@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
-const ytdl = require('ytdl-core');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const fs = require('fs');
@@ -27,163 +26,85 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// ---------- Cookie parser (Netscape format) ----------
-function parseNetscapeCookieFile(fileContent) {
-  // Trim and split
-  const lines = fileContent.split('\n')
-    .map(l => l.trim())
-    .filter(l => l && !l.startsWith('#'));
-
-  const cookies = [];
-  for (const line of lines) {
-    const parts = line.split('\t');
-    if (parts.length < 7) continue;
-    const name = parts[5];
-    const value = parts[6];
-    if (name && value) {
-      cookies.push(`${name}=${value}`);
-    }
-  }
-  return cookies.join('; ');
-}
-
-// ---------- Validate essential cookies ----------
-function validateCookieString(cookieStr) {
-  const required = ['__Secure-3PSID', 'LOGIN_INFO', '__Secure-1PSID'];
-  const missing = required.filter(r => !cookieStr.includes(r + '='));
-  if (missing.length > 0) {
-    return { valid: false, missing };
-  }
-  return { valid: true };
-}
-
 // ---------- Helpers ----------
-function extractVideoId(url) {
-  const patterns = [
-    /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?#]+)/,
-    /youtube\.com\/embed\/([^?]+)/,
-    /youtube\.com\/v\/([^?]+)/
-  ];
-  for (let p of patterns) {
-    const match = url.match(p);
-    if (match) return match[1];
-  }
-  return null;
+function extractTikTokId(url) {
+  // Simple: just check if it's a valid TikTok URL
+  if (url.includes('tiktok.com')) return true; // we'll fetch via API
+  return false;
 }
 
-// ---------- Test endpoint ----------
-app.get('/test-ffmpeg', (req, res) => {
-  ffmpeg.ffprobe(ffmpegPath, (err, info) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ version: info.version, path: ffmpegPath });
-  });
-});
+// ---------- Get TikTok video info ----------
+async function getTikTokVideoInfo(url) {
+  // Use tikwm.com API (free, no auth)
+  const apiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
+  const response = await fetch(apiUrl);
+  if (!response.ok) throw new Error('Failed to fetch TikTok video');
+  const data = await response.json();
+  if (data.code !== 0) throw new Error(data.msg || 'TikTok API error');
+  // Extract download URL (HD or no watermark)
+  const videoUrl = data.data.play || data.data.wmplay || data.data.hdplay;
+  if (!videoUrl) throw new Error('No video URL found');
+  return {
+    videoUrl,
+    title: data.data.title || 'TikTok Video',
+    author: data.data.author?.unique_id || 'Unknown',
+  };
+}
 
-// ---------- /get-video-info ----------
+// ---------- Endpoint: get video info (for preview) ----------
 app.post('/get-video-info', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
-  const videoId = extractVideoId(url);
-  if (!videoId) return res.status(400).json({ error: 'Invalid YouTube URL' });
 
-  try {
-    const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-    const response = await fetch(oembedUrl);
-    if (!response.ok) throw new Error('Video not found');
-    const data = await response.json();
-
+  // If it's TikTok, return a preview info (we can embed the video)
+  if (url.includes('tiktok.com')) {
     try {
-      await supabase.from('video_views').insert([{
-        video_id: videoId,
-        title: data.title,
-        author: data.author_name,
-        viewed_at: new Date().toISOString(),
-      }]);
-    } catch (dbErr) { /* ignore */ }
-
-    res.json({
-      success: true,
-      videoId,
-      title: data.title,
-      author: data.author_name,
-      embedUrl: `https://www.youtube.com/embed/${videoId}`,
-      thumbnail: data.thumbnail_url || `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+      const info = await getTikTokVideoInfo(url);
+      // For TikTok we return a direct video URL (the download link) – we'll embed a video element
+      res.json({
+        success: true,
+        isTikTok: true,
+        videoUrl: info.videoUrl,
+        title: info.title,
+        author: info.author,
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+    return;
   }
+
+  // (Optional: handle YouTube if you still want)
+  res.status(400).json({ error: 'Only TikTok URLs are supported now' });
 });
 
-// ---------- /create-summary ----------
+// ---------- /create-summary (now works for TikTok) ----------
 app.post('/create-summary', async (req, res) => {
   const { url, frameInterval = 5 } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
-  const videoId = extractVideoId(url);
-  if (!videoId) return res.status(400).json({ error: 'Invalid YouTube URL' });
 
-  // Build headers
-  const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
-  };
-
-  let cookieString = null;
-  if (process.env.YOUTUBE_COOKIE_FILE) {
-    try {
-      const raw = process.env.YOUTUBE_COOKIE_FILE;
-      cookieString = parseNetscapeCookieFile(raw);
-      console.log('[DEBUG] Parsed cookie length:', cookieString?.length);
-      // Log first 200 chars for debugging
-      console.log('[DEBUG] Cookie (first 200):', cookieString?.substring(0, 200));
-      
-      const validation = validateCookieString(cookieString);
-      if (validation.valid) {
-        headers.Cookie = cookieString;
-        console.log('[create-summary] ✅ Valid cookies found – using them.');
-      } else {
-        console.warn('[create-summary] ❌ Missing cookies:', validation.missing.join(', '));
-        // Still try, but likely to fail
-        headers.Cookie = cookieString;
-      }
-    } catch (e) {
-      console.warn('[create-summary] Cookie parsing error:', e.message);
-    }
-  } else if (process.env.YOUTUBE_COOKIE) {
-    cookieString = process.env.YOUTUBE_COOKIE;
-    const validation = validateCookieString(cookieString);
-    if (validation.valid) {
-      headers.Cookie = cookieString;
-      console.log('[create-summary] ✅ Using direct YOUTUBE_COOKIE');
-    } else {
-      console.warn('[create-summary] ❌ YOUTUBE_COOKIE missing:', validation.missing.join(', '));
-    }
-  } else {
-    console.warn('[create-summary] No cookies set.');
+  if (!url.includes('tiktok.com')) {
+    return res.status(400).json({ error: 'Only TikTok URLs are supported' });
   }
-
-  const requestOptions = { headers };
 
   const workDir = path.join('/tmp', uuidv4());
   fs.mkdirSync(workDir, { recursive: true });
 
   try {
-    console.log('[create-summary] Downloading video with quality 18...');
-    const videoStream = ytdl(url, {
-      quality: '18',
-      requestOptions,
-    });
+    // 1. Get video download URL
+    const info = await getTikTokVideoInfo(url);
+    const videoUrl = info.videoUrl;
+    console.log('[create-summary] Downloading from:', videoUrl);
 
+    // 2. Download the video
     const videoFilePath = path.join(workDir, 'input.mp4');
-    await new Promise((resolve, reject) => {
-      const writeStream = fs.createWriteStream(videoFilePath);
-      videoStream.pipe(writeStream);
-      videoStream.on('error', reject);
-      writeStream.on('finish', resolve);
-    });
+    const response = await fetch(videoUrl);
+    if (!response.ok) throw new Error('Failed to download video');
+    const buffer = Buffer.from(await response.arrayBuffer());
+    fs.writeFileSync(videoFilePath, buffer);
     console.log('[create-summary] Download complete.');
 
-    // -- rest of processing (frames, etc.) – same as before --
+    // 3. Extract frames
     const framesDir = path.join(workDir, 'frames');
     fs.mkdirSync(framesDir, { recursive: true });
     await new Promise((resolve, reject) => {
@@ -194,6 +115,7 @@ app.post('/create-summary', async (req, res) => {
         .output(path.join(framesDir, 'frame-%d.jpg'))
         .run();
     });
+    console.log('[create-summary] Frames extracted.');
 
     const frameFiles = fs.readdirSync(framesDir)
       .filter(f => f.endsWith('.jpg'))
@@ -201,6 +123,7 @@ app.post('/create-summary', async (req, res) => {
 
     if (frameFiles.length === 0) throw new Error('No frames extracted');
 
+    // 4. Create summary video
     const listFile = path.join(workDir, 'list.txt');
     const listContent = frameFiles.map(f => `file '${path.join(framesDir, f)}'\nduration 1`).join('\n');
     fs.writeFileSync(listFile, listContent);
@@ -216,9 +139,11 @@ app.post('/create-summary', async (req, res) => {
         .output(outputVideo)
         .run();
     });
+    console.log('[create-summary] Summary video generated.');
 
+    // 5. Upload to Supabase
     const fileBuffer = fs.readFileSync(outputVideo);
-    const fileName = `summary_${videoId}_${Date.now()}.mp4`;
+    const fileName = `summary_${Date.now()}.mp4`;
     const filePath = `temp_videos/${fileName}`;
 
     const { error: uploadError } = await supabase.storage
@@ -231,37 +156,21 @@ app.post('/create-summary', async (req, res) => {
       .createSignedUrl(filePath, 3600);
     if (signedErr) throw signedErr;
 
-    try {
-      await supabase.from('video_summaries').insert([{
-        video_id: videoId,
-        original_url: url,
-        summary_file_path: filePath,
-        frame_interval: frameInterval,
-        total_frames: frameFiles.length,
-        created_at: new Date().toISOString(),
-        expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
-      }]);
-    } catch (dbErr) { /* ignore */ }
-
+    // 6. Clean up
     fs.rmSync(workDir, { recursive: true, force: true });
+    console.log('[create-summary] Success!');
+
     res.json({
       success: true,
       signedUrl: signedData.signedUrl,
       frameCount: frameFiles.length,
+      message: `Summary created with ${frameFiles.length} frames.`,
     });
 
   } catch (err) {
     console.error('[create-summary] ERROR:', err);
     if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
-
-    // Provide actionable feedback
-    let userMsg = err.message;
-    if (err.message.includes('Cookie header') || err.message.includes('identity token')) {
-      userMsg = 'The provided cookies are invalid or expired. Please re‑export fresh cookies from a logged‑in YouTube session and set YOUTUBE_COOKIE_FILE on Render. Make sure you are logged into YouTube in your browser before exporting.';
-    } else if (err.statusCode === 410 || err.message.includes('410')) {
-      userMsg = 'YouTube returned 410 (Gone). This video may be region‑locked or requires a login. Try a different public video or refresh your cookies.';
-    }
-    res.status(500).json({ error: userMsg });
+    res.status(500).json({ error: err.message });
   }
 });
 
