@@ -13,14 +13,19 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
 }
 
+.container {
+  width: 90%;
+  max-width: 800px;
+  text-align: center;
+}
+
 input {
   font-size: 2rem;
-  font-weight: 700;          /* bold */
+  font-weight: 700;
   padding: 1rem 1.5rem;
   border: 2px solid #ccc;
   border-radius: 12px;
-  width: 80%;
-  max-width: 600px;
+  width: 100%;
   text-align: center;
   outline: none;
   transition: border-color 0.2s;
@@ -35,4 +40,43 @@ input:focus {
 input::placeholder {
   font-weight: 700;
   color: #aaa;
+}
+
+.hidden {
+  display: none !important;
+}
+
+#preview {
+  margin-top: 2rem;
+}
+
+.video-wrapper {
+  background: #ffffff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+}
+
+.video-wrapper iframe {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  display: block;
+}
+
+.video-info {
+  padding: 1.5rem;
+  text-align: left;
+  background: #fafafa;
+}
+
+.video-info h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  color: #111;
+}
+
+.video-info p {
+  font-size: 1rem;
+  color: #555;
 }
