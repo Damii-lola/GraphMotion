@@ -10,12 +10,14 @@ const cron = require('node-cron');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// CORS
 app.use(cors({
   origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
   credentials: true,
 }));
 app.use(express.json());
 
+// Supabase
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -30,8 +32,7 @@ async function ensureBucket() {
     const exists = buckets.some(b => b.name === bucketName);
     if (!exists) {
       console.log(`[Startup] Creating bucket "${bucketName}"...`);
-      const { error: createErr } = await supabase.storage.createBucket(bucketName, { public: false });
-      if (createErr) throw createErr;
+      await supabase.storage.createBucket(bucketName, { public: false });
       console.log(`[Startup] Bucket created.`);
     } else {
       console.log(`[Startup] Bucket "${bucketName}" exists.`);
@@ -47,7 +48,6 @@ function isTikTokUrl(url) {
   return url.includes('tiktok.com');
 }
 
-// ---------- Get TikTok video info (raw download URL) ----------
 async function getTikTokVideoInfo(url) {
   const apiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
   const response = await fetch(apiUrl);
@@ -63,7 +63,7 @@ async function getTikTokVideoInfo(url) {
   };
 }
 
-// ---------- Endpoint: preview (embed) ----------
+// ---------- /get-video-info (preview) ----------
 app.post('/get-video-info', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
@@ -84,7 +84,7 @@ app.post('/get-video-info', async (req, res) => {
   }
 });
 
-// ---------- Download full video and upload to Supabase ----------
+// ---------- /download-video ----------
 app.post('/download-video', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
@@ -119,7 +119,7 @@ app.post('/download-video', async (req, res) => {
       .createSignedUrl(filePath, 3600);
     if (signedErr) throw signedErr;
 
-    // Insert metadata – wrap in try/catch to avoid breaking the flow
+    // Insert metadata – skip if table missing
     try {
       await supabase.from('video_downloads').insert([{
         video_id: Date.now().toString(),
@@ -128,7 +128,7 @@ app.post('/download-video', async (req, res) => {
         expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
       }]);
     } catch (dbErr) {
-      console.warn('[DB] Insert skipped (table may not exist):', dbErr.message);
+      console.warn('[DB] Insert skipped:', dbErr.message);
     }
 
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -147,7 +147,65 @@ app.post('/download-video', async (req, res) => {
   }
 });
 
-// ---------- Cleanup (removes expired files) ----------
+// ---------- /generate-script (Mistral AI) ----------
+app.post('/generate-script', async (req, res) => {
+  const { title, author } = req.body;
+  if (!title) return res.status(400).json({ error: 'Title required' });
+
+  try {
+    const apiKey = process.env.MISTRAL_API_KEY;
+    if (!apiKey) throw new Error('MISTRAL_API_KEY not set');
+
+    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'mistral-small-latest',
+        messages: [
+          {
+            role: 'system',
+            content: `You are an animation director. Given a video title, generate a JSON script for Motion Canvas.
+Return a JSON array of scenes. Each scene has: shape (circle, rect, triangle), color (CSS color), x (0-800), y (0-600), duration (seconds). Make it simple (max 5 scenes). Only return valid JSON, no other text.`
+          },
+          {
+            role: 'user',
+            content: `Video title: "${title}" by ${author || 'Unknown'}. Generate animation script.`
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 500,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Mistral API error ${response.status}: ${errText}`);
+    }
+
+    const data = await response.json();
+    const scriptText = data.choices[0].message.content;
+
+    // Parse JSON (handles Markdown code blocks)
+    let script;
+    try {
+      script = JSON.parse(scriptText);
+    } catch (e) {
+      const match = scriptText.match(/```json\s*([\s\S]*?)\s*```/);
+      if (match) script = JSON.parse(match[1]);
+      else throw new Error('Failed to parse Mistral response as JSON');
+    }
+
+    res.json({ success: true, script });
+  } catch (err) {
+    console.error('[generate-script] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------- Cleanup (cron) ----------
 async function cleanupExpiredVideos() {
   try {
     const { data: expired, error } = await supabase
@@ -167,5 +225,7 @@ async function cleanupExpiredVideos() {
 }
 cron.schedule('0 * * * *', cleanupExpiredVideos);
 
+// ---------- Ping ----------
 app.get('/ping', (req, res) => res.send('pong'));
+
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
