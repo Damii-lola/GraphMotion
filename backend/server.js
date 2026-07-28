@@ -10,14 +10,12 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const cron = require('node-cron');
 
-// Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
 console.log('[FFmpeg] Path set to:', ffmpegPath);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS – allow your frontend
 app.use(cors({
   origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
   credentials: true,
@@ -29,7 +27,24 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// ------- Helper: extract video ID -------
+// ---------- Cookie parser (Netscape format) ----------
+function parseNetscapeCookieFile(fileContent) {
+  const lines = fileContent.split('\n').filter(line => {
+    const trimmed = line.trim();
+    return trimmed && !trimmed.startsWith('#');
+  });
+  const cookies = [];
+  for (const line of lines) {
+    const parts = line.split('\t');
+    if (parts.length < 7) continue;
+    const name = parts[5];
+    const value = parts[6];
+    if (name && value) cookies.push(`${name}=${value}`);
+  }
+  return cookies.join('; ');
+}
+
+// ---------- Helpers ----------
 function extractVideoId(url) {
   const patterns = [
     /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?#]+)/,
@@ -43,17 +58,15 @@ function extractVideoId(url) {
   return null;
 }
 
-// ------- TEST endpoint: check ffmpeg -------
+// ---------- Test FFmpeg ----------
 app.get('/test-ffmpeg', (req, res) => {
   ffmpeg.ffprobe(ffmpegPath, (err, info) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
+    if (err) return res.status(500).json({ error: err.message });
     res.json({ version: info.version, path: ffmpegPath });
   });
 });
 
-// ------- Endpoint: get embed info (unchanged) -------
+// ---------- /get-video-info ----------
 app.post('/get-video-info', async (req, res) => {
   console.log('[get-video-info] Request:', req.body);
   const { url } = req.body;
@@ -66,13 +79,19 @@ app.post('/get-video-info', async (req, res) => {
     const response = await fetch(oembedUrl);
     if (!response.ok) throw new Error('Video not found');
     const data = await response.json();
-    // optional DB insert
-    await supabase.from('video_views').insert([{
-      video_id: videoId,
-      title: data.title,
-      author: data.author_name,
-      viewed_at: new Date().toISOString(),
-    }]).catch(() => {});
+
+    // Optional DB insert – fixed with try/catch
+    try {
+      await supabase.from('video_views').insert([{
+        video_id: videoId,
+        title: data.title,
+        author: data.author_name,
+        viewed_at: new Date().toISOString(),
+      }]);
+    } catch (dbErr) {
+      console.warn('[DB] Insert skipped:', dbErr.message);
+    }
+
     res.json({
       success: true,
       videoId,
@@ -87,7 +106,7 @@ app.post('/get-video-info', async (req, res) => {
   }
 });
 
-// ------- ENDPOINT: create summary -------
+// ---------- /create-summary ----------
 app.post('/create-summary', async (req, res) => {
   console.log('[create-summary] Request:', req.body);
   const { url, frameInterval = 5 } = req.body;
@@ -95,13 +114,42 @@ app.post('/create-summary', async (req, res) => {
   const videoId = extractVideoId(url);
   if (!videoId) return res.status(400).json({ error: 'Invalid YouTube URL' });
 
+  // Build request headers (including cookies if provided)
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+  };
+
+  let cookieString = null;
+  if (process.env.YOUTUBE_COOKIE_FILE) {
+    try {
+      cookieString = parseNetscapeCookieFile(process.env.YOUTUBE_COOKIE_FILE);
+      if (cookieString) headers.Cookie = cookieString;
+      console.log('[create-summary] Using cookies from YOUTUBE_COOKIE_FILE');
+    } catch (e) {
+      console.warn('[create-summary] Failed to parse cookie file:', e.message);
+    }
+  } else if (process.env.YOUTUBE_COOKIE) {
+    headers.Cookie = process.env.YOUTUBE_COOKIE;
+    console.log('[create-summary] Using YOUTUBE_COOKIE env var');
+  } else {
+    console.warn('[create-summary] No cookies set – downloads may fail with 410');
+  }
+
+  const requestOptions = { headers };
+
   const workDir = path.join('/tmp', uuidv4());
   fs.mkdirSync(workDir, { recursive: true });
 
   try {
-    console.log('[create-summary] Downloading video...');
-    // 1. Download the video (use a specific format to avoid issues)
-    const videoStream = ytdl(url, { quality: '18' }); // 360p mp4
+    console.log('[create-summary] Downloading video with quality 18...');
+    // Use the request options with cookies
+    const videoStream = ytdl(url, {
+      quality: '18',
+      requestOptions,
+    });
+
     const videoFilePath = path.join(workDir, 'input.mp4');
     await new Promise((resolve, reject) => {
       const writeStream = fs.createWriteStream(videoFilePath);
@@ -111,17 +159,14 @@ app.post('/create-summary', async (req, res) => {
     });
     console.log('[create-summary] Download complete.');
 
-    // 2. Extract frames
+    // Extract frames
     const framesDir = path.join(workDir, 'frames');
     fs.mkdirSync(framesDir, { recursive: true });
     console.log('[create-summary] Extracting frames...');
     await new Promise((resolve, reject) => {
       ffmpeg(videoFilePath)
         .on('end', resolve)
-        .on('error', (err) => {
-          console.error('[FFmpeg] Frame extraction error:', err);
-          reject(err);
-        })
+        .on('error', reject)
         .outputOptions([
           `-vf fps=1/${frameInterval}`,
           '-frame_pts 1',
@@ -132,7 +177,6 @@ app.post('/create-summary', async (req, res) => {
     });
     console.log('[create-summary] Frames extracted.');
 
-    // 3. Get list of frames
     const frameFiles = fs.readdirSync(framesDir)
       .filter(f => f.endsWith('.jpg'))
       .sort((a, b) => {
@@ -146,7 +190,7 @@ app.post('/create-summary', async (req, res) => {
     }
     console.log(`[create-summary] Found ${frameFiles.length} frames.`);
 
-    // 4. Create video from frames
+    // Create video from frames
     const listFile = path.join(workDir, 'list.txt');
     const listContent = frameFiles.map(f => `file '${path.join(framesDir, f)}'\nduration 1`).join('\n');
     fs.writeFileSync(listFile, listContent);
@@ -159,16 +203,13 @@ app.post('/create-summary', async (req, res) => {
         .inputOptions(['-f concat', '-safe 0'])
         .outputOptions(['-c:v libx264', '-pix_fmt yuv420p'])
         .on('end', resolve)
-        .on('error', (err) => {
-          console.error('[FFmpeg] Concatenation error:', err);
-          reject(err);
-        })
+        .on('error', reject)
         .output(outputVideo)
         .run();
     });
     console.log('[create-summary] Summary video generated.');
 
-    // 5. Upload to Supabase Storage
+    // Upload to Supabase
     const fileBuffer = fs.readFileSync(outputVideo);
     const fileName = `summary_${videoId}_${Date.now()}.mp4`;
     const filePath = `temp_videos/${fileName}`;
@@ -182,24 +223,27 @@ app.post('/create-summary', async (req, res) => {
       });
     if (uploadError) throw uploadError;
 
-    // 6. Generate signed URL (1 hour)
     const { data: signedData, error: signedErr } = await supabase.storage
       .from('temp_videos')
       .createSignedUrl(filePath, 3600);
     if (signedErr) throw signedErr;
 
-    // 7. (Optional) store metadata in DB
-    await supabase.from('video_summaries').insert([{
-      video_id: videoId,
-      original_url: url,
-      summary_file_path: filePath,
-      frame_interval: frameInterval,
-      total_frames: frameFiles.length,
-      created_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
-    }]).catch(() => {});
+    // Optional DB record – fixed try/catch
+    try {
+      await supabase.from('video_summaries').insert([{
+        video_id: videoId,
+        original_url: url,
+        summary_file_path: filePath,
+        frame_interval: frameInterval,
+        total_frames: frameFiles.length,
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+      }]);
+    } catch (dbErr) {
+      console.warn('[DB] Insert skipped:', dbErr.message);
+    }
 
-    // 8. Clean up
+    // Clean up
     fs.rmSync(workDir, { recursive: true, force: true });
     console.log('[create-summary] Success!');
 
@@ -207,18 +251,23 @@ app.post('/create-summary', async (req, res) => {
       success: true,
       signedUrl: signedData.signedUrl,
       frameCount: frameFiles.length,
-      message: `Created summary with ${frameFiles.length} frames.`,
+      message: `Summary created with ${frameFiles.length} frames.`,
     });
 
   } catch (err) {
     console.error('[create-summary] ERROR:', err);
-    // Clean up on error
     if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
+    // Give a helpful message for 410
+    if (err.statusCode === 410 || err.message.includes('410')) {
+      return res.status(500).json({
+        error: 'YouTube is blocking this request. Please set the environment variable YOUTUBE_COOKIE_FILE on Render with your exported YouTube cookies (Netscape format).',
+      });
+    }
     res.status(500).json({ error: err.message });
   }
 });
 
-// ------- Cleanup (existing) -------
+// ---------- Cleanup ----------
 async function cleanupExpiredVideos() {
   console.log('[Cleanup] Starting...');
   try {
