@@ -3,10 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>YouTube URL input</title>
+  <title>YouTube Preview</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <input type="text" placeholder="enter youtube url" />
+
+  <div class="container">
+    <input type="text" id="urlInput" placeholder="enter youtube url" />
+    <div id="preview" class="hidden"></div>
+  </div>
+
+  <script src="script.js"></script>
 </body>
 </html>
