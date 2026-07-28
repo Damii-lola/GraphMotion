@@ -3,8 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const ytdl = require('ytdl-core');
-const { Readable } = require('stream');
-const mime = require('mime-types');
+const cron = require('node-cron');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,46 +17,110 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Health check
+// -------------------- CLEANUP FUNCTION --------------------
+async function cleanupExpiredVideos() {
+  console.log('[Cleanup] Starting cleanup job...');
+  try {
+    // 1. Find expired records (expires_at < now)
+    const { data: expiredRecords, error: fetchError } = await supabase
+      .from('video_downloads')
+      .select('id, file_path')
+      .lt('expires_at', new Date().toISOString());
+
+    if (fetchError) {
+      console.error('[Cleanup] DB fetch error:', fetchError.message);
+      return;
+    }
+
+    if (!expiredRecords || expiredRecords.length === 0) {
+      console.log('[Cleanup] No expired videos to delete.');
+      return;
+    }
+
+    console.log(`[Cleanup] Found ${expiredRecords.length} expired records.`);
+
+    // 2. Collect file paths to delete from storage
+    const filePaths = expiredRecords.map(record => record.file_path);
+
+    // 3. Delete files from Supabase Storage
+    const { error: storageError } = await supabase.storage
+      .from('temp_videos')
+      .remove(filePaths);
+
+    if (storageError) {
+      console.error('[Cleanup] Storage delete error:', storageError.message);
+      // Continue to delete DB records anyway? We'll still delete DB records to keep table clean.
+    } else {
+      console.log(`[Cleanup] Deleted ${filePaths.length} files from storage.`);
+    }
+
+    // 4. Delete records from DB (regardless of storage success)
+    const recordIds = expiredRecords.map(record => record.id);
+    const { error: deleteError } = await supabase
+      .from('video_downloads')
+      .delete()
+      .in('id', recordIds);
+
+    if (deleteError) {
+      console.error('[Cleanup] DB delete error:', deleteError.message);
+    } else {
+      console.log(`[Cleanup] Removed ${recordIds.length} records from DB.`);
+    }
+
+  } catch (err) {
+    console.error('[Cleanup] Unexpected error:', err.message);
+  }
+}
+
+// -------------------- SCHEDULED CLEANUP (every hour) --------------------
+cron.schedule('0 * * * *', () => {
+  cleanupExpiredVideos();
+});
+console.log('[Cron] Cleanup job scheduled to run every hour.');
+
+// Optionally run once on startup (uncomment if desired)
+// cleanupExpiredVideos();
+
+// -------------------- MANUAL CLEANUP ENDPOINT --------------------
+app.get('/cleanup', async (req, res) => {
+  await cleanupExpiredVideos();
+  res.json({ success: true, message: 'Cleanup completed.' });
+});
+
+// -------------------- HEALTH CHECK --------------------
 app.get('/', (req, res) => {
   res.send('Backend is running! 🚀');
 });
 
-// Endpoint to download YouTube video and store in Supabase
+// -------------------- DOWNLOAD ENDPOINT (same as before) --------------------
 app.post('/download-youtube', async (req, res) => {
   const { url } = req.body;
   if (!url) {
     return res.status(400).json({ error: 'URL is required' });
   }
 
-  // Validate YouTube URL
   if (!ytdl.validateURL(url)) {
     return res.status(400).json({ error: 'Invalid YouTube URL' });
   }
 
   try {
-    // 1. Get video info (title, etc.)
     const info = await ytdl.getInfo(url);
     const title = info.videoDetails.title.replace(/[^a-zA-Z0-9]/g, '_');
     const videoId = info.videoDetails.videoId;
 
-    // 2. Download the video as a stream (choose best quality)
     const videoStream = ytdl(url, { quality: 'highestvideo', filter: 'videoandaudio' });
 
-    // 3. Generate a unique filename
     const fileName = `${videoId}_${Date.now()}.mp4`;
     const filePath = `temp_videos/${fileName}`;
 
-    // 4. Convert stream to buffer (we'll collect chunks)
     const chunks = [];
     for await (const chunk of videoStream) {
       chunks.push(chunk);
     }
     const buffer = Buffer.concat(chunks);
 
-    // 5. Upload to Supabase Storage
     const { data, error } = await supabase.storage
-      .from('temp_videos') // make sure this bucket exists
+      .from('temp_videos')
       .upload(filePath, buffer, {
         contentType: 'video/mp4',
         cacheControl: '3600',
@@ -65,16 +128,15 @@ app.post('/download-youtube', async (req, res) => {
 
     if (error) throw error;
 
-    // 6. Generate a signed URL that expires in 1 hour (3600 seconds)
     const { data: signedUrlData, error: signedError } = await supabase.storage
       .from('temp_videos')
       .createSignedUrl(filePath, 3600); // 1 hour
 
     if (signedError) throw signedError;
 
-    // 7. (Optional) Save metadata to a DB table for tracking
+    // Insert into DB with expiry
     const { error: dbError } = await supabase
-      .from('video_downloads') // create this table if needed
+      .from('video_downloads')
       .insert([{
         video_id: videoId,
         title: title,
@@ -84,7 +146,6 @@ app.post('/download-youtube', async (req, res) => {
 
     if (dbError) console.warn('DB insert failed:', dbError.message);
 
-    // 8. Return the signed URL to the frontend
     res.json({
       success: true,
       signedUrl: signedUrlData.signedUrl,
@@ -98,7 +159,7 @@ app.post('/download-youtube', async (req, res) => {
   }
 });
 
-// (Optional) Endpoint to manually delete a file by path
+// -------------------- MANUAL DELETE ENDPOINT (optional) --------------------
 app.delete('/delete-video', async (req, res) => {
   const { filePath } = req.body;
   if (!filePath) return res.status(400).json({ error: 'filePath required' });
@@ -108,6 +169,7 @@ app.delete('/delete-video', async (req, res) => {
   res.json({ success: true });
 });
 
+// -------------------- START SERVER --------------------
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
 });
