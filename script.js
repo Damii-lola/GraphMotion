@@ -2,23 +2,8 @@ const input = document.getElementById('urlInput');
 const preview = document.getElementById('preview');
 const summaryBtn = document.getElementById('summaryBtn');
 const loading = document.getElementById('loading');
-const BACKEND_URL = 'https://graphmotion.onrender.com'; // change if needed
+const BACKEND_URL = 'https://graphmotion.onrender.com';
 
-// Helper: extract video ID (for validation)
-function extractVideoId(url) {
-  const patterns = [
-    /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?#]+)/,
-    /youtube\.com\/embed\/([^?]+)/,
-    /youtube\.com\/v\/([^?]+)/
-  ];
-  for (let p of patterns) {
-    const match = url.match(p);
-    if (match) return match[1];
-  }
-  return null;
-}
-
-// Show loading overlay, disable input/button
 function showLoading() {
   preview.classList.add('hidden');
   loading.classList.remove('hidden');
@@ -26,23 +11,20 @@ function showLoading() {
   summaryBtn.disabled = true;
 }
 
-// Hide loading, re-enable
 function hideLoading() {
   loading.classList.add('hidden');
   input.disabled = false;
   summaryBtn.disabled = false;
 }
 
-// Load video: preview (embed) or summary (processed video)
 async function loadVideo(url, isSummary = false) {
-  const endpoint = isSummary ? '/create-summary' : '/get-video-info';
-  
-  // Validate URL before sending
-  if (!extractVideoId(url)) {
-    alert('Invalid YouTube URL');
+  // Validate it's a TikTok URL (simple)
+  if (!url.includes('tiktok.com')) {
+    alert('Please enter a TikTok URL');
     return;
   }
 
+  const endpoint = isSummary ? '/create-summary' : '/get-video-info';
   showLoading();
 
   try {
@@ -53,7 +35,7 @@ async function loadVideo(url, isSummary = false) {
     });
 
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Failed to load');
+    if (!response.ok) throw new Error(data.error || 'Failed');
 
     hideLoading();
 
@@ -63,40 +45,33 @@ async function loadVideo(url, isSummary = false) {
         <div class="video-wrapper">
           <video controls autoplay>
             <source src="${data.signedUrl}" type="video/mp4" />
-            Your browser does not support the video tag.
           </video>
           <div class="video-info">
-            <p>✅ Summary created with ${data.frameCount} frames (each shown for 1 second)</p>
+            <p>✅ Summary created with ${data.frameCount} frames</p>
           </div>
         </div>
       `;
     } else {
-      // Show YouTube embed
+      // Preview: embed TikTok video (use video element)
       preview.innerHTML = `
         <div class="video-wrapper">
-          <iframe
-            src="${data.embedUrl}"
-            title="${data.title}"
-            frameborder="0"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowfullscreen
-          ></iframe>
+          <video controls autoplay>
+            <source src="${data.videoUrl}" type="video/mp4" />
+          </video>
           <div class="video-info">
-            <h2>${data.title}</h2>
-            <p>${data.author}</p>
+            <h2>${data.title || 'TikTok Video'}</h2>
+            <p>${data.author || 'Unknown'}</p>
           </div>
         </div>
       `;
     }
     preview.classList.remove('hidden');
-
   } catch (err) {
     hideLoading();
     alert('Error: ' + err.message);
   }
 }
 
-// --- Event Listeners ---
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     const url = input.value.trim();
@@ -107,7 +82,7 @@ input.addEventListener('keydown', (e) => {
 summaryBtn.addEventListener('click', () => {
   const url = input.value.trim();
   if (!url) {
-    alert('Please enter a YouTube URL first.');
+    alert('Please enter a TikTok URL first.');
     return;
   }
   loadVideo(url, true);
