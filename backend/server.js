@@ -26,23 +26,49 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// ---------- Ensure bucket exists ----------
+async function ensureBucket() {
+  const bucketName = 'temp_videos';
+  const { data: buckets, error } = await supabase.storage.listBuckets();
+  if (error) {
+    console.error('[Startup] Failed to list buckets:', error.message);
+    return;
+  }
+  const exists = buckets.some(b => b.name === bucketName);
+  if (!exists) {
+    console.log(`[Startup] Bucket "${bucketName}" not found. Creating...`);
+    const { error: createErr } = await supabase.storage.createBucket(bucketName, { public: false });
+    if (createErr) {
+      console.error('[Startup] Failed to create bucket:', createErr.message);
+    } else {
+      console.log(`[Startup] Bucket "${bucketName}" created.`);
+    }
+  } else {
+    console.log(`[Startup] Bucket "${bucketName}" exists.`);
+  }
+}
+ensureBucket();
+
 // ---------- Helpers ----------
 function extractTikTokId(url) {
-  // Simple: just check if it's a valid TikTok URL
-  if (url.includes('tiktok.com')) return true; // we'll fetch via API
-  return false;
+  // Just check if it's a TikTok URL
+  return url.includes('tiktok.com');
 }
 
 // ---------- Get TikTok video info ----------
 async function getTikTokVideoInfo(url) {
-  // Use tikwm.com API (free, no auth)
   const apiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
+  console.log('[TikTok] Fetching:', apiUrl);
   const response = await fetch(apiUrl);
-  if (!response.ok) throw new Error('Failed to fetch TikTok video');
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`TikTok API error ${response.status}: ${text}`);
+  }
   const data = await response.json();
+  console.log('[TikTok] API response code:', data.code);
   if (data.code !== 0) throw new Error(data.msg || 'TikTok API error');
-  // Extract download URL (HD or no watermark)
-  const videoUrl = data.data.play || data.data.wmplay || data.data.hdplay;
+  // Prefer no-watermark video
+  const videoUrl = data.data.hdplay || data.data.play || data.data.wmplay;
   if (!videoUrl) throw new Error('No video URL found');
   return {
     videoUrl,
@@ -51,39 +77,32 @@ async function getTikTokVideoInfo(url) {
   };
 }
 
-// ---------- Endpoint: get video info (for preview) ----------
+// ---------- Endpoint: get video info ----------
 app.post('/get-video-info', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
-
-  // If it's TikTok, return a preview info (we can embed the video)
-  if (url.includes('tiktok.com')) {
-    try {
-      const info = await getTikTokVideoInfo(url);
-      // For TikTok we return a direct video URL (the download link) – we'll embed a video element
-      res.json({
-        success: true,
-        isTikTok: true,
-        videoUrl: info.videoUrl,
-        title: info.title,
-        author: info.author,
-      });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-    return;
+  if (!extractTikTokId(url)) {
+    return res.status(400).json({ error: 'Only TikTok URLs are supported' });
   }
-
-  // (Optional: handle YouTube if you still want)
-  res.status(400).json({ error: 'Only TikTok URLs are supported now' });
+  try {
+    const info = await getTikTokVideoInfo(url);
+    res.json({
+      success: true,
+      videoUrl: info.videoUrl,
+      title: info.title,
+      author: info.author,
+    });
+  } catch (err) {
+    console.error('[get-video-info] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// ---------- /create-summary (now works for TikTok) ----------
+// ---------- /create-summary ----------
 app.post('/create-summary', async (req, res) => {
   const { url, frameInterval = 5 } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
-
-  if (!url.includes('tiktok.com')) {
+  if (!extractTikTokId(url)) {
     return res.status(400).json({ error: 'Only TikTok URLs are supported' });
   }
 
@@ -96,10 +115,10 @@ app.post('/create-summary', async (req, res) => {
     const videoUrl = info.videoUrl;
     console.log('[create-summary] Downloading from:', videoUrl);
 
-    // 2. Download the video
+    // 2. Download the video (stream to file)
     const videoFilePath = path.join(workDir, 'input.mp4');
     const response = await fetch(videoUrl);
-    if (!response.ok) throw new Error('Failed to download video');
+    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
     const buffer = Buffer.from(await response.arrayBuffer());
     fs.writeFileSync(videoFilePath, buffer);
     console.log('[create-summary] Download complete.');
