@@ -10,7 +10,7 @@
   <div class="container">
     <header>
       <h1>🎬 GraphMotion AI</h1>
-      <p>Paste a TikTok URL to preview or download the raw video</p>
+      <p>Paste a TikTok URL to preview, download, or generate an animation</p>
     </header>
 
     <div class="input-area">
@@ -18,18 +18,38 @@
       <button id="downloadBtn" class="btn-primary">⬇️ Download Full Video</button>
     </div>
 
-    <div id="preview" class="hidden"></div>
+    <!-- Extra buttons -->
+    <div class="action-bar">
+      <button id="scriptBtn" class="btn-secondary">🧠 Generate Script</button>
+      <button id="renderBtn" class="btn-secondary" disabled>▶️ Render Animation</button>
+    </div>
 
+    <div id="preview" class="hidden"></div>
     <div id="loading" class="hidden">
       <div class="spinner"></div>
-      <p>Processing your video...</p>
+      <p id="loadingMsg">Processing...</p>
+    </div>
+
+    <!-- Motion Canvas container -->
+    <div id="canvasContainer" class="hidden" style="margin-top:2rem; background:#1a1a1a; border-radius:16px; overflow:hidden;">
+      <canvas id="motionCanvas" width="800" height="600"></canvas>
     </div>
 
     <footer>
-      <p>Powered by Supabase &amp; TikTok API</p>
+      <p>Powered by Supabase &amp; Mistral AI</p>
     </footer>
   </div>
 
-  <script src="script.js"></script>
+  <!-- Motion Canvas library (CDN) -->
+  <script type="importmap">
+    {
+      "imports": {
+        "@motion-canvas/core": "https://cdn.jsdelivr.net/npm/@motion-canvas/core@3.12.0/dist/index.mjs",
+        "@motion-canvas/2d": "https://cdn.jsdelivr.net/npm/@motion-canvas/2d@3.12.0/dist/index.mjs",
+        "motion-canvas": "https://cdn.jsdelivr.net/npm/motion-canvas@3.12.0/dist/index.mjs"
+      }
+    }
+  </script>
+  <script type="module" src="script.js"></script>
 </body>
 </html>
