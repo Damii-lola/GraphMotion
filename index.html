@@ -3,23 +3,31 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>YouTube Summary Saas</title>
+  <title>GraphMotion AI</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-
   <div class="container">
-    <input type="text" id="urlInput" placeholder="enter tiktok url" />
-    <button id="summaryBtn">🎬 Create Summary (frame every 5s)</button>
-    
-    <!-- Preview area – shows either embed, summary video, or loading spinner -->
+    <header>
+      <h1>🎬 GraphMotion AI</h1>
+      <p>Paste a TikTok URL to preview or download the raw video</p>
+    </header>
+
+    <div class="input-area">
+      <input type="text" id="urlInput" placeholder="https://www.tiktok.com/..." />
+      <button id="downloadBtn" class="btn-primary">⬇️ Download Full Video</button>
+    </div>
+
     <div id="preview" class="hidden"></div>
 
-    <!-- Loading overlay (hidden by default) -->
     <div id="loading" class="hidden">
       <div class="spinner"></div>
-      <p>Processing your video... This may take a moment.</p>
+      <p>Processing your video...</p>
     </div>
+
+    <footer>
+      <p>Powered by Supabase &amp; TikTok API</p>
+    </footer>
   </div>
 
   <script src="script.js"></script>
