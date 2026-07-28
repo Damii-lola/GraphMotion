@@ -11,7 +11,15 @@
   <div class="container">
     <input type="text" id="urlInput" placeholder="enter youtube url" />
     <button id="summaryBtn">🎬 Create Summary (frame every 5s)</button>
+    
+    <!-- Preview area – shows either embed, summary video, or loading spinner -->
     <div id="preview" class="hidden"></div>
+
+    <!-- Loading overlay (hidden by default) -->
+    <div id="loading" class="hidden">
+      <div class="spinner"></div>
+      <p>Processing your video... This may take a moment.</p>
+    </div>
   </div>
 
   <script src="script.js"></script>
