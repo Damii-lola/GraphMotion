@@ -17,6 +17,7 @@ body {
   width: 90%;
   max-width: 800px;
   text-align: center;
+  position: relative;
 }
 
 input {
@@ -31,6 +32,7 @@ input {
   transition: border-color 0.2s;
   background: #ffffff;
   color: #111;
+  margin-bottom: 1rem;
 }
 
 input:focus {
@@ -42,12 +44,34 @@ input::placeholder {
   color: #aaa;
 }
 
+button {
+  font-size: 1.2rem;
+  font-weight: 600;
+  padding: 0.8rem 2rem;
+  border: none;
+  border-radius: 12px;
+  background: #1a73e8;
+  color: white;
+  cursor: pointer;
+  transition: background 0.2s;
+  margin-bottom: 1.5rem;
+}
+
+button:hover:not(:disabled) {
+  background: #1557b0;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .hidden {
   display: none !important;
 }
 
 #preview {
-  margin-top: 2rem;
+  margin-top: 1rem;
 }
 
 .video-wrapper {
@@ -57,7 +81,8 @@ input::placeholder {
   box-shadow: 0 8px 30px rgba(0,0,0,0.08);
 }
 
-.video-wrapper iframe {
+.video-wrapper iframe,
+.video-wrapper video {
   width: 100%;
   aspect-ratio: 16 / 9;
   display: block;
@@ -79,4 +104,33 @@ input::placeholder {
 .video-info p {
   font-size: 1rem;
   color: #555;
+}
+
+/* ----- Loading overlay ----- */
+#loading {
+  margin-top: 2rem;
+  padding: 2rem;
+  background: #f8f9fa;
+  border-radius: 16px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+
+#loading p {
+  margin-top: 1rem;
+  font-size: 1.2rem;
+  color: #555;
+}
+
+.spinner {
+  width: 50px;
+  height: 50px;
+  margin: 0 auto;
+  border: 5px solid #e0e0e0;
+  border-top-color: #1a73e8;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
