@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+
   <div class="container">
     <header>
       <h1>🎬 GraphMotion AI</h1>
@@ -18,7 +19,6 @@
       <button id="downloadBtn" class="btn-primary">⬇️ Download Full Video</button>
     </div>
 
-    <!-- Extra buttons -->
     <div class="action-bar">
       <button id="scriptBtn" class="btn-secondary">🧠 Generate Script</button>
       <button id="renderBtn" class="btn-secondary" disabled>▶️ Render Animation</button>
@@ -30,8 +30,8 @@
       <p id="loadingMsg">Processing...</p>
     </div>
 
-    <!-- Motion Canvas container -->
-    <div id="canvasContainer" class="hidden" style="margin-top:2rem; background:#1a1a1a; border-radius:16px; overflow:hidden;">
+    <!-- Motion Canvas player container -->
+    <div id="playerContainer" class="hidden" style="margin-top:2rem; background:#1a1a1a; border-radius:16px; overflow:hidden;">
       <canvas id="motionCanvas" width="800" height="600"></canvas>
     </div>
 
@@ -40,16 +40,18 @@
     </footer>
   </div>
 
-  <!-- Motion Canvas library (CDN) -->
+  <!-- Import map for Motion Canvas -->
   <script type="importmap">
     {
       "imports": {
-        "@motion-canvas/core": "https://cdn.jsdelivr.net/npm/@motion-canvas/core@3.12.0/dist/index.mjs",
-        "@motion-canvas/2d": "https://cdn.jsdelivr.net/npm/@motion-canvas/2d@3.12.0/dist/index.mjs",
-        "motion-canvas": "https://cdn.jsdelivr.net/npm/motion-canvas@3.12.0/dist/index.mjs"
+        "@motion-canvas/core": "https://esm.sh/@motion-canvas/core@3.12.0",
+        "@motion-canvas/2d": "https://esm.sh/@motion-canvas/2d@3.12.0",
+        "@motion-canvas/player": "https://esm.sh/@motion-canvas/player@3.12.0"
       }
     }
   </script>
+
+  <!-- Main script (ES module) -->
   <script type="module" src="script.js"></script>
 </body>
 </html>
