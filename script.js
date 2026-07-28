@@ -18,14 +18,23 @@ const loadingMsg = document.getElementById('loadingMsg');
 const playerContainer = document.getElementById('playerContainer');
 const canvasElement = document.getElementById('motionCanvas');
 
-const BACKEND_URL = 'https://graphmotion.onrender.com';
+const BACKEND_URL = 'https://graphmotion.onrender.com'; // <-- CHANGE if different
 let currentScript = null;
 let videoTitle = '';
 let videoAuthor = '';
 let playerInstance = null;
 
+// --- Debug: log that elements are found ---
+console.log('[GraphMotion] Elements found:', {
+  input: !!input,
+  downloadBtn: !!downloadBtn,
+  scriptBtn: !!scriptBtn,
+  renderBtn: !!renderBtn,
+});
+
 // --- UI helpers ---
 function showLoading(msg = 'Processing...') {
+  console.log('[UI] showLoading:', msg);
   preview.classList.add('hidden');
   playerContainer.classList.add('hidden');
   loading.classList.remove('hidden');
@@ -37,6 +46,7 @@ function showLoading(msg = 'Processing...') {
 }
 
 function hideLoading() {
+  console.log('[UI] hideLoading');
   loading.classList.add('hidden');
   input.disabled = false;
   downloadBtn.disabled = false;
@@ -52,7 +62,11 @@ function isTikTokUrl(url) {
 input.addEventListener('keydown', async (e) => {
   if (e.key === 'Enter') {
     const url = input.value.trim();
-    if (!url || !isTikTokUrl(url)) return alert('Enter a valid TikTok URL');
+    if (!url || !isTikTokUrl(url)) {
+      alert('Enter a valid TikTok URL');
+      return;
+    }
+    console.log('[Preview] URL:', url);
     showLoading('Fetching video...');
     try {
       const res = await fetch(`${BACKEND_URL}/get-video-info`, {
@@ -61,6 +75,7 @@ input.addEventListener('keydown', async (e) => {
         body: JSON.stringify({ url }),
       });
       const data = await res.json();
+      console.log('[Preview] Response:', data);
       if (!res.ok) throw new Error(data.error || 'Preview failed');
       videoTitle = data.title;
       videoAuthor = data.author;
@@ -78,6 +93,7 @@ input.addEventListener('keydown', async (e) => {
       `;
       preview.classList.remove('hidden');
     } catch (err) {
+      console.error('[Preview] Error:', err);
       hideLoading();
       alert('Preview error: ' + err.message);
     }
@@ -86,8 +102,13 @@ input.addEventListener('keydown', async (e) => {
 
 // --- Download full video ---
 downloadBtn.addEventListener('click', async () => {
+  console.log('[Download] Button clicked');
   const url = input.value.trim();
-  if (!url || !isTikTokUrl(url)) return alert('Enter a valid TikTok URL');
+  if (!url || !isTikTokUrl(url)) {
+    alert('Enter a valid TikTok URL');
+    return;
+  }
+  console.log('[Download] URL:', url);
   showLoading('Downloading & uploading...');
   try {
     const res = await fetch(`${BACKEND_URL}/download-video`, {
@@ -96,6 +117,7 @@ downloadBtn.addEventListener('click', async () => {
       body: JSON.stringify({ url }),
     });
     const data = await res.json();
+    console.log('[Download] Response:', data);
     if (!res.ok) throw new Error(data.error || 'Download failed');
     hideLoading();
     preview.innerHTML = `
@@ -114,6 +136,7 @@ downloadBtn.addEventListener('click', async () => {
     videoTitle = data.title;
     videoAuthor = data.author;
   } catch (err) {
+    console.error('[Download] Error:', err);
     hideLoading();
     alert('Download error: ' + err.message);
   }
@@ -121,6 +144,7 @@ downloadBtn.addEventListener('click', async () => {
 
 // --- Generate Script (Mistral) ---
 scriptBtn.addEventListener('click', async () => {
+  console.log('[Script] Button clicked');
   if (!videoTitle) {
     alert('Please preview or download a video first to get its title.');
     return;
@@ -133,6 +157,7 @@ scriptBtn.addEventListener('click', async () => {
       body: JSON.stringify({ title: videoTitle, author: videoAuthor }),
     });
     const data = await res.json();
+    console.log('[Script] Response:', data);
     if (!res.ok) throw new Error(data.error || 'Script generation failed');
     currentScript = data.script;
     hideLoading();
@@ -140,6 +165,7 @@ scriptBtn.addEventListener('click', async () => {
     alert(`✅ Script generated with ${currentScript.length} scenes! Click "Render Animation".`);
     console.log('[GraphMotion] Script:', currentScript);
   } catch (err) {
+    console.error('[Script] Error:', err);
     hideLoading();
     alert('Script error: ' + err.message);
   }
@@ -147,18 +173,18 @@ scriptBtn.addEventListener('click', async () => {
 
 // --- Render Animation with Motion Canvas ---
 renderBtn.addEventListener('click', async () => {
+  console.log('[Render] Button clicked');
   if (!currentScript || currentScript.length === 0) {
     alert('Generate a script first.');
     return;
   }
 
   showLoading('Building Motion Canvas scene...');
-  console.log('[GraphMotion] Starting render with script:', currentScript);
+  console.log('[Render] Script:', currentScript);
 
   try {
-    // Dynamic scene
     const scene = makeScene2D(function* (view) {
-      console.log('[GraphMotion] Scene generator started');
+      console.log('[MotionCanvas] Scene generator started');
       const group = new Layout({ layout: false });
       view.add(group);
 
@@ -178,17 +204,16 @@ renderBtn.addEventListener('click', async () => {
         }
         nodes.push(node);
         group.add(node);
-        console.log(`[GraphMotion] Created ${shape} at (${x},${y})`);
+        console.log(`[MotionCanvas] Created ${shape} at (${x},${y})`);
       }
 
-      // Animate: fade in one by one
       for (let i = 0; i < nodes.length; i++) {
         const node = nodes[i];
         yield* node.opacity(0, 0).to(1, 0.5);
         yield* waitFor(0.3);
       }
       yield* waitFor(1);
-      console.log('[GraphMotion] Animation finished');
+      console.log('[MotionCanvas] Animation finished');
     });
 
     const project = createProject({
@@ -200,23 +225,23 @@ renderBtn.addEventListener('click', async () => {
       },
     });
 
-    console.log('[GraphMotion] Project created');
+    console.log('[Render] Project created');
 
     playerInstance = new Player({
       canvas: canvasElement,
       project,
     });
 
-    console.log('[GraphMotion] Player created');
+    console.log('[Render] Player created');
 
     playerContainer.classList.remove('hidden');
     hideLoading();
 
     await playerInstance.play();
-    console.log('[GraphMotion] Play finished');
+    console.log('[Render] Play finished');
 
   } catch (err) {
-    console.error('[GraphMotion] Render error:', err);
+    console.error('[Render] Error:', err);
     hideLoading();
     alert('Render error: ' + err.message + '\nCheck console for details.');
   }
