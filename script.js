@@ -1,9 +1,10 @@
-import { Canvas } from '@motion-canvas/core/lib/Canvas.js';
-import { Scene } from '@motion-canvas/core/lib/scenes/Scene.js';
+import { makeScene2D } from '@motion-canvas/2d/lib/scenes/Scene2D.js';
+import { Circle, Rect, Txt, Layout } from '@motion-canvas/2d/lib/components/index.js';
 import { createRef } from '@motion-canvas/core/lib/utils.js';
-import { Circle, Rect, Txt, makeScene2D } from '@motion-canvas/2d/lib/scenes/Scene2D.js';
 import { all, waitFor } from '@motion-canvas/core/lib/flow.js';
 import { createSignal } from '@motion-canvas/core/lib/signals.js';
+import { Player } from '@motion-canvas/player/lib/Player.js';
+import { createProject } from '@motion-canvas/core/lib/project.js';
 
 const input = document.getElementById('urlInput');
 const preview = document.getElementById('preview');
@@ -12,18 +13,19 @@ const scriptBtn = document.getElementById('scriptBtn');
 const renderBtn = document.getElementById('renderBtn');
 const loading = document.getElementById('loading');
 const loadingMsg = document.getElementById('loadingMsg');
-const canvasContainer = document.getElementById('canvasContainer');
+const playerContainer = document.getElementById('playerContainer');
 const canvasElement = document.getElementById('motionCanvas');
 
 const BACKEND_URL = 'https://graphmotion.onrender.com';
-let currentScript = null; // store the script from Mistral
+let currentScript = null;
 let videoTitle = '';
 let videoAuthor = '';
+let playerInstance = null;
 
 // --- UI helpers ---
 function showLoading(msg = 'Processing...') {
   preview.classList.add('hidden');
-  canvasContainer.classList.add('hidden');
+  playerContainer.classList.add('hidden');
   loading.classList.remove('hidden');
   loadingMsg.textContent = msg;
   input.disabled = true;
@@ -44,7 +46,7 @@ function isTikTokUrl(url) {
   return url.includes('tiktok.com');
 }
 
-// --- Preview (same as before) ---
+// --- Preview (Enter) ---
 input.addEventListener('keydown', async (e) => {
   if (e.key === 'Enter') {
     const url = input.value.trim();
@@ -107,7 +109,6 @@ downloadBtn.addEventListener('click', async () => {
       </div>
     `;
     preview.classList.remove('hidden');
-    // Update global metadata
     videoTitle = data.title;
     videoAuthor = data.author;
   } catch (err) {
@@ -142,18 +143,24 @@ scriptBtn.addEventListener('click', async () => {
   }
 });
 
-// --- Render Animation (Motion Canvas) ---
+// --- Render Animation with Motion Canvas ---
 renderBtn.addEventListener('click', async () => {
-  if (!currentScript) return alert('Generate a script first.');
-  // Show canvas container
-  canvasContainer.classList.remove('hidden');
-  // We'll clear any previous animation
-  // Use Motion Canvas to render the script
+  if (!currentScript || currentScript.length === 0) {
+    alert('Generate a script first.');
+    return;
+  }
+
+  showLoading('Building Motion Canvas scene...');
+
   try {
-    // Build a dynamic scene based on currentScript
+    // Create a dynamic scene from the script
     const scene = makeScene2D(function* (view) {
-      // Create shapes based on the script
+      // We'll create a group to hold all shapes
       const shapes = [];
+      const group = new Layout({ layout: false });
+      view.add(group);
+
+      // For each item in the script, create a shape node
       for (const item of currentScript) {
         const shape = item.shape || 'circle';
         const color = item.color || '#ff0000';
@@ -162,31 +169,58 @@ renderBtn.addEventListener('click', async () => {
         const duration = item.duration || 1;
         let node;
         if (shape === 'circle') {
-          node = new Circle({ radius: 50, fill: color, x, y });
+          node = new Circle({ radius: 30, fill: color, x, y, opacity: 0 });
         } else if (shape === 'rect') {
-          node = new Rect({ width: 100, height: 80, fill: color, x, y });
+          node = new Rect({ width: 80, height: 60, fill: color, x, y, opacity: 0 });
         } else if (shape === 'triangle') {
-          // Triangle via polygon
-          node = new Rect({ width: 80, height: 80, fill: color, x, y });
+          // Use a simple rect as triangle placeholder
+          node = new Rect({ width: 70, height: 70, fill: color, x, y, opacity: 0 });
         } else {
-          node = new Circle({ radius: 40, fill: color, x, y });
+          node = new Circle({ radius: 30, fill: color, x, y, opacity: 0 });
         }
         shapes.push(node);
-        view.add(node);
+        group.add(node);
       }
-      // Animate: fade in each shape with a delay
+
+      // Animate each shape: fade in, then wait, then move?
       for (let i = 0; i < shapes.length; i++) {
         const node = shapes[i];
+        // fade in over 0.5s
         yield* node.opacity(0, 0).to(1, 0.5);
+        // wait a bit
         yield* waitFor(0.3);
       }
+      // Keep final frame for a moment
+      yield* waitFor(1);
     });
-    // Render the scene onto the canvas
-    const canvas = new Canvas(canvasElement, { width: 800, height: 600 });
-    await canvas.loadScene(scene);
-    canvas.play();
-    renderBtn.disabled = true; // disable until new script generated
+
+    // Create a project with the scene
+    const project = createProject({
+      scenes: [scene],
+      settings: {
+        width: 800,
+        height: 600,
+        backgroundColor: '#1a1a1a',
+      },
+    });
+
+    // Create a player instance
+    playerInstance = new Player({
+      canvas: canvasElement,
+      project,
+      // optional: controls
+    });
+
+    // Show the container
+    playerContainer.classList.remove('hidden');
+    hideLoading();
+
+    // Play the animation
+    await playerInstance.play();
+
   } catch (err) {
+    console.error('Render error:', err);
+    hideLoading();
     alert('Render error: ' + err.message);
   }
 });
