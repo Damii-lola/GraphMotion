@@ -80,7 +80,7 @@ app.get('/', (req, res) => {
   res.send('Backend is running! 🚀');
 });
 
-// ===================== DOWNLOAD ENDPOINT with better request handling =====================
+// ===================== DOWNLOAD ENDPOINT with cookie support =====================
 app.post('/download-youtube', async (req, res) => {
   const { url } = req.body;
   if (!url) {
@@ -91,37 +91,39 @@ app.post('/download-youtube', async (req, res) => {
     return res.status(400).json({ error: 'Invalid YouTube URL' });
   }
 
-  // ---- Custom headers to mimic a real browser ----
-  const requestOptions = {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'Connection': 'keep-alive',
-      'Upgrade-Insecure-Requests': '1',
-      'Sec-Fetch-Dest': 'document',
-      'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'none',
-      'Sec-Fetch-User': '?1',
-    },
+  // Build request headers with real browser UA + optional cookie
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
   };
 
+  // If we have a cookie string in env, add it
+  if (process.env.YOUTUBE_COOKIE) {
+    headers.Cookie = process.env.YOUTUBE_COOKIE;
+    console.log('[Download] Using cookies from environment');
+  } else {
+    console.warn('[Download] No YOUTUBE_COOKIE set – may fail for some videos');
+  }
+
+  const requestOptions = { headers };
+
   try {
-    // 1. Get info with our custom headers
     let info;
     try {
       info = await ytdl.getInfo(url, { requestOptions });
     } catch (infoErr) {
       console.error('getInfo error:', infoErr);
-      // If the video is blocked, try again with a different approach (no custom headers?)
-      // Or try using the default request options
+      // Try without custom headers (fallback)
       try {
         info = await ytdl.getInfo(url);
       } catch (fallbackErr) {
         console.error('Fallback getInfo also failed:', fallbackErr);
         return res.status(400).json({
-          error: 'Video not found or unavailable. It might be region‑blocked or require a login.'
+          error: 'Video not found or unavailable. Try setting YOUTUBE_COOKIE environment variable with a logged‑in session cookie.'
         });
       }
     }
@@ -129,30 +131,33 @@ app.post('/download-youtube', async (req, res) => {
     const title = info.videoDetails.title.replace(/[^a-zA-Z0-9 ]/g, '_');
     const videoId = info.videoDetails.videoId;
 
-    // 2. Try to download with a quality that works (try 'highest' first, fallback to 'lowest')
+    // Try download with cookie first; fallback to no cookie
     let videoStream;
     let streamError = null;
 
     try {
-      // First attempt: highest quality
       videoStream = ytdl(url, {
         quality: 'highest',
         requestOptions,
       });
     } catch (streamErr) {
-      console.warn('Highest quality stream failed, trying lowest:', streamErr.message);
+      console.warn('Highest quality stream with cookie failed, trying lowest with cookie...');
       try {
-        // Fallback: lowest quality (usually format 18 – 360p mp4)
         videoStream = ytdl(url, {
           quality: 'lowest',
           requestOptions,
         });
       } catch (fallbackStreamErr) {
-        throw new Error('Both highest and lowest quality streams failed: ' + fallbackStreamErr.message);
+        // If all fails with cookie, try without cookie (but we already have info)
+        console.warn('Cookie-based stream failed, falling back to no cookie');
+        try {
+          videoStream = ytdl(url, { quality: 'lowest' });
+        } catch (lastErr) {
+          throw new Error('All download attempts failed: ' + lastErr.message);
+        }
       }
     }
 
-    // 3. Collect chunks
     const chunks = [];
     videoStream.on('error', (err) => {
       streamError = err;
@@ -173,7 +178,7 @@ app.post('/download-youtube', async (req, res) => {
 
     const buffer = Buffer.concat(chunks);
 
-    // 4. Upload to Supabase
+    // Upload to Supabase
     const fileName = `${videoId}_${Date.now()}.mp4`;
     const filePath = `temp_videos/${fileName}`;
 
@@ -186,14 +191,14 @@ app.post('/download-youtube', async (req, res) => {
 
     if (uploadError) throw uploadError;
 
-    // 5. Generate signed URL
+    // Generate signed URL
     const { data: signedUrlData, error: signedError } = await supabase.storage
       .from('temp_videos')
       .createSignedUrl(filePath, 3600);
 
     if (signedError) throw signedError;
 
-    // 6. Insert record with expiry
+    // Insert record
     const { error: dbError } = await supabase
       .from('video_downloads')
       .insert([{
@@ -205,7 +210,6 @@ app.post('/download-youtube', async (req, res) => {
 
     if (dbError) console.warn('DB insert failed:', dbError.message);
 
-    // 7. Return signed URL
     res.json({
       success: true,
       signedUrl: signedUrlData.signedUrl,
