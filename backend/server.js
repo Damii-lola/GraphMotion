@@ -29,16 +29,15 @@ const supabase = createClient(
 
 // ---------- Cookie parser (Netscape format) ----------
 function parseNetscapeCookieFile(fileContent) {
-  const lines = fileContent.split('\n').filter(line => {
-    const trimmed = line.trim();
-    return trimmed && !trimmed.startsWith('#'); // skip comments
-  });
+  // Trim and split
+  const lines = fileContent.split('\n')
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith('#'));
 
   const cookies = [];
   for (const line of lines) {
     const parts = line.split('\t');
     if (parts.length < 7) continue;
-    // parts: domain, flag, path, secure, expiration, name, value
     const name = parts[5];
     const value = parts[6];
     if (name && value) {
@@ -48,16 +47,14 @@ function parseNetscapeCookieFile(fileContent) {
   return cookies.join('; ');
 }
 
-// ---------- Validate that we have essential cookies ----------
-function hasEssentialCookies(cookieString) {
+// ---------- Validate essential cookies ----------
+function validateCookieString(cookieStr) {
   const required = ['__Secure-3PSID', 'LOGIN_INFO', '__Secure-1PSID'];
-  const present = required.filter(r => cookieString.includes(r + '='));
-  const missing = required.filter(r => !cookieString.includes(r + '='));
+  const missing = required.filter(r => !cookieStr.includes(r + '='));
   if (missing.length > 0) {
-    console.warn('[Cookie] Missing essential cookies:', missing.join(', '));
-    return false;
+    return { valid: false, missing };
   }
-  return true;
+  return { valid: true };
 }
 
 // ---------- Helpers ----------
@@ -74,7 +71,7 @@ function extractVideoId(url) {
   return null;
 }
 
-// ---------- Test FFmpeg ----------
+// ---------- Test endpoint ----------
 app.get('/test-ffmpeg', (req, res) => {
   ffmpeg.ffprobe(ffmpegPath, (err, info) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -84,7 +81,6 @@ app.get('/test-ffmpeg', (req, res) => {
 
 // ---------- /get-video-info ----------
 app.post('/get-video-info', async (req, res) => {
-  console.log('[get-video-info] Request:', req.body);
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
   const videoId = extractVideoId(url);
@@ -103,9 +99,7 @@ app.post('/get-video-info', async (req, res) => {
         author: data.author_name,
         viewed_at: new Date().toISOString(),
       }]);
-    } catch (dbErr) {
-      console.warn('[DB] Insert skipped:', dbErr.message);
-    }
+    } catch (dbErr) { /* ignore */ }
 
     res.json({
       success: true,
@@ -116,64 +110,56 @@ app.post('/get-video-info', async (req, res) => {
       thumbnail: data.thumbnail_url || `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
     });
   } catch (err) {
-    console.error('[get-video-info] Error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ---------- /create-summary ----------
 app.post('/create-summary', async (req, res) => {
-  console.log('[create-summary] Request:', req.body);
   const { url, frameInterval = 5 } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
   const videoId = extractVideoId(url);
   if (!videoId) return res.status(400).json({ error: 'Invalid YouTube URL' });
 
-  // Build headers with a real browser UA
+  // Build headers
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.5',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
   };
 
-  // ----- Handle cookies -----
   let cookieString = null;
-  let usingCookies = false;
   if (process.env.YOUTUBE_COOKIE_FILE) {
     try {
-      cookieString = parseNetscapeCookieFile(process.env.YOUTUBE_COOKIE_FILE);
-      if (cookieString && cookieString.length > 0) {
-        // Validate essential cookies
-        if (hasEssentialCookies(cookieString)) {
-          headers.Cookie = cookieString;
-          usingCookies = true;
-          console.log('[create-summary] Using cookies (all essential tokens present)');
-        } else {
-          console.warn('[create-summary] Essential cookies missing – will try without cookies.');
-        }
+      const raw = process.env.YOUTUBE_COOKIE_FILE;
+      cookieString = parseNetscapeCookieFile(raw);
+      console.log('[DEBUG] Parsed cookie length:', cookieString?.length);
+      // Log first 200 chars for debugging
+      console.log('[DEBUG] Cookie (first 200):', cookieString?.substring(0, 200));
+      
+      const validation = validateCookieString(cookieString);
+      if (validation.valid) {
+        headers.Cookie = cookieString;
+        console.log('[create-summary] ✅ Valid cookies found – using them.');
       } else {
-        console.warn('[create-summary] Parsed cookie string is empty – will try without cookies.');
+        console.warn('[create-summary] ❌ Missing cookies:', validation.missing.join(', '));
+        // Still try, but likely to fail
+        headers.Cookie = cookieString;
       }
     } catch (e) {
-      console.warn('[create-summary] Failed to parse cookie file:', e.message);
+      console.warn('[create-summary] Cookie parsing error:', e.message);
     }
   } else if (process.env.YOUTUBE_COOKIE) {
     cookieString = process.env.YOUTUBE_COOKIE;
-    if (cookieString && cookieString.length > 0) {
-      if (hasEssentialCookies(cookieString)) {
-        headers.Cookie = cookieString;
-        usingCookies = true;
-        console.log('[create-summary] Using YOUTUBE_COOKIE env var');
-      } else {
-        console.warn('[create-summary] Essential cookies missing in YOUTUBE_COOKIE – will try without.');
-      }
+    const validation = validateCookieString(cookieString);
+    if (validation.valid) {
+      headers.Cookie = cookieString;
+      console.log('[create-summary] ✅ Using direct YOUTUBE_COOKIE');
+    } else {
+      console.warn('[create-summary] ❌ YOUTUBE_COOKIE missing:', validation.missing.join(', '));
     }
-  }
-
-  if (!usingCookies) {
-    console.warn('[create-summary] No valid cookies provided – downloads may fail with 410.');
+  } else {
+    console.warn('[create-summary] No cookies set.');
   }
 
   const requestOptions = { headers };
@@ -197,10 +183,9 @@ app.post('/create-summary', async (req, res) => {
     });
     console.log('[create-summary] Download complete.');
 
-    // Extract frames...
+    // -- rest of processing (frames, etc.) – same as before --
     const framesDir = path.join(workDir, 'frames');
     fs.mkdirSync(framesDir, { recursive: true });
-    console.log('[create-summary] Extracting frames...');
     await new Promise((resolve, reject) => {
       ffmpeg(videoFilePath)
         .on('end', resolve)
@@ -209,25 +194,18 @@ app.post('/create-summary', async (req, res) => {
         .output(path.join(framesDir, 'frame-%d.jpg'))
         .run();
     });
-    console.log('[create-summary] Frames extracted.');
 
     const frameFiles = fs.readdirSync(framesDir)
       .filter(f => f.endsWith('.jpg'))
-      .sort((a, b) => {
-        const numA = parseInt(a.match(/\d+/)[0], 10);
-        const numB = parseInt(b.match(/\d+/)[0], 10);
-        return numA - numB;
-      });
+      .sort((a, b) => parseInt(a.match(/\d+/)[0]) - parseInt(b.match(/\d+/)[0]));
 
     if (frameFiles.length === 0) throw new Error('No frames extracted');
-    console.log(`[create-summary] Found ${frameFiles.length} frames.`);
 
     const listFile = path.join(workDir, 'list.txt');
     const listContent = frameFiles.map(f => `file '${path.join(framesDir, f)}'\nduration 1`).join('\n');
     fs.writeFileSync(listFile, listContent);
 
     const outputVideo = path.join(workDir, 'summary.mp4');
-    console.log('[create-summary] Generating summary video...');
     await new Promise((resolve, reject) => {
       ffmpeg()
         .input(listFile)
@@ -238,14 +216,11 @@ app.post('/create-summary', async (req, res) => {
         .output(outputVideo)
         .run();
     });
-    console.log('[create-summary] Summary video generated.');
 
-    // Upload to Supabase...
     const fileBuffer = fs.readFileSync(outputVideo);
     const fileName = `summary_${videoId}_${Date.now()}.mp4`;
     const filePath = `temp_videos/${fileName}`;
 
-    console.log('[create-summary] Uploading to Supabase...');
     const { error: uploadError } = await supabase.storage
       .from('temp_videos')
       .upload(filePath, fileBuffer, { contentType: 'video/mp4', cacheControl: '3600' });
@@ -266,42 +241,32 @@ app.post('/create-summary', async (req, res) => {
         created_at: new Date().toISOString(),
         expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
       }]);
-    } catch (dbErr) {
-      console.warn('[DB] Insert skipped:', dbErr.message);
-    }
+    } catch (dbErr) { /* ignore */ }
 
     fs.rmSync(workDir, { recursive: true, force: true });
-    console.log('[create-summary] Success!');
-
     res.json({
       success: true,
       signedUrl: signedData.signedUrl,
       frameCount: frameFiles.length,
-      message: `Summary created with ${frameFiles.length} frames.`,
     });
 
   } catch (err) {
     console.error('[create-summary] ERROR:', err);
     if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
 
-    // Specific error messages
-    if (err.message && err.message.includes('Cookie header')) {
-      return res.status(500).json({
-        error: 'The provided cookies are incomplete or expired. Please re‑export your YouTube cookies (Netscape format) and set YOUTUBE_COOKIE_FILE on Render. Make sure you are logged into YouTube and the cookies contain __Secure-3PSID and LOGIN_INFO.',
-      });
+    // Provide actionable feedback
+    let userMsg = err.message;
+    if (err.message.includes('Cookie header') || err.message.includes('identity token')) {
+      userMsg = 'The provided cookies are invalid or expired. Please re‑export fresh cookies from a logged‑in YouTube session and set YOUTUBE_COOKIE_FILE on Render. Make sure you are logged into YouTube in your browser before exporting.';
+    } else if (err.statusCode === 410 || err.message.includes('410')) {
+      userMsg = 'YouTube returned 410 (Gone). This video may be region‑locked or requires a login. Try a different public video or refresh your cookies.';
     }
-    if (err.statusCode === 410 || err.message.includes('410')) {
-      return res.status(500).json({
-        error: 'YouTube returned 410. This video may be region‑locked or requires login. Try setting YOUTUBE_COOKIE_FILE with fresh cookies.',
-      });
-    }
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: userMsg });
   }
 });
 
 // ---------- Cleanup ----------
 async function cleanupExpiredVideos() {
-  console.log('[Cleanup] Starting...');
   try {
     const { data: expired, error } = await supabase
       .from('video_downloads')
@@ -313,8 +278,7 @@ async function cleanupExpiredVideos() {
     await supabase.storage.from('temp_videos').remove(filePaths);
     const ids = expired.map(r => r.id);
     await supabase.from('video_downloads').delete().in('id', ids);
-    console.log(`[Cleanup] Removed ${expired.length} expired files.`);
-  } catch (err) { console.error('[Cleanup] Error:', err); }
+  } catch (err) { console.error('[Cleanup]', err); }
 }
 cron.schedule('0 * * * *', cleanupExpiredVideos);
 
