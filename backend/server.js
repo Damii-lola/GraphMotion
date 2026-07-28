@@ -8,7 +8,11 @@ const cron = require('node-cron');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// ----- CORS: allow your GitHub Pages domain -----
+app.use(cors({
+  origin: ['https://damii-lola.github.io', 'http://localhost:5500', 'http://127.0.0.1:5500'],
+  credentials: true,
+}));
 app.use(express.json());
 
 // Supabase client
@@ -17,7 +21,29 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// ===================== CLEANUP FUNCTION =====================
+// ============ COOKIE PARSER (Netscape format) ============
+function parseNetscapeCookieFile(fileContent) {
+  // Split into lines, ignore comments and empty lines
+  const lines = fileContent.split('\n').filter(line => {
+    const trimmed = line.trim();
+    return trimmed && !trimmed.startsWith('#');
+  });
+
+  const cookies = [];
+  for (const line of lines) {
+    const parts = line.split('\t');
+    if (parts.length < 7) continue;
+    // parts: domain, flag, path, secure, expiration, name, value
+    const name = parts[5];
+    const value = parts[6];
+    if (name && value) {
+      cookies.push(`${name}=${value}`);
+    }
+  }
+  return cookies.join('; ');
+}
+
+// ============ CLEANUP (unchanged) ============
 async function cleanupExpiredVideos() {
   console.log('[Cleanup] Starting cleanup job...');
   try {
@@ -80,7 +106,7 @@ app.get('/', (req, res) => {
   res.send('Backend is running! 🚀');
 });
 
-// ===================== DOWNLOAD ENDPOINT with cookie support =====================
+// ============ DOWNLOAD ENDPOINT ============
 app.post('/download-youtube', async (req, res) => {
   const { url } = req.body;
   if (!url) {
@@ -91,7 +117,7 @@ app.post('/download-youtube', async (req, res) => {
     return res.status(400).json({ error: 'Invalid YouTube URL' });
   }
 
-  // Build request headers with real browser UA + optional cookie
+  // ----- Build request headers -----
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -101,29 +127,44 @@ app.post('/download-youtube', async (req, res) => {
     'Upgrade-Insecure-Requests': '1',
   };
 
-  // If we have a cookie string in env, add it
-  if (process.env.YOUTUBE_COOKIE) {
+  // ----- Cookie handling -----
+  let cookieString = null;
+  if (process.env.YOUTUBE_COOKIE_FILE) {
+    try {
+      cookieString = parseNetscapeCookieFile(process.env.YOUTUBE_COOKIE_FILE);
+      if (cookieString) {
+        headers.Cookie = cookieString;
+        console.log('[Download] Using parsed cookies from env');
+      } else {
+        console.warn('[Download] Parsed cookie string is empty');
+      }
+    } catch (err) {
+      console.error('[Download] Failed to parse cookie file:', err.message);
+    }
+  } else if (process.env.YOUTUBE_COOKIE) {
+    // fallback to a simple single-line cookie if provided
     headers.Cookie = process.env.YOUTUBE_COOKIE;
-    console.log('[Download] Using cookies from environment');
+    console.log('[Download] Using direct YOUTUBE_COOKIE env var');
   } else {
-    console.warn('[Download] No YOUTUBE_COOKIE set – may fail for some videos');
+    console.warn('[Download] No cookie provided – may fail for some videos');
   }
 
   const requestOptions = { headers };
 
   try {
+    // 1. Get info
     let info;
     try {
       info = await ytdl.getInfo(url, { requestOptions });
     } catch (infoErr) {
       console.error('getInfo error:', infoErr);
-      // Try without custom headers (fallback)
+      // fallback without custom headers
       try {
         info = await ytdl.getInfo(url);
       } catch (fallbackErr) {
         console.error('Fallback getInfo also failed:', fallbackErr);
         return res.status(400).json({
-          error: 'Video not found or unavailable. Try setting YOUTUBE_COOKIE environment variable with a logged‑in session cookie.'
+          error: 'Video not found or unavailable. Try setting YOUTUBE_COOKIE_FILE with a valid Netscape cookie export.'
         });
       }
     }
@@ -131,30 +172,20 @@ app.post('/download-youtube', async (req, res) => {
     const title = info.videoDetails.title.replace(/[^a-zA-Z0-9 ]/g, '_');
     const videoId = info.videoDetails.videoId;
 
-    // Try download with cookie first; fallback to no cookie
+    // 2. Download stream
     let videoStream;
     let streamError = null;
 
+    // Try highest quality with cookie, fallback to lowest with cookie, then no cookie
     try {
-      videoStream = ytdl(url, {
-        quality: 'highest',
-        requestOptions,
-      });
-    } catch (streamErr) {
-      console.warn('Highest quality stream with cookie failed, trying lowest with cookie...');
+      videoStream = ytdl(url, { quality: 'highest', requestOptions });
+    } catch (err) {
+      console.warn('Highest quality stream failed, trying lowest...');
       try {
-        videoStream = ytdl(url, {
-          quality: 'lowest',
-          requestOptions,
-        });
-      } catch (fallbackStreamErr) {
-        // If all fails with cookie, try without cookie (but we already have info)
-        console.warn('Cookie-based stream failed, falling back to no cookie');
-        try {
-          videoStream = ytdl(url, { quality: 'lowest' });
-        } catch (lastErr) {
-          throw new Error('All download attempts failed: ' + lastErr.message);
-        }
+        videoStream = ytdl(url, { quality: 'lowest', requestOptions });
+      } catch (err2) {
+        console.warn('Cookie stream failed, falling back to no cookie');
+        videoStream = ytdl(url, { quality: 'lowest' });
       }
     }
 
@@ -178,7 +209,7 @@ app.post('/download-youtube', async (req, res) => {
 
     const buffer = Buffer.concat(chunks);
 
-    // Upload to Supabase
+    // 3. Upload to Supabase
     const fileName = `${videoId}_${Date.now()}.mp4`;
     const filePath = `temp_videos/${fileName}`;
 
@@ -191,14 +222,14 @@ app.post('/download-youtube', async (req, res) => {
 
     if (uploadError) throw uploadError;
 
-    // Generate signed URL
+    // 4. Signed URL
     const { data: signedUrlData, error: signedError } = await supabase.storage
       .from('temp_videos')
       .createSignedUrl(filePath, 3600);
 
     if (signedError) throw signedError;
 
-    // Insert record
+    // 5. DB record
     const { error: dbError } = await supabase
       .from('video_downloads')
       .insert([{
