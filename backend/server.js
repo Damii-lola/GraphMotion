@@ -7,9 +7,12 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const fs = require('fs');
 const path = require('path');
-const { v4: uuidv4 } = require('uuid'); // you'll need to add 'uuid' package
+const { v4: uuidv4 } = require('uuid');
+const cron = require('node-cron');
 
+// Set ffmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
+console.log('[FFmpeg] Path set to:', ffmpegPath);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -40,8 +43,19 @@ function extractVideoId(url) {
   return null;
 }
 
+// ------- TEST endpoint: check ffmpeg -------
+app.get('/test-ffmpeg', (req, res) => {
+  ffmpeg.ffprobe(ffmpegPath, (err, info) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ version: info.version, path: ffmpegPath });
+  });
+});
+
 // ------- Endpoint: get embed info (unchanged) -------
 app.post('/get-video-info', async (req, res) => {
+  console.log('[get-video-info] Request:', req.body);
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
   const videoId = extractVideoId(url);
@@ -68,24 +82,26 @@ app.post('/get-video-info', async (req, res) => {
       thumbnail: data.thumbnail_url || `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
     });
   } catch (err) {
+    console.error('[get-video-info] Error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ------- NEW: extract frames & create summary video -------
+// ------- ENDPOINT: create summary -------
 app.post('/create-summary', async (req, res) => {
-  const { url, frameInterval = 5 } = req.body; // default: frame every 5 seconds
+  console.log('[create-summary] Request:', req.body);
+  const { url, frameInterval = 5 } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
   const videoId = extractVideoId(url);
   if (!videoId) return res.status(400).json({ error: 'Invalid YouTube URL' });
 
-  // We'll work in a temporary directory
   const workDir = path.join('/tmp', uuidv4());
   fs.mkdirSync(workDir, { recursive: true });
 
   try {
-    // 1. Download the video (use lowest quality for speed)
-    const videoStream = ytdl(url, { quality: 'lowest' });
+    console.log('[create-summary] Downloading video...');
+    // 1. Download the video (use a specific format to avoid issues)
+    const videoStream = ytdl(url, { quality: '18' }); // 360p mp4
     const videoFilePath = path.join(workDir, 'input.mp4');
     await new Promise((resolve, reject) => {
       const writeStream = fs.createWriteStream(videoFilePath);
@@ -93,14 +109,19 @@ app.post('/create-summary', async (req, res) => {
       videoStream.on('error', reject);
       writeStream.on('finish', resolve);
     });
+    console.log('[create-summary] Download complete.');
 
-    // 2. Extract frames every 'frameInterval' seconds
+    // 2. Extract frames
     const framesDir = path.join(workDir, 'frames');
     fs.mkdirSync(framesDir, { recursive: true });
+    console.log('[create-summary] Extracting frames...');
     await new Promise((resolve, reject) => {
       ffmpeg(videoFilePath)
         .on('end', resolve)
-        .on('error', reject)
+        .on('error', (err) => {
+          console.error('[FFmpeg] Frame extraction error:', err);
+          reject(err);
+        })
         .outputOptions([
           `-vf fps=1/${frameInterval}`,
           '-frame_pts 1',
@@ -109,8 +130,9 @@ app.post('/create-summary', async (req, res) => {
         .output(path.join(framesDir, 'frame-%d.jpg'))
         .run();
     });
+    console.log('[create-summary] Frames extracted.');
 
-    // 3. Get list of frames, sorted by name
+    // 3. Get list of frames
     const frameFiles = fs.readdirSync(framesDir)
       .filter(f => f.endsWith('.jpg'))
       .sort((a, b) => {
@@ -122,30 +144,36 @@ app.post('/create-summary', async (req, res) => {
     if (frameFiles.length === 0) {
       throw new Error('No frames extracted');
     }
+    console.log(`[create-summary] Found ${frameFiles.length} frames.`);
 
-    // 4. Create a new video from frames (each frame shown for 1 second)
-    // Use ffmpeg's concat demuxer with a file list
+    // 4. Create video from frames
     const listFile = path.join(workDir, 'list.txt');
     const listContent = frameFiles.map(f => `file '${path.join(framesDir, f)}'\nduration 1`).join('\n');
     fs.writeFileSync(listFile, listContent);
 
     const outputVideo = path.join(workDir, 'summary.mp4');
+    console.log('[create-summary] Generating summary video...');
     await new Promise((resolve, reject) => {
       ffmpeg()
         .input(listFile)
         .inputOptions(['-f concat', '-safe 0'])
         .outputOptions(['-c:v libx264', '-pix_fmt yuv420p'])
         .on('end', resolve)
-        .on('error', reject)
+        .on('error', (err) => {
+          console.error('[FFmpeg] Concatenation error:', err);
+          reject(err);
+        })
         .output(outputVideo)
         .run();
     });
+    console.log('[create-summary] Summary video generated.');
 
     // 5. Upload to Supabase Storage
     const fileBuffer = fs.readFileSync(outputVideo);
     const fileName = `summary_${videoId}_${Date.now()}.mp4`;
     const filePath = `temp_videos/${fileName}`;
 
+    console.log('[create-summary] Uploading to Supabase...');
     const { error: uploadError } = await supabase.storage
       .from('temp_videos')
       .upload(filePath, fileBuffer, {
@@ -171,18 +199,19 @@ app.post('/create-summary', async (req, res) => {
       expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
     }]).catch(() => {});
 
-    // 8. Clean up temporary files
+    // 8. Clean up
     fs.rmSync(workDir, { recursive: true, force: true });
+    console.log('[create-summary] Success!');
 
     res.json({
       success: true,
       signedUrl: signedData.signedUrl,
       frameCount: frameFiles.length,
-      message: `Created summary with ${frameFiles.length} frames, each displayed for 1 second.`,
+      message: `Created summary with ${frameFiles.length} frames.`,
     });
 
   } catch (err) {
-    console.error('Summary error:', err);
+    console.error('[create-summary] ERROR:', err);
     // Clean up on error
     if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
     res.status(500).json({ error: err.message });
@@ -191,10 +220,10 @@ app.post('/create-summary', async (req, res) => {
 
 // ------- Cleanup (existing) -------
 async function cleanupExpiredVideos() {
-  // same as before, but also clean up 'video_summaries' table if you want
+  console.log('[Cleanup] Starting...');
   try {
     const { data: expired, error } = await supabase
-      .from('video_downloads') // and video_summaries
+      .from('video_downloads')
       .select('id, file_path')
       .lt('expires_at', new Date().toISOString());
     if (error) throw error;
@@ -203,10 +232,10 @@ async function cleanupExpiredVideos() {
     await supabase.storage.from('temp_videos').remove(filePaths);
     const ids = expired.map(r => r.id);
     await supabase.from('video_downloads').delete().in('id', ids);
-  } catch (err) { console.error('Cleanup error:', err); }
+    console.log(`[Cleanup] Removed ${expired.length} expired files.`);
+  } catch (err) { console.error('[Cleanup] Error:', err); }
 }
-const cron = require('node-cron');
 cron.schedule('0 * * * *', cleanupExpiredVideos);
 
 app.get('/ping', (req, res) => res.send('pong'));
-app.listen(PORT, () => console.log(`Server on ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
