@@ -2,7 +2,7 @@ const input = document.getElementById('urlInput');
 const preview = document.getElementById('preview');
 
 // Your Render backend URL (change to your actual deployed URL)
-const BACKEND_URL = 'https://your-backend.onrender.com';
+const BACKEND_URL = 'https://graphmotion.onrender.com';
 
 async function loadVideo(url) {
   try {
