@@ -2,15 +2,10 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
-const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const cron = require('node-cron');
-
-ffmpeg.setFfmpegPath(ffmpegPath);
-console.log('[FFmpeg] Path set to:', ffmpegPath);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -36,13 +31,8 @@ async function ensureBucket() {
   }
   const exists = buckets.some(b => b.name === bucketName);
   if (!exists) {
-    console.log(`[Startup] Bucket "${bucketName}" not found. Creating...`);
-    const { error: createErr } = await supabase.storage.createBucket(bucketName, { public: false });
-    if (createErr) {
-      console.error('[Startup] Failed to create bucket:', createErr.message);
-    } else {
-      console.log(`[Startup] Bucket "${bucketName}" created.`);
-    }
+    console.log(`[Startup] Creating bucket "${bucketName}"...`);
+    await supabase.storage.createBucket(bucketName, { public: false });
   } else {
     console.log(`[Startup] Bucket "${bucketName}" exists.`);
   }
@@ -50,24 +40,17 @@ async function ensureBucket() {
 ensureBucket();
 
 // ---------- Helpers ----------
-function extractTikTokId(url) {
-  // Just check if it's a TikTok URL
+function isTikTokUrl(url) {
   return url.includes('tiktok.com');
 }
 
-// ---------- Get TikTok video info ----------
+// ---------- Get TikTok video info (raw download URL) ----------
 async function getTikTokVideoInfo(url) {
   const apiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
-  console.log('[TikTok] Fetching:', apiUrl);
   const response = await fetch(apiUrl);
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`TikTok API error ${response.status}: ${text}`);
-  }
+  if (!response.ok) throw new Error(`TikTok API error ${response.status}`);
   const data = await response.json();
-  console.log('[TikTok] API response code:', data.code);
   if (data.code !== 0) throw new Error(data.msg || 'TikTok API error');
-  // Prefer no-watermark video
   const videoUrl = data.data.hdplay || data.data.play || data.data.wmplay;
   if (!videoUrl) throw new Error('No video URL found');
   return {
@@ -77,11 +60,11 @@ async function getTikTokVideoInfo(url) {
   };
 }
 
-// ---------- Endpoint: get video info ----------
+// ---------- Endpoint: preview (embed) ----------
 app.post('/get-video-info', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
-  if (!extractTikTokId(url)) {
+  if (!isTikTokUrl(url)) {
     return res.status(400).json({ error: 'Only TikTok URLs are supported' });
   }
   try {
@@ -98,76 +81,34 @@ app.post('/get-video-info', async (req, res) => {
   }
 });
 
-// ---------- /create-summary ----------
-app.post('/create-summary', async (req, res) => {
-  const { url, frameInterval = 5 } = req.body;
+// ---------- Download full video and upload to Supabase ----------
+app.post('/download-video', async (req, res) => {
+  const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
-  if (!extractTikTokId(url)) {
+  if (!isTikTokUrl(url)) {
     return res.status(400).json({ error: 'Only TikTok URLs are supported' });
   }
 
-  const workDir = path.join('/tmp', uuidv4());
-  fs.mkdirSync(workDir, { recursive: true });
+  const tempDir = path.join('/tmp', uuidv4());
+  fs.mkdirSync(tempDir, { recursive: true });
 
   try {
-    // 1. Get video download URL
     const info = await getTikTokVideoInfo(url);
-    const videoUrl = info.videoUrl;
-    console.log('[create-summary] Downloading from:', videoUrl);
+    console.log('[download-video] Downloading from:', info.videoUrl);
 
-    // 2. Download the video (stream to file)
-    const videoFilePath = path.join(workDir, 'input.mp4');
-    const response = await fetch(videoUrl);
+    const videoFilePath = path.join(tempDir, 'video.mp4');
+    const response = await fetch(info.videoUrl);
     if (!response.ok) throw new Error(`Download failed: ${response.status}`);
     const buffer = Buffer.from(await response.arrayBuffer());
     fs.writeFileSync(videoFilePath, buffer);
-    console.log('[create-summary] Download complete.');
+    console.log('[download-video] Download complete.');
 
-    // 3. Extract frames
-    const framesDir = path.join(workDir, 'frames');
-    fs.mkdirSync(framesDir, { recursive: true });
-    await new Promise((resolve, reject) => {
-      ffmpeg(videoFilePath)
-        .on('end', resolve)
-        .on('error', reject)
-        .outputOptions([`-vf fps=1/${frameInterval}`, '-frame_pts 1', '-start_number 0'])
-        .output(path.join(framesDir, 'frame-%d.jpg'))
-        .run();
-    });
-    console.log('[create-summary] Frames extracted.');
-
-    const frameFiles = fs.readdirSync(framesDir)
-      .filter(f => f.endsWith('.jpg'))
-      .sort((a, b) => parseInt(a.match(/\d+/)[0]) - parseInt(b.match(/\d+/)[0]));
-
-    if (frameFiles.length === 0) throw new Error('No frames extracted');
-
-    // 4. Create summary video
-    const listFile = path.join(workDir, 'list.txt');
-    const listContent = frameFiles.map(f => `file '${path.join(framesDir, f)}'\nduration 1`).join('\n');
-    fs.writeFileSync(listFile, listContent);
-
-    const outputVideo = path.join(workDir, 'summary.mp4');
-    await new Promise((resolve, reject) => {
-      ffmpeg()
-        .input(listFile)
-        .inputOptions(['-f concat', '-safe 0'])
-        .outputOptions(['-c:v libx264', '-pix_fmt yuv420p'])
-        .on('end', resolve)
-        .on('error', reject)
-        .output(outputVideo)
-        .run();
-    });
-    console.log('[create-summary] Summary video generated.');
-
-    // 5. Upload to Supabase
-    const fileBuffer = fs.readFileSync(outputVideo);
-    const fileName = `summary_${Date.now()}.mp4`;
+    const fileName = `video_${Date.now()}.mp4`;
     const filePath = `temp_videos/${fileName}`;
 
     const { error: uploadError } = await supabase.storage
       .from('temp_videos')
-      .upload(filePath, fileBuffer, { contentType: 'video/mp4', cacheControl: '3600' });
+      .upload(filePath, buffer, { contentType: 'video/mp4', cacheControl: '3600' });
     if (uploadError) throw uploadError;
 
     const { data: signedData, error: signedErr } = await supabase.storage
@@ -175,20 +116,25 @@ app.post('/create-summary', async (req, res) => {
       .createSignedUrl(filePath, 3600);
     if (signedErr) throw signedErr;
 
-    // 6. Clean up
-    fs.rmSync(workDir, { recursive: true, force: true });
-    console.log('[create-summary] Success!');
+    await supabase.from('video_downloads').insert([{
+      video_id: Date.now().toString(),
+      title: info.title,
+      file_path: filePath,
+      expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+    }]).catch(() => {});
+
+    fs.rmSync(tempDir, { recursive: true, force: true });
 
     res.json({
       success: true,
       signedUrl: signedData.signedUrl,
-      frameCount: frameFiles.length,
-      message: `Summary created with ${frameFiles.length} frames.`,
+      title: info.title,
+      author: info.author,
     });
 
   } catch (err) {
-    console.error('[create-summary] ERROR:', err);
-    if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
+    console.error('[download-video] ERROR:', err);
+    if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
     res.status(500).json({ error: err.message });
   }
 });
