@@ -17,7 +17,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// -------------------- CLEANUP FUNCTION --------------------
+// ===================== CLEANUP FUNCTION =====================
 async function cleanupExpiredVideos() {
   console.log('[Cleanup] Starting cleanup job...');
   try {
@@ -49,7 +49,6 @@ async function cleanupExpiredVideos() {
 
     if (storageError) {
       console.error('[Cleanup] Storage delete error:', storageError.message);
-      // Continue to delete DB records anyway? We'll still delete DB records to keep table clean.
     } else {
       console.log(`[Cleanup] Deleted ${filePaths.length} files from storage.`);
     }
@@ -72,7 +71,7 @@ async function cleanupExpiredVideos() {
   }
 }
 
-// -------------------- SCHEDULED CLEANUP (every hour) --------------------
+// ===================== SCHEDULED CLEANUP (every hour) =====================
 cron.schedule('0 * * * *', () => {
   cleanupExpiredVideos();
 });
@@ -81,60 +80,91 @@ console.log('[Cron] Cleanup job scheduled to run every hour.');
 // Optionally run once on startup (uncomment if desired)
 // cleanupExpiredVideos();
 
-// -------------------- MANUAL CLEANUP ENDPOINT --------------------
+// ===================== MANUAL CLEANUP ENDPOINT =====================
 app.get('/cleanup', async (req, res) => {
   await cleanupExpiredVideos();
   res.json({ success: true, message: 'Cleanup completed.' });
 });
 
-// -------------------- HEALTH CHECK --------------------
+// ===================== HEALTH CHECK =====================
 app.get('/', (req, res) => {
   res.send('Backend is running! 🚀');
 });
 
-// -------------------- DOWNLOAD ENDPOINT (same as before) --------------------
+// ===================== YOUTUBE DOWNLOAD ENDPOINT =====================
 app.post('/download-youtube', async (req, res) => {
   const { url } = req.body;
   if (!url) {
     return res.status(400).json({ error: 'URL is required' });
   }
 
+  // Validate URL format
   if (!ytdl.validateURL(url)) {
     return res.status(400).json({ error: 'Invalid YouTube URL' });
   }
 
   try {
-    const info = await ytdl.getInfo(url);
-    const title = info.videoDetails.title.replace(/[^a-zA-Z0-9]/g, '_');
+    // 1. Get video info FIRST – this will fail if video is unavailable
+    let info;
+    try {
+      info = await ytdl.getInfo(url);
+    } catch (infoErr) {
+      // If getInfo fails, it's likely a 410 or 404
+      return res.status(400).json({
+        error: 'Video not found or unavailable. It may be private, age‑restricted, or deleted.'
+      });
+    }
+
+    const title = info.videoDetails.title.replace(/[^a-zA-Z0-9 ]/g, '_');
     const videoId = info.videoDetails.videoId;
 
-    const videoStream = ytdl(url, { quality: 'highestvideo', filter: 'videoandaudio' });
+    // 2. Download the video – use default quality (highest with audio+video)
+    const videoStream = ytdl(url, { quality: 'highest' }); // no filter
 
+    // 3. Collect chunks
+    const chunks = [];
+    let streamError = null;
+
+    videoStream.on('error', (err) => {
+      streamError = err;
+    });
+
+    for await (const chunk of videoStream) {
+      if (streamError) break;
+      chunks.push(chunk);
+    }
+
+    if (streamError) {
+      throw new Error('Download stream error: ' + streamError.message);
+    }
+
+    if (chunks.length === 0) {
+      throw new Error('No data received – video may be empty or unsupported format.');
+    }
+
+    const buffer = Buffer.concat(chunks);
+
+    // 4. Upload to Supabase Storage
     const fileName = `${videoId}_${Date.now()}.mp4`;
     const filePath = `temp_videos/${fileName}`;
 
-    const chunks = [];
-    for await (const chunk of videoStream) {
-      chunks.push(chunk);
-    }
-    const buffer = Buffer.concat(chunks);
-
-    const { data, error } = await supabase.storage
+    const { data, error: uploadError } = await supabase.storage
       .from('temp_videos')
       .upload(filePath, buffer, {
         contentType: 'video/mp4',
         cacheControl: '3600',
       });
 
-    if (error) throw error;
+    if (uploadError) throw uploadError;
 
+    // 5. Generate signed URL (1 hour)
     const { data: signedUrlData, error: signedError } = await supabase.storage
       .from('temp_videos')
-      .createSignedUrl(filePath, 3600); // 1 hour
+      .createSignedUrl(filePath, 3600);
 
     if (signedError) throw signedError;
 
-    // Insert into DB with expiry
+    // 6. Insert record with expiry
     const { error: dbError } = await supabase
       .from('video_downloads')
       .insert([{
@@ -146,6 +176,7 @@ app.post('/download-youtube', async (req, res) => {
 
     if (dbError) console.warn('DB insert failed:', dbError.message);
 
+    // 7. Return signed URL
     res.json({
       success: true,
       signedUrl: signedUrlData.signedUrl,
@@ -154,12 +185,14 @@ app.post('/download-youtube', async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Download failed: ' + err.message });
+    console.error('Download error:', err);
+    res.status(500).json({
+      error: 'Download failed: ' + err.message
+    });
   }
 });
 
-// -------------------- MANUAL DELETE ENDPOINT (optional) --------------------
+// ===================== MANUAL DELETE ENDPOINT (optional) =====================
 app.delete('/delete-video', async (req, res) => {
   const { filePath } = req.body;
   if (!filePath) return res.status(400).json({ error: 'filePath required' });
@@ -169,7 +202,7 @@ app.delete('/delete-video', async (req, res) => {
   res.json({ success: true });
 });
 
-// -------------------- START SERVER --------------------
+// ===================== START SERVER =====================
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
 });
