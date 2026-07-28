@@ -24,17 +24,20 @@ const supabase = createClient(
 // ---------- Ensure bucket exists ----------
 async function ensureBucket() {
   const bucketName = 'temp_videos';
-  const { data: buckets, error } = await supabase.storage.listBuckets();
-  if (error) {
-    console.error('[Startup] Failed to list buckets:', error.message);
-    return;
-  }
-  const exists = buckets.some(b => b.name === bucketName);
-  if (!exists) {
-    console.log(`[Startup] Creating bucket "${bucketName}"...`);
-    await supabase.storage.createBucket(bucketName, { public: false });
-  } else {
-    console.log(`[Startup] Bucket "${bucketName}" exists.`);
+  try {
+    const { data: buckets, error } = await supabase.storage.listBuckets();
+    if (error) throw error;
+    const exists = buckets.some(b => b.name === bucketName);
+    if (!exists) {
+      console.log(`[Startup] Creating bucket "${bucketName}"...`);
+      const { error: createErr } = await supabase.storage.createBucket(bucketName, { public: false });
+      if (createErr) throw createErr;
+      console.log(`[Startup] Bucket created.`);
+    } else {
+      console.log(`[Startup] Bucket "${bucketName}" exists.`);
+    }
+  } catch (err) {
+    console.error('[Startup] Bucket error:', err.message);
   }
 }
 ensureBucket();
@@ -116,12 +119,17 @@ app.post('/download-video', async (req, res) => {
       .createSignedUrl(filePath, 3600);
     if (signedErr) throw signedErr;
 
-    await supabase.from('video_downloads').insert([{
-      video_id: Date.now().toString(),
-      title: info.title,
-      file_path: filePath,
-      expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
-    }]).catch(() => {});
+    // Insert metadata – wrap in try/catch to avoid breaking the flow
+    try {
+      await supabase.from('video_downloads').insert([{
+        video_id: Date.now().toString(),
+        title: info.title,
+        file_path: filePath,
+        expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+      }]);
+    } catch (dbErr) {
+      console.warn('[DB] Insert skipped (table may not exist):', dbErr.message);
+    }
 
     fs.rmSync(tempDir, { recursive: true, force: true });
 
@@ -139,7 +147,7 @@ app.post('/download-video', async (req, res) => {
   }
 });
 
-// ---------- Cleanup ----------
+// ---------- Cleanup (removes expired files) ----------
 async function cleanupExpiredVideos() {
   try {
     const { data: expired, error } = await supabase
@@ -152,7 +160,10 @@ async function cleanupExpiredVideos() {
     await supabase.storage.from('temp_videos').remove(filePaths);
     const ids = expired.map(r => r.id);
     await supabase.from('video_downloads').delete().in('id', ids);
-  } catch (err) { console.error('[Cleanup]', err); }
+    console.log(`[Cleanup] Removed ${expired.length} expired files.`);
+  } catch (err) {
+    console.error('[Cleanup] Error:', err);
+  }
 }
 cron.schedule('0 * * * *', cleanupExpiredVideos);
 
