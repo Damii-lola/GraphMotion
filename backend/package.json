@@ -1,7 +1,7 @@
 {
   "name": "supabase-render-backend",
   "version": "1.0.0",
-  "description": "Simple backend connecting to Supabase",
+  "description": "Backend with YouTube download & Supabase storage",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -11,7 +11,9 @@
     "express": "^4.18.2",
     "@supabase/supabase-js": "^2.39.0",
     "dotenv": "^16.3.1",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "ytdl-core": "^4.11.5",
+    "mime-types": "^2.1.35"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
