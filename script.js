@@ -1,10 +1,12 @@
-import { makeScene2D } from '@motion-canvas/2d/lib/scenes/Scene2D.js';
-import { Circle, Rect, Txt, Layout } from '@motion-canvas/2d/lib/components/index.js';
-import { createRef } from '@motion-canvas/core/lib/utils.js';
-import { all, waitFor } from '@motion-canvas/core/lib/flow.js';
-import { createSignal } from '@motion-canvas/core/lib/signals.js';
-import { Player } from '@motion-canvas/player/lib/Player.js';
-import { createProject } from '@motion-canvas/core/lib/project.js';
+console.log('[GraphMotion] Script loaded');
+
+import { makeScene2D } from 'https://esm.sh/@motion-canvas/2d@3.12.0/lib/scenes/Scene2D.js';
+import { Circle, Rect, Layout } from 'https://esm.sh/@motion-canvas/2d@3.12.0/lib/components/index.js';
+import { waitFor } from 'https://esm.sh/@motion-canvas/core@3.12.0/lib/flow.js';
+import { createProject } from 'https://esm.sh/@motion-canvas/core@3.12.0/lib/project.js';
+import { Player } from 'https://esm.sh/@motion-canvas/player@3.12.0/lib/Player.js';
+
+console.log('[GraphMotion] Imports loaded');
 
 const input = document.getElementById('urlInput');
 const preview = document.getElementById('preview');
@@ -132,11 +134,11 @@ scriptBtn.addEventListener('click', async () => {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Script generation failed');
-    currentScript = data.script; // array of scenes
+    currentScript = data.script;
     hideLoading();
     renderBtn.disabled = false;
-    alert('Script generated successfully! Click "Render Animation" to see it.');
-    console.log('Script:', currentScript);
+    alert(`✅ Script generated with ${currentScript.length} scenes! Click "Render Animation".`);
+    console.log('[GraphMotion] Script:', currentScript);
   } catch (err) {
     hideLoading();
     alert('Script error: ' + err.message);
@@ -151,50 +153,44 @@ renderBtn.addEventListener('click', async () => {
   }
 
   showLoading('Building Motion Canvas scene...');
+  console.log('[GraphMotion] Starting render with script:', currentScript);
 
   try {
-    // Create a dynamic scene from the script
+    // Dynamic scene
     const scene = makeScene2D(function* (view) {
-      // We'll create a group to hold all shapes
-      const shapes = [];
+      console.log('[GraphMotion] Scene generator started');
       const group = new Layout({ layout: false });
       view.add(group);
 
-      // For each item in the script, create a shape node
+      const nodes = [];
       for (const item of currentScript) {
         const shape = item.shape || 'circle';
         const color = item.color || '#ff0000';
-        const x = item.x || 400;
-        const y = item.y || 300;
-        const duration = item.duration || 1;
+        const x = Number(item.x) || 400;
+        const y = Number(item.y) || 300;
         let node;
         if (shape === 'circle') {
           node = new Circle({ radius: 30, fill: color, x, y, opacity: 0 });
         } else if (shape === 'rect') {
           node = new Rect({ width: 80, height: 60, fill: color, x, y, opacity: 0 });
-        } else if (shape === 'triangle') {
-          // Use a simple rect as triangle placeholder
-          node = new Rect({ width: 70, height: 70, fill: color, x, y, opacity: 0 });
         } else {
           node = new Circle({ radius: 30, fill: color, x, y, opacity: 0 });
         }
-        shapes.push(node);
+        nodes.push(node);
         group.add(node);
+        console.log(`[GraphMotion] Created ${shape} at (${x},${y})`);
       }
 
-      // Animate each shape: fade in, then wait, then move?
-      for (let i = 0; i < shapes.length; i++) {
-        const node = shapes[i];
-        // fade in over 0.5s
+      // Animate: fade in one by one
+      for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
         yield* node.opacity(0, 0).to(1, 0.5);
-        // wait a bit
         yield* waitFor(0.3);
       }
-      // Keep final frame for a moment
       yield* waitFor(1);
+      console.log('[GraphMotion] Animation finished');
     });
 
-    // Create a project with the scene
     const project = createProject({
       scenes: [scene],
       settings: {
@@ -204,23 +200,24 @@ renderBtn.addEventListener('click', async () => {
       },
     });
 
-    // Create a player instance
+    console.log('[GraphMotion] Project created');
+
     playerInstance = new Player({
       canvas: canvasElement,
       project,
-      // optional: controls
     });
 
-    // Show the container
+    console.log('[GraphMotion] Player created');
+
     playerContainer.classList.remove('hidden');
     hideLoading();
 
-    // Play the animation
     await playerInstance.play();
+    console.log('[GraphMotion] Play finished');
 
   } catch (err) {
-    console.error('Render error:', err);
+    console.error('[GraphMotion] Render error:', err);
     hideLoading();
-    alert('Render error: ' + err.message);
+    alert('Render error: ' + err.message + '\nCheck console for details.');
   }
 });
