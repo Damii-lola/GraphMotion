@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Supabase client (service role for admin access)
+// Supabase client
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -21,7 +21,6 @@ const supabase = createClient(
 async function cleanupExpiredVideos() {
   console.log('[Cleanup] Starting cleanup job...');
   try {
-    // 1. Find expired records (expires_at < now)
     const { data: expiredRecords, error: fetchError } = await supabase
       .from('video_downloads')
       .select('id, file_path')
@@ -38,11 +37,8 @@ async function cleanupExpiredVideos() {
     }
 
     console.log(`[Cleanup] Found ${expiredRecords.length} expired records.`);
-
-    // 2. Collect file paths to delete from storage
     const filePaths = expiredRecords.map(record => record.file_path);
 
-    // 3. Delete files from Supabase Storage
     const { error: storageError } = await supabase.storage
       .from('temp_videos')
       .remove(filePaths);
@@ -53,7 +49,6 @@ async function cleanupExpiredVideos() {
       console.log(`[Cleanup] Deleted ${filePaths.length} files from storage.`);
     }
 
-    // 4. Delete records from DB (regardless of storage success)
     const recordIds = expiredRecords.map(record => record.id);
     const { error: deleteError } = await supabase
       .from('video_downloads')
@@ -71,60 +66,94 @@ async function cleanupExpiredVideos() {
   }
 }
 
-// ===================== SCHEDULED CLEANUP (every hour) =====================
 cron.schedule('0 * * * *', () => {
   cleanupExpiredVideos();
 });
-console.log('[Cron] Cleanup job scheduled to run every hour.');
+console.log('[Cron] Cleanup job scheduled every hour.');
 
-// Optionally run once on startup (uncomment if desired)
-// cleanupExpiredVideos();
-
-// ===================== MANUAL CLEANUP ENDPOINT =====================
 app.get('/cleanup', async (req, res) => {
   await cleanupExpiredVideos();
   res.json({ success: true, message: 'Cleanup completed.' });
 });
 
-// ===================== HEALTH CHECK =====================
 app.get('/', (req, res) => {
   res.send('Backend is running! 🚀');
 });
 
-// ===================== YOUTUBE DOWNLOAD ENDPOINT =====================
+// ===================== DOWNLOAD ENDPOINT with better request handling =====================
 app.post('/download-youtube', async (req, res) => {
   const { url } = req.body;
   if (!url) {
     return res.status(400).json({ error: 'URL is required' });
   }
 
-  // Validate URL format
   if (!ytdl.validateURL(url)) {
     return res.status(400).json({ error: 'Invalid YouTube URL' });
   }
 
+  // ---- Custom headers to mimic a real browser ----
+  const requestOptions = {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.5',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1',
+    },
+  };
+
   try {
-    // 1. Get video info FIRST – this will fail if video is unavailable
+    // 1. Get info with our custom headers
     let info;
     try {
-      info = await ytdl.getInfo(url);
+      info = await ytdl.getInfo(url, { requestOptions });
     } catch (infoErr) {
-      // If getInfo fails, it's likely a 410 or 404
-      return res.status(400).json({
-        error: 'Video not found or unavailable. It may be private, age‑restricted, or deleted.'
-      });
+      console.error('getInfo error:', infoErr);
+      // If the video is blocked, try again with a different approach (no custom headers?)
+      // Or try using the default request options
+      try {
+        info = await ytdl.getInfo(url);
+      } catch (fallbackErr) {
+        console.error('Fallback getInfo also failed:', fallbackErr);
+        return res.status(400).json({
+          error: 'Video not found or unavailable. It might be region‑blocked or require a login.'
+        });
+      }
     }
 
     const title = info.videoDetails.title.replace(/[^a-zA-Z0-9 ]/g, '_');
     const videoId = info.videoDetails.videoId;
 
-    // 2. Download the video – use default quality (highest with audio+video)
-    const videoStream = ytdl(url, { quality: 'highest' }); // no filter
+    // 2. Try to download with a quality that works (try 'highest' first, fallback to 'lowest')
+    let videoStream;
+    let streamError = null;
+
+    try {
+      // First attempt: highest quality
+      videoStream = ytdl(url, {
+        quality: 'highest',
+        requestOptions,
+      });
+    } catch (streamErr) {
+      console.warn('Highest quality stream failed, trying lowest:', streamErr.message);
+      try {
+        // Fallback: lowest quality (usually format 18 – 360p mp4)
+        videoStream = ytdl(url, {
+          quality: 'lowest',
+          requestOptions,
+        });
+      } catch (fallbackStreamErr) {
+        throw new Error('Both highest and lowest quality streams failed: ' + fallbackStreamErr.message);
+      }
+    }
 
     // 3. Collect chunks
     const chunks = [];
-    let streamError = null;
-
     videoStream.on('error', (err) => {
       streamError = err;
     });
@@ -144,7 +173,7 @@ app.post('/download-youtube', async (req, res) => {
 
     const buffer = Buffer.concat(chunks);
 
-    // 4. Upload to Supabase Storage
+    // 4. Upload to Supabase
     const fileName = `${videoId}_${Date.now()}.mp4`;
     const filePath = `temp_videos/${fileName}`;
 
@@ -157,7 +186,7 @@ app.post('/download-youtube', async (req, res) => {
 
     if (uploadError) throw uploadError;
 
-    // 5. Generate signed URL (1 hour)
+    // 5. Generate signed URL
     const { data: signedUrlData, error: signedError } = await supabase.storage
       .from('temp_videos')
       .createSignedUrl(filePath, 3600);
@@ -192,7 +221,6 @@ app.post('/download-youtube', async (req, res) => {
   }
 });
 
-// ===================== MANUAL DELETE ENDPOINT (optional) =====================
 app.delete('/delete-video', async (req, res) => {
   const { filePath } = req.body;
   if (!filePath) return res.status(400).json({ error: 'filePath required' });
@@ -202,7 +230,6 @@ app.delete('/delete-video', async (req, res) => {
   res.json({ success: true });
 });
 
-// ===================== START SERVER =====================
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
 });
