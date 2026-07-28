@@ -1,59 +1,42 @@
 const input = document.getElementById('urlInput');
 const preview = document.getElementById('preview');
 
-// Extract video ID from any YouTube URL
-function getVideoId(url) {
-  const patterns = [
-    /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&?#]+)/,
-    /youtube\.com\/embed\/([^?]+)/,
-    /youtube\.com\/v\/([^?]+)/
-  ];
-  for (let p of patterns) {
-    const match = url.match(p);
-    if (match) return match[1];
-  }
-  return null;
-}
+// Your Render backend URL (change to your actual deployed URL)
+const BACKEND_URL = 'https://your-backend.onrender.com';
 
-async function loadPreview(url) {
-  const videoId = getVideoId(url);
-  if (!videoId) {
-    alert('Invalid YouTube URL');
-    return;
-  }
-
+async function loadVideo(url) {
   try {
-    // Fetch metadata via oEmbed (no API key)
-    const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-    const res = await fetch(oembedUrl);
-    if (!res.ok) throw new Error('Video not found');
-    const data = await res.json();
+    const response = await fetch(`${BACKEND_URL}/download-youtube`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
 
-    // Build preview HTML
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Download failed');
+
+    // Show the video
     preview.innerHTML = `
       <div class="video-wrapper">
-        <iframe
-          src="https://www.youtube.com/embed/${videoId}"
-          title="${data.title}"
-          frameborder="0"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowfullscreen
-        ></iframe>
+        <video controls autoplay>
+          <source src="${data.signedUrl}" type="video/mp4" />
+          Your browser does not support the video tag.
+        </video>
         <div class="video-info">
           <h2>${data.title}</h2>
-          <p>${data.author_name}</p>
+          <p>${data.author}</p>
         </div>
       </div>
     `;
     preview.classList.remove('hidden');
   } catch (err) {
-    alert('Could not load video: ' + err.message);
+    alert('Error: ' + err.message);
   }
 }
 
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     const url = input.value.trim();
-    if (url) loadPreview(url);
+    if (url) loadVideo(url);
   }
 });
