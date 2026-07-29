@@ -7,44 +7,29 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-
   <div class="container">
     <header>
       <h1>🎬 GraphMotion AI</h1>
-      <p>Paste a TikTok URL to preview, download, or generate an animation</p>
+      <p>Paste a TikTok URL to preview or download the raw video</p>
     </header>
-
-    <!-- Status indicator -->
-    <div id="statusBar" style="margin: 1rem 0; font-size: 0.9rem; color: #94a3b8;">
-      Backend: <span id="statusText">Checking...</span>
-    </div>
 
     <div class="input-area">
       <input type="text" id="urlInput" placeholder="https://www.tiktok.com/..." />
       <button id="downloadBtn" class="btn-primary">⬇️ Download Full Video</button>
     </div>
 
-    <div class="action-bar">
-      <button id="scriptBtn" class="btn-secondary">🧠 Generate Script</button>
-      <button id="renderBtn" class="btn-secondary" disabled>▶️ Render Animation</button>
-    </div>
-
     <div id="preview" class="hidden"></div>
+
     <div id="loading" class="hidden">
       <div class="spinner"></div>
-      <p id="loadingMsg">Processing...</p>
-    </div>
-
-    <!-- Motion Canvas player container -->
-    <div id="playerContainer" class="hidden" style="margin-top:2rem; background:#1a1a1a; border-radius:16px; overflow:hidden;">
-      <canvas id="motionCanvas" width="800" height="600"></canvas>
+      <p>Processing your video...</p>
     </div>
 
     <footer>
-      <p>Powered by Supabase &amp; Mistral AI</p>
+      <p>Powered by Supabase &amp; TikTok API</p>
     </footer>
   </div>
 
-  <script type="module" src="script.js"></script>
+  <script src="script.js"></script>
 </body>
 </html>
