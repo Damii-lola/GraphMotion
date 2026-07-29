@@ -10,22 +10,20 @@ const cron = require('node-cron');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ---- Serve static frontend ----
-app.use(express.static('public'));
-
-// ---- CORS (still useful if other clients call) ----
+// ----- CORS -----
 app.use(cors({
-  origin: ['https://graphmotion.onrender.com', 'http://localhost:5500'],
+  origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
   credentials: true,
 }));
 app.use(express.json());
 
+// ----- Supabase -----
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// ---------- Ensure bucket exists ----------
+// ----- Ensure bucket exists -----
 async function ensureBucket() {
   const bucketName = 'temp_videos';
   try {
@@ -34,7 +32,8 @@ async function ensureBucket() {
     const exists = buckets.some(b => b.name === bucketName);
     if (!exists) {
       console.log(`[Startup] Creating bucket "${bucketName}"...`);
-      await supabase.storage.createBucket(bucketName, { public: false });
+      const { error: createErr } = await supabase.storage.createBucket(bucketName, { public: false });
+      if (createErr) throw createErr;
       console.log(`[Startup] Bucket created.`);
     } else {
       console.log(`[Startup] Bucket "${bucketName}" exists.`);
@@ -45,7 +44,7 @@ async function ensureBucket() {
 }
 ensureBucket();
 
-// ---------- Helpers ----------
+// ----- Helpers -----
 function isTikTokUrl(url) {
   return url.includes('tiktok.com');
 }
@@ -65,7 +64,7 @@ async function getTikTokVideoInfo(url) {
   };
 }
 
-// ---------- /get-video-info ----------
+// ----- Endpoint: preview -----
 app.post('/get-video-info', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
@@ -86,7 +85,7 @@ app.post('/get-video-info', async (req, res) => {
   }
 });
 
-// ---------- /download-video ----------
+// ----- Endpoint: download & upload -----
 app.post('/download-video', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
@@ -121,6 +120,7 @@ app.post('/download-video', async (req, res) => {
       .createSignedUrl(filePath, 3600);
     if (signedErr) throw signedErr;
 
+    // Record metadata (optional)
     try {
       await supabase.from('video_downloads').insert([{
         video_id: Date.now().toString(),
@@ -148,14 +148,14 @@ app.post('/download-video', async (req, res) => {
   }
 });
 
-// ---------- /generate-script (Mistral) ----------
+// ----- NEW: Mistral AI script generation -----
 app.post('/generate-script', async (req, res) => {
   const { title, author } = req.body;
   if (!title) return res.status(400).json({ error: 'Title required' });
 
   try {
     const apiKey = process.env.MISTRAL_API_KEY;
-    if (!apiKey) throw new Error('MISTRAL_API_KEY not set');
+    if (!apiKey) throw new Error('MISTRAL_API_KEY not set in environment');
 
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
@@ -189,10 +189,12 @@ Return a JSON array of scenes. Each scene has: shape (circle, rect, triangle), c
     const data = await response.json();
     const scriptText = data.choices[0].message.content;
 
+    // Try to parse JSON
     let script;
     try {
       script = JSON.parse(scriptText);
     } catch (e) {
+      // If not pure JSON, try to extract between ```json ... ```
       const match = scriptText.match(/```json\s*([\s\S]*?)\s*```/);
       if (match) script = JSON.parse(match[1]);
       else throw new Error('Failed to parse Mistral response as JSON');
@@ -205,7 +207,7 @@ Return a JSON array of scenes. Each scene has: shape (circle, rect, triangle), c
   }
 });
 
-// ---------- Cleanup ----------
+// ----- Cleanup (cron) -----
 async function cleanupExpiredVideos() {
   try {
     const { data: expired, error } = await supabase
@@ -225,12 +227,8 @@ async function cleanupExpiredVideos() {
 }
 cron.schedule('0 * * * *', cleanupExpiredVideos);
 
-// ---------- Ping (optional) ----------
+// ----- Ping -----
 app.get('/ping', (req, res) => res.send('pong'));
 
-// ---------- Catch-all: serve index.html for SPA ----------
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
+// ----- Start -----
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
