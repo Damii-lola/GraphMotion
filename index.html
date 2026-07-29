@@ -14,6 +14,11 @@
       <p>Paste a TikTok URL to preview, download, or generate an animation</p>
     </header>
 
+    <!-- Status indicator -->
+    <div id="statusBar" style="margin: 1rem 0; font-size: 0.9rem; color: #94a3b8;">
+      Backend: <span id="statusText">Checking...</span>
+    </div>
+
     <div class="input-area">
       <input type="text" id="urlInput" placeholder="https://www.tiktok.com/..." />
       <button id="downloadBtn" class="btn-primary">⬇️ Download Full Video</button>
@@ -40,7 +45,6 @@
     </footer>
   </div>
 
-  <!-- Main script with type="module" (no importmap needed) -->
   <script type="module" src="script.js"></script>
 </body>
 </html>
