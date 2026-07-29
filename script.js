@@ -59,7 +59,7 @@ input.addEventListener('keydown', async (e) => {
   }
 });
 
-// Download full video
+// Download full video – shows the downloaded video in the same page
 downloadBtn.addEventListener('click', async () => {
   const url = input.value.trim();
   if (!url) {
@@ -80,6 +80,7 @@ downloadBtn.addEventListener('click', async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Download failed');
     hideLoading();
+    // Show the downloaded video without a separate download link
     preview.innerHTML = `
       <div class="video-wrapper">
         <video controls autoplay>
@@ -88,7 +89,7 @@ downloadBtn.addEventListener('click', async () => {
         <div class="video-info">
           <h2>${data.title}</h2>
           <p>${data.author}</p>
-          <a href="${data.signedUrl}" download="${data.title || 'video'}.mp4" class="download-link">⬇️ Download Video</a>
+          <p style="font-size:0.9rem;color:#64748b;">✅ Video ready – saved in your Supabase storage (valid for 1 hour)</p>
         </div>
       </div>
     `;
