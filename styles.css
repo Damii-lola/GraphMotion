@@ -138,6 +138,13 @@ input:focus {
   background: #1557b0;
 }
 
+/* ... existing styles ... */
+.video-info .status {
+  font-size: 0.9rem;
+  color: #64748b;
+  margin-top: 0.5rem;
+}
+
 /* Loading */
 #loading {
   margin-top: 2rem;
