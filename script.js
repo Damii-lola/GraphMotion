@@ -1,5 +1,6 @@
 console.log('[GraphMotion] Script loaded');
 
+// ----- Import Motion Canvas (keep as is) -----
 import { makeScene2D } from 'https://esm.sh/@motion-canvas/2d@3.12.0/lib/scenes/Scene2D.js';
 import { Circle, Rect, Layout } from 'https://esm.sh/@motion-canvas/2d@3.12.0/lib/components/index.js';
 import { waitFor } from 'https://esm.sh/@motion-canvas/core@3.12.0/lib/flow.js';
@@ -8,6 +9,7 @@ import { Player } from 'https://esm.sh/@motion-canvas/player@3.12.0/lib/Player.j
 
 console.log('[GraphMotion] Imports loaded');
 
+// ----- DOM elements -----
 const input = document.getElementById('urlInput');
 const preview = document.getElementById('preview');
 const downloadBtn = document.getElementById('downloadBtn');
@@ -17,22 +19,36 @@ const loading = document.getElementById('loading');
 const loadingMsg = document.getElementById('loadingMsg');
 const playerContainer = document.getElementById('playerContainer');
 const canvasElement = document.getElementById('motionCanvas');
+const statusText = document.getElementById('statusText');
 
 const BACKEND_URL = 'https://graphmotion.onrender.com'; // <-- CHANGE if different
+
 let currentScript = null;
 let videoTitle = '';
 let videoAuthor = '';
 let playerInstance = null;
 
-// --- Debug: log that elements are found ---
-console.log('[GraphMotion] Elements found:', {
-  input: !!input,
-  downloadBtn: !!downloadBtn,
-  scriptBtn: !!scriptBtn,
-  renderBtn: !!renderBtn,
-});
+// ----- Check backend connection on load -----
+async function checkBackend() {
+  try {
+    statusText.textContent = 'Checking...';
+    const res = await fetch(`${BACKEND_URL}/ping`, { cache: 'no-store' });
+    if (res.ok) {
+      const text = await res.text();
+      statusText.textContent = `✅ Online (${text})`;
+      statusText.style.color = '#22c55e';
+    } else {
+      statusText.textContent = `⚠️ Server error (${res.status})`;
+      statusText.style.color = '#ef4444';
+    }
+  } catch (err) {
+    statusText.textContent = `❌ Cannot reach backend (${err.message})`;
+    statusText.style.color = '#ef4444';
+  }
+}
+checkBackend();
 
-// --- UI helpers ---
+// ----- UI helpers -----
 function showLoading(msg = 'Processing...') {
   console.log('[UI] showLoading:', msg);
   preview.classList.add('hidden');
@@ -58,7 +74,21 @@ function isTikTokUrl(url) {
   return url.includes('tiktok.com');
 }
 
-// --- Preview (Enter) ---
+// ----- Utility: make fetch with error logging -----
+async function apiCall(endpoint, body) {
+  const url = `${BACKEND_URL}${endpoint}`;
+  console.log(`[API] Calling ${url}`);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// ----- Preview (Enter) -----
 input.addEventListener('keydown', async (e) => {
   if (e.key === 'Enter') {
     const url = input.value.trim();
@@ -69,14 +99,7 @@ input.addEventListener('keydown', async (e) => {
     console.log('[Preview] URL:', url);
     showLoading('Fetching video...');
     try {
-      const res = await fetch(`${BACKEND_URL}/get-video-info`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
-      });
-      const data = await res.json();
-      console.log('[Preview] Response:', data);
-      if (!res.ok) throw new Error(data.error || 'Preview failed');
+      const data = await apiCall('/get-video-info', { url });
       videoTitle = data.title;
       videoAuthor = data.author;
       hideLoading();
@@ -100,7 +123,7 @@ input.addEventListener('keydown', async (e) => {
   }
 });
 
-// --- Download full video ---
+// ----- Download full video -----
 downloadBtn.addEventListener('click', async () => {
   console.log('[Download] Button clicked');
   const url = input.value.trim();
@@ -108,17 +131,9 @@ downloadBtn.addEventListener('click', async () => {
     alert('Enter a valid TikTok URL');
     return;
   }
-  console.log('[Download] URL:', url);
   showLoading('Downloading & uploading...');
   try {
-    const res = await fetch(`${BACKEND_URL}/download-video`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
-    });
-    const data = await res.json();
-    console.log('[Download] Response:', data);
-    if (!res.ok) throw new Error(data.error || 'Download failed');
+    const data = await apiCall('/download-video', { url });
     hideLoading();
     preview.innerHTML = `
       <div class="video-wrapper">
@@ -142,7 +157,7 @@ downloadBtn.addEventListener('click', async () => {
   }
 });
 
-// --- Generate Script (Mistral) ---
+// ----- Generate Script (Mistral) -----
 scriptBtn.addEventListener('click', async () => {
   console.log('[Script] Button clicked');
   if (!videoTitle) {
@@ -151,14 +166,7 @@ scriptBtn.addEventListener('click', async () => {
   }
   showLoading('Contacting Mistral AI...');
   try {
-    const res = await fetch(`${BACKEND_URL}/generate-script`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: videoTitle, author: videoAuthor }),
-    });
-    const data = await res.json();
-    console.log('[Script] Response:', data);
-    if (!res.ok) throw new Error(data.error || 'Script generation failed');
+    const data = await apiCall('/generate-script', { title: videoTitle, author: videoAuthor });
     currentScript = data.script;
     hideLoading();
     renderBtn.disabled = false;
@@ -171,7 +179,7 @@ scriptBtn.addEventListener('click', async () => {
   }
 });
 
-// --- Render Animation with Motion Canvas ---
+// ----- Render Animation with Motion Canvas -----
 renderBtn.addEventListener('click', async () => {
   console.log('[Render] Button clicked');
   if (!currentScript || currentScript.length === 0) {
@@ -184,10 +192,8 @@ renderBtn.addEventListener('click', async () => {
 
   try {
     const scene = makeScene2D(function* (view) {
-      console.log('[MotionCanvas] Scene generator started');
       const group = new Layout({ layout: false });
       view.add(group);
-
       const nodes = [];
       for (const item of currentScript) {
         const shape = item.shape || 'circle';
@@ -204,16 +210,13 @@ renderBtn.addEventListener('click', async () => {
         }
         nodes.push(node);
         group.add(node);
-        console.log(`[MotionCanvas] Created ${shape} at (${x},${y})`);
       }
-
       for (let i = 0; i < nodes.length; i++) {
         const node = nodes[i];
         yield* node.opacity(0, 0).to(1, 0.5);
         yield* waitFor(0.3);
       }
       yield* waitFor(1);
-      console.log('[MotionCanvas] Animation finished');
     });
 
     const project = createProject({
@@ -225,20 +228,14 @@ renderBtn.addEventListener('click', async () => {
       },
     });
 
-    console.log('[Render] Project created');
-
     playerInstance = new Player({
       canvas: canvasElement,
       project,
     });
 
-    console.log('[Render] Player created');
-
     playerContainer.classList.remove('hidden');
     hideLoading();
-
     await playerInstance.play();
-    console.log('[Render] Play finished');
 
   } catch (err) {
     console.error('[Render] Error:', err);
