@@ -1,6 +1,6 @@
 console.log('[GraphMotion] Script loaded');
 
-// ----- Import Motion Canvas (keep as is) -----
+// ----- Import Motion C
 import { makeScene2D } from 'https://esm.sh/@motion-canvas/2d@3.12.0/lib/scenes/Scene2D.js';
 import { Circle, Rect, Layout } from 'https://esm.sh/@motion-canvas/2d@3.12.0/lib/components/index.js';
 import { waitFor } from 'https://esm.sh/@motion-canvas/core@3.12.0/lib/flow.js';
