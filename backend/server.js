@@ -10,14 +10,16 @@ const cron = require('node-cron');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS
+// ---- Serve static frontend ----
+app.use(express.static('public'));
+
+// ---- CORS (still useful if other clients call) ----
 app.use(cors({
-  origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
+  origin: ['https://graphmotion.onrender.com', 'http://localhost:5500'],
   credentials: true,
 }));
 app.use(express.json());
 
-// Supabase
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -63,7 +65,7 @@ async function getTikTokVideoInfo(url) {
   };
 }
 
-// ---------- /get-video-info (preview) ----------
+// ---------- /get-video-info ----------
 app.post('/get-video-info', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
@@ -119,7 +121,6 @@ app.post('/download-video', async (req, res) => {
       .createSignedUrl(filePath, 3600);
     if (signedErr) throw signedErr;
 
-    // Insert metadata – skip if table missing
     try {
       await supabase.from('video_downloads').insert([{
         video_id: Date.now().toString(),
@@ -147,7 +148,7 @@ app.post('/download-video', async (req, res) => {
   }
 });
 
-// ---------- /generate-script (Mistral AI) ----------
+// ---------- /generate-script (Mistral) ----------
 app.post('/generate-script', async (req, res) => {
   const { title, author } = req.body;
   if (!title) return res.status(400).json({ error: 'Title required' });
@@ -188,7 +189,6 @@ Return a JSON array of scenes. Each scene has: shape (circle, rect, triangle), c
     const data = await response.json();
     const scriptText = data.choices[0].message.content;
 
-    // Parse JSON (handles Markdown code blocks)
     let script;
     try {
       script = JSON.parse(scriptText);
@@ -205,7 +205,7 @@ Return a JSON array of scenes. Each scene has: shape (circle, rect, triangle), c
   }
 });
 
-// ---------- Cleanup (cron) ----------
+// ---------- Cleanup ----------
 async function cleanupExpiredVideos() {
   try {
     const { data: expired, error } = await supabase
@@ -225,7 +225,12 @@ async function cleanupExpiredVideos() {
 }
 cron.schedule('0 * * * *', cleanupExpiredVideos);
 
-// ---------- Ping ----------
+// ---------- Ping (optional) ----------
 app.get('/ping', (req, res) => res.send('pong'));
+
+// ---------- Catch-all: serve index.html for SPA ----------
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
