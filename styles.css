@@ -192,7 +192,7 @@ input:focus {
   color: #64748b;
 }
 
-/* Canvas container */
+/* Motion Canvas container */
 #canvasContainer {
   margin-top: 2rem;
   background: #0f0f0f;
@@ -202,8 +202,8 @@ input:focus {
 
 #canvasContainer canvas {
   width: 100%;
-  height: auto;
   display: block;
+  aspect-ratio: 16 / 9;
 }
 
 footer {
