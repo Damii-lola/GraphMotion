@@ -76,7 +76,7 @@ app.post('/get-upload-url', async (req, res) => {
   }
 });
 
-// ---------- Confirm upload (client notifies when done) ----------
+// ---------- Confirm upload ----------
 app.post('/confirm-upload', async (req, res) => {
   const { filePath } = req.body;
   if (!filePath) return res.status(400).json({ error: 'Missing filePath' });
@@ -103,7 +103,7 @@ app.post('/confirm-upload', async (req, res) => {
   }
 });
 
-// ---------- Process with Mistral AI (using REST API) ----------
+// ---------- Process with Mistral AI (REST API) ----------
 app.post('/process-video', async (req, res) => {
   const { signedUrl, fileName } = req.body;
   if (!signedUrl || !fileName) {
@@ -113,7 +113,6 @@ app.post('/process-video', async (req, res) => {
   try {
     const prompt = `Write a creative and detailed script for a motion graphics animation that replicates and enhances the content of a video titled "${fileName}". The script should describe visual scenes, motion effects, transitions, and overall style. Make it engaging and suitable for a professional motion design project.`;
 
-    // Use Mistral REST API directly
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -146,15 +145,18 @@ app.post('/process-video', async (req, res) => {
   }
 });
 
-// ---------- Cleanup expired (and failed pending) ----------
+// ---------- Cleanup expired & failed pending ----------
 async function cleanupExpiredVideos() {
   try {
     // Delete expired files + pending older than 10 minutes
-    const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
+    const expiry = now.toISOString();
+
     const { data: toDelete, error } = await supabase
       .from('video_uploads')
       .select('id, file_path')
-      .or(`expires_at.lt.${new Date().toISOString()},and(upload_status.eq.pending,created_at.lt.${cutoff})`);
+      .or(`expires_at.lt.${expiry},and(upload_status.eq.pending,created_at.lt.${cutoff})`);
 
     if (error) throw error;
     if (!toDelete || toDelete.length === 0) return;
