@@ -284,3 +284,30 @@ footer {
     font-size: 1.1rem;
   }
 }
+
+/* Progress bar */
+#progressArea {
+  margin: 1.5rem 0;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 12px;
+  background: #e2e8f0;
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #1a73e8, #0d47a1);
+  border-radius: 20px;
+  transition: width 0.3s ease;
+}
+
+#progressText {
+  margin-top: 0.5rem;
+  font-size: 0.95rem;
+  color: #475569;
+  font-weight: 500;
+}
