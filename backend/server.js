@@ -4,6 +4,12 @@ const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const { v4: uuidv4 } = require('uuid');
 const cron = require('node-cron');
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('ffmpeg-static');
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,7 +18,7 @@ app.use(cors({
   origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
   credentials: true,
 }));
-app.use(express.json());
+app.use(express.json({ limit: '1gb' }));
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -48,14 +54,11 @@ app.post('/get-upload-url', async (req, res) => {
     const fileName = `${uuidv4()}.${ext}`;
     const filePath = `temp_videos/${fileName}`;
 
-    // Generate a signed upload URL (valid for 10 minutes)
     const { data, error } = await supabase.storage
       .from('temp_videos')
       .createSignedUploadUrl(filePath);
-
     if (error) throw error;
 
-    // Store metadata in DB (pending)
     await supabase.from('video_uploads').insert([{
       file_name: fileName,
       original_name: originalName,
@@ -64,12 +67,7 @@ app.post('/get-upload-url', async (req, res) => {
       expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
     }]);
 
-    res.json({
-      success: true,
-      signedUrl: data.signedUrl,
-      filePath: filePath,
-      fileName: originalName,
-    });
+    res.json({ success: true, signedUrl: data.signedUrl, filePath, fileName: originalName });
   } catch (err) {
     console.error('[get-upload-url] Error:', err);
     res.status(500).json({ error: err.message });
@@ -82,20 +80,11 @@ app.post('/confirm-upload', async (req, res) => {
   if (!filePath) return res.status(400).json({ error: 'Missing filePath' });
 
   try {
-    // Update status to 'completed'
-    const { error } = await supabase
-      .from('video_uploads')
-      .update({ upload_status: 'completed' })
-      .eq('file_path', filePath);
-
-    if (error) throw error;
-
-    // Get a signed URL for playback
+    await supabase.from('video_uploads').update({ upload_status: 'completed' }).eq('file_path', filePath);
     const { data, error: signedErr } = await supabase.storage
       .from('temp_videos')
       .createSignedUrl(filePath, 3600);
     if (signedErr) throw signedErr;
-
     res.json({ success: true, signedUrl: data.signedUrl });
   } catch (err) {
     console.error('[confirm-upload] Error:', err);
@@ -103,64 +92,234 @@ app.post('/confirm-upload', async (req, res) => {
   }
 });
 
-// ---------- Process with Mistral AI (REST API) ----------
+// ---------- Processing (no transcription) ----------
 app.post('/process-video', async (req, res) => {
   const { signedUrl, fileName } = req.body;
   if (!signedUrl || !fileName) {
     return res.status(400).json({ error: 'Missing video info' });
   }
 
-  try {
-    const prompt = `Write a creative and detailed script for a motion graphics animation that replicates and enhances the content of a video titled "${fileName}". The script should describe visual scenes, motion effects, transitions, and overall style. Make it engaging and suitable for a professional motion design project.`;
+  const workDir = path.join('/tmp', uuidv4());
+  fs.mkdirSync(workDir, { recursive: true });
+  const videoPath = path.join(workDir, 'input.mp4');
 
-    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'mistral-large-latest',
-        messages: [
-          { role: 'system', content: 'You are an expert motion graphics scriptwriter. Generate detailed, visual scripts for motion design projects.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: 0.7,
-        max_tokens: 1500,
-      }),
+  try {
+    // 1. Download video
+    console.log('[process] Downloading video...');
+    const videoRes = await axios.get(signedUrl, { responseType: 'arraybuffer' });
+    fs.writeFileSync(videoPath, videoRes.data);
+
+    // 2. Get video duration
+    const duration = await getVideoDuration(videoPath);
+
+    // 3. Extract audio and compute RMS (volume) over time
+    const audioPath = path.join(workDir, 'audio.wav');
+    await new Promise((resolve, reject) => {
+      ffmpeg(videoPath)
+        .output(audioPath)
+        .audioCodec('pcm_s16le')
+        .audioFrequency(16000)
+        .on('end', resolve)
+        .on('error', reject)
+        .run();
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Mistral API error: ${response.status} - ${errorText}`);
+    // Read audio data and compute RMS per second
+    const audioData = fs.readFileSync(audioPath);
+    const sampleRate = 16000;
+    const bytesPerSample = 2; // 16-bit
+    const samplesPerSecond = sampleRate;
+    const totalSeconds = Math.floor(audioData.length / (bytesPerSample * samplesPerSecond));
+    const rmsPerSecond = [];
+    for (let i = 0; i < totalSeconds; i++) {
+      const start = i * samplesPerSecond * bytesPerSample;
+      const end = start + samplesPerSecond * bytesPerSample;
+      const chunk = audioData.slice(start, end);
+      let sum = 0;
+      for (let j = 0; j < chunk.length; j += 2) {
+        const sample = chunk.readInt16LE(j);
+        sum += sample * sample;
+      }
+      const rms = Math.sqrt(sum / (chunk.length / 2));
+      rmsPerSecond.push(rms);
     }
 
-    const data = await response.json();
-    const script = data.choices[0].message.content;
+    // 4. Detect scene changes (shots) using ffmpeg scene filter
+    const sceneFile = path.join(workDir, 'scenes.txt');
+    await new Promise((resolve, reject) => {
+      ffmpeg(videoPath)
+        .outputOptions([
+          '-vf', 'select=gt(scene\\,0.4),metadata=print:file=' + sceneFile,
+          '-vsync', 'vfr',
+          '-f', 'null',
+          '-'
+        ])
+        .on('end', resolve)
+        .on('error', reject)
+        .run();
+    });
 
-    res.json({ success: true, script });
+    // Parse scene change timestamps
+    const sceneTimes = [];
+    if (fs.existsSync(sceneFile)) {
+      const data = fs.readFileSync(sceneFile, 'utf8');
+      const lines = data.split('\n').filter(l => l.includes('pts_time:'));
+      for (const line of lines) {
+        const match = line.match(/pts_time:([\d.]+)/);
+        if (match) {
+          const t = parseFloat(match[1]);
+          if (t < duration) sceneTimes.push(t);
+        }
+      }
+    }
+
+    // 5. Find interesting segments
+    // - High audio energy (RMS > mean + 1.5*std)
+    const mean = rmsPerSecond.reduce((a, b) => a + b, 0) / rmsPerSecond.length;
+    const std = Math.sqrt(rmsPerSecond.reduce((a, b) => a + (b - mean) ** 2, 0) / rmsPerSecond.length);
+    const threshold = mean + 1.5 * std;
+
+    const interestingSeconds = [];
+    for (let i = 0; i < rmsPerSecond.length; i++) {
+      if (rmsPerSecond[i] > threshold) {
+        interestingSeconds.push(i);
+      }
+    }
+
+    // Combine with scene changes: find clusters of interesting seconds
+    const segments = [];
+    let clusterStart = null;
+    for (let i = 0; i < interestingSeconds.length; i++) {
+      const sec = interestingSeconds[i];
+      if (clusterStart === null) {
+        clusterStart = sec;
+      } else if (sec - interestingSeconds[i-1] > 5) { // gap > 5s -> new cluster
+        const end = interestingSeconds[i-1] + 1;
+        segments.push({ start: clusterStart, end: Math.min(end, duration) });
+        clusterStart = sec;
+      }
+    }
+    if (clusterStart !== null) {
+      const end = interestingSeconds[interestingSeconds.length-1] + 1;
+      segments.push({ start: clusterStart, end: Math.min(end, duration) });
+    }
+
+    // Also include segments around scene changes if they have some energy
+    for (const sceneTime of sceneTimes) {
+      const sec = Math.floor(sceneTime);
+      const window = 2; // +/- 2 seconds
+      // Check if there's any energy around this scene
+      let hasEnergy = false;
+      for (let i = Math.max(0, sec - window); i < Math.min(rmsPerSecond.length, sec + window); i++) {
+        if (rmsPerSecond[i] > mean + 0.8 * std) {
+          hasEnergy = true;
+          break;
+        }
+      }
+      if (hasEnergy) {
+        // Add a segment around the scene change
+        const start = Math.max(0, sec - 1);
+        const end = Math.min(duration, sec + 3);
+        segments.push({ start, end });
+      }
+    }
+
+    // Merge overlapping segments
+    if (segments.length === 0) {
+      fs.rmSync(workDir, { recursive: true, force: true });
+      return res.json({ success: true, found: false, message: 'No interesting moments detected.' });
+    }
+
+    // Sort and merge
+    segments.sort((a, b) => a.start - b.start);
+    const merged = [];
+    let current = segments[0];
+    for (let i = 1; i < segments.length; i++) {
+      if (segments[i].start <= current.end + 1) {
+        current.end = Math.max(current.end, segments[i].end);
+      } else {
+        merged.push(current);
+        current = segments[i];
+      }
+    }
+    merged.push(current);
+
+    // Filter segments that are too short
+    const finalSegments = merged.filter(s => s.end - s.start >= 1.5);
+    if (finalSegments.length === 0) {
+      fs.rmSync(workDir, { recursive: true, force: true });
+      return res.json({ success: true, found: false, message: 'Segments too short.' });
+    }
+
+    // 6. Crop each segment
+    const clips = [];
+    for (let i = 0; i < Math.min(finalSegments.length, 10); i++) { // max 10 clips
+      const seg = finalSegments[i];
+      const clipName = `clip_${i}_${uuidv4()}.mp4`;
+      const clipPath = path.join(workDir, clipName);
+      await new Promise((resolve, reject) => {
+        ffmpeg(videoPath)
+          .setStartTime(seg.start)
+          .setDuration(seg.end - seg.start)
+          .output(clipPath)
+          .on('end', resolve)
+          .on('error', reject)
+          .run();
+      });
+      const clipBuffer = fs.readFileSync(clipPath);
+      const clipFilePath = `temp_videos/clips/${clipName}`;
+      const { error: uploadErr } = await supabase.storage
+        .from('temp_videos')
+        .upload(clipFilePath, clipBuffer, { contentType: 'video/mp4' });
+      if (uploadErr) throw uploadErr;
+      const { data: signedClip, error: signedErr } = await supabase.storage
+        .from('temp_videos')
+        .createSignedUrl(clipFilePath, 3600);
+      if (signedErr) throw signedErr;
+      clips.push({
+        start: seg.start,
+        end: seg.end,
+        signedUrl: signedClip.signedUrl,
+      });
+    }
+
+    fs.rmSync(workDir, { recursive: true, force: true });
+
+    res.json({
+      success: true,
+      found: true,
+      clips: clips,
+    });
+
   } catch (err) {
-    console.error('[process-video] Error:', err);
+    console.error('[process] Error:', err);
+    if (fs.existsSync(workDir)) fs.rmSync(workDir, { recursive: true, force: true });
     res.status(500).json({ error: err.message });
   }
 });
 
-// ---------- Cleanup expired & failed pending ----------
+// Helper: get video duration
+function getVideoDuration(filePath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, data) => {
+      if (err) reject(err);
+      else resolve(data.format.duration);
+    });
+  });
+}
+
+// ---------- Cleanup ----------
 async function cleanupExpiredVideos() {
   try {
-    // Delete expired files + pending older than 10 minutes
     const now = new Date();
     const cutoff = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
     const expiry = now.toISOString();
-
     const { data: toDelete, error } = await supabase
       .from('video_uploads')
       .select('id, file_path')
       .or(`expires_at.lt.${expiry},and(upload_status.eq.pending,created_at.lt.${cutoff})`);
-
     if (error) throw error;
     if (!toDelete || toDelete.length === 0) return;
-
     const filePaths = toDelete.map(r => r.file_path);
     await supabase.storage.from('temp_videos').remove(filePaths);
     const ids = toDelete.map(r => r.id);
@@ -170,7 +329,7 @@ async function cleanupExpiredVideos() {
     console.error('[Cleanup] Error:', err);
   }
 }
-cron.schedule('*/5 * * * *', cleanupExpiredVideos); // every 5 minutes
+cron.schedule('*/5 * * * *', cleanupExpiredVideos);
 
 app.get('/ping', (req, res) => res.send('pong'));
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
