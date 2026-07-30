@@ -1,21 +1,18 @@
 {
   "name": "supabase-render-backend",
   "version": "1.0.0",
-  "description": "Backend with YouTube preview & summary",
+  "description": "Backend for GraphMotion AI",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "build": "apt-get update && apt-get install -y ffmpeg || true"
+    "start": "node server.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "fluent-ffmpeg": "^2.1.2",
-    "@ffmpeg-installer/ffmpeg": "^1.1.0",
-    "node-cron": "^3.0.3",
+    "multer": "^1.4.5-lts.1",
     "uuid": "^9.0.1",
-    "ytdl-core": "^4.11.5"
+    "node-cron": "^3.0.3"
   }
 }
