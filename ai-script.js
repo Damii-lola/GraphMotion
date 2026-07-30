@@ -1,4 +1,3 @@
-// ---------- DOM refs ----------
 const fileInput = document.getElementById('fileInput');
 const dropZone = document.getElementById('dropZone');
 const dropMessage = document.getElementById('dropMessage');
@@ -10,13 +9,15 @@ const loading = document.getElementById('loading');
 const loadingMessage = document.getElementById('loadingMessage');
 const processArea = document.getElementById('processArea');
 const processBtn = document.getElementById('processBtn');
+const aiResult = document.getElementById('aiResult');
+const scriptOutput = document.getElementById('scriptOutput');
 const progressArea = document.getElementById('progressArea');
 const progressFill = document.getElementById('progressFill');
 const progressText = document.getElementById('progressText');
 const clipSelection = document.getElementById('clipSelection');
 const clipList = document.getElementById('clipList');
 
-const BACKEND_URL = 'https://graphmotion.onrender.com'; // CHANGE THIS
+const BACKEND_URL = 'https://graphmotion.onrender.com'; // Update with your Render URL
 
 let currentSignedUrl = null;
 let currentFileName = null;
@@ -25,7 +26,9 @@ let currentClips = [];
 // ---------- UI helpers ----------
 function showLoading(msg = 'Processing...') {
   preview.classList.add('hidden');
+  aiResult.classList.add('hidden');
   processArea.classList.add('hidden');
+  progressArea.classList.add('hidden');
   clipSelection.classList.add('hidden');
   loading.classList.remove('hidden');
   loadingMessage.textContent = msg;
@@ -52,34 +55,7 @@ function resetDropZone() {
   dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 1GB)</span>`;
 }
 
-// ---------- Upload with XHR (fastest, reliable progress) ----------
-function uploadFileWithXHR(file, signedUrl) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', signedUrl);
-    xhr.setRequestHeader('Content-Type', file.type);
-
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const percent = Math.round((e.loaded / e.total) * 100);
-        progressFill.style.width = `${percent}%`;
-        progressText.textContent = `${percent}%`;
-      }
-    };
-
-    xhr.onload = () => {
-      if (xhr.status === 200) resolve();
-      else reject(new Error(`Upload failed with status ${xhr.status}`));
-    };
-
-    xhr.onerror = () => reject(new Error('Upload failed (network error)'));
-    xhr.ontimeout = () => reject(new Error('Upload timed out'));
-
-    xhr.timeout = 600000; // 10 minutes
-    xhr.send(file);
-  });
-}
-
+// ---------- Upload using signed URL ----------
 async function uploadFile(file) {
   if (!file) return;
   if (!file.type.startsWith('video/')) {
@@ -103,15 +79,28 @@ async function uploadFile(file) {
     const { signedUrl, filePath, fileName: name } = getUrlRes.data;
     currentFileName = name;
 
-    // 2. Upload using XHR (fast, with progress)
-    await uploadFileWithXHR(file, signedUrl);
+    // 2. Upload directly to Supabase using the signed URL (PUT)
+    const uploadRes = await axios.put(signedUrl, file, {
+      headers: { 'Content-Type': file.type },
+      onUploadProgress: (progressEvent) => {
+        const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        progressFill.style.width = `${percent}%`;
+        progressText.textContent = `${percent}%`;
+      },
+      timeout: 600000, // 10 min
+      maxContentLength: Infinity, // Allow large file upload
+      maxBodyLength: Infinity,    // Allow large file upload
+    });
 
-    // 3. Confirm upload and get playback URL
+    if (uploadRes.status !== 200) throw new Error('Upload to storage failed');
+
+    // 3. Confirm upload to backend (so it marks as completed)
     const confirmRes = await axios.post(`${BACKEND_URL}/confirm-upload`, { filePath });
     const { signedUrl: playUrl } = confirmRes.data;
     currentSignedUrl = playUrl;
 
     progressArea.classList.add('hidden');
+    // Show video
     preview.innerHTML = `
       <div class="video-wrapper">
         <video controls autoplay>
@@ -124,16 +113,27 @@ async function uploadFile(file) {
       </div>
     `;
     preview.classList.remove('hidden');
+
     processArea.classList.remove('hidden');
     resetDropZone();
 
   } catch (err) {
     progressArea.classList.add('hidden');
-    alert('Upload error: ' + err.message);
+    let errorMsg = 'Upload error: ';
+    if (err.code === 'ECONNABORTED') {
+      errorMsg += 'The upload took too long. Please try again with a smaller file.';
+    } else if (err.response && err.response.data && err.response.data.error) {
+      errorMsg += err.response.data.error;
+    } else if (err.message) {
+      errorMsg += err.message;
+    } else {
+      errorMsg += 'Unknown error';
+    }
+    alert(errorMsg);
   }
 }
 
-// ---------- Process video ----------
+// ---------- Process video (find interesting moments) ----------
 processBtn.addEventListener('click', async () => {
   if (!currentSignedUrl || !currentFileName) {
     alert('Please upload a video first.');
@@ -145,7 +145,7 @@ processBtn.addEventListener('click', async () => {
     const response = await axios.post(`${BACKEND_URL}/process-video`, {
       signedUrl: currentSignedUrl,
       fileName: currentFileName,
-    }, { timeout: 600000 });
+    }, { timeout: 600000 }); // 10 min
 
     const data = response.data;
     if (!data.success) throw new Error(data.error || 'Processing failed');
@@ -153,15 +153,18 @@ processBtn.addEventListener('click', async () => {
     hideLoading();
 
     if (!data.found) {
-      alert('Could not find any interesting moments in this video.');
+      alert('Could not find any funny or interesting moments in this video.');
       return;
     }
 
+    // Store clips
     currentClips = data.clips;
 
     if (currentClips.length === 1) {
+      // Auto-select and play the only clip
       showClip(currentClips[0]);
     } else {
+      // Show selection UI
       clipList.innerHTML = '';
       currentClips.forEach((clip, index) => {
         const div = document.createElement('div');
@@ -188,7 +191,9 @@ processBtn.addEventListener('click', async () => {
   }
 });
 
+// ---------- Show a single clip (replace preview) ----------
 function showClip(clip) {
+  // Hide selection, show the clip
   clipSelection.classList.add('hidden');
   preview.innerHTML = `
     <div class="video-wrapper">
@@ -202,10 +207,11 @@ function showClip(clip) {
     </div>
   `;
   preview.classList.remove('hidden');
+  // Hide process area (since we're done)
   processArea.classList.add('hidden');
 }
 
-// ---------- File input ----------
+// ---------- File input change ----------
 fileInput.addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (file) {
@@ -235,6 +241,7 @@ dropZone.addEventListener('drop', (e) => {
   }
 });
 
+// Click on drop zone triggers input
 dropZone.addEventListener('click', () => {
   fileInput.click();
 });
