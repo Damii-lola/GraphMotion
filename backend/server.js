@@ -7,6 +7,7 @@ const { v4: uuidv4 } = require('uuid');
 const cron = require('node-cron');
 const path = require('path');
 const fs = require('fs');
+const { Mistral } = require('@mistralai/mistralai');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,6 +24,11 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
+
+// Mistral client
+const mistral = new Mistral({
+  apiKey: process.env.MISTRAL_API_KEY,
+});
 
 // ---------- Ensure bucket exists ----------
 async function ensureBucket() {
@@ -43,10 +49,10 @@ async function ensureBucket() {
 }
 ensureBucket();
 
-// ---------- Multer config (memory storage) ----------
+// ---------- Multer config – 1GB limit ----------
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB max
+  limits: { fileSize: 1024 * 1024 * 1024 }, // 1 GB
   fileFilter: (req, file, cb) => {
     const allowed = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'];
     if (allowed.includes(file.mimetype)) cb(null, true);
@@ -69,7 +75,6 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
 
     console.log('[upload] Storing:', fileName, 'size:', file.size);
 
-    // Upload to Supabase
     const { error: uploadError } = await supabase.storage
       .from('temp_videos')
       .upload(filePath, file.buffer, {
@@ -78,13 +83,12 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
       });
     if (uploadError) throw uploadError;
 
-    // Generate signed URL (1 hour)
     const { data: signedData, error: signedErr } = await supabase.storage
       .from('temp_videos')
       .createSignedUrl(filePath, 3600);
     if (signedErr) throw signedErr;
 
-    // Optionally store metadata in DB
+    // Store metadata
     try {
       await supabase.from('video_uploads').insert([{
         file_name: fileName,
@@ -104,6 +108,40 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
 
   } catch (err) {
     console.error('[upload] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------- Mistral AI processing ----------
+app.post('/process-video', async (req, res) => {
+  const { signedUrl, fileName, userPrompt } = req.body;
+  if (!signedUrl || !fileName) {
+    return res.status(400).json({ error: 'Missing video info' });
+  }
+
+  try {
+    // Build a prompt
+    const prompt = userPrompt || `Write a creative and detailed script for a motion graphics animation that replicates and enhances the content of a video titled "${fileName}". The script should describe visual scenes, motion effects, transitions, and overall style. Make it engaging and suitable for a professional motion design project.`;
+
+    const chatResponse = await mistral.chat({
+      model: 'mistral-large-latest',
+      messages: [
+        { role: 'system', content: 'You are an expert motion graphics scriptwriter. Generate detailed, visual scripts for motion design projects.' },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.7,
+      max_tokens: 1500,
+    });
+
+    const script = chatResponse.choices[0].message.content;
+
+    res.json({
+      success: true,
+      script: script,
+    });
+
+  } catch (err) {
+    console.error('[process-video] Error:', err);
     res.status(500).json({ error: err.message });
   }
 });
