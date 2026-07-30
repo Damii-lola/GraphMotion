@@ -15,7 +15,6 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Increase server timeout
 const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 server.timeout = 600000; // 10 minutes
 
@@ -49,43 +48,18 @@ async function ensureBucket() {
 }
 ensureBucket();
 
-// ---------- Get signed upload URL ----------
+// ---------- (Optional) Keep the old endpoints for compatibility ----------
+// We'll use the frontend direct‑to‑Supabase upload, so these are just for reference.
+// But we keep them for the /confirm-upload if needed.
 app.post('/get-upload-url', async (req, res) => {
-  try {
-    const { originalName } = req.body;
-    if (!originalName) return res.status(400).json({ error: 'Missing originalName' });
-
-    const ext = originalName.includes('.') ? originalName.split('.').pop() : 'mp4';
-    const fileName = `${uuidv4()}.${ext}`;
-    const filePath = `temp_videos/${fileName}`;
-
-    const { data, error } = await supabase.storage
-      .from('temp_videos')
-      .createSignedUploadUrl(filePath);
-    if (error) throw error;
-
-    await supabase.from('video_uploads').insert([{
-      file_name: fileName,
-      original_name: originalName,
-      file_path: filePath,
-      upload_status: 'pending',
-      expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
-    }]);
-
-    res.json({ success: true, signedUrl: data.signedUrl, filePath, fileName: originalName });
-  } catch (err) {
-    console.error('[get-upload-url] Error:', err);
-    res.status(500).json({ error: err.message });
-  }
+  // Not used anymore – but kept for fallback
+  res.status(501).json({ error: 'Use direct upload with Supabase client.' });
 });
 
-// ---------- Confirm upload ----------
 app.post('/confirm-upload', async (req, res) => {
   const { filePath } = req.body;
   if (!filePath) return res.status(400).json({ error: 'Missing filePath' });
-
   try {
-    await supabase.from('video_uploads').update({ upload_status: 'completed' }).eq('file_path', filePath);
     const { data, error: signedErr } = await supabase.storage
       .from('temp_videos')
       .createSignedUrl(filePath, 3600);
@@ -119,7 +93,7 @@ app.post('/process-video', async (req, res) => {
   const videoPath = path.join(workDir, 'input.mp4');
 
   try {
-    // 1. Download video (stream to disk to save memory)
+    // 1. Download video via signed URL
     console.log('[process] Downloading video...');
     const writer = fs.createWriteStream(videoPath);
     const response = await axios({
@@ -133,17 +107,39 @@ app.post('/process-video', async (req, res) => {
       writer.on('error', reject);
     });
 
-    // 2. Get video duration
     const duration = await getVideoDuration(videoPath);
     console.log(`[process] Duration: ${duration}s`);
 
-    // 3. Extract audio (8kHz mono for speed)
+    // ---- Short video shortcut ----
+    if (duration < 8) {
+      const clipName = `clip_${uuidv4()}.mp4`;
+      const clipPath = path.join(workDir, clipName);
+      await new Promise((resolve, reject) => {
+        ffmpeg(videoPath)
+          .output(clipPath)
+          .on('end', resolve)
+          .on('error', reject)
+          .run();
+      });
+      const clipBuffer = fs.readFileSync(clipPath);
+      const clipFilePath = `temp_videos/clips/${clipName}`;
+      await supabase.storage.from('temp_videos').upload(clipFilePath, clipBuffer, { contentType: 'video/mp4' });
+      const { data: signedClip } = await supabase.storage.from('temp_videos').createSignedUrl(clipFilePath, 3600);
+      fs.rmSync(workDir, { recursive: true, force: true });
+      return res.json({
+        success: true,
+        found: true,
+        clips: [{ start: 0, end: duration, signedUrl: signedClip.signedUrl }]
+      });
+    }
+
+    // 2. Extract audio (8kHz mono)
     const audioPath = path.join(workDir, 'audio.wav');
     await new Promise((resolve, reject) => {
       ffmpeg(videoPath)
         .output(audioPath)
         .audioCodec('pcm_s16le')
-        .audioFrequency(8000) // half the samples = faster
+        .audioFrequency(8000)
         .audioChannels(1)
         .on('end', resolve)
         .on('error', reject)
@@ -169,21 +165,15 @@ app.post('/process-video', async (req, res) => {
       rmsPerSecond.push(rms);
     }
 
-    // 4. Scene detection with exec (optimised: scale to 320x? for speed)
+    // 3. Scene detection (scaled down to 320px width)
     const sceneFile = path.join(workDir, 'scenes.txt');
-    // Scale down to 320px width to speed up scene detection
     const ffmpegCmd = `"${ffmpegPath}" -i "${videoPath}" -vf "scale=320:-1,select=gt(scene\\\\,0.35),metadata=print:file=${sceneFile}" -vsync vfr -f null -`;
     console.log('[process] Detecting scene changes...');
     await new Promise((resolve, reject) => {
       exec(ffmpegCmd, (error, stdout, stderr) => {
-        // Even if error, check if scene file was created
-        if (fs.existsSync(sceneFile)) {
-          resolve();
-        } else if (error) {
-          reject(error);
-        } else {
-          resolve();
-        }
+        if (fs.existsSync(sceneFile)) resolve();
+        else if (error) reject(error);
+        else resolve();
       });
     });
 
@@ -201,21 +191,15 @@ app.post('/process-video', async (req, res) => {
     }
     console.log(`[process] Found ${sceneTimes.length} scene changes.`);
 
-    // 5. Combine audio energy + scene changes
+    // 4. Combine audio energy + scene changes
     const mean = rmsPerSecond.reduce((a, b) => a + b, 0) / rmsPerSecond.length;
     const std = Math.sqrt(rmsPerSecond.reduce((a, b) => a + (b - mean) ** 2, 0) / rmsPerSecond.length);
     const audioThreshold = mean + 1.2 * std;
 
     const interestingSeconds = new Set();
-
-    // High audio energy
     for (let i = 0; i < rmsPerSecond.length; i++) {
-      if (rmsPerSecond[i] > audioThreshold) {
-        interestingSeconds.add(i);
-      }
+      if (rmsPerSecond[i] > audioThreshold) interestingSeconds.add(i);
     }
-
-    // Scene changes (2s before, 3s after)
     for (const sceneTime of sceneTimes) {
       const sec = Math.floor(sceneTime);
       for (let i = Math.max(0, sec - 2); i < Math.min(rmsPerSecond.length, sec + 4); i++) {
@@ -228,7 +212,7 @@ app.post('/process-video', async (req, res) => {
       return res.json({ success: true, found: false, message: 'No interesting moments detected.' });
     }
 
-    // 6. Cluster
+    // 5. Cluster interesting seconds into segments
     const sorted = Array.from(interestingSeconds).sort((a, b) => a - b);
     const segments = [];
     let clusterStart = sorted[0];
@@ -246,14 +230,13 @@ app.post('/process-video', async (req, res) => {
       segments.push({ start: clusterStart, end: Math.min(clusterEnd + 1, duration) });
     }
 
-    // Filter short segments
     const finalSegments = segments.filter(s => s.end - s.start >= 1.5);
     if (finalSegments.length === 0) {
       fs.rmSync(workDir, { recursive: true, force: true });
       return res.json({ success: true, found: false, message: 'Segments too short.' });
     }
 
-    // 7. Crop each segment (max 10)
+    // 6. Crop each segment (max 10)
     const clips = [];
     for (let i = 0; i < Math.min(finalSegments.length, 10); i++) {
       const seg = finalSegments[i];
@@ -270,28 +253,14 @@ app.post('/process-video', async (req, res) => {
       });
       const clipBuffer = fs.readFileSync(clipPath);
       const clipFilePath = `temp_videos/clips/${clipName}`;
-      const { error: uploadErr } = await supabase.storage
-        .from('temp_videos')
-        .upload(clipFilePath, clipBuffer, { contentType: 'video/mp4' });
-      if (uploadErr) throw uploadErr;
-      const { data: signedClip, error: signedErr } = await supabase.storage
-        .from('temp_videos')
-        .createSignedUrl(clipFilePath, 3600);
+      await supabase.storage.from('temp_videos').upload(clipFilePath, clipBuffer, { contentType: 'video/mp4' });
+      const { data: signedClip, error: signedErr } = await supabase.storage.from('temp_videos').createSignedUrl(clipFilePath, 3600);
       if (signedErr) throw signedErr;
-      clips.push({
-        start: seg.start,
-        end: seg.end,
-        signedUrl: signedClip.signedUrl,
-      });
+      clips.push({ start: seg.start, end: seg.end, signedUrl: signedClip.signedUrl });
     }
 
     fs.rmSync(workDir, { recursive: true, force: true });
-
-    res.json({
-      success: true,
-      found: true,
-      clips: clips,
-    });
+    res.json({ success: true, found: true, clips });
 
   } catch (err) {
     console.error('[process] Error:', err);
