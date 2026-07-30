@@ -6,6 +6,7 @@
   <title>GraphMotion AI – Upload</title>
   <link rel="stylesheet" href="styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
   <div class="container">
@@ -43,11 +44,6 @@
     <div id="clipSelection" class="hidden">
       <h3>🎯 Select the most interesting clip:</h3>
       <div id="clipList" class="clip-list"></div>
-    </div>
-
-    <div id="aiResult" class="hidden">
-      <h3>AI-Generated Script</h3>
-      <div id="scriptOutput" class="script-output"></div>
     </div>
 
     <div id="loading" class="hidden">
