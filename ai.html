@@ -17,26 +17,39 @@
     <div id="dropZone" class="drop-zone">
       <div id="dropMessage">
         <p>📁 Drop your video here</p>
-        <span>or click to select</span>
+        <span>or click to select (max 1GB)</span>
       </div>
       <input type="file" id="fileInput" accept="video/*" />
     </div>
 
-    <!-- File name preview (after selection) -->
+    <!-- File info -->
     <div id="fileInfo" class="file-info hidden">
       <span id="fileName"></span>
       <span id="fileSize"></span>
     </div>
 
+    <!-- Uploaded video preview -->
     <div id="preview" class="hidden"></div>
 
+    <!-- Process button (hidden until upload completes) -->
+    <div id="processArea" class="hidden">
+      <button id="processBtn" class="btn-primary">🧠 Process with AI</button>
+    </div>
+
+    <!-- AI result -->
+    <div id="aiResult" class="hidden">
+      <h3>AI-Generated Script</h3>
+      <div id="scriptOutput" class="script-output"></div>
+    </div>
+
+    <!-- Loading overlay -->
     <div id="loading" class="hidden">
       <div class="spinner"></div>
-      <p>Uploading and processing your video...</p>
+      <p id="loadingMessage">Uploading and processing your video...</p>
     </div>
 
     <footer>
-      <p>Powered by Supabase</p>
+      <p>Powered by Supabase &amp; Mistral AI</p>
     </footer>
   </div>
   <script src="ai-script.js"></script>
