@@ -15,6 +15,10 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Increase server timeout
+const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.timeout = 600000; // 10 minutes
+
 app.use(cors({
   origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
   credentials: true,
@@ -103,7 +107,7 @@ function getVideoDuration(filePath) {
   });
 }
 
-// ---------- Main processing (scene changes + audio energy) ----------
+// ---------- Main processing (optimised) ----------
 app.post('/process-video', async (req, res) => {
   const { signedUrl, fileName } = req.body;
   if (!signedUrl || !fileName) {
@@ -115,28 +119,39 @@ app.post('/process-video', async (req, res) => {
   const videoPath = path.join(workDir, 'input.mp4');
 
   try {
-    // 1. Download video
+    // 1. Download video (stream to disk to save memory)
     console.log('[process] Downloading video...');
-    const videoRes = await axios.get(signedUrl, { responseType: 'arraybuffer' });
-    fs.writeFileSync(videoPath, videoRes.data);
+    const writer = fs.createWriteStream(videoPath);
+    const response = await axios({
+      method: 'get',
+      url: signedUrl,
+      responseType: 'stream',
+    });
+    response.data.pipe(writer);
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
 
     // 2. Get video duration
     const duration = await getVideoDuration(videoPath);
+    console.log(`[process] Duration: ${duration}s`);
 
-    // 3. Extract audio and compute RMS per second (audio energy)
+    // 3. Extract audio (8kHz mono for speed)
     const audioPath = path.join(workDir, 'audio.wav');
     await new Promise((resolve, reject) => {
       ffmpeg(videoPath)
         .output(audioPath)
         .audioCodec('pcm_s16le')
-        .audioFrequency(16000)
+        .audioFrequency(8000) // half the samples = faster
+        .audioChannels(1)
         .on('end', resolve)
         .on('error', reject)
         .run();
     });
 
     const audioData = fs.readFileSync(audioPath);
-    const sampleRate = 16000;
+    const sampleRate = 8000;
     const bytesPerSample = 2;
     const samplesPerSecond = sampleRate;
     const totalSeconds = Math.floor(audioData.length / (bytesPerSample * samplesPerSecond));
@@ -154,19 +169,18 @@ app.post('/process-video', async (req, res) => {
       rmsPerSecond.push(rms);
     }
 
-    // 4. Detect scene changes using ffmpeg with exec
+    // 4. Scene detection with exec (optimised: scale to 320x? for speed)
     const sceneFile = path.join(workDir, 'scenes.txt');
-    const ffmpegCmd = `"${ffmpegPath}" -i "${videoPath}" -vf "select=gt(scene\\\\,0.3),metadata=print:file=${sceneFile}" -vsync vfr -f null -`;
+    // Scale down to 320px width to speed up scene detection
+    const ffmpegCmd = `"${ffmpegPath}" -i "${videoPath}" -vf "scale=320:-1,select=gt(scene\\\\,0.35),metadata=print:file=${sceneFile}" -vsync vfr -f null -`;
     console.log('[process] Detecting scene changes...');
     await new Promise((resolve, reject) => {
       exec(ffmpegCmd, (error, stdout, stderr) => {
-        if (error) {
-          // Scene detection may still have written some data; check file
-          if (fs.existsSync(sceneFile)) {
-            resolve();
-          } else {
-            reject(error);
-          }
+        // Even if error, check if scene file was created
+        if (fs.existsSync(sceneFile)) {
+          resolve();
+        } else if (error) {
+          reject(error);
         } else {
           resolve();
         }
@@ -187,21 +201,21 @@ app.post('/process-video', async (req, res) => {
     }
     console.log(`[process] Found ${sceneTimes.length} scene changes.`);
 
-    // 5. Combine audio energy + scene changes to find interesting moments
+    // 5. Combine audio energy + scene changes
     const mean = rmsPerSecond.reduce((a, b) => a + b, 0) / rmsPerSecond.length;
     const std = Math.sqrt(rmsPerSecond.reduce((a, b) => a + (b - mean) ** 2, 0) / rmsPerSecond.length);
     const audioThreshold = mean + 1.2 * std;
 
     const interestingSeconds = new Set();
 
-    // 5a. Add seconds with high audio energy
+    // High audio energy
     for (let i = 0; i < rmsPerSecond.length; i++) {
       if (rmsPerSecond[i] > audioThreshold) {
         interestingSeconds.add(i);
       }
     }
 
-    // 5b. Add seconds around scene changes (2s before, 3s after)
+    // Scene changes (2s before, 3s after)
     for (const sceneTime of sceneTimes) {
       const sec = Math.floor(sceneTime);
       for (let i = Math.max(0, sec - 2); i < Math.min(rmsPerSecond.length, sec + 4); i++) {
@@ -214,7 +228,7 @@ app.post('/process-video', async (req, res) => {
       return res.json({ success: true, found: false, message: 'No interesting moments detected.' });
     }
 
-    // 6. Cluster interesting seconds
+    // 6. Cluster
     const sorted = Array.from(interestingSeconds).sort((a, b) => a - b);
     const segments = [];
     let clusterStart = sorted[0];
@@ -232,7 +246,7 @@ app.post('/process-video', async (req, res) => {
       segments.push({ start: clusterStart, end: Math.min(clusterEnd + 1, duration) });
     }
 
-    // Filter segments shorter than 1.5 seconds
+    // Filter short segments
     const finalSegments = segments.filter(s => s.end - s.start >= 1.5);
     if (finalSegments.length === 0) {
       fs.rmSync(workDir, { recursive: true, force: true });
@@ -310,4 +324,3 @@ async function cleanupExpiredVideos() {
 cron.schedule('*/5 * * * *', cleanupExpiredVideos);
 
 app.get('/ping', (req, res) => res.send('pong'));
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
