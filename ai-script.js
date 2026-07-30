@@ -143,7 +143,7 @@ processBtn.addEventListener('click', async () => {
     const response = await axios.post(`${BACKEND_URL}/process-video`, {
       signedUrl: currentSignedUrl,
       fileName: currentFileName,
-    }, { timeout: 300000 }); // 5 min timeout
+    }, { timeout: 600000 }); // 5 min timeout
 
     const data = response.data;
     if (!data.success) throw new Error(data.error || 'Processing failed');
