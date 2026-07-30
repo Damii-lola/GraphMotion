@@ -55,7 +55,7 @@ function resetDropZone() {
   dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 1GB)</span>`;
 }
 
-// ---------- Upload using signed URL ----------
+// ---------- Upload using signed URL (timeout: 0) ----------
 async function uploadFile(file) {
   if (!file) return;
   if (!file.type.startsWith('video/')) {
@@ -79,7 +79,7 @@ async function uploadFile(file) {
     const { signedUrl, filePath, fileName: name } = getUrlRes.data;
     currentFileName = name;
 
-    // 2. Upload directly to Supabase using the signed URL (PUT)
+    // 2. Upload directly to Supabase – timeout set to 0 (no timeout)
     const uploadRes = await axios.put(signedUrl, file, {
       headers: { 'Content-Type': file.type },
       onUploadProgress: (progressEvent) => {
@@ -87,20 +87,19 @@ async function uploadFile(file) {
         progressFill.style.width = `${percent}%`;
         progressText.textContent = `${percent}%`;
       },
-      timeout: 600000, // 10 min
-      maxContentLength: Infinity, // Allow large file upload
-      maxBodyLength: Infinity,    // Allow large file upload
+      timeout: 0, // No timeout – let the browser handle it
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
     });
 
     if (uploadRes.status !== 200) throw new Error('Upload to storage failed');
 
-    // 3. Confirm upload to backend (so it marks as completed)
-    const confirmRes = await axios.post(`${BACKEND_URL}/confirm-upload`, { filePath });
+    // 3. Confirm upload to backend (short timeout)
+    const confirmRes = await axios.post(`${BACKEND_URL}/confirm-upload`, { filePath }, { timeout: 30000 });
     const { signedUrl: playUrl } = confirmRes.data;
     currentSignedUrl = playUrl;
 
     progressArea.classList.add('hidden');
-    // Show video
     preview.innerHTML = `
       <div class="video-wrapper">
         <video controls autoplay>
@@ -121,7 +120,7 @@ async function uploadFile(file) {
     progressArea.classList.add('hidden');
     let errorMsg = 'Upload error: ';
     if (err.code === 'ECONNABORTED') {
-      errorMsg += 'The upload took too long. Please try again with a smaller file.';
+      errorMsg += 'The upload took too long. Please try again with a faster connection or a smaller file.';
     } else if (err.response && err.response.data && err.response.data.error) {
       errorMsg += err.response.data.error;
     } else if (err.message) {
@@ -145,7 +144,7 @@ processBtn.addEventListener('click', async () => {
     const response = await axios.post(`${BACKEND_URL}/process-video`, {
       signedUrl: currentSignedUrl,
       fileName: currentFileName,
-    }, { timeout: 600000 }); // 10 min
+    }, { timeout: 600000 }); // 10 min for processing
 
     const data = response.data;
     if (!data.success) throw new Error(data.error || 'Processing failed');
