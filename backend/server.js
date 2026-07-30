@@ -12,25 +12,20 @@ const { Mistral } = require('@mistralai/mistralai');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// CORS
 app.use(cors({
   origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
   credentials: true,
 }));
 app.use(express.json());
 
-// Supabase
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Mistral client
-const mistral = new Mistral({
-  apiKey: process.env.MISTRAL_API_KEY,
-});
+const mistral = new Mistral({ apiKey: process.env.MISTRAL_API_KEY });
 
-// ---------- Ensure bucket exists ----------
+// ---------- Ensure bucket ----------
 async function ensureBucket() {
   const bucketName = 'temp_videos';
   try {
@@ -49,9 +44,21 @@ async function ensureBucket() {
 }
 ensureBucket();
 
-// ---------- Multer config – 1GB limit ----------
+// ---------- Multer config – disk storage ----------
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const tmpDir = '/tmp/uploads';
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+    cb(null, tmpDir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.mp4';
+    cb(null, `${uuidv4()}${ext}`);
+  }
+});
+
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage,
   limits: { fileSize: 1024 * 1024 * 1024 }, // 1 GB
   fileFilter: (req, file, cb) => {
     const allowed = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'];
@@ -69,19 +76,22 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
 
     const file = req.file;
     const originalName = file.originalname || 'video.mp4';
-    const ext = path.extname(originalName) || '.mp4';
-    const fileName = `upload_${uuidv4()}${ext}`;
-    const filePath = `temp_videos/${fileName}`;
+    const filePath = `temp_videos/${file.filename}`;
 
-    console.log('[upload] Storing:', fileName, 'size:', file.size);
+    console.log('[upload] Storing:', file.filename, 'size:', file.size);
 
+    // Read file and upload to Supabase
+    const fileBuffer = fs.readFileSync(file.path);
     const { error: uploadError } = await supabase.storage
       .from('temp_videos')
-      .upload(filePath, file.buffer, {
+      .upload(filePath, fileBuffer, {
         contentType: file.mimetype,
         cacheControl: '3600',
       });
     if (uploadError) throw uploadError;
+
+    // Clean up temp file
+    fs.unlinkSync(file.path);
 
     const { data: signedData, error: signedErr } = await supabase.storage
       .from('temp_videos')
@@ -91,7 +101,7 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
     // Store metadata
     try {
       await supabase.from('video_uploads').insert([{
-        file_name: fileName,
+        file_name: file.filename,
         original_name: originalName,
         file_path: filePath,
         expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
@@ -108,6 +118,8 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
 
   } catch (err) {
     console.error('[upload] Error:', err);
+    // Clean up temp file if still exists
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ error: err.message });
   }
 });
@@ -120,7 +132,6 @@ app.post('/process-video', async (req, res) => {
   }
 
   try {
-    // Build a prompt
     const prompt = userPrompt || `Write a creative and detailed script for a motion graphics animation that replicates and enhances the content of a video titled "${fileName}". The script should describe visual scenes, motion effects, transitions, and overall style. Make it engaging and suitable for a professional motion design project.`;
 
     const chatResponse = await mistral.chat({
@@ -135,10 +146,7 @@ app.post('/process-video', async (req, res) => {
 
     const script = chatResponse.choices[0].message.content;
 
-    res.json({
-      success: true,
-      script: script,
-    });
+    res.json({ success: true, script });
 
   } catch (err) {
     console.error('[process-video] Error:', err);
