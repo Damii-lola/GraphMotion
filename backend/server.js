@@ -25,7 +25,7 @@ const supabase = createClient(
 
 const mistral = new Mistral({ apiKey: process.env.MISTRAL_API_KEY });
 
-// ---------- Ensure bucket ----------
+// ----- Ensure bucket ----------
 async function ensureBucket() {
   const bucketName = 'temp_videos';
   try {
