@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GraphMotion AI – Upload</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🎬 GraphMotion AI</h1>
+      <p>Upload a video from your computer</p>
+    </header>
+
+    <div class="upload-area">
+      <input type="file" id="fileInput" accept="video/*" />
+      <button id="uploadBtn" class="btn-primary">⬆️ Upload & Preview</button>
+    </div>
+
+    <div id="preview" class="hidden"></div>
+
+    <div id="loading" class="hidden">
+      <div class="spinner"></div>
+      <p>Uploading and processing your video...</p>
+    </div>
+
+    <footer>
+      <p>Powered by Supabase</p>
+    </footer>
+  </div>
+  <script src="ai-script.js"></script>
+</body>
+</html>
