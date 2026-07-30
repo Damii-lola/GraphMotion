@@ -2,20 +2,23 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
-const fs = require('fs');
-const path = require('path');
+const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const cron = require('node-cron');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// CORS
 app.use(cors({
   origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
   credentials: true,
 }));
 app.use(express.json());
 
+// Supabase
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -29,12 +32,10 @@ async function ensureBucket() {
     if (error) throw error;
     const exists = buckets.some(b => b.name === bucketName);
     if (!exists) {
-      console.log(`[Startup] Creating bucket "${bucketName}"...`);
-      const { error: createErr } = await supabase.storage.createBucket(bucketName, { public: false });
-      if (createErr) throw createErr;
-      console.log(`[Startup] Bucket created.`);
+      await supabase.storage.createBucket(bucketName, { public: false });
+      console.log('[Startup] Created bucket:', bucketName);
     } else {
-      console.log(`[Startup] Bucket "${bucketName}" exists.`);
+      console.log('[Startup] Bucket exists:', bucketName);
     }
   } catch (err) {
     console.error('[Startup] Bucket error:', err.message);
@@ -42,116 +43,76 @@ async function ensureBucket() {
 }
 ensureBucket();
 
-// ---------- Helpers ----------
-function isTikTokUrl(url) {
-  return url.includes('tiktok.com');
-}
-
-// ---------- Get TikTok video info (raw download URL) ----------
-async function getTikTokVideoInfo(url) {
-  const apiUrl = `https://tikwm.com/api/?url=${encodeURIComponent(url)}`;
-  const response = await fetch(apiUrl);
-  if (!response.ok) throw new Error(`TikTok API error ${response.status}`);
-  const data = await response.json();
-  if (data.code !== 0) throw new Error(data.msg || 'TikTok API error');
-  const videoUrl = data.data.hdplay || data.data.play || data.data.wmplay;
-  if (!videoUrl) throw new Error('No video URL found');
-  return {
-    videoUrl,
-    title: data.data.title || 'TikTok Video',
-    author: data.data.author?.unique_id || 'Unknown',
-  };
-}
-
-// ---------- Endpoint: preview (embed) ----------
-app.post('/get-video-info', async (req, res) => {
-  const { url } = req.body;
-  if (!url) return res.status(400).json({ error: 'URL required' });
-  if (!isTikTokUrl(url)) {
-    return res.status(400).json({ error: 'Only TikTok URLs are supported' });
-  }
-  try {
-    const info = await getTikTokVideoInfo(url);
-    res.json({
-      success: true,
-      videoUrl: info.videoUrl,
-      title: info.title,
-      author: info.author,
-    });
-  } catch (err) {
-    console.error('[get-video-info] Error:', err);
-    res.status(500).json({ error: err.message });
+// ---------- Multer config (memory storage) ----------
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200 MB max
+  fileFilter: (req, file, cb) => {
+    const allowed = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Only video files are allowed'));
   }
 });
 
-// ---------- Download full video and upload to Supabase ----------
-app.post('/download-video', async (req, res) => {
-  const { url } = req.body;
-  if (!url) return res.status(400).json({ error: 'URL required' });
-  if (!isTikTokUrl(url)) {
-    return res.status(400).json({ error: 'Only TikTok URLs are supported' });
-  }
-
-  const tempDir = path.join('/tmp', uuidv4());
-  fs.mkdirSync(tempDir, { recursive: true });
-
+// ---------- Upload endpoint ----------
+app.post('/upload-video', upload.single('video'), async (req, res) => {
   try {
-    const info = await getTikTokVideoInfo(url);
-    console.log('[download-video] Downloading from:', info.videoUrl);
+    if (!req.file) {
+      return res.status(400).json({ error: 'No video file uploaded' });
+    }
 
-    const videoFilePath = path.join(tempDir, 'video.mp4');
-    const response = await fetch(info.videoUrl);
-    if (!response.ok) throw new Error(`Download failed: ${response.status}`);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    fs.writeFileSync(videoFilePath, buffer);
-    console.log('[download-video] Download complete.');
-
-    const fileName = `video_${Date.now()}.mp4`;
+    const file = req.file;
+    const originalName = file.originalname || 'video.mp4';
+    const ext = path.extname(originalName) || '.mp4';
+    const fileName = `upload_${uuidv4()}${ext}`;
     const filePath = `temp_videos/${fileName}`;
 
+    console.log('[upload] Storing:', fileName, 'size:', file.size);
+
+    // Upload to Supabase
     const { error: uploadError } = await supabase.storage
       .from('temp_videos')
-      .upload(filePath, buffer, { contentType: 'video/mp4', cacheControl: '3600' });
+      .upload(filePath, file.buffer, {
+        contentType: file.mimetype,
+        cacheControl: '3600',
+      });
     if (uploadError) throw uploadError;
 
+    // Generate signed URL (1 hour)
     const { data: signedData, error: signedErr } = await supabase.storage
       .from('temp_videos')
       .createSignedUrl(filePath, 3600);
     if (signedErr) throw signedErr;
 
-    // Insert metadata – wrap in try/catch to avoid breaking the flow
+    // Optionally store metadata in DB
     try {
-      await supabase.from('video_downloads').insert([{
-        video_id: Date.now().toString(),
-        title: info.title,
+      await supabase.from('video_uploads').insert([{
+        file_name: fileName,
+        original_name: originalName,
         file_path: filePath,
         expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
       }]);
     } catch (dbErr) {
-      console.warn('[DB] Insert skipped (table may not exist):', dbErr.message);
+      console.warn('[DB] Insert skipped:', dbErr.message);
     }
-
-    fs.rmSync(tempDir, { recursive: true, force: true });
 
     res.json({
       success: true,
       signedUrl: signedData.signedUrl,
-      title: info.title,
-      author: info.author,
+      fileName: originalName,
     });
 
   } catch (err) {
-    console.error('[download-video] ERROR:', err);
-    if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
+    console.error('[upload] Error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ---------- Cleanup (removes expired files) ----------
+// ---------- Cleanup ----------
 async function cleanupExpiredVideos() {
   try {
     const { data: expired, error } = await supabase
-      .from('video_downloads')
+      .from('video_uploads')
       .select('id, file_path')
       .lt('expires_at', new Date().toISOString());
     if (error) throw error;
@@ -159,7 +120,7 @@ async function cleanupExpiredVideos() {
     const filePaths = expired.map(r => r.file_path);
     await supabase.storage.from('temp_videos').remove(filePaths);
     const ids = expired.map(r => r.id);
-    await supabase.from('video_downloads').delete().in('id', ids);
+    await supabase.from('video_uploads').delete().in('id', ids);
     console.log(`[Cleanup] Removed ${expired.length} expired files.`);
   } catch (err) {
     console.error('[Cleanup] Error:', err);
