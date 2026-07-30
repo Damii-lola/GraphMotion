@@ -92,7 +92,17 @@ app.post('/confirm-upload', async (req, res) => {
   }
 });
 
-// ---------- Processing (no transcription) ----------
+// ---------- Helper: get video duration ----------
+function getVideoDuration(filePath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, data) => {
+      if (err) reject(err);
+      else resolve(data.format.duration);
+    });
+  });
+}
+
+// ---------- Main processing (no transcription) ----------
 app.post('/process-video', async (req, res) => {
   const { signedUrl, fileName } = req.body;
   if (!signedUrl || !fileName) {
@@ -112,7 +122,7 @@ app.post('/process-video', async (req, res) => {
     // 2. Get video duration
     const duration = await getVideoDuration(videoPath);
 
-    // 3. Extract audio and compute RMS (volume) over time
+    // 3. Extract audio and compute RMS (volume) per second
     const audioPath = path.join(workDir, 'audio.wav');
     await new Promise((resolve, reject) => {
       ffmpeg(videoPath)
@@ -124,10 +134,9 @@ app.post('/process-video', async (req, res) => {
         .run();
     });
 
-    // Read audio data and compute RMS per second
     const audioData = fs.readFileSync(audioPath);
     const sampleRate = 16000;
-    const bytesPerSample = 2; // 16-bit
+    const bytesPerSample = 2;
     const samplesPerSecond = sampleRate;
     const totalSeconds = Math.floor(audioData.length / (bytesPerSample * samplesPerSecond));
     const rmsPerSecond = [];
@@ -144,37 +153,31 @@ app.post('/process-video', async (req, res) => {
       rmsPerSecond.push(rms);
     }
 
-    // 4. Detect scene changes (shots) using ffmpeg scene filter
-    const sceneFile = path.join(workDir, 'scenes.txt');
+    // 4. Detect scene changes using ffmpeg (via stderr capture)
+    const sceneTimes = [];
     await new Promise((resolve, reject) => {
       ffmpeg(videoPath)
-        .outputOptions([
-          '-vf', 'select=gt(scene\\,0.4),metadata=print:file=' + sceneFile,
-          '-vsync', 'vfr',
-          '-f', 'null',
-          '-'
-        ])
+        .videoFilters('select=gt(scene\\,0.4)')
+        .outputOptions(['-vsync vfr'])
+        .output('/dev/null')  // output to null (Linux)
+        .on('stderr', (line) => {
+          // Parse scene change lines like: [Parsed_metadata_1 @ ...] pts_time:12.345
+          if (line.includes('pts_time:')) {
+            const match = line.match(/pts_time:([\d.]+)/);
+            if (match) {
+              const t = parseFloat(match[1]);
+              if (t < duration) sceneTimes.push(t);
+            }
+          }
+        })
         .on('end', resolve)
         .on('error', reject)
         .run();
     });
 
-    // Parse scene change timestamps
-    const sceneTimes = [];
-    if (fs.existsSync(sceneFile)) {
-      const data = fs.readFileSync(sceneFile, 'utf8');
-      const lines = data.split('\n').filter(l => l.includes('pts_time:'));
-      for (const line of lines) {
-        const match = line.match(/pts_time:([\d.]+)/);
-        if (match) {
-          const t = parseFloat(match[1]);
-          if (t < duration) sceneTimes.push(t);
-        }
-      }
-    }
+    console.log(`[process] Detected ${sceneTimes.length} scene changes`);
 
-    // 5. Find interesting segments
-    // - High audio energy (RMS > mean + 1.5*std)
+    // 5. Find interesting segments based on audio energy + scene changes
     const mean = rmsPerSecond.reduce((a, b) => a + b, 0) / rmsPerSecond.length;
     const std = Math.sqrt(rmsPerSecond.reduce((a, b) => a + (b - mean) ** 2, 0) / rmsPerSecond.length);
     const threshold = mean + 1.5 * std;
@@ -186,14 +189,14 @@ app.post('/process-video', async (req, res) => {
       }
     }
 
-    // Combine with scene changes: find clusters of interesting seconds
-    const segments = [];
+    let segments = [];
+    // Cluster interesting seconds
     let clusterStart = null;
     for (let i = 0; i < interestingSeconds.length; i++) {
       const sec = interestingSeconds[i];
       if (clusterStart === null) {
         clusterStart = sec;
-      } else if (sec - interestingSeconds[i-1] > 5) { // gap > 5s -> new cluster
+      } else if (sec - interestingSeconds[i-1] > 5) {
         const end = interestingSeconds[i-1] + 1;
         segments.push({ start: clusterStart, end: Math.min(end, duration) });
         clusterStart = sec;
@@ -204,11 +207,10 @@ app.post('/process-video', async (req, res) => {
       segments.push({ start: clusterStart, end: Math.min(end, duration) });
     }
 
-    // Also include segments around scene changes if they have some energy
+    // Add segments around scene changes if they have some energy
     for (const sceneTime of sceneTimes) {
       const sec = Math.floor(sceneTime);
-      const window = 2; // +/- 2 seconds
-      // Check if there's any energy around this scene
+      const window = 2;
       let hasEnergy = false;
       for (let i = Math.max(0, sec - window); i < Math.min(rmsPerSecond.length, sec + window); i++) {
         if (rmsPerSecond[i] > mean + 0.8 * std) {
@@ -217,20 +219,18 @@ app.post('/process-video', async (req, res) => {
         }
       }
       if (hasEnergy) {
-        // Add a segment around the scene change
         const start = Math.max(0, sec - 1);
         const end = Math.min(duration, sec + 3);
         segments.push({ start, end });
       }
     }
 
-    // Merge overlapping segments
     if (segments.length === 0) {
       fs.rmSync(workDir, { recursive: true, force: true });
       return res.json({ success: true, found: false, message: 'No interesting moments detected.' });
     }
 
-    // Sort and merge
+    // Merge overlapping segments
     segments.sort((a, b) => a.start - b.start);
     const merged = [];
     let current = segments[0];
@@ -251,9 +251,9 @@ app.post('/process-video', async (req, res) => {
       return res.json({ success: true, found: false, message: 'Segments too short.' });
     }
 
-    // 6. Crop each segment
+    // 6. Crop each segment (max 10)
     const clips = [];
-    for (let i = 0; i < Math.min(finalSegments.length, 10); i++) { // max 10 clips
+    for (let i = 0; i < Math.min(finalSegments.length, 10); i++) {
       const seg = finalSegments[i];
       const clipName = `clip_${i}_${uuidv4()}.mp4`;
       const clipPath = path.join(workDir, clipName);
@@ -297,16 +297,6 @@ app.post('/process-video', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-// Helper: get video duration
-function getVideoDuration(filePath) {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(filePath, (err, data) => {
-      if (err) reject(err);
-      else resolve(data.format.duration);
-    });
-  });
-}
 
 // ---------- Cleanup ----------
 async function cleanupExpiredVideos() {
