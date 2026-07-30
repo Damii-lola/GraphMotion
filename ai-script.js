@@ -1,7 +1,7 @@
 // ---------- Supabase config ----------
-const supabaseUrl = 'https://xbmbmkxpgcijvxpdircg.supabase.co'; // CHANGE THIS
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhibWJta3hwZ2NpanZ4cGRpcmNnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxODk3ODAsImV4cCI6MjEwMDc2NTc4MH0.yF4E8OM0diU6jpKymVGQUb-Ve3212avCOUeH2YjcdIE'; // CHANGE THIS
-const supabase = window.supabase.createClient(supabaseUrl, supabaseAnonKey);
+const supabaseUrl = 'https://xbmbmkxpgcijvxpdircg.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhibWJta3hwZ2NpanZ4cGRpcmNnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUxODk3ODAsImV4cCI6MjEwMDc2NTc4MH0.yF4E8OM0diU6jpKymVGQUb-Ve3212avCOUeH2YjcdIE';
+const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseAnonKey);
 
 // ---------- DOM refs ----------
 const fileInput = document.getElementById('fileInput');
@@ -21,7 +21,7 @@ const progressText = document.getElementById('progressText');
 const clipSelection = document.getElementById('clipSelection');
 const clipList = document.getElementById('clipList');
 
-const BACKEND_URL = 'https://graphmotion.onrender.com'; // Your Render backend URL
+const BACKEND_URL = 'https://graphmotion.onrender.com'; // Update with your actual Render URL
 
 let currentSignedUrl = null;
 let currentFileName = null;
@@ -79,7 +79,7 @@ async function uploadFile(file) {
     const filePath = `temp_videos/${fileName}`;
 
     // Upload with progress
-    const { data, error } = await supabase.storage
+    const { data, error } = await supabaseClient.storage
       .from('temp_videos')
       .upload(filePath, file, {
         cacheControl: '3600',
@@ -94,7 +94,7 @@ async function uploadFile(file) {
     if (error) throw error;
 
     // Get signed URL for playback
-    const { data: signedData, error: signedErr } = await supabase.storage
+    const { data: signedData, error: signedErr } = await supabaseClient.storage
       .from('temp_videos')
       .createSignedUrl(filePath, 3600);
     if (signedErr) throw signedErr;
