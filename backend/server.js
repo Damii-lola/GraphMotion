@@ -18,6 +18,7 @@ const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 server.timeout = 600000; // 10 minutes
 
+// CORS
 app.use(cors({
   origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
   credentials: true,
@@ -48,18 +49,45 @@ async function ensureBucket() {
 }
 ensureBucket();
 
-// ---------- (Optional) Keep the old endpoints for compatibility ----------
-// We'll use the frontend direct‑to‑Supabase upload, so these are just for reference.
-// But we keep them for the /confirm-upload if needed.
+// ---------- Get signed upload URL ----------
 app.post('/get-upload-url', async (req, res) => {
-  // Not used anymore – but kept for fallback
-  res.status(501).json({ error: 'Use direct upload with Supabase client.' });
+  try {
+    const { originalName } = req.body;
+    if (!originalName) return res.status(400).json({ error: 'Missing originalName' });
+
+    const ext = originalName.includes('.') ? originalName.split('.').pop() : 'mp4';
+    const fileName = `${uuidv4()}.${ext}`;
+    const filePath = `temp_videos/${fileName}`;
+
+    // Generate signed upload URL (valid 10 minutes)
+    const { data, error } = await supabase.storage
+      .from('temp_videos')
+      .createSignedUploadUrl(filePath);
+    if (error) throw error;
+
+    // Store metadata in DB
+    await supabase.from('video_uploads').insert([{
+      file_name: fileName,
+      original_name: originalName,
+      file_path: filePath,
+      upload_status: 'pending',
+      expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+    }]);
+
+    res.json({ success: true, signedUrl: data.signedUrl, filePath, fileName: originalName });
+  } catch (err) {
+    console.error('[get-upload-url] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
+// ---------- Confirm upload ----------
 app.post('/confirm-upload', async (req, res) => {
   const { filePath } = req.body;
   if (!filePath) return res.status(400).json({ error: 'Missing filePath' });
+
   try {
+    await supabase.from('video_uploads').update({ upload_status: 'completed' }).eq('file_path', filePath);
     const { data, error: signedErr } = await supabase.storage
       .from('temp_videos')
       .createSignedUrl(filePath, 3600);
@@ -110,7 +138,7 @@ app.post('/process-video', async (req, res) => {
     const duration = await getVideoDuration(videoPath);
     console.log(`[process] Duration: ${duration}s`);
 
-    // ---- Short video shortcut ----
+    // Short video shortcut
     if (duration < 8) {
       const clipName = `clip_${uuidv4()}.mp4`;
       const clipPath = path.join(workDir, clipName);
@@ -165,7 +193,7 @@ app.post('/process-video', async (req, res) => {
       rmsPerSecond.push(rms);
     }
 
-    // 3. Scene detection (scaled down to 320px width)
+    // 3. Scene detection (scaled down)
     const sceneFile = path.join(workDir, 'scenes.txt');
     const ffmpegCmd = `"${ffmpegPath}" -i "${videoPath}" -vf "scale=320:-1,select=gt(scene\\\\,0.35),metadata=print:file=${sceneFile}" -vsync vfr -f null -`;
     console.log('[process] Detecting scene changes...');
@@ -212,7 +240,7 @@ app.post('/process-video', async (req, res) => {
       return res.json({ success: true, found: false, message: 'No interesting moments detected.' });
     }
 
-    // 5. Cluster interesting seconds into segments
+    // 5. Cluster interesting seconds
     const sorted = Array.from(interestingSeconds).sort((a, b) => a - b);
     const segments = [];
     let clusterStart = sorted[0];
