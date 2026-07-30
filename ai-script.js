@@ -19,7 +19,6 @@ const BACKEND_URL = 'https://graphmotion.onrender.com';
 
 let currentSignedUrl = null;
 let currentFileName = null;
-let selectedFile = null;
 
 // ---------- UI helpers ----------
 function showLoading(msg = 'Processing...') {
@@ -52,7 +51,7 @@ function resetDropZone() {
   dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 1GB)</span>`;
 }
 
-// ---------- Upload with progress & timeout ----------
+// ---------- Upload using signed URL ----------
 async function uploadFile(file) {
   if (!file) return;
   if (!file.type.startsWith('video/')) {
@@ -68,34 +67,41 @@ async function uploadFile(file) {
   progressFill.style.width = '0%';
   progressText.textContent = '0%';
 
-  const formData = new FormData();
-  formData.append('video', file);
-
   try {
-    const response = await axios.post(`${BACKEND_URL}/upload-video`, formData, {
+    // 1. Get signed upload URL from backend
+    const getUrlRes = await axios.post(`${BACKEND_URL}/get-upload-url`, {
+      originalName: file.name,
+    });
+    const { signedUrl, filePath, fileName: name } = getUrlRes.data;
+    currentFileName = name;
+
+    // 2. Upload directly to Supabase using the signed URL (PUT)
+    const uploadRes = await axios.put(signedUrl, file, {
+      headers: { 'Content-Type': file.type },
       onUploadProgress: (progressEvent) => {
         const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
         progressFill.style.width = `${percent}%`;
         progressText.textContent = `${percent}%`;
       },
-      timeout: 600000, // 10 minutes
+      timeout: 600000, // 10 min
     });
 
-    const data = response.data;
-    if (!data.success) throw new Error(data.error || 'Upload failed');
+    if (uploadRes.status !== 200) throw new Error('Upload to storage failed');
+
+    // 3. Confirm upload to backend (so it marks as completed)
+    const confirmRes = await axios.post(`${BACKEND_URL}/confirm-upload`, { filePath });
+    const { signedUrl: playUrl } = confirmRes.data;
+    currentSignedUrl = playUrl;
 
     progressArea.classList.add('hidden');
-
-    currentSignedUrl = data.signedUrl;
-    currentFileName = data.fileName;
-
+    // Show video
     preview.innerHTML = `
       <div class="video-wrapper">
         <video controls autoplay>
-          <source src="${data.signedUrl}" type="${file.type}" />
+          <source src="${playUrl}" type="${file.type}" />
         </video>
         <div class="video-info">
-          <h2>${data.fileName}</h2>
+          <h2>${currentFileName}</h2>
           <p>✅ Video ready – valid for 1 hour</p>
         </div>
       </div>
@@ -104,13 +110,12 @@ async function uploadFile(file) {
 
     processArea.classList.remove('hidden');
     resetDropZone();
-    selectedFile = null;
 
   } catch (err) {
     progressArea.classList.add('hidden');
     let errorMsg = 'Upload error: ';
     if (err.code === 'ECONNABORTED') {
-      errorMsg += 'The upload took too long and timed out. Please try again with a smaller file.';
+      errorMsg += 'The upload took too long. Please try again with a smaller file.';
     } else if (err.response && err.response.data && err.response.data.error) {
       errorMsg += err.response.data.error;
     } else if (err.message) {
@@ -134,8 +139,7 @@ processBtn.addEventListener('click', async () => {
     const response = await axios.post(`${BACKEND_URL}/process-video`, {
       signedUrl: currentSignedUrl,
       fileName: currentFileName,
-    }, { timeout: 60000 }); // 60 sec for AI
-
+    }, { timeout: 60000 });
     const data = response.data;
     if (!data.success) throw new Error(data.error || 'AI processing failed');
 
@@ -161,7 +165,6 @@ processBtn.addEventListener('click', async () => {
 fileInput.addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (file) {
-    selectedFile = file;
     showFileInfo(file);
     uploadFile(file);
   }
@@ -183,7 +186,6 @@ dropZone.addEventListener('drop', (e) => {
   if (files.length > 0) {
     const file = files[0];
     fileInput.files = e.dataTransfer.files;
-    selectedFile = file;
     showFileInfo(file);
     uploadFile(file);
   }
