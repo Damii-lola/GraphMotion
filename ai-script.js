@@ -52,7 +52,7 @@ function resetDropZone() {
   dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 1GB)</span>`;
 }
 
-// ---------- Upload with progress ----------
+// ---------- Upload with progress & timeout ----------
 async function uploadFile(file) {
   if (!file) return;
   if (!file.type.startsWith('video/')) {
@@ -64,7 +64,6 @@ async function uploadFile(file) {
     return;
   }
 
-  // Show progress bar
   progressArea.classList.remove('hidden');
   progressFill.style.width = '0%';
   progressText.textContent = '0%';
@@ -79,12 +78,12 @@ async function uploadFile(file) {
         progressFill.style.width = `${percent}%`;
         progressText.textContent = `${percent}%`;
       },
+      timeout: 600000, // 10 minutes
     });
 
     const data = response.data;
     if (!data.success) throw new Error(data.error || 'Upload failed');
 
-    // Hide progress, show video
     progressArea.classList.add('hidden');
 
     currentSignedUrl = data.signedUrl;
@@ -109,7 +108,17 @@ async function uploadFile(file) {
 
   } catch (err) {
     progressArea.classList.add('hidden');
-    alert('Upload error: ' + err.message);
+    let errorMsg = 'Upload error: ';
+    if (err.code === 'ECONNABORTED') {
+      errorMsg += 'The upload took too long and timed out. Please try again with a smaller file.';
+    } else if (err.response && err.response.data && err.response.data.error) {
+      errorMsg += err.response.data.error;
+    } else if (err.message) {
+      errorMsg += err.message;
+    } else {
+      errorMsg += 'Unknown error';
+    }
+    alert(errorMsg);
   }
 }
 
@@ -125,7 +134,8 @@ processBtn.addEventListener('click', async () => {
     const response = await axios.post(`${BACKEND_URL}/process-video`, {
       signedUrl: currentSignedUrl,
       fileName: currentFileName,
-    });
+    }, { timeout: 60000 }); // 60 sec for AI
+
     const data = response.data;
     if (!data.success) throw new Error(data.error || 'AI processing failed');
 
@@ -135,7 +145,15 @@ processBtn.addEventListener('click', async () => {
 
   } catch (err) {
     hideLoading();
-    alert('AI error: ' + err.message);
+    let errorMsg = 'AI error: ';
+    if (err.response && err.response.data && err.response.data.error) {
+      errorMsg += err.response.data.error;
+    } else if (err.message) {
+      errorMsg += err.message;
+    } else {
+      errorMsg += 'Unknown error';
+    }
+    alert(errorMsg);
   }
 });
 
