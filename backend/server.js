@@ -7,6 +7,7 @@ const cron = require('node-cron');
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
+const { exec } = require('child_process');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -102,7 +103,7 @@ function getVideoDuration(filePath) {
   });
 }
 
-// ---------- Main processing (audio energy only) ----------
+// ---------- Main processing (scene changes + audio energy) ----------
 app.post('/process-video', async (req, res) => {
   const { signedUrl, fileName } = req.body;
   if (!signedUrl || !fileName) {
@@ -122,7 +123,7 @@ app.post('/process-video', async (req, res) => {
     // 2. Get video duration
     const duration = await getVideoDuration(videoPath);
 
-    // 3. Extract audio and compute RMS per second
+    // 3. Extract audio and compute RMS per second (audio energy)
     const audioPath = path.join(workDir, 'audio.wav');
     await new Promise((resolve, reject) => {
       ffmpeg(videoPath)
@@ -153,52 +154,92 @@ app.post('/process-video', async (req, res) => {
       rmsPerSecond.push(rms);
     }
 
-    // 4. Find segments with high audio energy (peaks)
+    // 4. Detect scene changes using ffmpeg with exec
+    const sceneFile = path.join(workDir, 'scenes.txt');
+    const ffmpegCmd = `"${ffmpegPath}" -i "${videoPath}" -vf "select=gt(scene\\\\,0.3),metadata=print:file=${sceneFile}" -vsync vfr -f null -`;
+    console.log('[process] Detecting scene changes...');
+    await new Promise((resolve, reject) => {
+      exec(ffmpegCmd, (error, stdout, stderr) => {
+        if (error) {
+          // Scene detection may still have written some data; check file
+          if (fs.existsSync(sceneFile)) {
+            resolve();
+          } else {
+            reject(error);
+          }
+        } else {
+          resolve();
+        }
+      });
+    });
+
+    const sceneTimes = [];
+    if (fs.existsSync(sceneFile)) {
+      const data = fs.readFileSync(sceneFile, 'utf8');
+      const lines = data.split('\n').filter(l => l.includes('pts_time:'));
+      for (const line of lines) {
+        const match = line.match(/pts_time:([\d.]+)/);
+        if (match) {
+          const t = parseFloat(match[1]);
+          if (t < duration) sceneTimes.push(t);
+        }
+      }
+    }
+    console.log(`[process] Found ${sceneTimes.length} scene changes.`);
+
+    // 5. Combine audio energy + scene changes to find interesting moments
     const mean = rmsPerSecond.reduce((a, b) => a + b, 0) / rmsPerSecond.length;
     const std = Math.sqrt(rmsPerSecond.reduce((a, b) => a + (b - mean) ** 2, 0) / rmsPerSecond.length);
-    const threshold = mean + 1.5 * std; // 1.5 standard deviations above mean
+    const audioThreshold = mean + 1.2 * std;
 
-    const interestingSeconds = [];
+    const interestingSeconds = new Set();
+
+    // 5a. Add seconds with high audio energy
     for (let i = 0; i < rmsPerSecond.length; i++) {
-      if (rmsPerSecond[i] > threshold) {
-        interestingSeconds.push(i);
+      if (rmsPerSecond[i] > audioThreshold) {
+        interestingSeconds.add(i);
       }
     }
 
-    if (interestingSeconds.length === 0) {
+    // 5b. Add seconds around scene changes (2s before, 3s after)
+    for (const sceneTime of sceneTimes) {
+      const sec = Math.floor(sceneTime);
+      for (let i = Math.max(0, sec - 2); i < Math.min(rmsPerSecond.length, sec + 4); i++) {
+        interestingSeconds.add(i);
+      }
+    }
+
+    if (interestingSeconds.size === 0) {
       fs.rmSync(workDir, { recursive: true, force: true });
-      return res.json({ success: true, found: false, message: 'No loud moments detected.' });
+      return res.json({ success: true, found: false, message: 'No interesting moments detected.' });
     }
 
-    // 5. Cluster consecutive seconds
+    // 6. Cluster interesting seconds
+    const sorted = Array.from(interestingSeconds).sort((a, b) => a - b);
     const segments = [];
-    let clusterStart = interestingSeconds[0];
-    let clusterEnd = interestingSeconds[0];
-    for (let i = 1; i < interestingSeconds.length; i++) {
-      if (interestingSeconds[i] - interestingSeconds[i-1] <= 2) {
-        // extend cluster
-        clusterEnd = interestingSeconds[i];
+    let clusterStart = sorted[0];
+    let clusterEnd = sorted[0];
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i] - sorted[i-1] <= 3) {
+        clusterEnd = sorted[i];
       } else {
-        // cluster ended
         segments.push({ start: clusterStart, end: Math.min(clusterEnd + 1, duration) });
-        clusterStart = interestingSeconds[i];
-        clusterEnd = interestingSeconds[i];
+        clusterStart = sorted[i];
+        clusterEnd = sorted[i];
       }
     }
-    // push last cluster
     if (clusterStart !== undefined) {
       segments.push({ start: clusterStart, end: Math.min(clusterEnd + 1, duration) });
     }
 
-    // 6. Merge overlapping (though we already did)
-    // 7. Filter segments shorter than 1.5 seconds
+    // Filter segments shorter than 1.5 seconds
     const finalSegments = segments.filter(s => s.end - s.start >= 1.5);
     if (finalSegments.length === 0) {
       fs.rmSync(workDir, { recursive: true, force: true });
       return res.json({ success: true, found: false, message: 'Segments too short.' });
     }
 
-    // 8. Crop each segment (max 10)
+    // 7. Crop each segment (max 10)
     const clips = [];
     for (let i = 0; i < Math.min(finalSegments.length, 10); i++) {
       const seg = finalSegments[i];
