@@ -102,7 +102,7 @@ function getVideoDuration(filePath) {
   });
 }
 
-// ---------- Main processing (no transcription) ----------
+// ---------- Main processing (audio energy only) ----------
 app.post('/process-video', async (req, res) => {
   const { signedUrl, fileName } = req.body;
   if (!signedUrl || !fileName) {
@@ -122,7 +122,7 @@ app.post('/process-video', async (req, res) => {
     // 2. Get video duration
     const duration = await getVideoDuration(videoPath);
 
-    // 3. Extract audio and compute RMS (volume) per second
+    // 3. Extract audio and compute RMS per second
     const audioPath = path.join(workDir, 'audio.wav');
     await new Promise((resolve, reject) => {
       ffmpeg(videoPath)
@@ -153,34 +153,10 @@ app.post('/process-video', async (req, res) => {
       rmsPerSecond.push(rms);
     }
 
-    // 4. Detect scene changes using ffmpeg (via stderr capture)
-    const sceneTimes = [];
-    await new Promise((resolve, reject) => {
-      ffmpeg(videoPath)
-        .videoFilters('select=gt(scene\\,0.4)')
-        .outputOptions(['-vsync vfr'])
-        .output('/dev/null')  // output to null (Linux)
-        .on('stderr', (line) => {
-          // Parse scene change lines like: [Parsed_metadata_1 @ ...] pts_time:12.345
-          if (line.includes('pts_time:')) {
-            const match = line.match(/pts_time:([\d.]+)/);
-            if (match) {
-              const t = parseFloat(match[1]);
-              if (t < duration) sceneTimes.push(t);
-            }
-          }
-        })
-        .on('end', resolve)
-        .on('error', reject)
-        .run();
-    });
-
-    console.log(`[process] Detected ${sceneTimes.length} scene changes`);
-
-    // 5. Find interesting segments based on audio energy + scene changes
+    // 4. Find segments with high audio energy (peaks)
     const mean = rmsPerSecond.reduce((a, b) => a + b, 0) / rmsPerSecond.length;
     const std = Math.sqrt(rmsPerSecond.reduce((a, b) => a + (b - mean) ** 2, 0) / rmsPerSecond.length);
-    const threshold = mean + 1.5 * std;
+    const threshold = mean + 1.5 * std; // 1.5 standard deviations above mean
 
     const interestingSeconds = [];
     for (let i = 0; i < rmsPerSecond.length; i++) {
@@ -189,69 +165,40 @@ app.post('/process-video', async (req, res) => {
       }
     }
 
-    let segments = [];
-    // Cluster interesting seconds
-    let clusterStart = null;
-    for (let i = 0; i < interestingSeconds.length; i++) {
-      const sec = interestingSeconds[i];
-      if (clusterStart === null) {
-        clusterStart = sec;
-      } else if (sec - interestingSeconds[i-1] > 5) {
-        const end = interestingSeconds[i-1] + 1;
-        segments.push({ start: clusterStart, end: Math.min(end, duration) });
-        clusterStart = sec;
-      }
-    }
-    if (clusterStart !== null) {
-      const end = interestingSeconds[interestingSeconds.length-1] + 1;
-      segments.push({ start: clusterStart, end: Math.min(end, duration) });
-    }
-
-    // Add segments around scene changes if they have some energy
-    for (const sceneTime of sceneTimes) {
-      const sec = Math.floor(sceneTime);
-      const window = 2;
-      let hasEnergy = false;
-      for (let i = Math.max(0, sec - window); i < Math.min(rmsPerSecond.length, sec + window); i++) {
-        if (rmsPerSecond[i] > mean + 0.8 * std) {
-          hasEnergy = true;
-          break;
-        }
-      }
-      if (hasEnergy) {
-        const start = Math.max(0, sec - 1);
-        const end = Math.min(duration, sec + 3);
-        segments.push({ start, end });
-      }
-    }
-
-    if (segments.length === 0) {
+    if (interestingSeconds.length === 0) {
       fs.rmSync(workDir, { recursive: true, force: true });
-      return res.json({ success: true, found: false, message: 'No interesting moments detected.' });
+      return res.json({ success: true, found: false, message: 'No loud moments detected.' });
     }
 
-    // Merge overlapping segments
-    segments.sort((a, b) => a.start - b.start);
-    const merged = [];
-    let current = segments[0];
-    for (let i = 1; i < segments.length; i++) {
-      if (segments[i].start <= current.end + 1) {
-        current.end = Math.max(current.end, segments[i].end);
+    // 5. Cluster consecutive seconds
+    const segments = [];
+    let clusterStart = interestingSeconds[0];
+    let clusterEnd = interestingSeconds[0];
+    for (let i = 1; i < interestingSeconds.length; i++) {
+      if (interestingSeconds[i] - interestingSeconds[i-1] <= 2) {
+        // extend cluster
+        clusterEnd = interestingSeconds[i];
       } else {
-        merged.push(current);
-        current = segments[i];
+        // cluster ended
+        segments.push({ start: clusterStart, end: Math.min(clusterEnd + 1, duration) });
+        clusterStart = interestingSeconds[i];
+        clusterEnd = interestingSeconds[i];
       }
     }
-    merged.push(current);
+    // push last cluster
+    if (clusterStart !== undefined) {
+      segments.push({ start: clusterStart, end: Math.min(clusterEnd + 1, duration) });
+    }
 
-    // Filter segments that are too short
-    const finalSegments = merged.filter(s => s.end - s.start >= 1.5);
+    // 6. Merge overlapping (though we already did)
+    // 7. Filter segments shorter than 1.5 seconds
+    const finalSegments = segments.filter(s => s.end - s.start >= 1.5);
     if (finalSegments.length === 0) {
       fs.rmSync(workDir, { recursive: true, force: true });
       return res.json({ success: true, found: false, message: 'Segments too short.' });
     }
 
-    // 6. Crop each segment (max 10)
+    // 8. Crop each segment (max 10)
     const clips = [];
     for (let i = 0; i < Math.min(finalSegments.length, 10); i++) {
       const seg = finalSegments[i];
