@@ -10,12 +10,22 @@
   <div class="container">
     <header>
       <h1>🎬 GraphMotion AI</h1>
-      <p>Upload a video from your computer</p>
+      <p>Upload your video – drag & drop or click to browse</p>
     </header>
 
-    <div class="upload-area">
+    <!-- Drop zone -->
+    <div id="dropZone" class="drop-zone">
+      <div id="dropMessage">
+        <p>📁 Drop your video here</p>
+        <span>or click to select</span>
+      </div>
       <input type="file" id="fileInput" accept="video/*" />
-      <button id="uploadBtn" class="btn-primary">⬆️ Upload & Preview</button>
+    </div>
+
+    <!-- File name preview (after selection) -->
+    <div id="fileInfo" class="file-info hidden">
+      <span id="fileName"></span>
+      <span id="fileSize"></span>
     </div>
 
     <div id="preview" class="hidden"></div>
