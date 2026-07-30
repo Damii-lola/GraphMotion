@@ -1,6 +1,3 @@
-// ---------- Supabase config (only for signed URL, not used directly) ----------
-// We'll use the backend to get signed URLs
-
 // ---------- DOM refs ----------
 const fileInput = document.getElementById('fileInput');
 const dropZone = document.getElementById('dropZone');
@@ -55,7 +52,34 @@ function resetDropZone() {
   dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 1GB)</span>`;
 }
 
-// ---------- Upload with axios (working progress) ----------
+// ---------- Upload with XHR (fastest, reliable progress) ----------
+function uploadFileWithXHR(file, signedUrl) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', signedUrl);
+    xhr.setRequestHeader('Content-Type', file.type);
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const percent = Math.round((e.loaded / e.total) * 100);
+        progressFill.style.width = `${percent}%`;
+        progressText.textContent = `${percent}%`;
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status === 200) resolve();
+      else reject(new Error(`Upload failed with status ${xhr.status}`));
+    };
+
+    xhr.onerror = () => reject(new Error('Upload failed (network error)'));
+    xhr.ontimeout = () => reject(new Error('Upload timed out'));
+
+    xhr.timeout = 600000; // 10 minutes
+    xhr.send(file);
+  });
+}
+
 async function uploadFile(file) {
   if (!file) return;
   if (!file.type.startsWith('video/')) {
@@ -79,20 +103,8 @@ async function uploadFile(file) {
     const { signedUrl, filePath, fileName: name } = getUrlRes.data;
     currentFileName = name;
 
-    // 2. Upload directly to Supabase with axios (progress works)
-    const uploadRes = await axios.put(signedUrl, file, {
-      headers: { 'Content-Type': file.type },
-      onUploadProgress: (progressEvent) => {
-        const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-        progressFill.style.width = `${percent}%`;
-        progressText.textContent = `${percent}%`;
-      },
-      timeout: 600000, // 10 min
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity,
-    });
-
-    if (uploadRes.status !== 200) throw new Error('Upload to storage failed');
+    // 2. Upload using XHR (fast, with progress)
+    await uploadFileWithXHR(file, signedUrl);
 
     // 3. Confirm upload and get playback URL
     const confirmRes = await axios.post(`${BACKEND_URL}/confirm-upload`, { filePath });
@@ -117,17 +129,7 @@ async function uploadFile(file) {
 
   } catch (err) {
     progressArea.classList.add('hidden');
-    let errorMsg = 'Upload error: ';
-    if (err.code === 'ECONNABORTED') {
-      errorMsg += 'The upload took too long. Please try again with a smaller file.';
-    } else if (err.response && err.response.data && err.response.data.error) {
-      errorMsg += err.response.data.error;
-    } else if (err.message) {
-      errorMsg += err.message;
-    } else {
-      errorMsg += 'Unknown error';
-    }
-    alert(errorMsg);
+    alert('Upload error: ' + err.message);
   }
 }
 
