@@ -11,17 +11,22 @@ const processArea = document.getElementById('processArea');
 const processBtn = document.getElementById('processBtn');
 const aiResult = document.getElementById('aiResult');
 const scriptOutput = document.getElementById('scriptOutput');
+const progressArea = document.getElementById('progressArea');
+const progressFill = document.getElementById('progressFill');
+const progressText = document.getElementById('progressText');
 
 const BACKEND_URL = 'https://graphmotion.onrender.com';
 
 let currentSignedUrl = null;
 let currentFileName = null;
+let selectedFile = null;
 
 // ---------- UI helpers ----------
-function showLoading(msg = 'Uploading and processing your video...') {
+function showLoading(msg = 'Processing...') {
   preview.classList.add('hidden');
   aiResult.classList.add('hidden');
   processArea.classList.add('hidden');
+  progressArea.classList.add('hidden');
   loading.classList.remove('hidden');
   loadingMessage.textContent = msg;
   fileInput.disabled = true;
@@ -47,7 +52,7 @@ function resetDropZone() {
   dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 1GB)</span>`;
 }
 
-// ---------- Upload logic ----------
+// ---------- Upload with progress ----------
 async function uploadFile(file) {
   if (!file) return;
   if (!file.type.startsWith('video/')) {
@@ -59,25 +64,32 @@ async function uploadFile(file) {
     return;
   }
 
-  showLoading('Uploading video...');
+  // Show progress bar
+  progressArea.classList.remove('hidden');
+  progressFill.style.width = '0%';
+  progressText.textContent = '0%';
+
   const formData = new FormData();
   formData.append('video', file);
 
   try {
-    const response = await fetch(`${BACKEND_URL}/upload-video`, {
-      method: 'POST',
-      body: formData,
+    const response = await axios.post(`${BACKEND_URL}/upload-video`, formData, {
+      onUploadProgress: (progressEvent) => {
+        const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        progressFill.style.width = `${percent}%`;
+        progressText.textContent = `${percent}%`;
+      },
     });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Upload failed');
 
-    hideLoading();
+    const data = response.data;
+    if (!data.success) throw new Error(data.error || 'Upload failed');
 
-    // Save for later use
+    // Hide progress, show video
+    progressArea.classList.add('hidden');
+
     currentSignedUrl = data.signedUrl;
     currentFileName = data.fileName;
 
-    // Show video player
     preview.innerHTML = `
       <div class="video-wrapper">
         <video controls autoplay>
@@ -91,15 +103,12 @@ async function uploadFile(file) {
     `;
     preview.classList.remove('hidden');
 
-    // Show process button
     processArea.classList.remove('hidden');
-
-    // Reset drop zone
     resetDropZone();
     selectedFile = null;
 
   } catch (err) {
-    hideLoading();
+    progressArea.classList.add('hidden');
     alert('Upload error: ' + err.message);
   }
 }
@@ -113,17 +122,12 @@ processBtn.addEventListener('click', async () => {
 
   showLoading('Contacting Mistral AI...');
   try {
-    const response = await fetch(`${BACKEND_URL}/process-video`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        signedUrl: currentSignedUrl,
-        fileName: currentFileName,
-        // Optionally add a user prompt input field later
-      }),
+    const response = await axios.post(`${BACKEND_URL}/process-video`, {
+      signedUrl: currentSignedUrl,
+      fileName: currentFileName,
     });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'AI processing failed');
+    const data = response.data;
+    if (!data.success) throw new Error(data.error || 'AI processing failed');
 
     hideLoading();
     aiResult.classList.remove('hidden');
