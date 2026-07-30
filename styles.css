@@ -311,3 +311,26 @@ footer {
   color: #475569;
   font-weight: 500;
 }
+
+.clip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  justify-content: center;
+  margin: 1.5rem 0;
+}
+.clip-item {
+  width: 200px;
+  background: #f8fafc;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+}
+.clip-item video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+.clip-item button {
+  margin: 0.8rem 0;
+}
