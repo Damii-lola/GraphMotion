@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GraphMotion AI – Upload</title>
   <link rel="stylesheet" href="styles.css" />
-  <!-- Axios for progress tracking -->
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
 </head>
 <body>
@@ -28,7 +27,6 @@
       <span id="fileSize"></span>
     </div>
 
-    <!-- Progress bar -->
     <div id="progressArea" class="hidden">
       <div class="progress-bar">
         <div id="progressFill" class="progress-fill" style="width:0%"></div>
@@ -37,9 +35,16 @@
     </div>
 
     <div id="preview" class="hidden"></div>
+
     <div id="processArea" class="hidden">
-      <button id="processBtn" class="btn-primary">🧠 Process with AI</button>
+      <button id="processBtn" class="btn-primary">🧠 Find Interesting Moments</button>
     </div>
+
+    <div id="clipSelection" class="hidden">
+      <h3>🎯 Select the most interesting clip:</h3>
+      <div id="clipList" class="clip-list"></div>
+    </div>
+
     <div id="aiResult" class="hidden">
       <h3>AI-Generated Script</h3>
       <div id="scriptOutput" class="script-output"></div>
@@ -51,7 +56,7 @@
     </div>
 
     <footer>
-      <p>Powered by Supabase &amp; Mistral AI</p>
+      <p>Powered by Supabase</p>
     </footer>
   </div>
   <script src="ai-script.js"></script>
