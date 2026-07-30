@@ -12,11 +12,14 @@ const { Mistral } = require('@mistralai/mistralai');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Increase JSON/URL-encoded limits (just in case)
+app.use(express.json({ limit: '1gb' }));
+app.use(express.urlencoded({ limit: '1gb', extended: true }));
+
 app.use(cors({
   origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
   credentials: true,
 }));
-app.use(express.json());
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -25,7 +28,7 @@ const supabase = createClient(
 
 const mistral = new Mistral({ apiKey: process.env.MISTRAL_API_KEY });
 
-// ----- Ensure bucket ----------
+// ---------- Ensure bucket ----------
 async function ensureBucket() {
   const bucketName = 'temp_videos';
   try {
@@ -80,7 +83,6 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
 
     console.log('[upload] Storing:', file.filename, 'size:', file.size);
 
-    // Read file and upload to Supabase
     const fileBuffer = fs.readFileSync(file.path);
     const { error: uploadError } = await supabase.storage
       .from('temp_videos')
@@ -90,7 +92,6 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
       });
     if (uploadError) throw uploadError;
 
-    // Clean up temp file
     fs.unlinkSync(file.path);
 
     const { data: signedData, error: signedErr } = await supabase.storage
@@ -98,7 +99,6 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
       .createSignedUrl(filePath, 3600);
     if (signedErr) throw signedErr;
 
-    // Store metadata
     try {
       await supabase.from('video_uploads').insert([{
         file_name: file.filename,
@@ -118,7 +118,6 @@ app.post('/upload-video', upload.single('video'), async (req, res) => {
 
   } catch (err) {
     console.error('[upload] Error:', err);
-    // Clean up temp file if still exists
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ error: err.message });
   }
@@ -175,4 +174,7 @@ async function cleanupExpiredVideos() {
 cron.schedule('0 * * * *', cleanupExpiredVideos);
 
 app.get('/ping', (req, res) => res.send('pong'));
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// ---------- Start server with timeout ----------
+const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.timeout = 600000; // 10 minutes
