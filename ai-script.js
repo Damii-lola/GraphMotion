@@ -6,14 +6,24 @@ const fileName = document.getElementById('fileName');
 const fileSize = document.getElementById('fileSize');
 const preview = document.getElementById('preview');
 const loading = document.getElementById('loading');
+const loadingMessage = document.getElementById('loadingMessage');
+const processArea = document.getElementById('processArea');
+const processBtn = document.getElementById('processBtn');
+const aiResult = document.getElementById('aiResult');
+const scriptOutput = document.getElementById('scriptOutput');
+
 const BACKEND_URL = 'https://graphmotion.onrender.com';
 
-let selectedFile = null;
+let currentSignedUrl = null;
+let currentFileName = null;
 
 // ---------- UI helpers ----------
-function showLoading() {
+function showLoading(msg = 'Uploading and processing your video...') {
   preview.classList.add('hidden');
+  aiResult.classList.add('hidden');
+  processArea.classList.add('hidden');
   loading.classList.remove('hidden');
+  loadingMessage.textContent = msg;
   fileInput.disabled = true;
   dropZone.style.pointerEvents = 'none';
 }
@@ -34,24 +44,22 @@ function showFileInfo(file) {
 
 function resetDropZone() {
   fileInfo.classList.add('hidden');
-  dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select</span>`;
+  dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 1GB)</span>`;
 }
 
 // ---------- Upload logic ----------
 async function uploadFile(file) {
   if (!file) return;
-
-  // Validate file type
   if (!file.type.startsWith('video/')) {
     alert('Please select a video file.');
     return;
   }
-  if (file.size > 200 * 1024 * 1024) {
-    alert('File too large. Max 200 MB.');
+  if (file.size > 1024 * 1024 * 1024) {
+    alert('File too large. Max 1 GB.');
     return;
   }
 
-  showLoading();
+  showLoading('Uploading video...');
   const formData = new FormData();
   formData.append('video', file);
 
@@ -64,7 +72,12 @@ async function uploadFile(file) {
     if (!response.ok) throw new Error(data.error || 'Upload failed');
 
     hideLoading();
-    // Show video
+
+    // Save for later use
+    currentSignedUrl = data.signedUrl;
+    currentFileName = data.fileName;
+
+    // Show video player
     preview.innerHTML = `
       <div class="video-wrapper">
         <video controls autoplay>
@@ -77,54 +90,84 @@ async function uploadFile(file) {
       </div>
     `;
     preview.classList.remove('hidden');
-    // Reset drop zone after success (optional)
+
+    // Show process button
+    processArea.classList.remove('hidden');
+
+    // Reset drop zone
     resetDropZone();
     selectedFile = null;
+
   } catch (err) {
     hideLoading();
     alert('Upload error: ' + err.message);
   }
 }
 
-// ---------- Event: file input change ----------
+// ---------- Process with Mistral AI ----------
+processBtn.addEventListener('click', async () => {
+  if (!currentSignedUrl || !currentFileName) {
+    alert('Please upload a video first.');
+    return;
+  }
+
+  showLoading('Contacting Mistral AI...');
+  try {
+    const response = await fetch(`${BACKEND_URL}/process-video`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        signedUrl: currentSignedUrl,
+        fileName: currentFileName,
+        // Optionally add a user prompt input field later
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'AI processing failed');
+
+    hideLoading();
+    aiResult.classList.remove('hidden');
+    scriptOutput.textContent = data.script;
+
+  } catch (err) {
+    hideLoading();
+    alert('AI error: ' + err.message);
+  }
+});
+
+// ---------- File input change ----------
 fileInput.addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (file) {
     selectedFile = file;
     showFileInfo(file);
-    // Auto‑upload after selection
     uploadFile(file);
   }
 });
 
-// ---------- Drag & Drop events ----------
+// ---------- Drag & Drop ----------
 dropZone.addEventListener('dragover', (e) => {
   e.preventDefault();
   dropZone.classList.add('dragover');
 });
-
 dropZone.addEventListener('dragleave', (e) => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
 });
-
 dropZone.addEventListener('drop', (e) => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
   const files = e.dataTransfer.files;
   if (files.length > 0) {
     const file = files[0];
-    // Update the file input so that the change event fires
     fileInput.files = e.dataTransfer.files;
-    // Manually trigger the change handler (browsers may not fire it automatically)
-    // So we call our handler directly
     selectedFile = file;
     showFileInfo(file);
     uploadFile(file);
   }
 });
 
-// ---------- Click on drop zone triggers file input ----------
+// Click on drop zone triggers input
 dropZone.addEventListener('click', () => {
   fileInput.click();
 });
