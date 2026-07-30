@@ -14,11 +14,14 @@ const scriptOutput = document.getElementById('scriptOutput');
 const progressArea = document.getElementById('progressArea');
 const progressFill = document.getElementById('progressFill');
 const progressText = document.getElementById('progressText');
+const clipSelection = document.getElementById('clipSelection');
+const clipList = document.getElementById('clipList');
 
-const BACKEND_URL = 'https://graphmotion.onrender.com';
+const BACKEND_URL = 'https://graphmotion.onrender.com'; // Update with your Render URL
 
 let currentSignedUrl = null;
 let currentFileName = null;
+let currentClips = [];
 
 // ---------- UI helpers ----------
 function showLoading(msg = 'Processing...') {
@@ -26,6 +29,7 @@ function showLoading(msg = 'Processing...') {
   aiResult.classList.add('hidden');
   processArea.classList.add('hidden');
   progressArea.classList.add('hidden');
+  clipSelection.classList.add('hidden');
   loading.classList.remove('hidden');
   loadingMessage.textContent = msg;
   fileInput.disabled = true;
@@ -127,39 +131,83 @@ async function uploadFile(file) {
   }
 }
 
-// ---------- Process with Mistral AI ----------
+// ---------- Process video (find interesting moments) ----------
 processBtn.addEventListener('click', async () => {
   if (!currentSignedUrl || !currentFileName) {
     alert('Please upload a video first.');
     return;
   }
 
-  showLoading('Contacting Mistral AI...');
+  showLoading('Scanning video for interesting moments...');
   try {
     const response = await axios.post(`${BACKEND_URL}/process-video`, {
       signedUrl: currentSignedUrl,
       fileName: currentFileName,
-    }, { timeout: 60000 });
+    }, { timeout: 300000 }); // 5 min timeout
+
     const data = response.data;
-    if (!data.success) throw new Error(data.error || 'AI processing failed');
+    if (!data.success) throw new Error(data.error || 'Processing failed');
 
     hideLoading();
-    aiResult.classList.remove('hidden');
-    scriptOutput.textContent = data.script;
 
+    if (!data.found) {
+      alert('Could not find any funny or interesting moments in this video.');
+      return;
+    }
+
+    // Store clips
+    currentClips = data.clips;
+
+    if (currentClips.length === 1) {
+      // Auto-select and play the only clip
+      showClip(currentClips[0]);
+    } else {
+      // Show selection UI
+      clipList.innerHTML = '';
+      currentClips.forEach((clip, index) => {
+        const div = document.createElement('div');
+        div.className = 'clip-item';
+        div.innerHTML = `
+          <video src="${clip.signedUrl}" muted preload="metadata"></video>
+          <button data-index="${index}" class="btn-primary select-clip">Select</button>
+        `;
+        clipList.appendChild(div);
+      });
+
+      document.querySelectorAll('.select-clip').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const idx = parseInt(e.target.dataset.index);
+          showClip(currentClips[idx]);
+        });
+      });
+
+      clipSelection.classList.remove('hidden');
+    }
   } catch (err) {
     hideLoading();
-    let errorMsg = 'AI error: ';
-    if (err.response && err.response.data && err.response.data.error) {
-      errorMsg += err.response.data.error;
-    } else if (err.message) {
-      errorMsg += err.message;
-    } else {
-      errorMsg += 'Unknown error';
-    }
-    alert(errorMsg);
+    alert('Processing error: ' + (err.response?.data?.error || err.message));
   }
 });
+
+// ---------- Show a single clip (replace preview) ----------
+function showClip(clip) {
+  // Hide selection, show the clip
+  clipSelection.classList.add('hidden');
+  preview.innerHTML = `
+    <div class="video-wrapper">
+      <video controls autoplay>
+        <source src="${clip.signedUrl}" type="video/mp4" />
+      </video>
+      <div class="video-info">
+        <h2>Selected Clip (${clip.start.toFixed(1)}s – ${clip.end.toFixed(1)}s)</h2>
+        <a href="${clip.signedUrl}" download="clip.mp4" class="download-link">⬇️ Download Clip</a>
+      </div>
+    </div>
+  `;
+  preview.classList.remove('hidden');
+  // Hide process area (since we're done)
+  processArea.classList.add('hidden');
+}
 
 // ---------- File input change ----------
 fileInput.addEventListener('change', (e) => {
