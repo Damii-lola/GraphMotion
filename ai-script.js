@@ -1,11 +1,11 @@
 // =============================================
 //  GraphMotion AI – Frontend Upload & Processing
-//  (multipart + compression + fallback)
+//  (multipart via backend proxy – no presigned URLs)
 // =============================================
 
-const BACKEND_URL = 'https://graphmotion.onrender.com';
-const CHUNK_SIZE = 5 * 1024 * 1024;          // 5 MB per part
-const MAX_CONCURRENT_UPLOADS = 6;
+const BACKEND_URL = 'https://graphmotion.onrender.com'; // your Render backend
+const CHUNK_SIZE = 5 * 1024 * 1024;                     // 5 MB per part
+const MAX_CONCURRENT_UPLOADS = 10;                      // more parallelism for speed
 
 // ---------- Global state ----------
 let currentFile = null;
@@ -88,7 +88,7 @@ function resetForNewUpload() {
 }
 
 // ======================
-//   FFmpeg.wasm compression
+//   FFmpeg.wasm compression (optional)
 // ======================
 async function compressVideo(file) {
   if (!useCompression.checked) return file;
@@ -135,7 +135,7 @@ async function compressVideo(file) {
 }
 
 // ======================
-//   Multipart upload (with fallback)
+//   Multipart upload (via backend proxy)
 // ======================
 async function uploadFileMultipart(file) {
   progressArea.classList.remove('hidden');
@@ -147,6 +147,7 @@ async function uploadFileMultipart(file) {
   uploadAbortController = new AbortController();
 
   try {
+    // 1. Init multipart on backend
     const initRes = await axios.post(`${BACKEND_URL}/init-multipart`, {
       fileName: file.name,
       fileSize: file.size,
@@ -178,30 +179,31 @@ async function uploadFileMultipart(file) {
       progressSpeed.textContent = `${mbps.toFixed(1)} MB/s`;
     };
 
+    // 👇 NEW: upload part via backend proxy
     const uploadPart = async (partNumber) => {
       const start = (partNumber - 1) * CHUNK_SIZE;
       const end = Math.min(start + CHUNK_SIZE, file.size);
       const blob = file.slice(start, end);
 
-      const urlRes = await axios.post(`${BACKEND_URL}/get-part-url`, {
-        uploadId,
-        partNumber,
-        filePath,
-        contentLength: blob.size,   // 👈 THIS FIXES THE 413
-      }, { signal: uploadAbortController.signal });
-
-      const { signedUrl } = urlRes.data;
       const bar = chunkGrid.children[partNumber - 1];
       bar.classList.add('uploading');
 
-      const putRes = await axios.put(signedUrl, blob, {
-        headers: { 'Content-Type': 'application/octet-stream' },
+      const putRes = await axios.post(`${BACKEND_URL}/upload-part`, blob, {
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'x-upload-id': uploadId,
+          'x-part-number': partNumber,
+          'x-file-path': filePath,
+        },
         signal: uploadAbortController.signal,
+        timeout: 0,
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
       });
 
       if (putRes.status !== 200) throw new Error(`Part ${partNumber} failed`);
 
-      const etag = putRes.headers.etag || putRes.headers['ETag'] || '';
+      const etag = putRes.data.ETag || putRes.headers.etag || '';
       uploadParts[partNumber - 1] = { PartNumber: partNumber, ETag: etag.replace(/"/g, '') };
 
       completedChunks++;
@@ -211,6 +213,7 @@ async function uploadFileMultipart(file) {
       updateProgress();
     };
 
+    // Parallel execution (controlled concurrency)
     let idx = 1;
     const tasks = [];
     const enqueue = async () => {
@@ -230,6 +233,7 @@ async function uploadFileMultipart(file) {
     await enqueue();
     await Promise.all(tasks);
 
+    // 3. Complete multipart
     const completeRes = await axios.post(`${BACKEND_URL}/complete-multipart`, {
       uploadId,
       filePath,
@@ -244,9 +248,9 @@ async function uploadFileMultipart(file) {
 
   } catch (err) {
     if (axios.isCancel(err)) {
-      console.log('Upload cancelled by user');
+      console.log('Upload cancelled');
     } else if (err.response?.status === 404 || err.response?.data?.error?.includes('not found')) {
-      console.warn('Multipart not supported by backend, falling back to single upload.');
+      console.warn('Multipart not supported, falling back to single upload.');
       await uploadFileSingle(file);
     } else {
       alert('Upload error: ' + (err.response?.data?.error || err.message));
@@ -323,12 +327,15 @@ function finishUpload(playUrl, mimeType) {
   dropMessage.innerHTML = `<p>📁 Drop another video here</p><span>or click to select</span>`;
 }
 
+// ======================
+//   Cancel upload
+// ======================
 cancelUploadBtn.addEventListener('click', () => {
   if (uploadAbortController) uploadAbortController.abort();
 });
 
 // ======================
-//   Process video
+//   Process video (AI)
 // ======================
 processBtn.addEventListener('click', async () => {
   if (!currentSignedUrl || !currentFileName) {
