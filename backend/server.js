@@ -3,7 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand } = require('@aws-sdk/client-s3');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { v4: uuidv4 } = require('uuid');
 const cron = require('node-cron');
 const fs = require('fs');
@@ -18,15 +17,27 @@ const execAsync = promisify(require('child_process').exec);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Increase server timeout
 const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 server.timeout = 600000;
 
+// ---------- Middleware ----------
 app.use(cors({
   origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
   credentials: true,
 }));
-app.use(express.json({ limit: '1gb' }));
 
+// Normal JSON parsing for all routes EXCEPT /upload-part
+app.use((req, res, next) => {
+  if (req.path === '/upload-part' && req.method === 'POST') {
+    // Skip json parser, we'll handle raw body later
+    next();
+  } else {
+    express.json({ limit: '1gb' })(req, res, next);
+  }
+});
+
+// ---------- Supabase + S3 clients ----------
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -46,6 +57,7 @@ const s3 = new S3Client({
 
 const BUCKET_NAME = 'temp_videos';
 
+// ---------- Ensure bucket ----------
 async function ensureBucket() {
   try {
     const { data: buckets, error } = await supabase.storage.listBuckets();
@@ -67,7 +79,9 @@ async function ensureBucket() {
 }
 ensureBucket();
 
-// ---------- Single PUT (fallback) ----------
+// ==============================================
+//   ORIGINAL SINGLE-PUT UPLOAD (fallback)
+// ==============================================
 app.post('/get-upload-url', async (req, res) => {
   try {
     const { originalName } = req.body;
@@ -118,14 +132,16 @@ app.post('/confirm-upload', async (req, res) => {
   }
 });
 
-// ---------- Multipart upload (FIXED) ----------
+// ==============================================
+//   MULTIPART UPLOAD (FAST – NO PRESIGNED URL)
+// ==============================================
 app.post('/init-multipart', async (req, res) => {
   try {
     const { fileName, fileSize, contentType } = req.body;
     if (!fileName || !fileSize) return res.status(400).json({ error: 'Missing file info' });
 
     const ext = fileName.includes('.') ? fileName.split('.').pop() : 'mp4';
-    const key = `${uuidv4()}.${ext}`;
+    const key = `${uuidv4()}.${ext}`;   // no bucket prefix
 
     const command = new CreateMultipartUploadCommand({
       Bucket: BUCKET_NAME,
@@ -135,7 +151,7 @@ app.post('/init-multipart', async (req, res) => {
     const response = await s3.send(command);
     const uploadId = response.UploadId;
 
-    const totalParts = Math.ceil(fileSize / (5 * 1024 * 1024));
+    const totalParts = Math.ceil(fileSize / (5 * 1024 * 1024)); // 5 MB parts
     await supabase.from('multipart_uploads').insert({
       id: uploadId,
       file_name: fileName,
@@ -152,27 +168,42 @@ app.post('/init-multipart', async (req, res) => {
   }
 });
 
-// 👇 UPDATED: no contentLength, no HTTP/2 error
-app.post('/get-part-url', async (req, res) => {
+// ---------- UPLOAD PART (proxy – client sends raw chunk to backend) ----------
+app.post('/upload-part', async (req, res) => {
   try {
-    const { uploadId, partNumber, filePath } = req.body;
-    if (!uploadId || !partNumber || !filePath) return res.status(400).json({ error: 'Missing parameters' });
+    const uploadId = req.headers['x-upload-id'];
+    const partNumber = parseInt(req.headers['x-part-number'], 10);
+    const filePath = req.headers['x-file-path'];
 
-    const command = new UploadPartCommand({
-      Bucket: BUCKET_NAME,
-      Key: filePath,
-      UploadId: uploadId,
-      PartNumber: partNumber,
+    if (!uploadId || !partNumber || !filePath) {
+      return res.status(400).json({ error: 'Missing upload parameters in headers' });
+    }
+
+    // Read raw body
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', async () => {
+      try {
+        const body = Buffer.concat(chunks);
+
+        const command = new UploadPartCommand({
+          Bucket: BUCKET_NAME,
+          Key: filePath,
+          UploadId: uploadId,
+          PartNumber: partNumber,
+          Body: body,
+        });
+
+        const result = await s3.send(command);
+        res.setHeader('ETag', result.ETag);
+        res.json({ success: true, ETag: result.ETag });
+      } catch (err) {
+        console.error('[upload-part] S3 error:', err);
+        res.status(500).json({ error: err.message });
+      }
     });
-
-    const url = await getSignedUrl(s3, command, {
-      expiresIn: 3600,
-      unhoistableHeaders: new Set(['content-length']),   // 👈 FIX
-    });
-
-    res.json({ success: true, signedUrl: url });
   } catch (err) {
-    console.error('[get-part-url] Error:', err);
+    console.error('[upload-part] Error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -190,12 +221,14 @@ app.post('/complete-multipart', async (req, res) => {
     });
     await s3.send(command);
 
+    // Fetch file name from multipart_uploads record
     const { data: mpu } = await supabase.from('multipart_uploads')
       .select('file_name')
       .eq('upload_id', uploadId)
       .single();
     const finalName = mpu?.file_name || originalName;
 
+    // Insert into video_uploads with the full path (for Supabase Storage API)
     await supabase.from('video_uploads').insert({
       file_name: finalName,
       original_name: originalName,
@@ -205,6 +238,7 @@ app.post('/complete-multipart', async (req, res) => {
     });
     await supabase.from('multipart_uploads').delete().eq('upload_id', uploadId);
 
+    // Generate a signed URL for playback using Supabase Storage API
     const { data: signedUrlData, error } = await supabase.storage
       .from(BUCKET_NAME)
       .createSignedUrl(`temp_videos/${filePath}`, 3600);
@@ -235,11 +269,14 @@ app.post('/abort-multipart', async (req, res) => {
   }
 });
 
-// ---------- Video processing ----------
+// ==============================================
+//   VIDEO PROCESSING
+// ==============================================
 app.post('/process-video', async (req, res) => {
   const { signedUrl, fileName } = req.body;
   if (!signedUrl || !fileName) return res.status(400).json({ error: 'Missing video info' });
 
+  // Use RAM disk if available
   const workDir = fs.existsSync('/dev/shm') ? `/dev/shm/${uuidv4()}` : path.join('/tmp', uuidv4());
   fs.mkdirSync(workDir, { recursive: true });
   const videoPath = path.join(workDir, 'input.mp4');
@@ -259,6 +296,7 @@ app.post('/process-video', async (req, res) => {
     });
     console.log(`[process] Duration: ${duration}s`);
 
+    // Audio extraction (4kHz mono for speed)
     const audioPath = path.join(workDir, 'audio.wav');
     await new Promise((resolve, reject) => {
       ffmpeg(videoPath)
@@ -288,6 +326,7 @@ app.post('/process-video', async (req, res) => {
       rmsPerSecond.push(Math.sqrt(sum / (chunk.length / 2)));
     }
 
+    // Scene detection
     const sceneFile = path.join(workDir, 'scenes.txt');
     const cmd = `"${ffmpegPath}" -threads 0 -i "${videoPath}" -vf "scale=160:-2,select=gt(scene\\,0.35),metadata=print:file=${sceneFile}" -vsync vfr -f null -`;
     console.log('[process] Detecting scene changes...');
@@ -308,6 +347,7 @@ app.post('/process-video', async (req, res) => {
     }
     console.log(`[process] Found ${sceneTimes.length} scene changes.`);
 
+    // Combine audio energy + scene changes
     const mean = rmsPerSecond.reduce((a, b) => a + b, 0) / rmsPerSecond.length;
     const std = Math.sqrt(rmsPerSecond.reduce((a, b) => a + (b - mean) ** 2, 0) / rmsPerSecond.length);
     const audioThreshold = mean + 1.2 * std;
@@ -328,6 +368,7 @@ app.post('/process-video', async (req, res) => {
       return res.json({ success: true, found: false });
     }
 
+    // Cluster into segments
     const sorted = Array.from(interestingSeconds).sort((a, b) => a - b);
     const segments = [];
     let cStart = sorted[0], cEnd = sorted[0];
@@ -346,6 +387,7 @@ app.post('/process-video', async (req, res) => {
       return res.json({ success: true, found: false });
     }
 
+    // Extract clips in parallel
     const clipJobs = finalSegments.slice(0, 10).map(async (seg, i) => {
       const clipName = `clip_${i}_${uuidv4()}.mp4`;
       const clipPath = path.join(workDir, clipName);
@@ -382,12 +424,15 @@ app.post('/process-video', async (req, res) => {
   }
 });
 
-// ---------- Cleanup ----------
+// ==============================================
+//   CLEANUP CRON
+// ==============================================
 async function cleanupExpired() {
   const now = new Date();
   const expiry = now.toISOString();
   const cutoff = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
 
+  // Standard video uploads
   const { data: old } = await supabase.from('video_uploads')
     .select('id, file_path')
     .or(`expires_at.lt.${expiry},and(upload_status.eq.pending,created_at.lt.${cutoff})`);
@@ -398,6 +443,7 @@ async function cleanupExpired() {
     console.log(`[Cleanup] Removed ${old.length} expired/failed videos.`);
   }
 
+  // Stale multipart uploads
   const { data: mpus } = await supabase.from('multipart_uploads')
     .select('upload_id, file_path')
     .lt('expires_at', expiry);
@@ -406,7 +452,7 @@ async function cleanupExpired() {
       try {
         await s3.send(new AbortMultipartUploadCommand({
           Bucket: BUCKET_NAME,
-          Key: mpu.file_path,
+          Key: mpu.file_path,   // key is just the UUID
           UploadId: mpu.upload_id,
         }));
       } catch (e) { /* ignore */ }
@@ -417,4 +463,5 @@ async function cleanupExpired() {
 }
 cron.schedule('*/5 * * * *', cleanupExpired);
 
+// Health check
 app.get('/ping', (req, res) => res.send('pong'));
