@@ -1,10 +1,10 @@
 // =============================================
 //  GraphMotion AI – Frontend Upload & Processing
-//  (with multipart + compression + fallback)
+//  (multipart + compression + fallback)
 // =============================================
 
-const BACKEND_URL = 'https://graphmotion.onrender.com'; // ← your Render backend
-const CHUNK_SIZE = 5 * 1024 * 1024;                     // 5 MB per part
+const BACKEND_URL = 'https://graphmotion.onrender.com';
+const CHUNK_SIZE = 5 * 1024 * 1024;          // 5 MB per part
 const MAX_CONCURRENT_UPLOADS = 6;
 
 // ---------- Global state ----------
@@ -91,7 +91,7 @@ function resetForNewUpload() {
 //   FFmpeg.wasm compression
 // ======================
 async function compressVideo(file) {
-  if (!useCompression.checked) return file;                 // user turned off
+  if (!useCompression.checked) return file;
 
   if (typeof FFmpeg === 'undefined') {
     console.warn('FFmpeg.wasm not loaded – skipping compression.');
@@ -130,7 +130,7 @@ async function compressVideo(file) {
   } catch (err) {
     console.error('Compression failed, using original:', err);
     hideLoading();
-    return file;   // fallback to original
+    return file;
   }
 }
 
@@ -138,7 +138,6 @@ async function compressVideo(file) {
 //   Multipart upload (with fallback)
 // ======================
 async function uploadFileMultipart(file) {
-  // --- prepare progress UI ---
   progressArea.classList.remove('hidden');
   progressFill.style.width = '0%';
   progressText.textContent = '0%';
@@ -148,7 +147,6 @@ async function uploadFileMultipart(file) {
   uploadAbortController = new AbortController();
 
   try {
-    // 1. Init multipart on backend
     const initRes = await axios.post(`${BACKEND_URL}/init-multipart`, {
       fileName: file.name,
       fileSize: file.size,
@@ -160,7 +158,6 @@ async function uploadFileMultipart(file) {
     uploadParts = new Array(parts).fill(null);
 
     const totalChunks = parts;
-    // draw chunk bars
     for (let i = 0; i < totalChunks; i++) {
       const bar = document.createElement('div');
       bar.className = 'chunk-bar';
@@ -168,7 +165,6 @@ async function uploadFileMultipart(file) {
       chunkGrid.appendChild(bar);
     }
 
-    // 2. Upload parts in parallel
     let completedChunks = 0;
     let totalUploaded = 0;
     const startTime = Date.now();
@@ -191,6 +187,7 @@ async function uploadFileMultipart(file) {
         uploadId,
         partNumber,
         filePath,
+        contentLength: blob.size,   // 👈 THIS FIXES THE 413
       }, { signal: uploadAbortController.signal });
 
       const { signedUrl } = urlRes.data;
@@ -214,7 +211,6 @@ async function uploadFileMultipart(file) {
       updateProgress();
     };
 
-    // concurrency limiter
     let idx = 1;
     const tasks = [];
     const enqueue = async () => {
@@ -234,7 +230,6 @@ async function uploadFileMultipart(file) {
     await enqueue();
     await Promise.all(tasks);
 
-    // 3. Complete multipart
     const completeRes = await axios.post(`${BACKEND_URL}/complete-multipart`, {
       uploadId,
       filePath,
@@ -251,7 +246,6 @@ async function uploadFileMultipart(file) {
     if (axios.isCancel(err)) {
       console.log('Upload cancelled by user');
     } else if (err.response?.status === 404 || err.response?.data?.error?.includes('not found')) {
-      // Fallback to old single PUT if multipart not available
       console.warn('Multipart not supported by backend, falling back to single upload.');
       await uploadFileSingle(file);
     } else {
@@ -265,13 +259,12 @@ async function uploadFileMultipart(file) {
 }
 
 // ======================
-//   Fallback: single PUT upload
+//   Fallback single PUT upload
 // ======================
 async function uploadFileSingle(file) {
   progressArea.classList.remove('hidden');
   progressFill.style.width = '0%';
   progressText.textContent = '0%';
-  progressSpeed.textContent = '';
   cancelUploadBtn.classList.remove('hidden');
   uploadAbortController = new AbortController();
 
@@ -282,6 +275,7 @@ async function uploadFileSingle(file) {
     const { signedUrl, filePath, fileName: name } = getUrlRes.data;
     currentFileName = name;
 
+    const startTime = Date.now();
     await axios.put(signedUrl, file, {
       headers: { 'Content-Type': file.type },
       onUploadProgress: (pe) => {
@@ -311,9 +305,6 @@ async function uploadFileSingle(file) {
   }
 }
 
-// ======================
-//   After successful upload
-// ======================
 function finishUpload(playUrl, mimeType) {
   cleanUploadUI();
   preview.innerHTML = `
@@ -332,15 +323,12 @@ function finishUpload(playUrl, mimeType) {
   dropMessage.innerHTML = `<p>📁 Drop another video here</p><span>or click to select</span>`;
 }
 
-// ======================
-//   Cancel upload
-// ======================
 cancelUploadBtn.addEventListener('click', () => {
   if (uploadAbortController) uploadAbortController.abort();
 });
 
 // ======================
-//   Process video (AI)
+//   Process video
 // ======================
 processBtn.addEventListener('click', async () => {
   if (!currentSignedUrl || !currentFileName) {
