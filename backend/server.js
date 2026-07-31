@@ -33,7 +33,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// 👇 FIX: disable automatic checksums to prevent 524 timeouts
 const s3 = new S3Client({
   region: 'us-east-1',
   endpoint: process.env.SUPABASE_S3_ENDPOINT,
@@ -42,8 +41,8 @@ const s3 = new S3Client({
     secretAccessKey: process.env.SUPABASE_S3_SECRET_KEY,
   },
   forcePathStyle: true,
-  requestChecksumCalculation: 'WHEN_REQUIRED',   // ← added
-  responseChecksumValidation: 'WHEN_REQUIRED',   // ← added
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
 });
 
 const BUCKET_NAME = 'temp_videos';
@@ -124,7 +123,7 @@ app.post('/confirm-upload', async (req, res) => {
 });
 
 // ==============================================
-//   MULTIPART UPLOAD (FAST – FIXED)
+//   MULTIPART UPLOAD (FIXED KEY PATHS)
 // ==============================================
 app.post('/init-multipart', async (req, res) => {
   try {
@@ -132,7 +131,7 @@ app.post('/init-multipart', async (req, res) => {
     if (!fileName || !fileSize) return res.status(400).json({ error: 'Missing file info' });
 
     const ext = fileName.includes('.') ? fileName.split('.').pop() : 'mp4';
-    const key = `temp_videos/${uuidv4()}.${ext}`;
+    const key = `${uuidv4()}.${ext}`;   // ✅ FIX: no bucket prefix
 
     const command = new CreateMultipartUploadCommand({
       Bucket: BUCKET_NAME,
@@ -142,7 +141,7 @@ app.post('/init-multipart', async (req, res) => {
     const response = await s3.send(command);
     const uploadId = response.UploadId;
 
-    const totalParts = Math.ceil(fileSize / (5 * 1024 * 1024)); // 5 MB parts
+    const totalParts = Math.ceil(fileSize / (5 * 1024 * 1024));
     await supabase.from('multipart_uploads').insert({
       id: uploadId,
       file_name: fileName,
@@ -159,7 +158,6 @@ app.post('/init-multipart', async (req, res) => {
   }
 });
 
-// ---------- FIXED: presigned URL without checksum parameters ----------
 app.post('/get-part-url', async (req, res) => {
   try {
     const { uploadId, partNumber, filePath, contentLength } = req.body;
@@ -201,12 +199,12 @@ app.post('/complete-multipart', async (req, res) => {
       .select('file_name')
       .eq('upload_id', uploadId)
       .single();
-    const fileName = mpu?.file_name || originalName;
+    const finalName = mpu?.file_name || originalName;
 
     await supabase.from('video_uploads').insert({
-      file_name: fileName,
+      file_name: finalName,
       original_name: originalName,
-      file_path: filePath,
+      file_path: `temp_videos/${filePath}`,   // full path for Supabase API
       upload_status: 'completed',
       expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
     });
@@ -214,7 +212,7 @@ app.post('/complete-multipart', async (req, res) => {
 
     const { data: signedUrlData, error } = await supabase.storage
       .from(BUCKET_NAME)
-      .createSignedUrl(filePath, 3600);
+      .createSignedUrl(`temp_videos/${filePath}`, 3600);
     if (error) throw error;
 
     res.json({ success: true, signedUrl: signedUrlData.signedUrl });
@@ -417,7 +415,7 @@ async function cleanupExpired() {
       try {
         await s3.send(new AbortMultipartUploadCommand({
           Bucket: BUCKET_NAME,
-          Key: mpu.file_path,
+          Key: mpu.file_path,   // key is just the UUID, no bucket prefix
           UploadId: mpu.upload_id,
         }));
       } catch (e) { /* ignore */ }
