@@ -89,17 +89,38 @@ function resetForNewUpload() {
 
 // ---------- Video compression (client-side, optional) ----------
 async function compressVideo(file) {
+  // Skip if user unchecks compression or library missing
   if (!useCompression.checked) return file;
+
+  if (typeof FFmpeg === 'undefined') {
+    console.warn('FFmpeg.wasm not loaded – skipping compression.');
+    return file;
+  }
+
   showLoading('Compressing video (this may take a moment)...');
   try {
-    const { createFFmpeg, fetchFile } = FFmpeg; // Assume FFmpeg.wasm is loaded
+    const { createFFmpeg, fetchFile } = FFmpeg;
     const ffmpeg = createFFmpeg({ log: false });
     await ffmpeg.load();
+
     ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(file));
-    await ffmpeg.run('-i', 'input.mp4', '-c:v', 'libx264', '-crf', '28', '-preset', 'fast', '-c:a', 'aac', 'output.mp4');
+    await ffmpeg.run(
+      '-i', 'input.mp4',
+      '-c:v', 'libx264',
+      '-crf', '28',
+      '-preset', 'fast',
+      '-c:a', 'aac',
+      'output.mp4'
+    );
+
     const data = ffmpeg.FS('readFile', 'output.mp4');
     const compressedBlob = new Blob([data.buffer], { type: 'video/mp4' });
-    const compressedFile = new File([compressedBlob], file.name.replace(/\.[^.]+$/, '.mp4'), { type: 'video/mp4' });
+    const compressedFile = new File(
+      [compressedBlob],
+      file.name.replace(/\.[^.]+$/, '.mp4'),
+      { type: 'video/mp4' }
+    );
+
     hideLoading();
     return compressedFile;
   } catch (err) {
@@ -232,7 +253,7 @@ async function uploadFileWithMultipart(file) {
     currentSignedUrl = playUrl;
     currentFileName = file.name;
 
-    // *** FIX: Clean upload UI, but keep preview & process button visible ***
+    // Clean upload UI, but keep preview & process button visible
     cleanUploadUI(); // hides fileInfo, compressToggle, progress, cancel button
     
     // Show video preview
