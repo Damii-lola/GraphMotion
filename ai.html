@@ -8,7 +8,10 @@
   <!-- AWS SDK for multipart upload -->
   <script src="https://cdn.jsdelivr.net/npm/@aws-sdk/client-s3@3.504.0/dist/aws-sdk-client-s3.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@aws-sdk/lib-storage@3.504.0/dist/aws-sdk-lib-storage.min.js"></script>
+  <!-- Axios -->
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <!-- FFmpeg.wasm UMD build (sets window.FFmpeg) -->
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.min.js"></script>
 </head>
 <body>
   <div class="container">
@@ -27,7 +30,7 @@
 
     <div id="compressToggle" class="compress-toggle hidden">
       <label>
-        <input type="checkbox" id="useCompression" />
+        <input type="checkbox" id="useCompression" checked />
         ⚡ Compress before upload (recommended, saves bandwidth)
       </label>
     </div>
