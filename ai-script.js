@@ -66,14 +66,25 @@ function showFileInfo(file) {
   compressToggle.classList.remove('hidden');
 }
 
-function resetUI() {
+// Clean up upload UI elements only (not preview/process)
+function cleanUploadUI() {
   fileInfo.classList.add('hidden');
   compressToggle.classList.add('hidden');
   progressArea.classList.add('hidden');
+  cancelUploadBtn.classList.add('hidden');
+  chunkGrid.innerHTML = '';
+}
+
+// Full reset for new uploads (when user selects a new file)
+function resetForNewUpload() {
+  cleanUploadUI();
   preview.classList.add('hidden');
   processArea.classList.add('hidden');
   clipSelection.classList.add('hidden');
   dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 1GB)</span>`;
+  currentSignedUrl = null;
+  currentFileName = null;
+  currentClips = [];
 }
 
 // ---------- Video compression (client-side, optional) ----------
@@ -221,11 +232,10 @@ async function uploadFileWithMultipart(file) {
     currentSignedUrl = playUrl;
     currentFileName = file.name;
 
-    // Cleanup progress
-    progressArea.classList.add('hidden');
-    cancelUploadBtn.classList.add('hidden');
+    // *** FIX: Clean upload UI, but keep preview & process button visible ***
+    cleanUploadUI(); // hides fileInfo, compressToggle, progress, cancel button
     
-    // Show preview
+    // Show video preview
     preview.innerHTML = `
       <div class="video-wrapper">
         <video controls autoplay>
@@ -238,8 +248,12 @@ async function uploadFileWithMultipart(file) {
       </div>
     `;
     preview.classList.remove('hidden');
+    
+    // Show process button
     processArea.classList.remove('hidden');
-    resetUI();
+    
+    // Reset drop zone message for possible new upload
+    dropMessage.innerHTML = `<p>📁 Drop another video here</p><span>or click to select</span>`;
 
   } catch (err) {
     if (axios.isCancel(err)) {
@@ -247,8 +261,7 @@ async function uploadFileWithMultipart(file) {
     } else {
       alert('Upload error: ' + (err.response?.data?.error || err.message));
     }
-    progressArea.classList.add('hidden');
-    cancelUploadBtn.classList.add('hidden');
+    cleanUploadUI();
     // Attempt to abort multipart if started
     if (uploadId) {
       axios.post(`${BACKEND_URL}/abort-multipart`, { uploadId, filePath }).catch(() => {});
@@ -338,6 +351,7 @@ fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   currentFile = file;
+  resetForNewUpload(); // clear any previous preview/process UI
   showFileInfo(file);
   const compressed = await compressVideo(file);
   uploadFileWithMultipart(compressed);
@@ -360,6 +374,7 @@ dropZone.addEventListener('drop', (e) => {
     const file = files[0];
     fileInput.files = e.dataTransfer.files;
     currentFile = file;
+    resetForNewUpload();
     showFileInfo(file);
     compressVideo(file).then(compressed => uploadFileWithMultipart(compressed));
   }
