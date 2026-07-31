@@ -5,8 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GraphMotion AI – Upload</title>
   <link rel="stylesheet" href="styles.css" />
+  <!-- AWS SDK for multipart upload -->
+  <script src="https://cdn.jsdelivr.net/npm/@aws-sdk/client-s3@3.504.0/dist/aws-sdk-client-s3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@aws-sdk/lib-storage@3.504.0/dist/aws-sdk-lib-storage.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
   <div class="container">
@@ -23,16 +25,29 @@
       <input type="file" id="fileInput" accept="video/*" />
     </div>
 
+    <div id="compressToggle" class="compress-toggle hidden">
+      <label>
+        <input type="checkbox" id="useCompression" />
+        ⚡ Compress before upload (recommended, saves bandwidth)
+      </label>
+    </div>
+
     <div id="fileInfo" class="file-info hidden">
       <span id="fileName"></span>
       <span id="fileSize"></span>
     </div>
 
+    <!-- Upload progress with chunks -->
     <div id="progressArea" class="hidden">
+      <div class="progress-header">
+        <span id="progressText">0%</span>
+        <span id="progressSpeed"></span>
+      </div>
       <div class="progress-bar">
         <div id="progressFill" class="progress-fill" style="width:0%"></div>
       </div>
-      <p id="progressText">0%</p>
+      <div id="chunkGrid" class="chunk-grid"></div>
+      <button id="cancelUploadBtn" class="btn-cancel hidden">Cancel Upload</button>
     </div>
 
     <div id="preview" class="hidden"></div>
