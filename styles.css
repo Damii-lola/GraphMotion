@@ -334,3 +334,56 @@ footer {
 .clip-item button {
   margin: 0.8rem 0;
 }
+
+/* ----- Upload progress additions ----- */
+.progress-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.25rem;
+  font-size: 0.9rem;
+  color: #475569;
+}
+
+.chunk-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 0.5rem;
+}
+
+.chunk-bar {
+  width: 8px;
+  height: 24px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+.chunk-bar.completed {
+  background: #1a73e8;
+}
+.chunk-bar.uploading {
+  background: #60a5fa;
+}
+
+.compress-toggle {
+  margin: 1rem 0;
+  text-align: left;
+}
+.compress-toggle label {
+  font-size: 0.95rem;
+  color: #1e293b;
+  cursor: pointer;
+}
+
+.btn-cancel {
+  margin-top: 0.5rem;
+  background: none;
+  border: 1px solid #ef4444;
+  color: #ef4444;
+  padding: 0.4rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.btn-cancel:hover {
+  background: #fee2e2;
+}
