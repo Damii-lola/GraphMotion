@@ -1,272 +1,367 @@
-// Wait for DOM to be ready
-document.addEventListener('DOMContentLoaded', function() {
+// ---------- Configuration ----------
+const BACKEND_URL = 'https://graphmotion.onrender.com'; // Update with your Render URL
+const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB per part
+const MAX_CONCURRENT_UPLOADS = 6;
 
-  // Get all elements – with fallback to avoid null errors
-  const fileInput = document.getElementById('fileInput');
-  const dropZone = document.getElementById('dropZone');
-  const dropMessage = document.getElementById('dropMessage');
-  const fileInfo = document.getElementById('fileInfo');
-  const fileName = document.getElementById('fileName');
-  const fileSize = document.getElementById('fileSize');
-  const preview = document.getElementById('preview');
-  const loading = document.getElementById('loading');
-  const loadingMessage = document.getElementById('loadingMessage');
-  const processArea = document.getElementById('processArea');
-  const processBtn = document.getElementById('processBtn');
-  const aiResult = document.getElementById('aiResult');
-  const scriptOutput = document.getElementById('scriptOutput');
-  const progressArea = document.getElementById('progressArea');
-  const progressFill = document.getElementById('progressFill');
-  const progressText = document.getElementById('progressText');
-  const clipSelection = document.getElementById('clipSelection');
-  const clipList = document.getElementById('clipList');
+// ---------- Global state ----------
+let currentFile = null;
+let currentSignedUrl = null;
+let currentFileName = null;
+let currentClips = [];
+let uploadAbortController = null;
+let uploadId = null;
+let uploadParts = [];
+let multipartUploadMeta = null;
 
-  // Check essential elements exist
-  if (!fileInput || !dropZone || !preview || !loading || !processBtn) {
-    console.error('Missing required DOM elements. Check IDs.');
+// ---------- DOM elements ----------
+const $ = (id) => document.getElementById(id);
+const fileInput = $('fileInput');
+const dropZone = $('dropZone');
+const dropMessage = $('dropMessage');
+const fileInfo = $('fileInfo');
+const fileName = $('fileName');
+const fileSize = $('fileSize');
+const preview = $('preview');
+const loading = $('loading');
+const loadingMessage = $('loadingMessage');
+const processArea = $('processArea');
+const processBtn = $('processBtn');
+const progressArea = $('progressArea');
+const progressFill = $('progressFill');
+const progressText = $('progressText');
+const progressSpeed = $('progressSpeed');
+const chunkGrid = $('chunkGrid');
+const cancelUploadBtn = $('cancelUploadBtn');
+const clipSelection = $('clipSelection');
+const clipList = $('clipList');
+const compressToggle = $('compressToggle');
+const useCompression = $('useCompression');
+
+if (!fileInput || !dropZone || !preview || !loading || !processBtn) {
+  console.error('Missing required DOM elements');
+}
+
+// ---------- UI helpers ----------
+function showLoading(msg = 'Processing...') {
+  preview.classList.add('hidden');
+  processArea.classList.add('hidden');
+  progressArea.classList.add('hidden');
+  clipSelection.classList.add('hidden');
+  loading.classList.remove('hidden');
+  loadingMessage.textContent = msg;
+  fileInput.disabled = true;
+  dropZone.style.pointerEvents = 'none';
+}
+
+function hideLoading() {
+  loading.classList.add('hidden');
+  fileInput.disabled = false;
+  dropZone.style.pointerEvents = 'auto';
+}
+
+function showFileInfo(file) {
+  fileName.textContent = file.name;
+  fileSize.textContent = `${(file.size / (1024 * 1024)).toFixed(2)} MB`;
+  fileInfo.classList.remove('hidden');
+  compressToggle.classList.remove('hidden');
+}
+
+function resetUI() {
+  fileInfo.classList.add('hidden');
+  compressToggle.classList.add('hidden');
+  progressArea.classList.add('hidden');
+  preview.classList.add('hidden');
+  processArea.classList.add('hidden');
+  clipSelection.classList.add('hidden');
+  dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 1GB)</span>`;
+}
+
+// ---------- Video compression (client-side, optional) ----------
+async function compressVideo(file) {
+  if (!useCompression.checked) return file;
+  showLoading('Compressing video (this may take a moment)...');
+  try {
+    const { createFFmpeg, fetchFile } = FFmpeg; // Assume FFmpeg.wasm is loaded
+    const ffmpeg = createFFmpeg({ log: false });
+    await ffmpeg.load();
+    ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(file));
+    await ffmpeg.run('-i', 'input.mp4', '-c:v', 'libx264', '-crf', '28', '-preset', 'fast', '-c:a', 'aac', 'output.mp4');
+    const data = ffmpeg.FS('readFile', 'output.mp4');
+    const compressedBlob = new Blob([data.buffer], { type: 'video/mp4' });
+    const compressedFile = new File([compressedBlob], file.name.replace(/\.[^.]+$/, '.mp4'), { type: 'video/mp4' });
+    hideLoading();
+    return compressedFile;
+  } catch (err) {
+    console.error('Compression failed, using original:', err);
+    hideLoading();
+    return file;
+  }
+}
+
+// ---------- Multipart upload (client) ----------
+async function uploadFileWithMultipart(file) {
+  if (!file.type.startsWith('video/')) {
+    alert('Please select a video file.');
+    return;
+  }
+  if (file.size > 1024 * 1024 * 1024) {
+    alert('File too large. Max 1 GB.');
     return;
   }
 
-  const BACKEND_URL = 'https://graphmotion.onrender.com'; // Update with your Render URL
+  // Show progress UI
+  progressArea.classList.remove('hidden');
+  progressFill.style.width = '0%';
+  progressText.textContent = '0%';
+  progressSpeed.textContent = '';
+  chunkGrid.innerHTML = '';
+  cancelUploadBtn.classList.remove('hidden');
+  uploadAbortController = new AbortController();
 
-  let currentSignedUrl = null;
-  let currentFileName = null;
-  let currentClips = [];
-
-  // ---------- UI helpers with null checks ----------
-  function showLoading(msg = 'Processing...') {
-    if (preview) preview.classList.add('hidden');
-    if (aiResult) aiResult.classList.add('hidden');
-    if (processArea) processArea.classList.add('hidden');
-    if (progressArea) progressArea.classList.add('hidden');
-    if (clipSelection) clipSelection.classList.add('hidden');
-    if (loading) {
-      loading.classList.remove('hidden');
-      if (loadingMessage) loadingMessage.textContent = msg;
-    }
-    if (fileInput) fileInput.disabled = true;
-    if (dropZone) dropZone.style.pointerEvents = 'none';
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  // Build chunk placeholder bars
+  for (let i = 0; i < totalChunks; i++) {
+    const div = document.createElement('div');
+    div.className = 'chunk-bar';
+    div.dataset.index = i;
+    chunkGrid.appendChild(div);
   }
 
-  function hideLoading() {
-    if (loading) loading.classList.add('hidden');
-    if (fileInput) fileInput.disabled = false;
-    if (dropZone) dropZone.style.pointerEvents = 'auto';
-  }
+  try {
+    // 1. Initiate multipart upload on backend
+    const initRes = await axios.post(`${BACKEND_URL}/init-multipart`, {
+      fileName: file.name,
+      fileSize: file.size,
+      contentType: file.type,
+    }, { signal: uploadAbortController.signal });
+    
+    const { uploadId, filePath, parts } = initRes.data;
+    multipartUploadMeta = { uploadId, filePath, parts };
+    uploadParts = new Array(parts).fill(null);
 
-  function showFileInfo(file) {
-    if (fileName) fileName.textContent = file.name;
-    const size = (file.size / (1024 * 1024)).toFixed(2);
-    if (fileSize) fileSize.textContent = `${size} MB`;
-    if (fileInfo) fileInfo.classList.remove('hidden');
-    if (dropMessage) {
-      dropMessage.innerHTML = `<p>✅ ${file.name}</p><span>Drop another or click to change</span>`;
-    }
-  }
+    // 2. Upload each part in parallel (limited concurrency)
+    const concurrencyLimit = MAX_CONCURRENT_UPLOADS;
+    let completedChunks = 0;
+    let totalUploaded = 0;
+    const startTime = Date.now();
 
-  function resetDropZone() {
-    if (fileInfo) fileInfo.classList.add('hidden');
-    if (dropMessage) {
-      dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 1GB)</span>`;
-    }
-  }
+    const updateProgress = () => {
+      const percent = Math.round((completedChunks / parts) * 100);
+      progressFill.style.width = `${percent}%`;
+      progressText.textContent = `${percent}%`;
+      const elapsed = (Date.now() - startTime) / 1000;
+      const speed = totalUploaded / elapsed / (1024 * 1024);
+      progressSpeed.textContent = `${speed.toFixed(1)} MB/s`;
+    };
 
-  // ---------- Upload using signed URL ----------
-  async function uploadFile(file) {
-    if (!file) return;
-    if (!file.type.startsWith('video/')) {
-      alert('Please select a video file.');
-      return;
-    }
-    if (file.size > 1024 * 1024 * 1024) {
-      alert('File too large. Max 1 GB.');
-      return;
-    }
+    const uploadPart = async (partNumber) => {
+      const start = (partNumber - 1) * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const blob = file.slice(start, end);
 
-    if (progressArea) progressArea.classList.remove('hidden');
-    if (progressFill) progressFill.style.width = '0%';
-    if (progressText) progressText.textContent = '0%';
+      // Get presigned URL for this part
+      const urlRes = await axios.post(`${BACKEND_URL}/get-part-url`, {
+        uploadId,
+        partNumber,
+        filePath,
+      }, { signal: uploadAbortController.signal });
+      const { signedUrl } = urlRes.data;
 
-    try {
-      // 1. Get signed upload URL
-      const getUrlRes = await axios.post(`${BACKEND_URL}/get-upload-url`, {
-        originalName: file.name,
-      });
-      const { signedUrl, filePath, fileName: name } = getUrlRes.data;
-      currentFileName = name;
+      const chunkBar = chunkGrid.children[partNumber - 1];
+      chunkBar.classList.add('uploading');
 
-      // 2. Upload directly to Supabase – no timeout
-      const uploadRes = await axios.put(signedUrl, file, {
-        headers: { 'Content-Type': file.type },
-        onUploadProgress: (progressEvent) => {
-          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          if (progressFill) progressFill.style.width = `${percent}%`;
-          if (progressText) progressText.textContent = `${percent}%`;
+      const res = await axios.put(signedUrl, blob, {
+        headers: { 'Content-Type': 'application/octet-stream' },
+        onUploadProgress: (evt) => {
+          // Part progress optional
         },
-        timeout: 0,
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
+        signal: uploadAbortController.signal,
       });
 
-      if (uploadRes.status !== 200) throw new Error('Upload to storage failed');
+      if (res.status !== 200) throw new Error(`Part ${partNumber} failed`);
+      
+      // Extract ETag from response headers (required for completion)
+      const etag = res.headers.etag || res.headers['ETag'] || '';
+      uploadParts[partNumber - 1] = { PartNumber: partNumber, ETag: etag.replace(/"/g, '') };
+      
+      completedChunks++;
+      totalUploaded += blob.size;
+      chunkBar.classList.remove('uploading');
+      chunkBar.classList.add('completed');
+      updateProgress();
+    };
 
-      // 3. Confirm upload
-      const confirmRes = await axios.post(`${BACKEND_URL}/confirm-upload`, { filePath }, { timeout: 30000 });
-      const { signedUrl: playUrl } = confirmRes.data;
-      currentSignedUrl = playUrl;
-
-      if (progressArea) progressArea.classList.add('hidden');
-      if (preview) {
-        preview.innerHTML = `
-          <div class="video-wrapper">
-            <video controls autoplay>
-              <source src="${playUrl}" type="${file.type}" />
-            </video>
-            <div class="video-info">
-              <h2>${currentFileName}</h2>
-              <p>✅ Video ready – valid for 1 hour</p>
-            </div>
-          </div>
-        `;
-        preview.classList.remove('hidden');
-      }
-
-      if (processArea) processArea.classList.remove('hidden');
-      resetDropZone();
-
-    } catch (err) {
-      if (progressArea) progressArea.classList.add('hidden');
-      let errorMsg = 'Upload error: ';
-      if (err.code === 'ECONNABORTED') {
-        errorMsg += 'The upload took too long. Please try again with a faster connection or a smaller file.';
-      } else if (err.response && err.response.data && err.response.data.error) {
-        errorMsg += err.response.data.error;
-      } else if (err.message) {
-        errorMsg += err.message;
-      } else {
-        errorMsg += 'Unknown error';
-      }
-      alert(errorMsg);
-    }
-  }
-
-  // ---------- Process video ----------
-  if (processBtn) {
-    processBtn.addEventListener('click', async () => {
-      if (!currentSignedUrl || !currentFileName) {
-        alert('Please upload a video first.');
-        return;
-      }
-
-      showLoading('Scanning video for interesting moments...');
-      try {
-        const response = await axios.post(`${BACKEND_URL}/process-video`, {
-          signedUrl: currentSignedUrl,
-          fileName: currentFileName,
-        }, { timeout: 600000 });
-
-        const data = response.data;
-        if (!data.success) throw new Error(data.error || 'Processing failed');
-
-        hideLoading();
-
-        if (!data.found) {
-          alert('Could not find any funny or interesting moments in this video.');
-          return;
+    // Execute with concurrency control
+    let idx = 1;
+    const workers = [];
+    const runNext = async () => {
+      while (idx <= parts) {
+        const partNum = idx++;
+        const task = uploadPart(partNum).then(() => {
+          // automatically continue
+        });
+        workers.push(task);
+        if (workers.length >= concurrencyLimit) {
+          await Promise.race(workers);
         }
-
-        currentClips = data.clips;
-
-        if (currentClips.length === 1) {
-          showClip(currentClips[0]);
-        } else {
-          if (clipList) {
-            clipList.innerHTML = '';
-            currentClips.forEach((clip, index) => {
-              const div = document.createElement('div');
-              div.className = 'clip-item';
-              div.innerHTML = `
-                <video src="${clip.signedUrl}" muted preload="metadata"></video>
-                <button data-index="${index}" class="btn-primary select-clip">Select</button>
-              `;
-              clipList.appendChild(div);
-            });
-
-            document.querySelectorAll('.select-clip').forEach(btn => {
-              btn.addEventListener('click', (e) => {
-                const idx = parseInt(e.target.dataset.index);
-                showClip(currentClips[idx]);
-              });
-            });
-          }
-          if (clipSelection) clipSelection.classList.remove('hidden');
-        }
-      } catch (err) {
-        hideLoading();
-        alert('Processing error: ' + (err.response?.data?.error || err.message));
       }
-    });
-  }
+    };
+    await runNext();
+    await Promise.all(workers); // wait for remaining
 
-  // ---------- Show a single clip ----------
-  function showClip(clip) {
-    if (clipSelection) clipSelection.classList.add('hidden');
-    if (preview) {
-      preview.innerHTML = `
-        <div class="video-wrapper">
-          <video controls autoplay>
-            <source src="${clip.signedUrl}" type="video/mp4" />
-          </video>
-          <div class="video-info">
-            <h2>Selected Clip (${clip.start.toFixed(1)}s – ${clip.end.toFixed(1)}s)</h2>
-            <a href="${clip.signedUrl}" download="clip.mp4" class="download-link">⬇️ Download Clip</a>
-          </div>
+    // 3. Complete multipart upload
+    const completeRes = await axios.post(`${BACKEND_URL}/complete-multipart`, {
+      uploadId,
+      filePath,
+      parts: uploadParts,
+      originalName: file.name,
+    }, { signal: uploadAbortController.signal });
+
+    const { signedUrl: playUrl } = completeRes.data;
+    currentSignedUrl = playUrl;
+    currentFileName = file.name;
+
+    // Cleanup progress
+    progressArea.classList.add('hidden');
+    cancelUploadBtn.classList.add('hidden');
+    
+    // Show preview
+    preview.innerHTML = `
+      <div class="video-wrapper">
+        <video controls autoplay>
+          <source src="${playUrl}" type="${file.type}" />
+        </video>
+        <div class="video-info">
+          <h2>${currentFileName}</h2>
+          <p>✅ Video ready – valid for 1 hour</p>
         </div>
-      `;
-      preview.classList.remove('hidden');
+      </div>
+    `;
+    preview.classList.remove('hidden');
+    processArea.classList.remove('hidden');
+    resetUI();
+
+  } catch (err) {
+    if (axios.isCancel(err)) {
+      console.log('Upload cancelled');
+    } else {
+      alert('Upload error: ' + (err.response?.data?.error || err.message));
     }
-    if (processArea) processArea.classList.add('hidden');
+    progressArea.classList.add('hidden');
+    cancelUploadBtn.classList.add('hidden');
+    // Attempt to abort multipart if started
+    if (uploadId) {
+      axios.post(`${BACKEND_URL}/abort-multipart`, { uploadId, filePath }).catch(() => {});
+    }
+  }
+}
+
+// ---------- Cancel upload ----------
+cancelUploadBtn.addEventListener('click', () => {
+  if (uploadAbortController) {
+    uploadAbortController.abort();
+  }
+});
+
+// ---------- Process video ----------
+processBtn.addEventListener('click', async () => {
+  if (!currentSignedUrl || !currentFileName) {
+    alert('Please upload a video first.');
+    return;
   }
 
-  // ---------- File input change ----------
-  if (fileInput) {
-    fileInput.addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (file) {
-        showFileInfo(file);
-        uploadFile(file);
-      }
-    });
+  showLoading('Scanning video for interesting moments...');
+  try {
+    const response = await axios.post(`${BACKEND_URL}/process-video`, {
+      signedUrl: currentSignedUrl,
+      fileName: currentFileName,
+    }, { timeout: 600000 });
+
+    const data = response.data;
+    if (!data.success) throw new Error(data.error || 'Processing failed');
+
+    hideLoading();
+
+    if (!data.found) {
+      alert('Could not find any funny or interesting moments in this video.');
+      return;
+    }
+
+    currentClips = data.clips;
+
+    if (currentClips.length === 1) {
+      showClip(currentClips[0]);
+    } else {
+      clipList.innerHTML = '';
+      currentClips.forEach((clip, index) => {
+        const div = document.createElement('div');
+        div.className = 'clip-item';
+        div.innerHTML = `
+          <video src="${clip.signedUrl}" muted preload="metadata"></video>
+          <button data-index="${index}" class="btn-primary select-clip">Select</button>
+        `;
+        clipList.appendChild(div);
+      });
+      document.querySelectorAll('.select-clip').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const idx = parseInt(e.target.dataset.index);
+          showClip(currentClips[idx]);
+        });
+      });
+      clipSelection.classList.remove('hidden');
+    }
+  } catch (err) {
+    hideLoading();
+    alert('Processing error: ' + (err.response?.data?.error || err.message));
   }
+});
 
-  // ---------- Drag & Drop ----------
-  if (dropZone) {
-    dropZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropZone.classList.add('dragover');
-    });
-    dropZone.addEventListener('dragleave', (e) => {
-      e.preventDefault();
-      dropZone.classList.remove('dragover');
-    });
-    dropZone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dropZone.classList.remove('dragover');
-      const files = e.dataTransfer.files;
-      if (files.length > 0) {
-        const file = files[0];
-        if (fileInput) {
-          fileInput.files = e.dataTransfer.files;
-        }
-        showFileInfo(file);
-        uploadFile(file);
-      }
-    });
+function showClip(clip) {
+  clipSelection.classList.add('hidden');
+  preview.innerHTML = `
+    <div class="video-wrapper">
+      <video controls autoplay>
+        <source src="${clip.signedUrl}" type="video/mp4" />
+      </video>
+      <div class="video-info">
+        <h2>Selected Clip (${clip.start.toFixed(1)}s – ${clip.end.toFixed(1)}s)</h2>
+        <a href="${clip.signedUrl}" download="clip.mp4" class="download-link">⬇️ Download Clip</a>
+      </div>
+    </div>
+  `;
+  preview.classList.remove('hidden');
+  processArea.classList.add('hidden');
+}
 
-    // Click on drop zone triggers input
-    dropZone.addEventListener('click', () => {
-      if (fileInput) fileInput.click();
-    });
+// ---------- File selection ----------
+fileInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  currentFile = file;
+  showFileInfo(file);
+  const compressed = await compressVideo(file);
+  uploadFileWithMultipart(compressed);
+});
+
+// ---------- Drag & Drop ----------
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('dragover');
+});
+dropZone.addEventListener('dragleave', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+});
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const files = e.dataTransfer.files;
+  if (files.length > 0) {
+    const file = files[0];
+    fileInput.files = e.dataTransfer.files;
+    currentFile = file;
+    showFileInfo(file);
+    compressVideo(file).then(compressed => uploadFileWithMultipart(compressed));
   }
-
-}); // end DOMContentLoaded
+});
+dropZone.addEventListener('click', () => fileInput.click());
