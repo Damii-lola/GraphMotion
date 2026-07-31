@@ -27,7 +27,6 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '1gb' }));
 
-// ---------- Supabase + S3 clients ----------
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -47,7 +46,6 @@ const s3 = new S3Client({
 
 const BUCKET_NAME = 'temp_videos';
 
-// ---------- Ensure bucket ----------
 async function ensureBucket() {
   try {
     const { data: buckets, error } = await supabase.storage.listBuckets();
@@ -69,9 +67,7 @@ async function ensureBucket() {
 }
 ensureBucket();
 
-// ==============================================
-//   ORIGINAL SINGLE-PUT UPLOAD (fallback)
-// ==============================================
+// ---------- Single PUT (fallback) ----------
 app.post('/get-upload-url', async (req, res) => {
   try {
     const { originalName } = req.body;
@@ -122,16 +118,14 @@ app.post('/confirm-upload', async (req, res) => {
   }
 });
 
-// ==============================================
-//   MULTIPART UPLOAD (FIXED KEY PATHS)
-// ==============================================
+// ---------- Multipart upload (FIXED) ----------
 app.post('/init-multipart', async (req, res) => {
   try {
     const { fileName, fileSize, contentType } = req.body;
     if (!fileName || !fileSize) return res.status(400).json({ error: 'Missing file info' });
 
     const ext = fileName.includes('.') ? fileName.split('.').pop() : 'mp4';
-    const key = `${uuidv4()}.${ext}`;   // ✅ FIX: no bucket prefix
+    const key = `${uuidv4()}.${ext}`;
 
     const command = new CreateMultipartUploadCommand({
       Bucket: BUCKET_NAME,
@@ -158,9 +152,10 @@ app.post('/init-multipart', async (req, res) => {
   }
 });
 
+// 👇 UPDATED: no contentLength, no HTTP/2 error
 app.post('/get-part-url', async (req, res) => {
   try {
-    const { uploadId, partNumber, filePath, contentLength } = req.body;
+    const { uploadId, partNumber, filePath } = req.body;
     if (!uploadId || !partNumber || !filePath) return res.status(400).json({ error: 'Missing parameters' });
 
     const command = new UploadPartCommand({
@@ -172,7 +167,7 @@ app.post('/get-part-url', async (req, res) => {
 
     const url = await getSignedUrl(s3, command, {
       expiresIn: 3600,
-      ...(contentLength ? { contentLength } : {}),
+      unhoistableHeaders: new Set(['content-length']),   // 👈 FIX
     });
 
     res.json({ success: true, signedUrl: url });
@@ -204,7 +199,7 @@ app.post('/complete-multipart', async (req, res) => {
     await supabase.from('video_uploads').insert({
       file_name: finalName,
       original_name: originalName,
-      file_path: `temp_videos/${filePath}`,   // full path for Supabase API
+      file_path: `temp_videos/${filePath}`,
       upload_status: 'completed',
       expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
     });
@@ -240,9 +235,7 @@ app.post('/abort-multipart', async (req, res) => {
   }
 });
 
-// ==============================================
-//   VIDEO PROCESSING
-// ==============================================
+// ---------- Video processing ----------
 app.post('/process-video', async (req, res) => {
   const { signedUrl, fileName } = req.body;
   if (!signedUrl || !fileName) return res.status(400).json({ error: 'Missing video info' });
@@ -389,9 +382,7 @@ app.post('/process-video', async (req, res) => {
   }
 });
 
-// ==============================================
-//   CLEANUP
-// ==============================================
+// ---------- Cleanup ----------
 async function cleanupExpired() {
   const now = new Date();
   const expiry = now.toISOString();
@@ -415,7 +406,7 @@ async function cleanupExpired() {
       try {
         await s3.send(new AbortMultipartUploadCommand({
           Bucket: BUCKET_NAME,
-          Key: mpu.file_path,   // key is just the UUID, no bucket prefix
+          Key: mpu.file_path,
           UploadId: mpu.upload_id,
         }));
       } catch (e) { /* ignore */ }
