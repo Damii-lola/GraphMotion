@@ -1,20 +1,21 @@
 {
   "name": "supabase-render-backend",
   "version": "1.0.0",
-  "description": "Backend for GraphMotion AI",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.504.0",
+    "@aws-sdk/s3-request-presigner": "^3.504.0",
     "@supabase/supabase-js": "^2.39.0",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "ffmpeg-static": "^5.1.0",
     "fluent-ffmpeg": "^2.1.2",
-    "form-data": "^4.0.0",
-    "uuid": "^9.0.1",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "uuid": "^9.0.1"
   }
 }
