@@ -159,9 +159,10 @@ app.post('/init-multipart', async (req, res) => {
   }
 });
 
+// ---------- FIX: Accept contentLength to avoid 413 ----------
 app.post('/get-part-url', async (req, res) => {
   try {
-    const { uploadId, partNumber, filePath } = req.body;
+    const { uploadId, partNumber, filePath, contentLength } = req.body;
     if (!uploadId || !partNumber || !filePath) return res.status(400).json({ error: 'Missing parameters' });
 
     const command = new UploadPartCommand({
@@ -170,7 +171,13 @@ app.post('/get-part-url', async (req, res) => {
       UploadId: uploadId,
       PartNumber: partNumber,
     });
-    const url = await getSignedUrl(s3, command, { expiresIn: 3600 });
+
+    // Include the exact content length in the pre‑signed URL
+    const url = await getSignedUrl(s3, command, {
+      expiresIn: 3600,
+      ...(contentLength ? { contentLength } : {}),
+    });
+
     res.json({ success: true, signedUrl: url });
   } catch (err) {
     console.error('[get-part-url] Error:', err);
