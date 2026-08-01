@@ -1,11 +1,11 @@
 // =============================================
 //  GraphMotion AI – Frontend Upload & Processing
-//  (Direct multipart uploads to S3, no backend proxy)
+//  (Direct multipart uploads to S3, 500MB chunks, 100 concurrent)
 // =============================================
 
 const BACKEND_URL = 'https://graphmotion.onrender.com'; // Your Render backend
-const CHUNK_SIZE = 100 * 1024 * 1024;                     // 100 MB per part (faster)
-const MAX_CONCURRENT_UPLOADS = 50;                      // More parallelism
+const CHUNK_SIZE = 500 * 1024 * 1024;                     // 500 MB per part
+const MAX_CONCURRENT_UPLOADS = 100;                      // 100 concurrent uploads
 
 // ---------- Global state ----------
 let currentFile = null;
@@ -38,8 +38,6 @@ const chunkGrid = $('chunkGrid');
 const cancelUploadBtn = $('cancelUploadBtn');
 const clipSelection = $('clipSelection');
 const clipList = $('clipList');
-const compressToggle = $('compressToggle');
-const useCompression = $('useCompression');
 
 // ---------- UI helpers ----------
 function showLoading(msg = 'Processing...') {
@@ -63,12 +61,10 @@ function showFileInfo(file) {
   fileName.textContent = file.name;
   fileSize.textContent = `${(file.size / (1024 * 1024)).toFixed(2)} MB`;
   fileInfo.classList.remove('hidden');
-  compressToggle.classList.remove('hidden');
 }
 
 function cleanUploadUI() {
   fileInfo.classList.add('hidden');
-  compressToggle.classList.add('hidden');
   progressArea.classList.add('hidden');
   cancelUploadBtn.classList.add('hidden');
   chunkGrid.innerHTML = '';
@@ -79,14 +75,13 @@ function resetForNewUpload() {
   preview.classList.add('hidden');
   processArea.classList.add('hidden');
   clipSelection.classList.add('hidden');
-  dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 5GB)</span>`;
+  dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 10GB)</span>`;
   currentSignedUrl = null;
   currentFileName = null;
   currentClips = [];
 }
 
 // ---------- Direct Multipart Upload to S3 ----------
-// Upload chunks directly to S3 using presigned URLs
 async function uploadPartDirect(partNumber, blob, uploadId, filePath) {
   const { data: { url } } = await axios.get(`${BACKEND_URL}/get-part-url`, {
     params: { uploadId, partNumber, filePath },
@@ -102,7 +97,6 @@ async function uploadPartDirect(partNumber, blob, uploadId, filePath) {
   return { PartNumber: partNumber, ETag: response.headers.etag.replace(/"/g, '') };
 }
 
-// Retry failed chunks (3 attempts)
 async function uploadPartWithRetry(partNumber, blob, uploadId, filePath, retries = 3) {
   try {
     return await uploadPartDirect(partNumber, blob, uploadId, filePath);
@@ -113,7 +107,6 @@ async function uploadPartWithRetry(partNumber, blob, uploadId, filePath, retries
   }
 }
 
-// Upload file using direct multipart to S3
 async function uploadFileMultipart(file) {
   progressArea.classList.remove('hidden');
   progressFill.style.width = '0%';
@@ -156,7 +149,7 @@ async function uploadFileMultipart(file) {
       progressSpeed.textContent = `${mbps.toFixed(1)} MB/s`;
     };
 
-    // Use a queue for controlled parallelism (50 concurrent uploads)
+    // Queue for controlled parallelism
     const queue = [];
     for (let i = 1; i <= totalChunks; i++) {
       queue.push(i);
@@ -188,7 +181,7 @@ async function uploadFileMultipart(file) {
       }
     }
 
-    // Run 50 workers in parallel
+    // Run 100 workers in parallel
     const workers = [];
     for (let i = 0; i < Math.min(MAX_CONCURRENT_UPLOADS, totalChunks); i++) {
       workers.push(worker());
@@ -221,7 +214,7 @@ async function uploadFileMultipart(file) {
   }
 }
 
-// Fallback single PUT upload (if multipart fails)
+// Fallback single PUT upload
 async function uploadFileSingle(file) {
   progressArea.classList.remove('hidden');
   progressFill.style.width = '0%';
