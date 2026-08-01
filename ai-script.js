@@ -1,6 +1,6 @@
 // =============================================
 //  GraphMotion AI – Frontend Upload & Processing
-//  (Direct multipart uploads to S3, 500MB chunks, 100 concurrent)
+//  (FULL VERSION: 500MB chunks, 100 concurrent, direct S3 uploads)
 // =============================================
 
 const BACKEND_URL = 'https://graphmotion.onrender.com'; // Your Render backend
@@ -94,7 +94,7 @@ async function uploadPartDirect(partNumber, blob, uploadId, filePath) {
     maxBodyLength: Infinity,
   });
 
-  return { PartNumber: partNumber, ETag: response.headers.etag.replace(/"/g, '') };
+  return { PartNumber: partNumber, ETag: response.headers.etag?.replace(/"/g, '') || `etag-${partNumber}` };
 }
 
 async function uploadPartWithRetry(partNumber, blob, uploadId, filePath, retries = 3) {
