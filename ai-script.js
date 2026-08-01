@@ -1,8 +1,9 @@
 // =============================================
 //  GraphMotion AI – Frontend Upload (Direct Supabase Storage Uploads)
+//  USES XHR FOR PROGRESS TRACKING + FETCH FOR RELIABILITY
 // =============================================
 
-const BACKEND_URL = 'https://graphmotion.onrender.com'; // Your Render backend
+const BACKEND_URL = 'https://graphmotion.onrender.com';
 
 // ---------- Global state ----------
 let currentFile = null;
@@ -10,6 +11,7 @@ let currentSignedUrl = null;
 let currentFileName = null;
 let currentClips = [];
 let uploadAbortController = null;
+let xhr = null;
 
 // ---------- DOM references ----------
 const $ = (id) => document.getElementById(id);
@@ -60,6 +62,7 @@ function cleanUploadUI() {
   fileInfo.classList.add('hidden');
   progressArea.classList.add('hidden');
   cancelUploadBtn.classList.add('hidden');
+  if (xhr) xhr.abort();
 }
 
 function resetForNewUpload() {
@@ -73,7 +76,7 @@ function resetForNewUpload() {
   currentClips = [];
 }
 
-// ---------- Direct Upload to Supabase Storage ----------
+// ---------- Direct Upload to Supabase Storage (XHR + Fetch) ----------
 async function uploadFileDirect(file) {
   progressArea.classList.remove('hidden');
   progressFill.style.width = '0%';
@@ -84,42 +87,70 @@ async function uploadFileDirect(file) {
 
   try {
     // 1. Get a signed URL from the backend
-    const getUrlRes = await axios.post(`${BACKEND_URL}/get-upload-url`, {
-      originalName: file.name,
-    }, { signal: uploadAbortController.signal });
-
-    const { signedUrl, filePath, fileName: name } = getUrlRes.data;
+    const getUrlRes = await fetch(`${BACKEND_URL}/get-upload-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ originalName: file.name }),
+      signal: uploadAbortController.signal,
+    });
+    const { signedUrl, filePath, fileName: name } = await getUrlRes.json();
     currentFileName = name;
 
-    // 2. Upload directly to Supabase Storage with progress tracking
-    const startTime = Date.now();
-    await axios.put(signedUrl, file, {
-      headers: {
-        'Content-Type': file.type,
-        'x-upsert': 'false', // Prevent overwriting existing files
-      },
-      onUploadProgress: (pe) => {
-        const pct = Math.round((pe.loaded * 100) / pe.total);
-        progressFill.style.width = `${pct}%`;
-        progressText.textContent = `${pct}%`;
-        const elapsed = (Date.now() - startTime) / 1000;
-        const mbps = pe.loaded / elapsed / (1024 * 1024);
-        progressSpeed.textContent = `${mbps.toFixed(1)} MB/s`;
-      },
-      signal: uploadAbortController.signal,
-      timeout: 0,
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity,
-    });
+    // 2. Upload directly to Supabase Storage with XHR (for progress)
+    return new Promise((resolve, reject) => {
+      xhr = new XMLHttpRequest();
+      xhr.open('PUT', signedUrl, true);
+      xhr.setRequestHeader('Content-Type', file.type);
+      xhr.setRequestHeader('x-upsert', 'false');
 
-    // 3. Confirm upload completion
-    const confirmRes = await axios.post(`${BACKEND_URL}/confirm-upload`, { filePath });
-    const { signedUrl: playUrl } = confirmRes.data;
-    currentSignedUrl = playUrl;
-    finishUpload(playUrl, file.type);
+      const startTime = Date.now();
+      let lastUpdate = 0;
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const now = Date.now();
+          if (now - lastUpdate > 100) { // Throttle updates to avoid UI lag
+            const pct = Math.round((e.loaded / e.total) * 100);
+            progressFill.style.width = `${pct}%`;
+            progressText.textContent = `${pct}%`;
+            const elapsed = (now - startTime) / 1000;
+            const mbps = e.loaded / elapsed / (1024 * 1024);
+            progressSpeed.textContent = `${mbps.toFixed(1)} MB/s`;
+            lastUpdate = now;
+          }
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('Upload failed'));
+      xhr.onabort = () => reject(new Error('Upload cancelled'));
+      xhr.onload = async () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          // 3. Confirm upload completion
+          const confirmRes = await fetch(`${BACKEND_URL}/confirm-upload`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filePath }),
+          });
+          const { signedUrl: playUrl } = await confirmRes.json();
+          currentSignedUrl = playUrl;
+          resolve(playUrl);
+        } else {
+          reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));
+        }
+      };
+
+      xhr.send(file);
+    }).then((playUrl) => {
+      finishUpload(playUrl, file.type);
+    }).catch((err) => {
+      if (err.message !== 'Upload cancelled') {
+        alert('Upload error: ' + err.message);
+      }
+      cleanUploadUI();
+    });
   } catch (err) {
-    if (!axios.isCancel(err)) {
-      alert('Upload error: ' + (err.response?.data?.error || err.message));
+    if (err.name !== 'AbortError') {
+      alert('Upload error: ' + err.message);
     }
     cleanUploadUI();
   }
@@ -145,6 +176,7 @@ function finishUpload(playUrl, mimeType) {
 
 // ---------- Cancel upload ----------
 cancelUploadBtn.addEventListener('click', () => {
+  if (xhr) xhr.abort();
   if (uploadAbortController) uploadAbortController.abort();
 });
 
@@ -157,12 +189,17 @@ processBtn.addEventListener('click', async () => {
 
   showLoading('Scanning video for interesting moments...');
   try {
-    const resp = await axios.post(`${BACKEND_URL}/process-video`, {
-      signedUrl: currentSignedUrl,
-      fileName: currentFileName,
-    }, { timeout: 600000 });
+    const resp = await fetch(`${BACKEND_URL}/process-video`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        signedUrl: currentSignedUrl,
+        fileName: currentFileName,
+      }),
+      timeout: 600000,
+    });
 
-    const data = resp.data;
+    const data = await resp.json();
     if (!data.success) throw new Error(data.error || 'Processing failed');
     hideLoading();
 
@@ -195,7 +232,7 @@ processBtn.addEventListener('click', async () => {
     }
   } catch (err) {
     hideLoading();
-    alert('Processing error: ' + (err.response?.data?.error || err.message));
+    alert('Processing error: ' + err.message);
   }
 });
 
