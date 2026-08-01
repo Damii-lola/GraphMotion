@@ -1,11 +1,8 @@
 // =============================================
-//  GraphMotion AI – Frontend Upload & Processing
-//  (FULL VERSION: 500MB chunks, 100 concurrent, direct S3 uploads)
+//  GraphMotion AI – Frontend Upload (Direct Supabase Storage Uploads)
 // =============================================
 
 const BACKEND_URL = 'https://graphmotion.onrender.com'; // Your Render backend
-const CHUNK_SIZE = 500 * 1024 * 1024;                     // 500 MB per part
-const MAX_CONCURRENT_UPLOADS = 100;                      // 100 concurrent uploads
 
 // ---------- Global state ----------
 let currentFile = null;
@@ -13,9 +10,6 @@ let currentSignedUrl = null;
 let currentFileName = null;
 let currentClips = [];
 let uploadAbortController = null;
-let uploadId = null;
-let uploadParts = [];
-let multipartMeta = null;
 
 // ---------- DOM references ----------
 const $ = (id) => document.getElementById(id);
@@ -34,7 +28,6 @@ const progressArea = $('progressArea');
 const progressFill = $('progressFill');
 const progressText = $('progressText');
 const progressSpeed = $('progressSpeed');
-const chunkGrid = $('chunkGrid');
 const cancelUploadBtn = $('cancelUploadBtn');
 const clipSelection = $('clipSelection');
 const clipList = $('clipList');
@@ -67,7 +60,6 @@ function cleanUploadUI() {
   fileInfo.classList.add('hidden');
   progressArea.classList.add('hidden');
   cancelUploadBtn.classList.add('hidden');
-  chunkGrid.innerHTML = '';
 }
 
 function resetForNewUpload() {
@@ -81,157 +73,31 @@ function resetForNewUpload() {
   currentClips = [];
 }
 
-// ---------- Direct Multipart Upload to S3 ----------
-async function uploadPartDirect(partNumber, blob, uploadId, filePath) {
-  const { data: { url } } = await axios.get(`${BACKEND_URL}/get-part-url`, {
-    params: { uploadId, partNumber, filePath },
-  });
-
-  const response = await axios.put(url, blob, {
-    headers: { 'Content-Type': 'application/octet-stream' },
-    timeout: 0,
-    maxContentLength: Infinity,
-    maxBodyLength: Infinity,
-  });
-
-  return { PartNumber: partNumber, ETag: response.headers.etag?.replace(/"/g, '') || `etag-${partNumber}` };
-}
-
-async function uploadPartWithRetry(partNumber, blob, uploadId, filePath, retries = 3) {
-  try {
-    return await uploadPartDirect(partNumber, blob, uploadId, filePath);
-  } catch (err) {
-    if (retries <= 0) throw err;
-    console.log(`Retrying part ${partNumber}... (${retries} left)`);
-    return uploadPartWithRetry(partNumber, blob, uploadId, filePath, retries - 1);
-  }
-}
-
-async function uploadFileMultipart(file) {
+// ---------- Direct Upload to Supabase Storage ----------
+async function uploadFileDirect(file) {
   progressArea.classList.remove('hidden');
   progressFill.style.width = '0%';
   progressText.textContent = '0%';
   progressSpeed.textContent = '';
-  chunkGrid.innerHTML = '';
   cancelUploadBtn.classList.remove('hidden');
   uploadAbortController = new AbortController();
 
   try {
-    // 1. Init multipart on backend
-    const initRes = await axios.post(`${BACKEND_URL}/init-multipart`, {
-      fileName: file.name,
-      fileSize: file.size,
-      contentType: file.type,
-    }, { signal: uploadAbortController.signal });
-
-    const { uploadId, filePath, parts } = initRes.data;
-    multipartMeta = { uploadId, filePath, parts };
-    uploadParts = new Array(parts).fill(null);
-
-    const totalChunks = parts;
-    for (let i = 0; i < totalChunks; i++) {
-      const bar = document.createElement('div');
-      bar.className = 'chunk-bar';
-      bar.dataset.index = i;
-      chunkGrid.appendChild(bar);
-    }
-
-    let completedChunks = 0;
-    let totalUploaded = 0;
-    const startTime = Date.now();
-
-    const updateProgress = () => {
-      const pct = Math.round((completedChunks / totalChunks) * 100);
-      progressFill.style.width = `${pct}%`;
-      progressText.textContent = `${pct}%`;
-      const elapsed = (Date.now() - startTime) / 1000;
-      const mbps = totalUploaded / elapsed / (1024 * 1024);
-      progressSpeed.textContent = `${mbps.toFixed(1)} MB/s`;
-    };
-
-    // Queue for controlled parallelism
-    const queue = [];
-    for (let i = 1; i <= totalChunks; i++) {
-      queue.push(i);
-    }
-
-    async function worker() {
-      while (queue.length > 0 && !uploadAbortController.signal.aborted) {
-        const partNumber = queue.shift();
-        const start = (partNumber - 1) * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, file.size);
-        const blob = file.slice(start, end);
-
-        const bar = chunkGrid.children[partNumber - 1];
-        bar.classList.add('uploading');
-
-        try {
-          const part = await uploadPartWithRetry(partNumber, blob, uploadId, filePath);
-          uploadParts[partNumber - 1] = part;
-          completedChunks++;
-          totalUploaded += blob.size;
-          bar.classList.remove('uploading');
-          bar.classList.add('completed');
-          updateProgress();
-        } catch (err) {
-          console.error(`Part ${partNumber} failed after retries:`, err);
-          queue.push(partNumber); // Re-queue failed part
-          bar.classList.remove('uploading');
-        }
-      }
-    }
-
-    // Run 100 workers in parallel
-    const workers = [];
-    for (let i = 0; i < Math.min(MAX_CONCURRENT_UPLOADS, totalChunks); i++) {
-      workers.push(worker());
-    }
-    await Promise.all(workers);
-
-    // 3. Complete multipart
-    const completeRes = await axios.post(`${BACKEND_URL}/complete-multipart`, {
-      uploadId,
-      filePath,
-      parts: uploadParts,
-      originalName: file.name,
-    }, { signal: uploadAbortController.signal });
-
-    const { signedUrl: playUrl } = completeRes.data;
-    currentSignedUrl = playUrl;
-    currentFileName = file.name;
-    finishUpload(playUrl, file.type);
-  } catch (err) {
-    if (axios.isCancel(err)) {
-      console.log('Upload cancelled');
-    } else {
-      console.warn('Multipart failed, falling back to single upload.');
-      await uploadFileSingle(file);
-    }
-    cleanUploadUI();
-    if (uploadId) {
-      axios.post(`${BACKEND_URL}/abort-multipart`, { uploadId, filePath }).catch(() => {});
-    }
-  }
-}
-
-// Fallback single PUT upload
-async function uploadFileSingle(file) {
-  progressArea.classList.remove('hidden');
-  progressFill.style.width = '0%';
-  progressText.textContent = '0%';
-  cancelUploadBtn.classList.remove('hidden');
-  uploadAbortController = new AbortController();
-
-  try {
+    // 1. Get a signed URL from the backend
     const getUrlRes = await axios.post(`${BACKEND_URL}/get-upload-url`, {
       originalName: file.name,
-    });
+    }, { signal: uploadAbortController.signal });
+
     const { signedUrl, filePath, fileName: name } = getUrlRes.data;
     currentFileName = name;
 
+    // 2. Upload directly to Supabase Storage with progress tracking
     const startTime = Date.now();
     await axios.put(signedUrl, file, {
-      headers: { 'Content-Type': file.type },
+      headers: {
+        'Content-Type': file.type,
+        'x-upsert': 'false', // Prevent overwriting existing files
+      },
       onUploadProgress: (pe) => {
         const pct = Math.round((pe.loaded * 100) / pe.total);
         progressFill.style.width = `${pct}%`;
@@ -246,6 +112,7 @@ async function uploadFileSingle(file) {
       maxBodyLength: Infinity,
     });
 
+    // 3. Confirm upload completion
     const confirmRes = await axios.post(`${BACKEND_URL}/confirm-upload`, { filePath });
     const { signedUrl: playUrl } = confirmRes.data;
     currentSignedUrl = playUrl;
@@ -356,7 +223,7 @@ fileInput.addEventListener('change', async (e) => {
   currentFile = file;
   resetForNewUpload();
   showFileInfo(file);
-  uploadFileMultipart(file);
+  uploadFileDirect(file);
 });
 
 dropZone.addEventListener('dragover', (e) => {
@@ -379,7 +246,7 @@ dropZone.addEventListener('drop', (e) => {
     currentFile = file;
     resetForNewUpload();
     showFileInfo(file);
-    uploadFileMultipart(file);
+    uploadFileDirect(file);
   }
 });
 
