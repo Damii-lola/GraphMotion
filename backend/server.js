@@ -1,8 +1,16 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
-const { S3Client, CreateMultipartUploadCommand, UploadPartCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand } = require('@aws-sdk/client-s3');
+const { createClient: createSupabaseClient } = require('@supabase/supabase-js');
+const {
+  S3Client,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+  GetObjectCommand,
+} = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { v4: uuidv4 } = require('uuid');
 const cron = require('node-cron');
 const fs = require('fs');
@@ -13,6 +21,14 @@ const ffmpegPath = require('ffmpeg-static');
 ffmpeg.setFfmpegPath(ffmpegPath);
 const { promisify } = require('util');
 const execAsync = promisify(require('child_process').exec);
+const { createClient: createRedisClient } = require('redis');
+
+// Initialize Redis for progress tracking (optional)
+let redis;
+if (process.env.REDIS_URL) {
+  redis = createRedisClient({ url: process.env.REDIS_URL });
+  redis.connect().catch(console.error);
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,24 +37,15 @@ const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 server.timeout = 600000;
 
-// ---------- Middleware ----------
+// Middleware
 app.use(cors({
   origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
   credentials: true,
 }));
+app.use(express.json({ limit: '1gb' }));
 
-// Normal JSON parsing for all routes EXCEPT /upload-part
-app.use((req, res, next) => {
-  if (req.path === '/upload-part' && req.method === 'POST') {
-    // Skip json parser, we'll handle raw body later
-    next();
-  } else {
-    express.json({ limit: '1gb' })(req, res, next);
-  }
-});
-
-// ---------- Supabase + S3 clients ----------
-const supabase = createClient(
+// Supabase + S3 clients
+const supabase = createSupabaseClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
@@ -51,13 +58,13 @@ const s3 = new S3Client({
     secretAccessKey: process.env.SUPABASE_S3_SECRET_KEY,
   },
   forcePathStyle: true,
-  requestChecksumCalculation: 'WHEN_REQUIRED',
-  responseChecksumValidation: 'WHEN_REQUIRED',
+  maxAttempts: 3, // Retry failed requests
+  timeout: 60000, // 60s timeout
 });
 
 const BUCKET_NAME = 'temp_videos';
 
-// ---------- Ensure bucket ----------
+// Ensure bucket exists
 async function ensureBucket() {
   try {
     const { data: buckets, error } = await supabase.storage.listBuckets();
@@ -67,7 +74,7 @@ async function ensureBucket() {
       await supabase.storage.createBucket(BUCKET_NAME, {
         public: false,
         fileSizeLimit: '5GB',
-        allowedMimeTypes: ['video/*']
+        allowedMimeTypes: ['video/*'],
       });
       console.log('[Startup] Created bucket:', BUCKET_NAME);
     } else {
@@ -80,60 +87,7 @@ async function ensureBucket() {
 ensureBucket();
 
 // ==============================================
-//   ORIGINAL SINGLE-PUT UPLOAD (fallback)
-// ==============================================
-app.post('/get-upload-url', async (req, res) => {
-  try {
-    const { originalName } = req.body;
-    if (!originalName) return res.status(400).json({ error: 'Missing originalName' });
-
-    const ext = originalName.includes('.') ? originalName.split('.').pop() : 'mp4';
-    const fileName = `${uuidv4()}.${ext}`;
-    const filePath = `temp_videos/${fileName}`;
-
-    const { data, error } = await supabase.storage
-      .from(BUCKET_NAME)
-      .createSignedUploadUrl(filePath);
-    if (error) throw error;
-
-    await supabase.from('video_uploads').insert({
-      file_name: fileName,
-      original_name: originalName,
-      file_path: filePath,
-      upload_status: 'pending',
-      expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
-    });
-
-    res.json({ success: true, signedUrl: data.signedUrl, filePath, fileName: originalName });
-  } catch (err) {
-    console.error('[get-upload-url] Error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/confirm-upload', async (req, res) => {
-  const { filePath } = req.body;
-  if (!filePath) return res.status(400).json({ error: 'Missing filePath' });
-
-  try {
-    await supabase.from('video_uploads')
-      .update({ upload_status: 'completed' })
-      .eq('file_path', filePath);
-
-    const { data, error } = await supabase.storage
-      .from(BUCKET_NAME)
-      .createSignedUrl(filePath, 3600);
-    if (error) throw error;
-
-    res.json({ success: true, signedUrl: data.signedUrl });
-  } catch (err) {
-    console.error('[confirm-upload] Error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ==============================================
-//   MULTIPART UPLOAD (FAST – NO PRESIGNED URL)
+//   MULTIPART UPLOAD (Presigned URLs for speed)
 // ==============================================
 app.post('/init-multipart', async (req, res) => {
   try {
@@ -141,17 +95,19 @@ app.post('/init-multipart', async (req, res) => {
     if (!fileName || !fileSize) return res.status(400).json({ error: 'Missing file info' });
 
     const ext = fileName.includes('.') ? fileName.split('.').pop() : 'mp4';
-    const key = `${uuidv4()}.${ext}`;   // no bucket prefix
+    const key = `${uuidv4()}.${ext}`;
 
     const command = new CreateMultipartUploadCommand({
       Bucket: BUCKET_NAME,
       Key: key,
       ContentType: contentType || 'video/mp4',
+      ACL: 'private',
+      StorageClass: 'STANDARD',
     });
     const response = await s3.send(command);
     const uploadId = response.UploadId;
 
-    const totalParts = Math.ceil(fileSize / (5 * 1024 * 1024)); // 5 MB parts
+    const totalParts = Math.ceil(fileSize / (50 * 1024 * 1024)); // 50MB chunks
     await supabase.from('multipart_uploads').insert({
       id: uploadId,
       file_name: fileName,
@@ -168,46 +124,29 @@ app.post('/init-multipart', async (req, res) => {
   }
 });
 
-// ---------- UPLOAD PART (proxy – client sends raw chunk to backend) ----------
-app.post('/upload-part', async (req, res) => {
+// Generate presigned URL for a chunk
+app.get('/get-part-url', async (req, res) => {
   try {
-    const uploadId = req.headers['x-upload-id'];
-    const partNumber = parseInt(req.headers['x-part-number'], 10);
-    const filePath = req.headers['x-file-path'];
-
+    const { uploadId, partNumber, filePath } = req.query;
     if (!uploadId || !partNumber || !filePath) {
-      return res.status(400).json({ error: 'Missing upload parameters in headers' });
+      return res.status(400).json({ error: 'Missing parameters' });
     }
 
-    // Read raw body
-    const chunks = [];
-    req.on('data', (chunk) => chunks.push(chunk));
-    req.on('end', async () => {
-      try {
-        const body = Buffer.concat(chunks);
-
-        const command = new UploadPartCommand({
-          Bucket: BUCKET_NAME,
-          Key: filePath,
-          UploadId: uploadId,
-          PartNumber: partNumber,
-          Body: body,
-        });
-
-        const result = await s3.send(command);
-        res.setHeader('ETag', result.ETag);
-        res.json({ success: true, ETag: result.ETag });
-      } catch (err) {
-        console.error('[upload-part] S3 error:', err);
-        res.status(500).json({ error: err.message });
-      }
+    const command = new UploadPartCommand({
+      Bucket: BUCKET_NAME,
+      Key: filePath,
+      UploadId: uploadId,
+      PartNumber: parseInt(partNumber),
     });
+    const url = await getSignedUrl(s3, command, { expiresIn: 3600 });
+    res.json({ success: true, url });
   } catch (err) {
-    console.error('[upload-part] Error:', err);
+    console.error('[get-part-url] Error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// Complete multipart upload
 app.post('/complete-multipart', async (req, res) => {
   try {
     const { uploadId, filePath, parts, originalName } = req.body;
@@ -228,7 +167,7 @@ app.post('/complete-multipart', async (req, res) => {
       .single();
     const finalName = mpu?.file_name || originalName;
 
-    // Insert into video_uploads with the full path (for Supabase Storage API)
+    // Insert into video_uploads
     await supabase.from('video_uploads').insert({
       file_name: finalName,
       original_name: originalName,
@@ -238,7 +177,7 @@ app.post('/complete-multipart', async (req, res) => {
     });
     await supabase.from('multipart_uploads').delete().eq('upload_id', uploadId);
 
-    // Generate a signed URL for playback using Supabase Storage API
+    // Generate a signed URL for playback
     const { data: signedUrlData, error } = await supabase.storage
       .from(BUCKET_NAME)
       .createSignedUrl(`temp_videos/${filePath}`, 3600);
@@ -251,6 +190,7 @@ app.post('/complete-multipart', async (req, res) => {
   }
 });
 
+// Abort multipart upload
 app.post('/abort-multipart', async (req, res) => {
   try {
     const { uploadId, filePath } = req.body;
@@ -270,13 +210,41 @@ app.post('/abort-multipart', async (req, res) => {
 });
 
 // ==============================================
-//   VIDEO PROCESSING
+//   PROGRESS TRACKING (Redis)
+// ==============================================
+app.post('/update-progress', async (req, res) => {
+  if (!redis) return res.status(500).json({ error: 'Redis not configured' });
+  try {
+    const { uploadId, completedParts, totalParts } = req.body;
+    await redis.set(`upload:${uploadId}:progress`, JSON.stringify({
+      completed: completedParts,
+      total: totalParts,
+      percentage: Math.round((completedParts / totalParts) * 100),
+    }));
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/get-progress/:uploadId', async (req, res) => {
+  if (!redis) return res.status(500).json({ error: 'Redis not configured' });
+  try {
+    const { uploadId } = req.params;
+    const progress = await redis.get(`upload:${uploadId}:progress`);
+    res.json({ progress: progress ? JSON.parse(progress) : null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==============================================
+//   VIDEO PROCESSING (Parallel FFmpeg)
 // ==============================================
 app.post('/process-video', async (req, res) => {
   const { signedUrl, fileName } = req.body;
   if (!signedUrl || !fileName) return res.status(400).json({ error: 'Missing video info' });
 
-  // Use RAM disk if available
   const workDir = fs.existsSync('/dev/shm') ? `/dev/shm/${uuidv4()}` : path.join('/tmp', uuidv4());
   fs.mkdirSync(workDir, { recursive: true });
   const videoPath = path.join(workDir, 'input.mp4');
@@ -328,7 +296,7 @@ app.post('/process-video', async (req, res) => {
 
     // Scene detection
     const sceneFile = path.join(workDir, 'scenes.txt');
-    const cmd = `"${ffmpegPath}" -threads 0 -i "${videoPath}" -vf "scale=160:-2,select=gt(scene\\,0.35),metadata=print:file=${sceneFile}" -vsync vfr -f null -`;
+    const cmd = `"${ffmpegPath}" -threads 4 -i "${videoPath}" -vf "scale=160:-2,select=gt(scene\\,0.35),metadata=print:file=${sceneFile}" -vsync vfr -f null -`;
     console.log('[process] Detecting scene changes...');
     try {
       await execAsync(cmd, { timeout: 120000 });
@@ -387,7 +355,7 @@ app.post('/process-video', async (req, res) => {
       return res.json({ success: true, found: false });
     }
 
-    // Extract clips in parallel
+    // Extract clips in parallel (4 threads)
     const clipJobs = finalSegments.slice(0, 10).map(async (seg, i) => {
       const clipName = `clip_${i}_${uuidv4()}.mp4`;
       const clipPath = path.join(workDir, clipName);
@@ -395,7 +363,7 @@ app.post('/process-video', async (req, res) => {
         ffmpeg(videoPath)
           .setStartTime(seg.start)
           .setDuration(seg.end - seg.start)
-          .outputOptions('-preset', 'ultrafast', '-threads', '0')
+          .outputOptions('-preset', 'ultrafast', '-threads', '4') // Parallel encoding
           .output(clipPath)
           .on('end', resolve)
           .on('error', reject)
@@ -452,7 +420,7 @@ async function cleanupExpired() {
       try {
         await s3.send(new AbortMultipartUploadCommand({
           Bucket: BUCKET_NAME,
-          Key: mpu.file_path,   // key is just the UUID
+          Key: mpu.file_path,
           UploadId: mpu.upload_id,
         }));
       } catch (e) { /* ignore */ }
