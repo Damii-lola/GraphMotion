@@ -1,11 +1,11 @@
 // =============================================
 //  GraphMotion AI – Frontend Upload & Processing
-//  (multipart via backend proxy – no presigned URLs)
+//  (Direct multipart uploads to S3, no backend proxy)
 // =============================================
 
-const BACKEND_URL = 'https://graphmotion.onrender.com'; // your Render backend
-const CHUNK_SIZE = 5 * 1024 * 1024;                     // 5 MB per part
-const MAX_CONCURRENT_UPLOADS = 10;                      // more parallelism for speed
+const BACKEND_URL = 'https://graphmotion.onrender.com'; // Your Render backend
+const CHUNK_SIZE = 50 * 1024 * 1024;                     // 50 MB per part (faster)
+const MAX_CONCURRENT_UPLOADS = 20;                      // More parallelism
 
 // ---------- Global state ----------
 let currentFile = null;
@@ -41,13 +41,7 @@ const clipList = $('clipList');
 const compressToggle = $('compressToggle');
 const useCompression = $('useCompression');
 
-if (!fileInput || !dropZone || !preview || !loading || !processBtn) {
-  console.error('Missing required DOM elements');
-}
-
-// ======================
-//   UI helpers
-// ======================
+// ---------- UI helpers ----------
 function showLoading(msg = 'Processing...') {
   preview.classList.add('hidden');
   processArea.classList.add('hidden');
@@ -58,17 +52,20 @@ function showLoading(msg = 'Processing...') {
   fileInput.disabled = true;
   dropZone.style.pointerEvents = 'none';
 }
+
 function hideLoading() {
   loading.classList.add('hidden');
   fileInput.disabled = false;
   dropZone.style.pointerEvents = 'auto';
 }
+
 function showFileInfo(file) {
   fileName.textContent = file.name;
   fileSize.textContent = `${(file.size / (1024 * 1024)).toFixed(2)} MB`;
   fileInfo.classList.remove('hidden');
   compressToggle.classList.remove('hidden');
 }
+
 function cleanUploadUI() {
   fileInfo.classList.add('hidden');
   compressToggle.classList.add('hidden');
@@ -76,20 +73,19 @@ function cleanUploadUI() {
   cancelUploadBtn.classList.add('hidden');
   chunkGrid.innerHTML = '';
 }
+
 function resetForNewUpload() {
   cleanUploadUI();
   preview.classList.add('hidden');
   processArea.classList.add('hidden');
   clipSelection.classList.add('hidden');
-  dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 1GB)</span>`;
+  dropMessage.innerHTML = `<p>📁 Drop your video here</p><span>or click to select (max 5GB)</span>`;
   currentSignedUrl = null;
   currentFileName = null;
   currentClips = [];
 }
 
-// ======================
-//   FFmpeg.wasm compression (optional)
-// ======================
+// ---------- FFmpeg.wasm compression (optional) ----------
 async function compressVideo(file) {
   if (!useCompression.checked) return file;
 
@@ -114,6 +110,7 @@ async function compressVideo(file) {
       '-crf', '28',
       '-preset', 'fast',
       '-c:a', 'aac',
+      '-threads', '4', // Parallel encoding
       'output.mp4'
     );
 
@@ -134,9 +131,35 @@ async function compressVideo(file) {
   }
 }
 
-// ======================
-//   Multipart upload (via backend proxy)
-// ======================
+// ---------- Direct Multipart Upload to S3 ----------
+// NEW: Upload chunks directly to S3 using presigned URLs
+async function uploadPartDirect(partNumber, blob, uploadId, filePath) {
+  const { data: { url } } = await axios.get(`${BACKEND_URL}/get-part-url`, {
+    params: { uploadId, partNumber, filePath },
+  });
+
+  const response = await axios.put(url, blob, {
+    headers: { 'Content-Type': 'application/octet-stream' },
+    timeout: 0,
+    maxContentLength: Infinity,
+    maxBodyLength: Infinity,
+  });
+
+  return { PartNumber: partNumber, ETag: response.headers.etag.replace(/"/g, '') };
+}
+
+// NEW: Retry failed chunks (3 attempts)
+async function uploadPartWithRetry(partNumber, blob, uploadId, filePath, retries = 3) {
+  try {
+    return await uploadPartDirect(partNumber, blob, uploadId, filePath);
+  } catch (err) {
+    if (retries <= 0) throw err;
+    console.log(`Retrying part ${partNumber}... (${retries} left)`);
+    return uploadPartWithRetry(partNumber, blob, uploadId, filePath, retries - 1);
+  }
+}
+
+// NEW: Upload file using direct multipart to S3
 async function uploadFileMultipart(file) {
   progressArea.classList.remove('hidden');
   progressFill.style.width = '0%';
@@ -177,61 +200,55 @@ async function uploadFileMultipart(file) {
       const elapsed = (Date.now() - startTime) / 1000;
       const mbps = totalUploaded / elapsed / (1024 * 1024);
       progressSpeed.textContent = `${mbps.toFixed(1)} MB/s`;
-    };
 
-    // 👇 NEW: upload part via backend proxy
-    const uploadPart = async (partNumber) => {
-      const start = (partNumber - 1) * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, file.size);
-      const blob = file.slice(start, end);
-
-      const bar = chunkGrid.children[partNumber - 1];
-      bar.classList.add('uploading');
-
-      const putRes = await axios.post(`${BACKEND_URL}/upload-part`, blob, {
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'x-upload-id': uploadId,
-          'x-part-number': partNumber,
-          'x-file-path': filePath,
-        },
-        signal: uploadAbortController.signal,
-        timeout: 0,
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-      });
-
-      if (putRes.status !== 200) throw new Error(`Part ${partNumber} failed`);
-
-      const etag = putRes.data.ETag || putRes.headers.etag || '';
-      uploadParts[partNumber - 1] = { PartNumber: partNumber, ETag: etag.replace(/"/g, '') };
-
-      completedChunks++;
-      totalUploaded += blob.size;
-      bar.classList.remove('uploading');
-      bar.classList.add('completed');
-      updateProgress();
-    };
-
-    // Parallel execution (controlled concurrency)
-    let idx = 1;
-    const tasks = [];
-    const enqueue = async () => {
-      while (idx <= totalChunks) {
-        const partNum = idx++;
-        const p = uploadPart(partNum).catch(e => {
-          if (axios.isCancel(e)) throw e;
-          console.error(`Part ${partNum} error:`, e);
-          throw e;
-        });
-        tasks.push(p);
-        if (tasks.length >= MAX_CONCURRENT_UPLOADS) {
-          await Promise.race(tasks);
-        }
+      // NEW: Update progress in Redis (if enabled)
+      if (uploadId) {
+        axios.post(`${BACKEND_URL}/update-progress`, {
+          uploadId,
+          completedParts: completedChunks,
+          totalParts: totalChunks,
+        }).catch(() => {});
       }
     };
-    await enqueue();
-    await Promise.all(tasks);
+
+    // NEW: Use a queue for controlled parallelism (20 concurrent uploads)
+    const queue = [];
+    for (let i = 1; i <= totalChunks; i++) {
+      queue.push(i);
+    }
+
+    async function worker() {
+      while (queue.length > 0 && !uploadAbortController.signal.aborted) {
+        const partNumber = queue.shift();
+        const start = (partNumber - 1) * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const blob = file.slice(start, end);
+
+        const bar = chunkGrid.children[partNumber - 1];
+        bar.classList.add('uploading');
+
+        try {
+          const part = await uploadPartWithRetry(partNumber, blob, uploadId, filePath);
+          uploadParts[partNumber - 1] = part;
+          completedChunks++;
+          totalUploaded += blob.size;
+          bar.classList.remove('uploading');
+          bar.classList.add('completed');
+          updateProgress();
+        } catch (err) {
+          console.error(`Part ${partNumber} failed after retries:`, err);
+          queue.push(partNumber); // Re-queue failed part
+          bar.classList.remove('uploading');
+        }
+      }
+    }
+
+    // NEW: Run 20 workers in parallel
+    const workers = [];
+    for (let i = 0; i < Math.min(MAX_CONCURRENT_UPLOADS, totalChunks); i++) {
+      workers.push(worker());
+    }
+    await Promise.all(workers);
 
     // 3. Complete multipart
     const completeRes = await axios.post(`${BACKEND_URL}/complete-multipart`, {
@@ -245,7 +262,6 @@ async function uploadFileMultipart(file) {
     currentSignedUrl = playUrl;
     currentFileName = file.name;
     finishUpload(playUrl, file.type);
-
   } catch (err) {
     if (axios.isCancel(err)) {
       console.log('Upload cancelled');
@@ -262,9 +278,7 @@ async function uploadFileMultipart(file) {
   }
 }
 
-// ======================
-//   Fallback single PUT upload
-// ======================
+// Fallback single PUT upload (if multipart fails)
 async function uploadFileSingle(file) {
   progressArea.classList.remove('hidden');
   progressFill.style.width = '0%';
@@ -300,7 +314,6 @@ async function uploadFileSingle(file) {
     const { signedUrl: playUrl } = confirmRes.data;
     currentSignedUrl = playUrl;
     finishUpload(playUrl, file.type);
-
   } catch (err) {
     if (!axios.isCancel(err)) {
       alert('Upload error: ' + (err.response?.data?.error || err.message));
@@ -327,16 +340,12 @@ function finishUpload(playUrl, mimeType) {
   dropMessage.innerHTML = `<p>📁 Drop another video here</p><span>or click to select</span>`;
 }
 
-// ======================
-//   Cancel upload
-// ======================
+// ---------- Cancel upload ----------
 cancelUploadBtn.addEventListener('click', () => {
   if (uploadAbortController) uploadAbortController.abort();
 });
 
-// ======================
-//   Process video (AI)
-// ======================
+// ---------- Process video (AI) ----------
 processBtn.addEventListener('click', async () => {
   if (!currentSignedUrl || !currentFileName) {
     alert('Please upload a video first.');
@@ -404,9 +413,7 @@ function showClip(clip) {
   processArea.classList.add('hidden');
 }
 
-// ======================
-//   File selection & drag/drop
-// ======================
+// ---------- File selection & drag/drop ----------
 fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -421,10 +428,12 @@ dropZone.addEventListener('dragover', (e) => {
   e.preventDefault();
   dropZone.classList.add('dragover');
 });
+
 dropZone.addEventListener('dragleave', (e) => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
 });
+
 dropZone.addEventListener('drop', (e) => {
   e.preventDefault();
   dropZone.classList.remove('dragover');
@@ -438,4 +447,5 @@ dropZone.addEventListener('drop', (e) => {
     compressVideo(file).then(comp => uploadFileMultipart(comp));
   }
 });
+
 dropZone.addEventListener('click', () => fileInput.click());
