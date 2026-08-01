@@ -33,7 +33,7 @@ app.use(cors({
   origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
   credentials: true,
 }));
-app.use(express.json({ limit: '1gb' }));
+app.use(express.json({ limit: '10gb' })); // Support 10GB files
 
 // Supabase + S3 clients
 const supabase = createSupabaseClient(
@@ -41,16 +41,17 @@ const supabase = createSupabaseClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// Use Cloudflare R2 (faster) or S3
 const s3 = new S3Client({
-  region: 'us-east-1',
-  endpoint: process.env.SUPABASE_S3_ENDPOINT,
+  region: process.env.S3_REGION || 'us-east-1',
+  endpoint: process.env.S3_ENDPOINT || process.env.SUPABASE_S3_ENDPOINT,
   credentials: {
-    accessKeyId: process.env.SUPABASE_S3_ACCESS_KEY,
-    secretAccessKey: process.env.SUPABASE_S3_SECRET_KEY,
+    accessKeyId: process.env.S3_ACCESS_KEY || process.env.SUPABASE_S3_ACCESS_KEY,
+    secretAccessKey: process.env.S3_SECRET_KEY || process.env.SUPABASE_S3_SECRET_KEY,
   },
   forcePathStyle: true,
   maxAttempts: 3,
-  timeout: 60000,
+  timeout: 120000, // 2-minute timeout for large chunks
 });
 
 const BUCKET_NAME = 'temp_videos';
@@ -64,7 +65,7 @@ async function ensureBucket() {
     if (!exists) {
       await supabase.storage.createBucket(BUCKET_NAME, {
         public: false,
-        fileSizeLimit: '5GB',
+        fileSizeLimit: '10GB', // Support 10GB files
         allowedMimeTypes: ['video/*'],
       });
       console.log('[Startup] Created bucket:', BUCKET_NAME);
@@ -131,7 +132,7 @@ app.post('/confirm-upload', async (req, res) => {
 });
 
 // ==============================================
-//   MULTIPART UPLOAD (Presigned URLs)
+//   MULTIPART UPLOAD (500MB Chunks, 100 Concurrent)
 // ==============================================
 app.post('/init-multipart', async (req, res) => {
   try {
@@ -151,7 +152,8 @@ app.post('/init-multipart', async (req, res) => {
     const response = await s3.send(command);
     const uploadId = response.UploadId;
 
-    const totalParts = Math.ceil(fileSize / (100 * 1024 * 1024)); // 100MB chunks
+    // 500MB chunks for large files
+    const totalParts = Math.ceil(fileSize / (500 * 1024 * 1024));
     await supabase.from('multipart_uploads').insert({
       id: uploadId,
       file_name: fileName,
@@ -311,7 +313,7 @@ app.post('/process-video', async (req, res) => {
 
     // Scene detection
     const sceneFile = path.join(workDir, 'scenes.txt');
-    const cmd = `"${ffmpegPath}" -threads 4 -i "${videoPath}" -vf "scale=160:-2,select=gt(scene\\,0.35),metadata=print:file=${sceneFile}" -vsync vfr -f null -`;
+    const cmd = `"${ffmpegPath}" -threads 8 -i "${videoPath}" -vf "scale=160:-2,select=gt(scene\\,0.35),metadata=print:file=${sceneFile}" -vsync vfr -f null -`;
     console.log('[process] Detecting scene changes...');
     try {
       await execAsync(cmd, { timeout: 120000 });
@@ -370,7 +372,7 @@ app.post('/process-video', async (req, res) => {
       return res.json({ success: true, found: false });
     }
 
-    // Extract clips in parallel (4 threads)
+    // Extract clips in parallel (8 threads)
     const clipJobs = finalSegments.slice(0, 10).map(async (seg, i) => {
       const clipName = `clip_${i}_${uuidv4()}.mp4`;
       const clipPath = path.join(workDir, clipName);
@@ -378,7 +380,7 @@ app.post('/process-video', async (req, res) => {
         ffmpeg(videoPath)
           .setStartTime(seg.start)
           .setDuration(seg.end - seg.start)
-          .outputOptions('-preset', 'ultrafast', '-threads', '4')
+          .outputOptions('-preset', 'ultrafast', '-threads', '8')
           .output(clipPath)
           .on('end', resolve)
           .on('error', reject)
