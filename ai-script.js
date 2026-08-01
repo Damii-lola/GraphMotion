@@ -4,8 +4,8 @@
 // =============================================
 
 const BACKEND_URL = 'https://graphmotion.onrender.com'; // Your Render backend
-const CHUNK_SIZE = 50 * 1024 * 1024;                     // 50 MB per part (faster)
-const MAX_CONCURRENT_UPLOADS = 20;                      // More parallelism
+const CHUNK_SIZE = 100 * 1024 * 1024;                     // 100 MB per part (faster)
+const MAX_CONCURRENT_UPLOADS = 50;                      // More parallelism
 
 // ---------- Global state ----------
 let currentFile = null;
@@ -85,54 +85,8 @@ function resetForNewUpload() {
   currentClips = [];
 }
 
-// ---------- FFmpeg.wasm compression (optional) ----------
-async function compressVideo(file) {
-  if (!useCompression.checked) return file;
-
-  if (typeof FFmpeg === 'undefined') {
-    console.warn('FFmpeg.wasm not loaded – skipping compression.');
-    return file;
-  }
-
-  showLoading('Compressing video (this may take a moment)...');
-  try {
-    const { createFFmpeg, fetchFile } = FFmpeg;
-    const ffmpeg = createFFmpeg({
-      log: false,
-      corePath: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/ffmpeg-core.js',
-    });
-    await ffmpeg.load();
-
-    ffmpeg.FS('writeFile', 'input.mp4', await fetchFile(file));
-    await ffmpeg.run(
-      '-i', 'input.mp4',
-      '-c:v', 'libx264',
-      '-crf', '28',
-      '-preset', 'fast',
-      '-c:a', 'aac',
-      '-threads', '4', // Parallel encoding
-      'output.mp4'
-    );
-
-    const data = ffmpeg.FS('readFile', 'output.mp4');
-    const compressedBlob = new Blob([data.buffer], { type: 'video/mp4' });
-    const compressedFile = new File(
-      [compressedBlob],
-      file.name.replace(/\.[^.]+$/, '.mp4'),
-      { type: 'video/mp4' }
-    );
-
-    hideLoading();
-    return compressedFile;
-  } catch (err) {
-    console.error('Compression failed, using original:', err);
-    hideLoading();
-    return file;
-  }
-}
-
 // ---------- Direct Multipart Upload to S3 ----------
-// NEW: Upload chunks directly to S3 using presigned URLs
+// Upload chunks directly to S3 using presigned URLs
 async function uploadPartDirect(partNumber, blob, uploadId, filePath) {
   const { data: { url } } = await axios.get(`${BACKEND_URL}/get-part-url`, {
     params: { uploadId, partNumber, filePath },
@@ -148,7 +102,7 @@ async function uploadPartDirect(partNumber, blob, uploadId, filePath) {
   return { PartNumber: partNumber, ETag: response.headers.etag.replace(/"/g, '') };
 }
 
-// NEW: Retry failed chunks (3 attempts)
+// Retry failed chunks (3 attempts)
 async function uploadPartWithRetry(partNumber, blob, uploadId, filePath, retries = 3) {
   try {
     return await uploadPartDirect(partNumber, blob, uploadId, filePath);
@@ -159,7 +113,7 @@ async function uploadPartWithRetry(partNumber, blob, uploadId, filePath, retries
   }
 }
 
-// NEW: Upload file using direct multipart to S3
+// Upload file using direct multipart to S3
 async function uploadFileMultipart(file) {
   progressArea.classList.remove('hidden');
   progressFill.style.width = '0%';
@@ -200,18 +154,9 @@ async function uploadFileMultipart(file) {
       const elapsed = (Date.now() - startTime) / 1000;
       const mbps = totalUploaded / elapsed / (1024 * 1024);
       progressSpeed.textContent = `${mbps.toFixed(1)} MB/s`;
-
-      // NEW: Update progress in Redis (if enabled)
-      if (uploadId) {
-        axios.post(`${BACKEND_URL}/update-progress`, {
-          uploadId,
-          completedParts: completedChunks,
-          totalParts: totalChunks,
-        }).catch(() => {});
-      }
     };
 
-    // NEW: Use a queue for controlled parallelism (20 concurrent uploads)
+    // Use a queue for controlled parallelism (50 concurrent uploads)
     const queue = [];
     for (let i = 1; i <= totalChunks; i++) {
       queue.push(i);
@@ -243,7 +188,7 @@ async function uploadFileMultipart(file) {
       }
     }
 
-    // NEW: Run 20 workers in parallel
+    // Run 50 workers in parallel
     const workers = [];
     for (let i = 0; i < Math.min(MAX_CONCURRENT_UPLOADS, totalChunks); i++) {
       workers.push(worker());
@@ -265,11 +210,9 @@ async function uploadFileMultipart(file) {
   } catch (err) {
     if (axios.isCancel(err)) {
       console.log('Upload cancelled');
-    } else if (err.response?.status === 404 || err.response?.data?.error?.includes('not found')) {
-      console.warn('Multipart not supported, falling back to single upload.');
-      await uploadFileSingle(file);
     } else {
-      alert('Upload error: ' + (err.response?.data?.error || err.message));
+      console.warn('Multipart failed, falling back to single upload.');
+      await uploadFileSingle(file);
     }
     cleanUploadUI();
     if (uploadId) {
@@ -420,8 +363,7 @@ fileInput.addEventListener('change', async (e) => {
   currentFile = file;
   resetForNewUpload();
   showFileInfo(file);
-  const compressed = await compressVideo(file);
-  uploadFileMultipart(compressed);
+  uploadFileMultipart(file);
 });
 
 dropZone.addEventListener('dragover', (e) => {
@@ -444,7 +386,7 @@ dropZone.addEventListener('drop', (e) => {
     currentFile = file;
     resetForNewUpload();
     showFileInfo(file);
-    compressVideo(file).then(comp => uploadFileMultipart(comp));
+    uploadFileMultipart(file);
   }
 });
 
