@@ -8,7 +8,6 @@ const {
   UploadPartCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
-  GetObjectCommand,
 } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { v4: uuidv4 } = require('uuid');
@@ -21,14 +20,6 @@ const ffmpegPath = require('ffmpeg-static');
 ffmpeg.setFfmpegPath(ffmpegPath);
 const { promisify } = require('util');
 const execAsync = promisify(require('child_process').exec);
-const { createClient: createRedisClient } = require('redis');
-
-// Initialize Redis for progress tracking (optional)
-let redis;
-if (process.env.REDIS_URL) {
-  redis = createRedisClient({ url: process.env.REDIS_URL });
-  redis.connect().catch(console.error);
-}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -58,8 +49,8 @@ const s3 = new S3Client({
     secretAccessKey: process.env.SUPABASE_S3_SECRET_KEY,
   },
   forcePathStyle: true,
-  maxAttempts: 3, // Retry failed requests
-  timeout: 60000, // 60s timeout
+  maxAttempts: 3,
+  timeout: 60000,
 });
 
 const BUCKET_NAME = 'temp_videos';
@@ -87,7 +78,60 @@ async function ensureBucket() {
 ensureBucket();
 
 // ==============================================
-//   MULTIPART UPLOAD (Presigned URLs for speed)
+//   SINGLE UPLOAD (Fallback)
+// ==============================================
+app.post('/get-upload-url', async (req, res) => {
+  try {
+    const { originalName } = req.body;
+    if (!originalName) return res.status(400).json({ error: 'Missing originalName' });
+
+    const ext = originalName.includes('.') ? originalName.split('.').pop() : 'mp4';
+    const fileName = `${uuidv4()}.${ext}`;
+    const filePath = `temp_videos/${fileName}`;
+
+    const { data, error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .createSignedUploadUrl(filePath);
+    if (error) throw error;
+
+    await supabase.from('video_uploads').insert({
+      file_name: fileName,
+      original_name: originalName,
+      file_path: filePath,
+      upload_status: 'pending',
+      expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+    });
+
+    res.json({ success: true, signedUrl: data.signedUrl, filePath, fileName: originalName });
+  } catch (err) {
+    console.error('[get-upload-url] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/confirm-upload', async (req, res) => {
+  const { filePath } = req.body;
+  if (!filePath) return res.status(400).json({ error: 'Missing filePath' });
+
+  try {
+    await supabase.from('video_uploads')
+      .update({ upload_status: 'completed' })
+      .eq('file_path', filePath);
+
+    const { data, error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .createSignedUrl(filePath, 3600);
+    if (error) throw error;
+
+    res.json({ success: true, signedUrl: data.signedUrl });
+  } catch (err) {
+    console.error('[confirm-upload] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==============================================
+//   MULTIPART UPLOAD (Presigned URLs)
 // ==============================================
 app.post('/init-multipart', async (req, res) => {
   try {
@@ -107,7 +151,7 @@ app.post('/init-multipart', async (req, res) => {
     const response = await s3.send(command);
     const uploadId = response.UploadId;
 
-    const totalParts = Math.ceil(fileSize / (50 * 1024 * 1024)); // 50MB chunks
+    const totalParts = Math.ceil(fileSize / (100 * 1024 * 1024)); // 100MB chunks
     await supabase.from('multipart_uploads').insert({
       id: uploadId,
       file_name: fileName,
@@ -205,35 +249,6 @@ app.post('/abort-multipart', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('[abort-multipart] Error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ==============================================
-//   PROGRESS TRACKING (Redis)
-// ==============================================
-app.post('/update-progress', async (req, res) => {
-  if (!redis) return res.status(500).json({ error: 'Redis not configured' });
-  try {
-    const { uploadId, completedParts, totalParts } = req.body;
-    await redis.set(`upload:${uploadId}:progress`, JSON.stringify({
-      completed: completedParts,
-      total: totalParts,
-      percentage: Math.round((completedParts / totalParts) * 100),
-    }));
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/get-progress/:uploadId', async (req, res) => {
-  if (!redis) return res.status(500).json({ error: 'Redis not configured' });
-  try {
-    const { uploadId } = req.params;
-    const progress = await redis.get(`upload:${uploadId}:progress`);
-    res.json({ progress: progress ? JSON.parse(progress) : null });
-  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
@@ -363,7 +378,7 @@ app.post('/process-video', async (req, res) => {
         ffmpeg(videoPath)
           .setStartTime(seg.start)
           .setDuration(seg.end - seg.start)
-          .outputOptions('-preset', 'ultrafast', '-threads', '4') // Parallel encoding
+          .outputOptions('-preset', 'ultrafast', '-threads', '4')
           .output(clipPath)
           .on('end', resolve)
           .on('error', reject)
