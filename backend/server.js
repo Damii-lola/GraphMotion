@@ -24,33 +24,34 @@ const execAsync = promisify(require('child_process').exec);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Increase server timeout
+// Increase server timeout for Render (10 minutes)
 const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-server.timeout = 600000;
+server.timeout = 600000; // 10 minutes
 
-// Middleware
+// CORS for GitHub Pages + Localhost
 app.use(cors({
   origin: ['https://damii-lola.github.io', 'http://localhost:5500'],
+  methods: ['GET', 'POST', 'PUT', 'HEAD', 'OPTIONS'],
   credentials: true,
 }));
 app.use(express.json({ limit: '10gb' })); // Support 10GB files
 
-// Supabase + S3 clients
+// Supabase client
 const supabase = createSupabaseClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Use Cloudflare R2 (faster) or S3
+// S3 client (works with Supabase Storage or AWS S3)
 const s3 = new S3Client({
   region: process.env.S3_REGION || 'us-east-1',
-  endpoint: process.env.S3_ENDPOINT || process.env.SUPABASE_S3_ENDPOINT,
+  endpoint: process.env.SUPABASE_S3_ENDPOINT || process.env.S3_ENDPOINT,
   credentials: {
-    accessKeyId: process.env.S3_ACCESS_KEY || process.env.SUPABASE_S3_ACCESS_KEY,
-    secretAccessKey: process.env.S3_SECRET_KEY || process.env.SUPABASE_S3_SECRET_KEY,
+    accessKeyId: process.env.SUPABASE_S3_ACCESS_KEY || process.env.S3_ACCESS_KEY,
+    secretAccessKey: process.env.SUPABASE_S3_SECRET_KEY || process.env.S3_SECRET_KEY,
   },
   forcePathStyle: true,
-  maxAttempts: 3,
+  maxAttempts: 3, // Retry failed requests
   timeout: 120000, // 2-minute timeout for large chunks
 });
 
@@ -256,7 +257,7 @@ app.post('/abort-multipart', async (req, res) => {
 });
 
 // ==============================================
-//   VIDEO PROCESSING (Parallel FFmpeg)
+//   VIDEO PROCESSING (Parallel FFmpeg, 8 Threads)
 // ==============================================
 app.post('/process-video', async (req, res) => {
   const { signedUrl, fileName } = req.body;
@@ -410,7 +411,7 @@ app.post('/process-video', async (req, res) => {
 });
 
 // ==============================================
-//   CLEANUP CRON
+//   CLEANUP CRON (Remove expired uploads)
 // ==============================================
 async function cleanupExpired() {
   const now = new Date();
