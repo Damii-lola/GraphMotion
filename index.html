@@ -1,146 +1,248 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GraphMotion | AI-Generated Motion Graphics</title>
-  <link rel="stylesheet" href="style.css" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GraphMotion — Animated, not stitched.</title>
+<meta name="description" content="GraphMotion turns a prompt into a fully animated faceless video using code-generated motion graphics — not stock footage, not avatars, not templates." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <!-- Full-Screen MotionCanvas Section -->
-  <section class="motion-canvas-section">
-    <div class="motion-canvas-container">
-      <div class="display-area">
-        <canvas id="motion-canvas"></canvas>
+
+<div class="grain"></div>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a href="#top" class="logo">
+      <span class="logo-mark" aria-hidden="true"></span>
+      GraphMotion
+    </a>
+    <nav class="nav-links">
+      <a href="#problem">Why</a>
+      <a href="#how">How it works</a>
+      <a href="#compare">Comparison</a>
+      <a href="#proof">Proof</a>
+    </nav>
+    <a href="#signup" class="btn btn-small">Get early access</a>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">Code-driven motion graphics</p>
+      <h1>Animated, not stitched.</h1>
+      <p class="hero-sub">
+        GraphMotion turns a prompt into a fully animated faceless video —
+        built from freshly generated animation code, not stock clips,
+        not templates, not an AI avatar reading a script.
+      </p>
+      <div class="hero-actions">
+        <a href="#signup" class="btn btn-primary">Join for $1 →</a>
+        <a href="#how" class="btn btn-ghost">See how it renders</a>
       </div>
-      <div class="input-area">
-        <h2>Create Motion Graphics</h2>
-        <p>Describe your video, and our AI will generate MotionCanvas code to render it below.</p>
-        <textarea 
-          id="video-prompt" 
-          placeholder="e.g., 'Animate a blue circle moving across the screen with a fade-in effect...'"
-          rows="4"
-        ></textarea>
-        <button id="generate-btn" class="cta-button">Generate Video</button>
-        <div id="status"></div>
+      <p class="hero-note">$1 gets you into the beta Discord and a say in what we build next.</p>
+    </div>
+
+    <div class="hero-demo" role="img" aria-label="A prompt being typed, then rendered into an animated bar chart scene">
+      <div class="demo-window">
+        <div class="demo-titlebar">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="demo-titlebar-label">prompt.txt</span>
+        </div>
+        <div class="demo-body">
+          <div class="prompt-line">
+            <span class="prompt-caret">&gt;</span>
+            <span id="typedPrompt" class="typed"></span><span class="cursor">▌</span>
+          </div>
+
+          <div class="render-divider">
+            <span>renders as</span>
+          </div>
+
+          <svg class="scene" viewBox="0 0 400 180" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <line x1="20" y1="150" x2="380" y2="150" stroke="var(--line)" stroke-width="1.5"/>
+            <rect class="bar bar-1" x="50"  y="150" width="34" height="0" rx="3"/>
+            <rect class="bar bar-2" x="120" y="150" width="34" height="0" rx="3"/>
+            <rect class="bar bar-3" x="190" y="150" width="34" height="0" rx="3"/>
+            <rect class="bar bar-4" x="260" y="150" width="34" height="0" rx="3"/>
+            <rect class="bar bar-5" x="330" y="150" width="34" height="0" rx="3"/>
+            <circle class="scene-dot" cx="67" cy="0" r="4" />
+          </svg>
+
+          <div class="timeline">
+            <div class="timeline-track"><div class="timeline-fill"></div></div>
+            <div class="timeline-labels">
+              <span>00:00</span><span>keyframes rendering…</span><span>00:12</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- Rest of the Page -->
-  <header>
-    <div class="container">
-      <div class="header-content">
-        <div class="logo">GraphMotion</div>
-        <nav>
-          <a href="#features">Features</a>
-          <a href="#how-it-works">How It Works</a>
-          <a href="#pricing">Pricing</a>
-          <a href="#signup" class="cta-button">Sign Up</a>
-        </nav>
-      </div>
+  <!-- PROBLEM -->
+  <section id="problem" class="section">
+    <div class="section-inner narrow">
+      <p class="eyebrow">The problem</p>
+      <h2>Every "AI video generator" outputs the same footage.</h2>
+      <p class="lead">
+        Faceless content is one of the biggest openings in short- and long-form video right now.
+        But almost every tool making it draws from the same well: stock clips stitched together,
+        or a stiff AI avatar reading a script. It looks templated because it is templated —
+        the building blocks are identical for every user, on every topic.
+      </p>
+      <p class="lead">
+        Creators end up sounding automated because their videos <em>look</em> automated.
+      </p>
     </div>
-  </header>
+  </section>
 
-  <main>
-    <section class="hero">
-      <div class="container">
-        <h1>AI-Generated, Code-Driven Motion Graphics</h1>
-        <p>Turn any prompt into a fully animated, unique video. No templates. No stock footage. Just pure, code-driven motion graphics.</p>
-        <a href="#signup" class="cta-button">Get Early Access</a>
-      </div>
-    </section>
+  <!-- SOLUTION / HOW IT WORKS -->
+  <section id="how" class="section section-alt">
+    <div class="section-inner">
+      <p class="eyebrow">The solution</p>
+      <h2>Every video is written and rendered fresh — as code.</h2>
+      <p class="lead narrow">
+        GraphMotion generates video as code-driven motion graphics: charts, diagrams,
+        animated typography, and illustrated scenes, built new for each prompt.
+        There's no shared stock library to draw from, which makes the sameness problem
+        structurally harder to hit in the first place.
+      </p>
 
-    <section class="features" id="features">
-      <div class="container">
-        <h2>Why GraphMotion?</h2>
-        <div class="feature-grid">
-          <div class="feature-card">
-            <h3>✨ Unique Output</h3>
-            <p>Every video is generated fresh from code, ensuring your content stands out.</p>
-          </div>
-          <div class="feature-card">
-            <h3>🎨 Customizable</h3>
-            <p>Adjust scenes, colors, and transitions with simple commands.</p>
-          </div>
-          <div class="feature-card">
-            <h3>🚀 Fast Iteration</h3>
-            <p>Make changes to specific parts without regenerating everything.</p>
-          </div>
-        </div>
-      </div>
-    </section>
+      <ol class="steps">
+        <li class="step">
+          <span class="step-num">01</span>
+          <h3>Describe the video</h3>
+          <p>Topic, tone, and an optional style direction — that's the whole brief.</p>
+        </li>
+        <li class="step">
+          <span class="step-num">02</span>
+          <h3>GraphMotion writes the animation</h3>
+          <p>Original Motion Canvas–based code is generated and rendered: text reveals, charts, diagrams, illustrated scenes — whatever the prompt calls for.</p>
+        </li>
+        <li class="step">
+          <span class="step-num">03</span>
+          <h3>Nudge specific scenes</h3>
+          <p>"Make this scene blue." "Slow down that transition." GraphMotion updates just that part — no full regeneration.</p>
+        </li>
+        <li class="step">
+          <span class="step-num">04</span>
+          <h3>Export and post</h3>
+          <p>The finished render comes out ready for TikTok, Shorts, Reels, or YouTube.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
 
-    <section class="problem-solution">
-      <div class="container">
-        <h2>The Problem</h2>
-        <p class="problem">
-          Most AI video tools rely on stock footage or templates. The result? Videos that look automated and lack originality.
-        </p>
-        <h2>The Solution</h2>
-        <p class="solution">
-          GraphMotion generates videos as <strong>code-driven motion graphics</strong>—tailored to your prompt, with no shared libraries or templates.
-        </p>
-      </div>
-    </section>
+  <!-- COMPARISON -->
+  <section id="compare" class="section">
+    <div class="section-inner">
+      <p class="eyebrow">Differentiation</p>
+      <h2>Not another timeline editor with a stock library.</h2>
 
-    <section class="differentiation" id="how-it-works">
-      <div class="container">
-        <h2>How It Works</h2>
-        <ol style="font-size: 18px; line-height: 2; color: var(--gray);">
-          <li><strong>Submit a Prompt:</strong> Describe the video you want.</li>
-          <li><strong>AI Generates Code:</strong> GraphMotion writes MotionCanvas code for your video.</li>
-          <li><strong>Preview & Edit:</strong> See the render and request changes.</li>
-          <li><strong>Export & Post:</strong> Download your video, ready to share.</li>
-        </ol>
-
-        <h2>What Sets Us Apart</h2>
-        <table>
+      <div class="table-wrap">
+        <table class="compare-table">
           <thead>
             <tr>
               <th></th>
-              <th>Typical AI Video Tools</th>
-              <th>GraphMotion</th>
+              <th>Typical AI video tools</th>
+              <th class="highlight">GraphMotion</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td><strong>Visual Building Blocks</strong></td>
-              <td>Stock footage / AI avatars / templates</td>
-              <td>Freshly generated animation code per video</td>
+              <td>Visual building blocks</td>
+              <td>Stock footage, AI avatars, templates</td>
+              <td class="highlight">Freshly generated animation code, per video</td>
             </tr>
             <tr>
-              <td><strong>Editing Model</strong></td>
+              <td>Editing model</td>
               <td>Timeline editing or full regeneration</td>
-              <td>Targeted natural-language nudges</td>
+              <td class="highlight">Targeted natural-language nudges to specific scenes</td>
+            </tr>
+            <tr>
+              <td>Best-fit content</td>
+              <td>General faceless content, avatars, voiceover-over-footage</td>
+              <td class="highlight">Explainer, educational, data/concept-driven content</td>
+            </tr>
+            <tr>
+              <td>"Look" risk</td>
+              <td>Shared stock library → visual sameness across users</td>
+              <td class="highlight">No shared footage library → structurally harder to template</td>
             </tr>
           </tbody>
         </table>
       </div>
-    </section>
+    </div>
+  </section>
 
-    <section id="pricing">
-      <div class="container">
-        <h2 style="text-align: center; margin-bottom: 20px;">Early Access</h2>
-        <div class="feature-card" style="max-width: 500px; margin: 0 auto;">
-          <h3>$1 Early-Access Signup</h3>
-          <p>Join our Discord for beta access and input into feature/roadmap decisions.</p>
-          <a href="#signup" class="cta-button" style="display: block; text-align: center; margin-top: 20px;">Sign Up Now</a>
+  <!-- PROOF / HONEST STATE -->
+  <section id="proof" class="section section-alt">
+    <div class="section-inner narrow">
+      <p class="eyebrow">Where things actually stand</p>
+      <h2>What's proven, and what isn't — no spin.</h2>
+
+      <div class="proof-grid">
+        <div class="proof-card proof-good">
+          <span class="proof-tag">Proven</span>
+          <p>The AI reliably generates coherent, working animation code from a prompt with zero manual correction — tested across unrelated topics, first-shot.</p>
+        </div>
+        <div class="proof-card proof-good">
+          <span class="proof-tag">Proven</span>
+          <p>The system follows explicit visual direction — color, mood, layout — and meaningfully shifts away from a default look when instructed.</p>
+        </div>
+        <div class="proof-card proof-open">
+          <span class="proof-tag">Open question</span>
+          <p>Whether lightly-detailed, average prompts still produce distinct visual identities, or default to a house style.</p>
+        </div>
+        <div class="proof-card proof-open">
+          <span class="proof-tag">Open question</span>
+          <p>Full-length reliability and native narration/voiceover sync are still being hardened.</p>
         </div>
       </div>
-    </section>
-  </main>
 
-  <footer>
-    <div class="container">
-      <p>&copy; 2026 GraphMotion. All rights reserved.</p>
+      <p class="lead" style="margin-top: 2.5rem;">
+        We're validating real demand with a public 7-day content test — one video a day,
+        in the actual target niche, each ending with a signup call-to-action. Real interest,
+        not view counts, decides what happens next.
+      </p>
     </div>
-  </footer>
+  </section>
 
-  <!-- Load MotionCanvas and App Script as ES Modules -->
-  <script type="module" src="script.js"></script>
+  <!-- SIGNUP -->
+  <section id="signup" class="section signup">
+    <div class="section-inner narrow center">
+      <p class="eyebrow">Early access</p>
+      <h2>Get in before the public launch.</h2>
+      <p class="lead">
+        $1 gets you into the beta Discord, first access to renders, and a real vote
+        in what GraphMotion builds next. Not a free-email list — just people who are actually in.
+      </p>
+
+      <form id="waitlistForm" class="signup-form" novalidate>
+        <label for="email" class="sr-only">Email address</label>
+        <input type="email" id="email" name="email" placeholder="you@domain.com" required autocomplete="email">
+        <button type="submit" class="btn btn-primary">Join for $1</button>
+      </form>
+      <p id="formStatus" class="form-status" role="status" aria-live="polite"></p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div class="section-inner footer-inner">
+    <span>GraphMotion</span>
+    <span class="footer-note">Built with code. Rendered as motion.</span>
+  </div>
+</footer>
+
+<script src="script.js"></script>
 </body>
 </html>
