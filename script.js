@@ -26,6 +26,112 @@ const API_BASE = "https://graphmotion-backend.onrender.com";
 })();
 
 // ---------------------------------------------------------------------
+// Live demo: prompt -> POST /api/render -> poll /api/render/:jobId -> play mp4
+// ---------------------------------------------------------------------
+(function setupDemoForm() {
+  const form = document.getElementById('demoForm');
+  if (!form) return;
+
+  const promptInput = document.getElementById('demoPrompt');
+  const submitBtn = document.getElementById('demoSubmit');
+  const statusWrap = document.getElementById('demoStatusWrap');
+  const statusLabel = document.getElementById('demoStatusLabel');
+  const statusPercent = document.getElementById('demoStatusPercent');
+  const progressFill = document.getElementById('demoProgressFill');
+  const videoWrap = document.getElementById('demoVideoWrap');
+  const video = document.getElementById('demoVideo');
+  const errorEl = document.getElementById('demoError');
+
+  const STATUS_LABELS = {
+    queued: 'Queued…',
+    generating: 'Writing the animation code…',
+    rendering: 'Rendering frames…',
+    done: 'Done.',
+    error: 'Something went wrong.',
+  };
+
+  let pollTimer = null;
+
+  function setProgress(status, progress) {
+    statusLabel.textContent = STATUS_LABELS[status] || status;
+    const pct = Math.round((progress || 0) * 100);
+    statusPercent.textContent = `${pct}%`;
+    progressFill.style.width = `${pct}%`;
+  }
+
+  function stopPolling() {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+
+  async function pollJob(jobId) {
+    try {
+      const res = await fetch(`${API_BASE}/api/render/${jobId}`);
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'Render failed.');
+      }
+
+      setProgress(data.status, data.progress);
+
+      if (data.status === 'done' && data.url) {
+        stopPolling();
+        video.src = `${API_BASE}${data.url}`;
+        videoWrap.hidden = false;
+        submitBtn.disabled = false;
+        return;
+      }
+
+      if (data.status === 'error') {
+        throw new Error(data.error || 'Render failed.');
+      }
+
+      pollTimer = setTimeout(() => pollJob(jobId), 2500);
+    } catch (err) {
+      stopPolling();
+      statusWrap.hidden = true;
+      errorEl.textContent = err.message || 'Could not reach the render service.';
+      submitBtn.disabled = false;
+    }
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    stopPolling();
+
+    const prompt = promptInput.value.trim();
+    if (!prompt) return;
+
+    errorEl.textContent = '';
+    videoWrap.hidden = true;
+    video.removeAttribute('src');
+    statusWrap.hidden = false;
+    submitBtn.disabled = true;
+    setProgress('queued', 0);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/render`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'Could not start the render.');
+      }
+
+      pollJob(data.jobId);
+    } catch (err) {
+      statusWrap.hidden = true;
+      errorEl.textContent = err.message || 'Could not reach the render service.';
+      submitBtn.disabled = false;
+    }
+  });
+})();
+
+// ---------------------------------------------------------------------
 // Waitlist form
 // ---------------------------------------------------------------------
 (function setupWaitlistForm() {
