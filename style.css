@@ -25,6 +25,83 @@ body {
   padding: 0 20px;
 }
 
+/* Motion Canvas Section */
+.motion-canvas-section {
+  background-color: #f1f5f9;
+  padding: 20px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.motion-canvas-container {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.display-area {
+  flex: 1;
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e2e8f0;
+}
+
+.display-area h2 {
+  margin-bottom: 15px;
+  color: var(--dark);
+  font-size: 20px;
+}
+
+#motion-canvas {
+  width: 100%;
+  height: 300px;
+  background: #1e293b;
+  border-radius: 8px;
+  margin-top: 10px;
+}
+
+.input-area {
+  flex: 1;
+  background: white;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e2e8f0;
+}
+
+.input-area h2 {
+  margin-bottom: 10px;
+  color: var(--dark);
+  font-size: 20px;
+}
+
+.input-area p {
+  color: var(--gray);
+  margin-bottom: 15px;
+}
+
+#video-prompt {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 16px;
+  margin-bottom: 15px;
+  resize: vertical;
+}
+
+#video-prompt:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+#generate-btn {
+  width: 100%;
+}
+
+/* Header */
 header {
   padding: 20px 0;
   border-bottom: 1px solid #e2e8f0;
@@ -50,6 +127,7 @@ nav a {
   font-weight: 500;
 }
 
+/* Hero */
 .hero {
   text-align: center;
   padding: 60px 0;
@@ -71,6 +149,7 @@ nav a {
   margin: 0 auto 30px;
 }
 
+/* CTA Button */
 .cta-button {
   display: inline-block;
   background-color: var(--primary);
@@ -80,12 +159,15 @@ nav a {
   text-decoration: none;
   font-weight: 600;
   transition: background-color 0.3s;
+  border: none;
+  cursor: pointer;
 }
 
 .cta-button:hover {
   background-color: var(--primary-dark);
 }
 
+/* Features */
 .features {
   padding: 60px 0;
 }
@@ -115,6 +197,7 @@ nav a {
   color: var(--primary);
 }
 
+/* Problem/Solution */
 .problem-solution {
   padding: 60px 0;
   background-color: #f1f5f9;
@@ -130,6 +213,7 @@ nav a {
   margin-bottom: 30px;
 }
 
+/* Differentiation */
 .differentiation {
   padding: 60px 0;
 }
@@ -139,6 +223,7 @@ nav a {
   margin-bottom: 40px;
 }
 
+/* Table */
 table {
   width: 100%;
   border-collapse: collapse;
@@ -156,6 +241,7 @@ th {
   font-weight: 600;
 }
 
+/* Footer */
 footer {
   padding: 40px 0;
   text-align: center;
@@ -164,10 +250,16 @@ footer {
   margin-top: 60px;
 }
 
+/* Responsive */
 @media (max-width: 768px) {
+  .motion-canvas-container {
+    flex-direction: column;
+  }
+  
   .hero h1 {
     font-size: 36px;
   }
+  
   .hero p {
     font-size: 18px;
   }
