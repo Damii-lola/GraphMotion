@@ -8,8 +8,33 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <!-- Motion Canvas -->
+  <script src="https://unpkg.com/@motion-canvas/2d@latest/dist/motion-canvas-2d.min.js"></script>
 </head>
 <body>
+  <!-- Top Section: MotionCanvas Display + Input -->
+  <section class="motion-canvas-section">
+    <div class="container">
+      <div class="motion-canvas-container">
+        <div class="display-area">
+          <h2>Video Preview</h2>
+          <div id="motion-canvas"></div>
+        </div>
+        <div class="input-area">
+          <h2>Create Your Video</h2>
+          <p>Describe the video you want, and our AI will generate the Motion Canvas code for you.</p>
+          <textarea 
+            id="video-prompt" 
+            placeholder="e.g., 'Create a 10-second explainer video about AI with animated charts and a blue theme...'"
+            rows="4"
+          ></textarea>
+          <button id="generate-btn" class="cta-button">Generate Video</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Rest of the Content -->
   <header>
     <div class="container">
       <div class="header-content">
@@ -119,14 +144,6 @@
           <p>Join our Discord for beta access and input into feature/roadmap decisions. Limited spots available!</p>
           <a href="#signup" class="cta-button" style="display: block; text-align: center; margin-top: 20px;">Sign Up Now</a>
         </div>
-      </div>
-    </section>
-
-    <section id="signup" style="padding: 60px 0; text-align: center;">
-      <div class="container">
-        <h2>Ready to Transform Your Content?</h2>
-        <p style="margin-bottom: 30px;">Be among the first to experience the future of faceless video creation.</p>
-        <a href="#" class="cta-button" style="font-size: 18px; padding: 15px 30px;">Join the Waitlist</a>
       </div>
     </section>
   </main>
