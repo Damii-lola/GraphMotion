@@ -1,7 +1,7 @@
 {
   "name": "graphmotion-backend",
-  "version": "1.0.0",
-  "description": "GraphMotion backend — Express API wiring GitHub -> Render -> Supabase, with Mistral AI generation calls.",
+  "version": "1.1.0",
+  "description": "GraphMotion backend — Express API wiring GitHub -> Render -> Supabase, Mistral generation, and Revideo/Motion Canvas .tsx rendering.",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
@@ -15,6 +15,12 @@
     "@supabase/supabase-js": "^2.45.4",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "@revideo/core": "^0.9.4",
+    "@revideo/2d": "^0.9.4",
+    "@revideo/renderer": "^0.9.4",
+    "@revideo/vite-plugin": "^0.9.4",
+    "vite": "^5.4.0",
+    "typescript": "^5.5.4"
   }
 }
