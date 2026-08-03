@@ -1,215 +1,79 @@
-// Import MotionCanvas from esm.sh CDN
-import { makeScene2D, makeRectangle, makeText, makeCircle, createRef, useDuration, waitFor, waitUntil, useTime } from 'https://esm.sh/@motion-canvas/2d@latest';
-import { all, createSignal, easeInOutCubic } from 'https://esm.sh/@motion-canvas/core@latest';
+// GraphMotion frontend — no hardcoded data beyond the demo copy itself,
+// all real signups go through the backend API.
 
-// Global reference to the current project
-let currentProject = null;
-let currentScene = null;
+// Point this at your Render backend once deployed, e.g.:
+// const API_BASE = "https://graphmotion-backend.onrender.com";
+const API_BASE = "https://graphmotion-backend.onrender.com";
 
-// Initialize MotionCanvas with a blank scene
-function initMotionCanvas(canvas) {
-  if (currentProject) {
-    currentProject.dispose();
+// ---------------------------------------------------------------------
+// Hero typing effect
+// ---------------------------------------------------------------------
+(function typePrompt() {
+  const el = document.getElementById('typedPrompt');
+  if (!el) return;
+
+  const text = "explain compound interest, upbeat and visual";
+  let i = 0;
+
+  function tick() {
+    if (i <= text.length) {
+      el.textContent = text.slice(0, i);
+      i++;
+      setTimeout(tick, 38);
+    }
   }
+  tick();
+})();
 
-  // Create a new project
-  currentScene = makeScene2D(function* (view) {
-    // Default: Show a placeholder
-    const rect = makeRectangle({
-      width: 200,
-      height: 100,
-      fill: '#6366f1',
-    });
-    
-    const text = makeText({
-      text: 'Your animation will appear here',
-      fontSize: 20,
-      fill: 'white',
-    });
-    
-    yield view.add(rect);
-    yield view.add(text);
-    
-    // Center the elements
-    rect.position.set(0, 0);
-    text.position.set(0, 0);
-    
-    // Simple animation
-    yield* rect.scale(1.1, 1).to(1, 1);
-  });
+// ---------------------------------------------------------------------
+// Waitlist form
+// ---------------------------------------------------------------------
+(function setupWaitlistForm() {
+  const form = document.getElementById('waitlistForm');
+  const status = document.getElementById('formStatus');
+  if (!form || !status) return;
 
-  currentProject = new Project({
-    scenes: [currentScene],
-    canvas,
-  });
-  
-  currentProject.start();
-}
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
 
-// Load and run MotionCanvas code dynamically
-function loadMotionCanvasCode(canvas, code) {
-  if (currentProject) {
-    currentProject.dispose();
-  }
+    const emailInput = document.getElementById('email');
+    const email = emailInput.value.trim();
 
-  try {
-    // Create a new scene from the generated code
-    // Note: This is a simplified approach. In production, you'd need to:
-    // 1. Parse the code to extract the scene function
-    // 2. Dynamically import and run it
-    // For now, we'll use a basic scene with the user's prompt
-    
-    const scene = makeScene2D(function* (view) {
-      const text = makeText({
-        text: 'Rendering your animation...',
-        fontSize: 24,
-        fill: 'white',
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      status.textContent = 'Enter a valid email address.';
+      status.className = 'form-status error';
+      return;
+    }
+
+    const submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    status.textContent = 'Sending…';
+    status.className = 'form-status';
+
+    try {
+      const res = await fetch(`${API_BASE}/api/waitlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, source: 'landing_page' }),
       });
-      
-      yield view.add(text);
-      text.position.set(0, 0);
-      
-      // Try to evaluate the generated code
-      // WARNING: eval is used here for simplicity. In production, use a safer method.
-      try {
-        // Create a function from the code
-        const sceneFunc = new Function('makeScene2D', 'makeRectangle', 'makeText', 'makeCircle', 'createRef', 'useDuration', 'waitFor', 'waitUntil', 'useTime', 'all', 'createSignal', 'easeInOutCubic', 'view',
-          `return ${code}`
-        );
-        
-        // Clear the current view
-        yield* all(
-          text.opacity(1, 0.5),
-        );
-        
-        // Run the generated scene
-        const generatedScene = sceneFunc(
-          makeScene2D, makeRectangle, makeText, makeCircle, createRef, useDuration, waitFor, waitUntil, useTime, all, createSignal, easeInOutCubic, view
-        );
-        
-        // For now, just show a success message
-        text.text.set('Animation generated! (Check console for code)');
-        
-      } catch (e) {
-        console.error('Error running generated code:', e);
-        text.text.set('Error: Could not render animation');
+
+      const data = await res.json();
+
+      if (res.ok && data.ok) {
+        status.textContent = data.alreadySignedUp
+          ? "You're already on the list — see you in Discord."
+          : "You're in. Check your email for next steps.";
+        status.className = 'form-status success';
+        form.reset();
+      } else {
+        status.textContent = data.error || 'Something went wrong. Try again.';
+        status.className = 'form-status error';
       }
-    });
-
-    currentProject = new Project({
-      scenes: [scene],
-      canvas,
-    });
-    
-    currentProject.start();
-    
-  } catch (error) {
-    console.error('Error loading MotionCanvas:', error);
-    alert('Error loading MotionCanvas: ' + error.message);
-  }
-}
-
-// Generate video from prompt
-async function generateVideo() {
-  const prompt = document.getElementById('video-prompt').value;
-  const status = document.getElementById('status');
-  const generateBtn = document.getElementById('generate-btn');
-  const canvas = document.getElementById('motion-canvas');
-
-  if (!prompt) {
-    status.textContent = 'Please enter a prompt!';
-    return;
-  }
-
-  // Disable the button during generation
-  generateBtn.disabled = true;
-  generateBtn.textContent = 'Generating...';
-  status.textContent = 'Generating animation code...';
-
-  try {
-    // Call your backend API to generate MotionCanvas code
-    // NOTE: Update this URL to your deployed backend (e.g., https://your-render-app.onrender.com)
-    const backendUrl = 'http://localhost:3000/api/generate-animation';
-    
-    const response = await fetch(backendUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ prompt }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Backend error: ${response.status} ${response.statusText}`);
+    } catch (err) {
+      status.textContent = 'Could not reach the server. Try again in a moment.';
+      status.className = 'form-status error';
+    } finally {
+      submitBtn.disabled = false;
     }
-
-    const data = await response.json();
-    
-    if (data.success && data.data && data.data.animation_code) {
-      status.textContent = 'Rendering animation...';
-      
-      // Load the generated code into MotionCanvas
-      loadMotionCanvasCode(canvas, data.data.animation_code);
-      
-      status.textContent = 'Done! Animation rendered.';
-      console.log('Generated MotionCanvas code:', data.data.animation_code);
-    } else {
-      throw new Error(data.error || 'Failed to generate animation code');
-    }
-    
-  } catch (error) {
-    console.error('Error generating video:', error);
-    status.textContent = 'Error: ' + error.message;
-    alert('Error generating video. Check the console for details.');
-  } finally {
-    generateBtn.disabled = false;
-    generateBtn.textContent = 'Generate Video';
-  }
-}
-
-// Initialize on page load
-window.addEventListener('load', () => {
-  const canvas = document.getElementById('motion-canvas');
-  if (canvas) {
-    initMotionCanvas(canvas);
-  }
-  
-  const generateBtn = document.getElementById('generate-btn');
-  if (generateBtn) {
-    generateBtn.addEventListener('click', generateVideo);
-  }
-});
-
-// Project class (simplified for browser usage)
-class Project {
-  constructor({ scenes, canvas }) {
-    this.scenes = scenes;
-    this.canvas = canvas;
-    this.currentScene = null;
-  }
-
-  async start() {
-    if (this.scenes.length === 0) return;
-    
-    this.currentScene = this.scenes[0];
-    
-    // Simple rendering loop for demo purposes
-    // In a real implementation, you'd use MotionCanvas's proper rendering
-    const render = async () => {
-      if (this.currentScene) {
-        // This is a simplified approach
-        // MotionCanvas normally handles this internally
-        const generator = this.currentScene();
-        for await (const _ of generator) {
-          // Rendering would happen here
-        }
-      }
-    };
-    
-    render();
-  }
-
-  dispose() {
-    this.currentScene = null;
-  }
-}
+  });
+})();
