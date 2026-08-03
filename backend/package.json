@@ -1,7 +1,7 @@
 {
   "name": "graphmotion-backend",
   "version": "1.0.0",
-  "description": "Backend for GraphMotion: AI-generated, code-driven faceless video creation",
+  "description": "Backend for GraphMotion: AI-generated, code-driven motion graphics video creation with chat integration",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
