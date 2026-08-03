@@ -340,6 +340,51 @@ h3 { font-size: 1.1rem; margin-bottom: 0.4rem; }
 .proof-open .proof-tag { background: rgba(255, 155, 92, 0.14); color: var(--amber); }
 .proof-card p { margin: 0; color: var(--text-dim); font-size: 0.92rem; }
 
+/* ---------------- live demo ---------------- */
+.demo-form {
+  display: flex;
+  gap: 0.7rem;
+  margin-top: 1.8rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.demo-form textarea {
+  flex: 1;
+  min-width: 260px;
+  resize: vertical;
+  padding: 0.85rem 1.1rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--canvas);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.demo-form textarea:focus {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+}
+.demo-form .btn { flex-shrink: 0; }
+.demo-form .btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+
+.demo-status-wrap { margin-top: 1.6rem; }
+#demoProgressFill {
+  transition: width 0.4s ease;
+  background: linear-gradient(90deg, var(--violet), var(--amber));
+}
+
+.demo-video-wrap { margin-top: 1.8rem; }
+.demo-video {
+  width: 100%;
+  max-width: 420px;
+  display: block;
+  margin: 0 auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: #000;
+}
+
 /* ---------------- signup ---------------- */
 .signup-form {
   display: flex;
