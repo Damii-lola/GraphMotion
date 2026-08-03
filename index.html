@@ -23,6 +23,7 @@
     <nav class="nav-links">
       <a href="#problem">Why</a>
       <a href="#how">How it works</a>
+      <a href="#demo">Try it</a>
       <a href="#compare">Comparison</a>
       <a href="#proof">Proof</a>
     </nav>
@@ -137,6 +138,47 @@
           <p>The finished render comes out ready for TikTok, Shorts, Reels, or YouTube.</p>
         </li>
       </ol>
+    </div>
+  </section>
+
+  <!-- LIVE DEMO -->
+  <section id="demo" class="section section-alt">
+    <div class="section-inner narrow">
+      <p class="eyebrow">Try it live</p>
+      <h2>Type a prompt. Get a rendered scene.</h2>
+      <p class="lead">
+        This calls the real GraphMotion pipeline — Mistral writes the animation
+        code, then it's rendered headlessly and streamed back here. A render
+        usually takes a minute or two, since a fresh video is being written and
+        drawn frame by frame, not pulled off a shelf.
+      </p>
+
+      <form id="demoForm" class="demo-form" novalidate>
+        <label for="demoPrompt" class="sr-only">Describe the video you want</label>
+        <textarea
+          id="demoPrompt"
+          rows="2"
+          placeholder="e.g. explain compound interest, upbeat and visual"
+          required
+        ></textarea>
+        <button type="submit" class="btn btn-primary" id="demoSubmit">Render preview</button>
+      </form>
+
+      <div id="demoStatusWrap" class="demo-status-wrap" hidden>
+        <div class="timeline">
+          <div class="timeline-track"><div id="demoProgressFill" class="timeline-fill" style="animation:none; width:0%;"></div></div>
+          <div class="timeline-labels">
+            <span id="demoStatusLabel">Queued…</span>
+            <span id="demoStatusPercent">0%</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="demoVideoWrap" class="demo-video-wrap" hidden>
+        <video id="demoVideo" class="demo-video" controls playsinline></video>
+      </div>
+
+      <p id="demoError" class="form-status error" role="status" aria-live="polite"></p>
     </div>
   </section>
 
