@@ -3,38 +3,34 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GraphMotion | AI-Generated, Code-Driven Faceless Video Creation</title>
+  <title>GraphMotion | AI-Generated Motion Graphics</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <!-- Motion Canvas -->
-  <script src="https://unpkg.com/@motion-canvas/2d@latest/dist/motion-canvas-2d.min.js"></script>
 </head>
 <body>
-  <!-- Top Section: MotionCanvas Display + Input -->
+  <!-- Full-Screen MotionCanvas Section -->
   <section class="motion-canvas-section">
-    <div class="container">
-      <div class="motion-canvas-container">
-        <div class="display-area">
-          <h2>Video Preview</h2>
-          <div id="motion-canvas"></div>
-        </div>
-        <div class="input-area">
-          <h2>Create Your Video</h2>
-          <p>Describe the video you want, and our AI will generate the Motion Canvas code for you.</p>
-          <textarea 
-            id="video-prompt" 
-            placeholder="e.g., 'Create a 10-second explainer video about AI with animated charts and a blue theme...'"
-            rows="4"
-          ></textarea>
-          <button id="generate-btn" class="cta-button">Generate Video</button>
-        </div>
+    <div class="motion-canvas-container">
+      <div class="display-area">
+        <canvas id="motion-canvas"></canvas>
+      </div>
+      <div class="input-area">
+        <h2>Create Motion Graphics</h2>
+        <p>Describe your video, and our AI will generate MotionCanvas code to render it below.</p>
+        <textarea 
+          id="video-prompt" 
+          placeholder="e.g., 'Animate a blue circle moving across the screen with a fade-in effect...'"
+          rows="4"
+        ></textarea>
+        <button id="generate-btn" class="cta-button">Generate Video</button>
+        <div id="status"></div>
       </div>
     </div>
   </section>
 
-  <!-- Rest of the Content -->
+  <!-- Rest of the Page -->
   <header>
     <div class="container">
       <div class="header-content">
@@ -52,8 +48,8 @@
   <main>
     <section class="hero">
       <div class="container">
-        <h1>AI-Generated, Code-Driven Faceless Video Creation</h1>
-        <p>Turn any prompt into a fully animated, unique faceless video. No templates. No stock footage. Just pure, code-driven motion graphics.</p>
+        <h1>AI-Generated, Code-Driven Motion Graphics</h1>
+        <p>Turn any prompt into a fully animated, unique video. No templates. No stock footage. Just pure, code-driven motion graphics.</p>
         <a href="#signup" class="cta-button">Get Early Access</a>
       </div>
     </section>
@@ -64,15 +60,15 @@
         <div class="feature-grid">
           <div class="feature-card">
             <h3>✨ Unique Output</h3>
-            <p>Every video is generated fresh from code, ensuring your content stands out and doesn't look like everyone else's.</p>
+            <p>Every video is generated fresh from code, ensuring your content stands out.</p>
           </div>
           <div class="feature-card">
             <h3>🎨 Customizable</h3>
-            <p>Adjust scenes, colors, and transitions with simple commands. No technical skills required.</p>
+            <p>Adjust scenes, colors, and transitions with simple commands.</p>
           </div>
           <div class="feature-card">
             <h3>🚀 Fast Iteration</h3>
-            <p>Make changes to specific parts of your video without regenerating everything from scratch.</p>
+            <p>Make changes to specific parts without regenerating everything.</p>
           </div>
         </div>
       </div>
@@ -82,11 +78,11 @@
       <div class="container">
         <h2>The Problem</h2>
         <p class="problem">
-          Faceless content is booming, but most AI video tools rely on stock footage, templates, or stiff avatars. The result? Videos that look automated and lack originality.
+          Most AI video tools rely on stock footage or templates. The result? Videos that look automated and lack originality.
         </p>
         <h2>The Solution</h2>
         <p class="solution">
-          GraphMotion generates videos as <strong>code-driven motion graphics</strong>—charts, diagrams, and illustrated scenes—tailored to your prompt. No shared libraries, no templates, just unique, animated content.
+          GraphMotion generates videos as <strong>code-driven motion graphics</strong>—tailored to your prompt, with no shared libraries or templates.
         </p>
       </div>
     </section>
@@ -95,10 +91,10 @@
       <div class="container">
         <h2>How It Works</h2>
         <ol style="font-size: 18px; line-height: 2; color: var(--gray);">
-          <li><strong>Submit a Prompt:</strong> Describe the video you want—topic, tone, or style direction.</li>
-          <li><strong>AI Generates Code:</strong> GraphMotion writes and renders original animation code (Motion Canvas-based) for your video.</li>
-          <li><strong>Review & Edit:</strong> Preview the render and request targeted edits in plain language (e.g., "Make this scene blue").</li>
-          <li><strong>Export & Post:</strong> Download your finished video, ready to share on any platform.</li>
+          <li><strong>Submit a Prompt:</strong> Describe the video you want.</li>
+          <li><strong>AI Generates Code:</strong> GraphMotion writes MotionCanvas code for your video.</li>
+          <li><strong>Preview & Edit:</strong> See the render and request changes.</li>
+          <li><strong>Export & Post:</strong> Download your video, ready to share.</li>
         </ol>
 
         <h2>What Sets Us Apart</h2>
@@ -119,17 +115,7 @@
             <tr>
               <td><strong>Editing Model</strong></td>
               <td>Timeline editing or full regeneration</td>
-              <td>Targeted natural-language nudges to specific scenes</td>
-            </tr>
-            <tr>
-              <td><strong>Best-Fit Content</strong></td>
-              <td>General faceless content, avatars, voiceover-over-footage</td>
-              <td>Explainer, educational, data/concept-driven content</td>
-            </tr>
-            <tr>
-              <td><strong>"Look" Risk</strong></td>
-              <td>Shared stock library → visual sameness</td>
-              <td>No shared footage library → structurally harder to look templated</td>
+              <td>Targeted natural-language nudges</td>
             </tr>
           </tbody>
         </table>
@@ -141,7 +127,7 @@
         <h2 style="text-align: center; margin-bottom: 20px;">Early Access</h2>
         <div class="feature-card" style="max-width: 500px; margin: 0 auto;">
           <h3>$1 Early-Access Signup</h3>
-          <p>Join our Discord for beta access and input into feature/roadmap decisions. Limited spots available!</p>
+          <p>Join our Discord for beta access and input into feature/roadmap decisions.</p>
           <a href="#signup" class="cta-button" style="display: block; text-align: center; margin-top: 20px;">Sign Up Now</a>
         </div>
       </div>
@@ -154,6 +140,7 @@
     </div>
   </footer>
 
-  <script src="script.js"></script>
+  <!-- Load MotionCanvas and App Script as ES Modules -->
+  <script type="module" src="script.js"></script>
 </body>
 </html>
