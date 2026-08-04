@@ -30,13 +30,14 @@ function getDeviceId() {
   const loadingLabel = document.getElementById('loadingLabel');
   const resultVideo = document.getElementById('resultVideo');
   const codeContent = document.getElementById('codeContent');
+  const timelinePlayhead = document.getElementById('timelinePlayhead');
 
   if (!form) return;
 
   const STATUS_LABELS = {
     queued: 'Queued…',
     generating: 'Writing the animation code…',
-    rendering: 'Rendering frames…',
+    rendering: 'Generating your preview…',
   };
 
   let codeRevealed = false;
@@ -73,11 +74,18 @@ function getDeviceId() {
     resetCodePanel();
   }
 
-  function showLoading(status) {
+  function showLoading(status, progress) {
     previewIdle.hidden = true;
     previewLoading.hidden = false;
     resultVideo.hidden = true;
-    loadingLabel.textContent = STATUS_LABELS[status] || 'Rendering…';
+    loadingLabel.textContent = STATUS_LABELS[status] || 'Generating your preview…';
+
+    // Real progress, not a decorative loop: 'generating' has no numeric
+    // progress from Mistral, so it just nudges the playhead to show
+    // something's happening; 'rendering' reflects the actual frame
+    // progress reported by Revideo's progressCallback.
+    const pct = status === 'generating' ? 8 : Math.round((progress || 0) * 98);
+    timelinePlayhead.style.left = `${pct}%`;
   }
 
   function showResult(url) {
@@ -108,7 +116,7 @@ function getDeviceId() {
 
       if (data.status === 'error') throw new Error(data.error || 'Render failed.');
 
-      showLoading(data.status);
+      showLoading(data.status, data.progress);
       if (data.code) revealCode(data.code);
 
       if (data.status === 'done' && data.url) {
