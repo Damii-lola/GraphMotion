@@ -7,7 +7,7 @@
 <meta name="description" content="GraphMotion turns a prompt into a fully animated faceless video using code-generated motion graphics — not stock footage, not avatars, not templates. Try one free, right now." />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -46,64 +46,64 @@
         <span class="rec-dot"></span> GraphMotion — live render
       </div>
 
-      <div class="generator-body">
+      <div class="workspace">
 
-        <!-- INPUT STATE -->
-        <form id="generatorForm" class="generator-form">
-          <div class="prompt-pill">
-            <input
-              type="text"
-              id="promptInput"
-              placeholder="a 30-second explainer on how compound interest works, playful and colorful"
-              autocomplete="off"
-              required
-            />
-            <button type="submit" class="pill-submit" id="generatorSubmit" aria-label="Generate video">
-              Generate
-            </button>
+        <!-- PREVIEW: left/main — nothing until a prompt is submitted -->
+        <div class="workspace-preview">
+          <div class="preview-frame" id="previewFrame">
+            <div class="preview-inner" id="previewInner">
+              <div class="preview-idle" id="previewIdle"></div>
+
+              <div class="preview-loading" id="previewLoading" hidden>
+                <div class="timeline-loader">
+                  <div class="timeline-track">
+                    <div class="timeline-segment seg-1"></div>
+                    <div class="timeline-segment seg-2"></div>
+                    <div class="timeline-segment seg-3"></div>
+                    <div class="timeline-playhead" id="timelinePlayhead"></div>
+                  </div>
+                </div>
+                <p id="loadingLabel">Writing the animation code…</p>
+              </div>
+
+              <video id="resultVideo" class="preview-video" controls playsinline hidden></video>
+            </div>
           </div>
-          <p class="generator-helper" id="generatorHelper">One free generation. No signup, no card.</p>
-        </form>
-
-        <!-- LOCKED STATE -->
-        <div class="locked-banner" id="lockedBanner" hidden>
-          <p class="locked-label">Your free generation</p>
-          <p class="locked-prompt" id="lockedPrompt"></p>
-          <a href="#signup" class="btn btn-primary">Join for $1 to save, download, and get unlimited generations</a>
         </div>
 
-        <p class="generator-error" id="generatorError" role="status" aria-live="polite"></p>
-
-        <!-- PREVIEW FRAME -->
-        <div class="preview-frame" id="previewFrame">
-          <div class="preview-inner" id="previewInner">
-
-            <div class="preview-idle" id="previewIdle">
-              <svg viewBox="0 0 220 220" class="idle-loop" aria-hidden="true">
-                <circle cx="110" cy="70" r="18" class="idle-shape idle-shape-1"/>
-                <rect x="70" y="110" width="80" height="80" rx="14" class="idle-shape idle-shape-2"/>
-                <path d="M60 60 L160 160" class="idle-shape idle-shape-3" stroke-linecap="round"/>
-              </svg>
-              <p>Your video renders here</p>
-            </div>
-
-            <div class="preview-loading" id="previewLoading" hidden>
-              <div class="timeline-loader">
-                <div class="timeline-track">
-                  <div class="timeline-segment seg-1"></div>
-                  <div class="timeline-segment seg-2"></div>
-                  <div class="timeline-segment seg-3"></div>
-                  <div class="timeline-playhead" id="timelinePlayhead"></div>
-                </div>
-              </div>
-              <p id="loadingLabel">Writing the animation code…</p>
-            </div>
-
-            <video id="resultVideo" class="preview-video" controls playsinline hidden></video>
-          </div>
+        <!-- CODE: right — the actual generated .tsx, revealed as it's written -->
+        <div class="workspace-code">
+          <div class="code-panel-header"><span class="code-dot"></span> generated.tsx</div>
+          <pre class="code-panel-body"><code id="codeContent">// waiting for a prompt…</code></pre>
         </div>
 
       </div>
+
+      <!-- BOTTOM: full-width prompt bar -->
+      <form id="generatorForm" class="generator-form-full">
+        <div class="prompt-pill prompt-pill-wide">
+          <input
+            type="text"
+            id="promptInput"
+            placeholder="a 30-second explainer on how compound interest works, playful and colorful"
+            autocomplete="off"
+            required
+          />
+          <button type="submit" class="pill-submit" id="generatorSubmit" aria-label="Generate video">
+            Generate
+          </button>
+        </div>
+        <p class="generator-helper" id="generatorHelper">One free generation. No signup, no card.</p>
+      </form>
+
+      <!-- LOCKED STATE — replaces the prompt bar once the free generation is used -->
+      <div class="locked-banner" id="lockedBanner" hidden>
+        <p class="locked-label">Your free generation</p>
+        <p class="locked-prompt" id="lockedPrompt"></p>
+        <a href="#signup" class="btn btn-primary">Join for $1 to save, download, and get unlimited generations</a>
+      </div>
+
+      <p class="generator-error" id="generatorError" role="status" aria-live="polite"></p>
     </div>
   </section>
 
