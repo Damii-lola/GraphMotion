@@ -29,6 +29,7 @@ function getDeviceId() {
   const previewLoading = document.getElementById('previewLoading');
   const loadingLabel = document.getElementById('loadingLabel');
   const resultVideo = document.getElementById('resultVideo');
+  const codeContent = document.getElementById('codeContent');
 
   if (!form) return;
 
@@ -38,10 +39,38 @@ function getDeviceId() {
     rendering: 'Rendering frames…',
   };
 
+  let codeRevealed = false;
+  let typeTimer = null;
+
+  function resetCodePanel() {
+    codeRevealed = false;
+    if (typeTimer) clearInterval(typeTimer);
+    codeContent.textContent = '// waiting for a prompt…';
+  }
+
+  // Reveals the generated .tsx a chunk at a time rather than dumping it in
+  // all at once — the code is already fully generated server-side by the
+  // time we have it, this just makes it readable as it appears.
+  function revealCode(code) {
+    if (codeRevealed || !code) return;
+    codeRevealed = true;
+    if (typeTimer) clearInterval(typeTimer);
+
+    codeContent.textContent = '';
+    const chunkSize = Math.max(1, Math.ceil(code.length / 120));
+    let i = 0;
+    typeTimer = setInterval(() => {
+      i += chunkSize;
+      codeContent.textContent = code.slice(0, i);
+      if (i >= code.length) clearInterval(typeTimer);
+    }, 16);
+  }
+
   function showIdle() {
     previewIdle.hidden = false;
     previewLoading.hidden = true;
     resultVideo.hidden = true;
+    resetCodePanel();
   }
 
   function showLoading(status) {
@@ -80,6 +109,7 @@ function getDeviceId() {
       if (data.status === 'error') throw new Error(data.error || 'Render failed.');
 
       showLoading(data.status);
+      if (data.code) revealCode(data.code);
 
       if (data.status === 'done' && data.url) {
         stopPolling();
