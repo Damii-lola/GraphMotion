@@ -1,100 +1,121 @@
-// GraphMotion frontend — no hardcoded data beyond the demo copy itself,
-// all real signups go through the backend API.
+// GraphMotion frontend — the hero generator calls the real backend.
+// No hardcoded data beyond UI copy; every render and every lock decision
+// comes from the server.
 
-// Point this at your Render backend once deployed, e.g.:
-// const API_BASE = "https://graphmotion-backend.onrender.com";
-const API_BASE = "https://graphmotion-backend.onrender.com";
+const API_BASE = "https://graphmotion.onrender.com";
+const DEVICE_ID_KEY = "gm_device_id";
 
-// ---------------------------------------------------------------------
-// Hero typing effect
-// ---------------------------------------------------------------------
-(function typePrompt() {
-  const el = document.getElementById('typedPrompt');
-  if (!el) return;
-
-  const text = "explain compound interest, upbeat and visual";
-  let i = 0;
-
-  function tick() {
-    if (i <= text.length) {
-      el.textContent = text.slice(0, i);
-      i++;
-      setTimeout(tick, 38);
-    }
+function getDeviceId() {
+  let id = localStorage.getItem(DEVICE_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(DEVICE_ID_KEY, id);
   }
-  tick();
-})();
+  return id;
+}
 
 // ---------------------------------------------------------------------
-// Live demo: prompt -> POST /api/render -> poll /api/render/:jobId -> play mp4
+// Hero generator
 // ---------------------------------------------------------------------
-(function setupDemoForm() {
-  const form = document.getElementById('demoForm');
+(function setupGenerator() {
+  const form = document.getElementById('generatorForm');
+  const lockedBanner = document.getElementById('lockedBanner');
+  const lockedPrompt = document.getElementById('lockedPrompt');
+  const errorEl = document.getElementById('generatorError');
+  const promptInput = document.getElementById('promptInput');
+  const submitBtn = document.getElementById('generatorSubmit');
+
+  const previewIdle = document.getElementById('previewIdle');
+  const previewLoading = document.getElementById('previewLoading');
+  const loadingLabel = document.getElementById('loadingLabel');
+  const resultVideo = document.getElementById('resultVideo');
+
   if (!form) return;
-
-  const promptInput = document.getElementById('demoPrompt');
-  const submitBtn = document.getElementById('demoSubmit');
-  const statusWrap = document.getElementById('demoStatusWrap');
-  const statusLabel = document.getElementById('demoStatusLabel');
-  const statusPercent = document.getElementById('demoStatusPercent');
-  const progressFill = document.getElementById('demoProgressFill');
-  const videoWrap = document.getElementById('demoVideoWrap');
-  const video = document.getElementById('demoVideo');
-  const errorEl = document.getElementById('demoError');
 
   const STATUS_LABELS = {
     queued: 'Queued…',
     generating: 'Writing the animation code…',
     rendering: 'Rendering frames…',
-    done: 'Done.',
-    error: 'Something went wrong.',
   };
 
-  let pollTimer = null;
-
-  function setProgress(status, progress) {
-    statusLabel.textContent = STATUS_LABELS[status] || status;
-    const pct = Math.round((progress || 0) * 100);
-    statusPercent.textContent = `${pct}%`;
-    progressFill.style.width = `${pct}%`;
+  function showIdle() {
+    previewIdle.hidden = false;
+    previewLoading.hidden = true;
+    resultVideo.hidden = true;
   }
 
+  function showLoading(status) {
+    previewIdle.hidden = true;
+    previewLoading.hidden = false;
+    resultVideo.hidden = true;
+    loadingLabel.textContent = STATUS_LABELS[status] || 'Rendering…';
+  }
+
+  function showResult(url) {
+    previewIdle.hidden = true;
+    previewLoading.hidden = true;
+    resultVideo.src = `${API_BASE}${url}`;
+    resultVideo.hidden = false;
+  }
+
+  function lockUI(prompt) {
+    form.hidden = true;
+    lockedBanner.hidden = false;
+    lockedPrompt.textContent = `"${prompt}"`;
+  }
+
+  let pollTimer = null;
   function stopPolling() {
     if (pollTimer) clearTimeout(pollTimer);
     pollTimer = null;
   }
 
-  async function pollJob(jobId) {
+  async function pollJob(jobId, prompt) {
     try {
       const res = await fetch(`${API_BASE}/api/render/${jobId}`);
       const data = await res.json();
 
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || 'Render failed.');
-      }
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Render failed.');
 
-      setProgress(data.status, data.progress);
+      if (data.status === 'error') throw new Error(data.error || 'Render failed.');
+
+      showLoading(data.status);
 
       if (data.status === 'done' && data.url) {
         stopPolling();
-        video.src = `${API_BASE}${data.url}`;
-        videoWrap.hidden = false;
+        showResult(data.url);
+        lockUI(prompt);
         submitBtn.disabled = false;
         return;
       }
 
-      if (data.status === 'error') {
-        throw new Error(data.error || 'Render failed.');
-      }
-
-      pollTimer = setTimeout(() => pollJob(jobId), 2500);
+      pollTimer = setTimeout(() => pollJob(jobId, prompt), 2500);
     } catch (err) {
       stopPolling();
-      statusWrap.hidden = true;
+      showIdle();
       errorEl.textContent = err.message || 'Could not reach the render service.';
       submitBtn.disabled = false;
     }
   }
+
+  // On load: ask the server whether this visitor already used their free
+  // generation. If so, skip straight to the locked state with their result.
+  (async function checkFreeStatus() {
+    try {
+      const deviceId = getDeviceId();
+      const res = await fetch(`${API_BASE}/api/free-status?deviceId=${encodeURIComponent(deviceId)}`);
+      const data = await res.json();
+
+      if (data.ok && data.used) {
+        lockUI(data.prompt || '');
+        if (data.url) showResult(data.url);
+      }
+    } catch (err) {
+      // If the status check fails, leave the form usable — the render
+      // endpoint itself still enforces the limit server-side either way.
+      console.error('free-status check failed', err);
+    }
+  })();
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -104,27 +125,30 @@ const API_BASE = "https://graphmotion-backend.onrender.com";
     if (!prompt) return;
 
     errorEl.textContent = '';
-    videoWrap.hidden = true;
-    video.removeAttribute('src');
-    statusWrap.hidden = false;
     submitBtn.disabled = true;
-    setProgress('queued', 0);
+    showLoading('queued');
 
     try {
       const res = await fetch(`${API_BASE}/api/render`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, deviceId: getDeviceId() }),
       });
       const data = await res.json();
 
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || 'Could not start the render.');
+      if (res.status === 403 && data.locked) {
+        // Already used, caught late (e.g. two tabs). Lock the UI instead of erroring.
+        lockUI(data.prompt || prompt);
+        if (data.url) showResult(data.url);
+        submitBtn.disabled = false;
+        return;
       }
 
-      pollJob(data.jobId);
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Could not start the render.');
+
+      pollJob(data.jobId, prompt);
     } catch (err) {
-      statusWrap.hidden = true;
+      showIdle();
       errorEl.textContent = err.message || 'Could not reach the render service.';
       submitBtn.disabled = false;
     }
