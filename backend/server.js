@@ -299,7 +299,13 @@ async function runRender(jobId) {
   try {
     job.status = 'generating';
     const sceneCode = await generateSceneCode(job.prompt);
+
+    // Defensive: make sure the scenes directory actually exists before
+    // writing into it. This is what was throwing ENOENT — writeFileSync
+    // fails if the parent directory is missing, it doesn't create it.
+    fs.mkdirSync(path.dirname(SCENE_FILE), { recursive: true });
     fs.writeFileSync(SCENE_FILE, sceneCode, 'utf-8');
+    job.code = sceneCode;
 
     job.status = 'rendering';
 
@@ -404,6 +410,12 @@ app.get('/api/render/:jobId', (req, res) => {
     progress: job.progress,
     error: job.error,
   };
+
+  // Send the generated .tsx as soon as it exists so the UI can reveal it
+  // in the code panel while the render itself is still in progress.
+  if (job.code) {
+    payload.code = job.code;
+  }
 
   if (job.status === 'done' && job.file) {
     payload.url = `/renders/${job.file}`;
