@@ -9,6 +9,7 @@
 //   SUPABASE_SERVICE_ROLE_KEY  - Supabase service role key (server-side only, never expose to frontend)
 //   MISTRAL_API_KEY            - Mistral API key
 //   ALLOWED_ORIGIN              - the GitHub Pages origin allowed to call this API (e.g. https://you.github.io)
+//   IP_HASH_SALT                 - any random string, used to hash visitor IPs before storing them
 //   PORT                        - Render sets this automatically, defaults to 3000 locally
 //
 // Deploy this as a Render DOCKER service (see Dockerfile) — rendering needs
@@ -28,6 +29,7 @@ const {
   SUPABASE_SERVICE_ROLE_KEY,
   MISTRAL_API_KEY,
   ALLOWED_ORIGIN,
+  IP_HASH_SALT,
   PORT,
 } = process.env;
 
@@ -37,12 +39,20 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 if (!MISTRAL_API_KEY) {
   console.error('Missing MISTRAL_API_KEY env var.');
 }
+if (!IP_HASH_SALT) {
+  console.warn('IP_HASH_SALT not set — using an insecure default. Set this in Render.');
+}
 
 // Service role key => server-side only client, full DB access, bypasses RLS.
 // Never send this key to the frontend.
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const app = express();
+// Render sits in front of this service as a proxy — without this, req.ip
+// resolves to Render's internal proxy address, not the visitor's real IP,
+// and the free-generation limit becomes trivially bypassable.
+app.set('trust proxy', true);
+
 app.use(express.json());
 app.use(
   cors({
@@ -50,8 +60,20 @@ app.use(
   })
 );
 
+function hashIp(ip) {
+  return crypto
+    .createHash('sha256')
+    .update(String(ip) + (IP_HASH_SALT || 'graphmotion-dev-salt'))
+    .digest('hex');
+}
+
+function getClientIp(req) {
+  // req.ip already respects X-Forwarded-For once 'trust proxy' is set.
+  return req.ip || req.socket.remoteAddress || 'unknown';
+}
+
 // ---------------------------------------------------------------------------
-// Health check — used by Render and for a quick manual sanity check
+// Health check
 // ---------------------------------------------------------------------------
 app.get('/health', (req, res) => {
   res.json({ ok: true, service: 'graphmotion-backend', time: new Date().toISOString() });
@@ -59,8 +81,6 @@ app.get('/health', (req, res) => {
 
 // ---------------------------------------------------------------------------
 // Waitlist signup — stores an email from the landing page into Supabase
-//
-// Expected table (run this in the Supabase SQL editor):
 //
 //   create table waitlist (
 //     id uuid primary key default gen_random_uuid(),
@@ -84,7 +104,6 @@ app.post('/api/waitlist', async (req, res) => {
       .single();
 
     if (error) {
-      // Unique violation = already signed up, treat as success so the UI stays friendly
       if (error.code === '23505') {
         return res.status(200).json({ ok: true, alreadySignedUp: true });
       }
@@ -100,9 +119,70 @@ app.post('/api/waitlist', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Mistral-powered scene plan (kept from earlier wiring — returns a text plan,
-// not code). Useful for previewing what a render will contain before paying
-// the cost of an actual render.
+// Free-generation gate
+//
+// One free render per visitor, enforced server-side by IP hash AND a
+// client-generated device id — either match locks them out, so clearing
+// localStorage alone (new device id, same IP) or switching networks alone
+// (new IP, same device id) doesn't get around it.
+//
+//   create table free_generations (
+//     id uuid primary key default gen_random_uuid(),
+//     ip_hash text not null,
+//     device_id text,
+//     prompt text,
+//     video_url text,
+//     created_at timestamptz default now()
+//   );
+//   create index free_generations_ip_hash_idx on free_generations (ip_hash);
+//   create index free_generations_device_id_idx on free_generations (device_id);
+// ---------------------------------------------------------------------------
+async function findExistingFreeGeneration(ipHash, deviceId) {
+  const filters = [`ip_hash.eq.${ipHash}`];
+  if (deviceId) filters.push(`device_id.eq.${deviceId}`);
+
+  const { data, error } = await supabase
+    .from('free_generations')
+    .select('prompt, video_url, created_at')
+    .or(filters.join(','))
+    .order('created_at', { ascending: true })
+    .limit(1);
+
+  if (error) {
+    console.error('Supabase free_generations lookup error:', error);
+    return null;
+  }
+  return data && data[0] ? data[0] : null;
+}
+
+// Lets the frontend know, on page load, whether this visitor already has a
+// free generation on file — so it can render the locked state immediately
+// instead of flashing the input then locking it after a request.
+app.get('/api/free-status', async (req, res) => {
+  try {
+    const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId : null;
+    const ipHash = hashIp(getClientIp(req));
+
+    const existing = await findExistingFreeGeneration(ipHash, deviceId);
+
+    if (existing) {
+      return res.json({
+        ok: true,
+        used: true,
+        prompt: existing.prompt,
+        url: existing.video_url,
+      });
+    }
+
+    return res.json({ ok: true, used: false });
+  } catch (err) {
+    console.error('Unexpected /api/free-status error:', err);
+    return res.status(500).json({ ok: false, error: 'Unexpected server error.' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Mistral-powered scene plan (text only, no render) — kept for internal use.
 // ---------------------------------------------------------------------------
 app.post('/api/generate', async (req, res) => {
   try {
@@ -150,16 +230,6 @@ app.post('/api/generate', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Render pipeline: prompt -> Mistral writes a Revideo/Motion Canvas .tsx
 // scene -> Revideo renders it headlessly to mp4 -> file is served back.
-//
-// This runs one render at a time (renderBusy lock below). Revideo's
-// renderVideo() spins up a Vite dev server + headless Chromium per call,
-// which is heavy — running several concurrently on a single Render
-// instance is a good way to run out of memory. If you need concurrency,
-// look at renderVideo()'s `settings.workers` option or queue jobs into
-// something like BullMQ backed by Redis.
-//
-// Jobs are tracked in memory only — they don't survive a restart/redeploy.
-// For anything beyond solo testing, write job status into Supabase instead.
 // ---------------------------------------------------------------------------
 const RENDER_DIR = path.join(__dirname, 'render');
 const SCENE_FILE = path.join(RENDER_DIR, 'src', 'scenes', 'generated.tsx');
@@ -168,10 +238,9 @@ const OUTPUT_DIR = path.join(RENDER_DIR, 'output');
 
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-// Serve finished renders at /renders/<file>.mp4
 app.use('/renders', express.static(OUTPUT_DIR));
 
-const jobs = new Map(); // jobId -> { status, progress, file, error, createdAt }
+const jobs = new Map(); // jobId -> { status, progress, file, error, ipHash, deviceId, prompt, createdAt }
 let renderBusy = false;
 
 const SCENE_SYSTEM_PROMPT = `You write Revideo/Motion Canvas .tsx scene code for GraphMotion.
@@ -183,14 +252,15 @@ Hard rules:
 - Imports allowed: only from '@revideo/2d' and '@revideo/core'.
 - Must have exactly one default export, in this exact shape:
   export default makeScene2D('generated', function* (view) { ... });
-- Start the generator with view.fill('#0B0C10') (or another dark hex) to set the background.
+- Start the generator with view.fill('#0B0C10') (or another appropriate hex) to set the background.
 - Build the scene from primitives such as Txt, Rect, Circle, Line, and Node.
 - Animate with generator-style tweens driven by yield*, e.g.
   yield* someRef().opacity(1, 0.8);
   yield* waitFor(1);
 - Do not reference any image, video, audio, or font file that doesn't already
   exist in the project — text and vector shapes only.
-- Keep the whole scene under ~20 seconds of animated content.`;
+- Keep the whole scene under ~20 seconds of animated content.
+- Frame the scene for a 9:16 vertical video.`;
 
 async function generateSceneCode(prompt) {
   const mistralRes = await fetch('https://api.mistral.ai/v1/chat/completions', {
@@ -216,7 +286,6 @@ async function generateSceneCode(prompt) {
   const data = await mistralRes.json();
   let code = data?.choices?.[0]?.message?.content || '';
 
-  // Defensive cleanup in case the model wraps the code in fences anyway.
   code = code.trim();
   if (code.startsWith('```')) {
     code = code.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
@@ -225,16 +294,15 @@ async function generateSceneCode(prompt) {
   return code;
 }
 
-async function runRender(jobId, prompt) {
+async function runRender(jobId) {
   const job = jobs.get(jobId);
   try {
     job.status = 'generating';
-    const sceneCode = await generateSceneCode(prompt);
+    const sceneCode = await generateSceneCode(job.prompt);
     fs.writeFileSync(SCENE_FILE, sceneCode, 'utf-8');
 
     job.status = 'rendering';
 
-    // @revideo/renderer is ESM-only; server.js is CommonJS, so import it dynamically.
     const { renderVideo } = await import('@revideo/renderer');
 
     const outFile = `${jobId}.mp4`;
@@ -254,9 +322,23 @@ async function runRender(jobId, prompt) {
       },
     });
 
+    const finalFile = path.basename(file || outFile);
+    const videoUrl = `/renders/${finalFile}`;
+
+    // Record this as the visitor's one free generation.
+    const { error } = await supabase.from('free_generations').insert([
+      {
+        ip_hash: job.ipHash,
+        device_id: job.deviceId || null,
+        prompt: job.prompt,
+        video_url: videoUrl,
+      },
+    ]);
+    if (error) console.error('Failed to record free_generation:', error);
+
     job.status = 'done';
     job.progress = 1;
-    job.file = path.basename(file || outFile);
+    job.file = finalFile;
   } catch (err) {
     console.error(`Render job ${jobId} failed:`, err);
     job.status = 'error';
@@ -268,10 +350,23 @@ async function runRender(jobId, prompt) {
 
 // Kick off a render job. Returns immediately with a jobId to poll.
 app.post('/api/render', async (req, res) => {
-  const { prompt } = req.body || {};
+  const { prompt, deviceId } = req.body || {};
 
   if (!prompt || typeof prompt !== 'string') {
     return res.status(400).json({ ok: false, error: 'A prompt string is required.' });
+  }
+
+  const ipHash = hashIp(getClientIp(req));
+
+  const existing = await findExistingFreeGeneration(ipHash, deviceId);
+  if (existing) {
+    return res.status(403).json({
+      ok: false,
+      locked: true,
+      error: 'Free generation already used.',
+      prompt: existing.prompt,
+      url: existing.video_url,
+    });
   }
 
   if (renderBusy) {
@@ -279,11 +374,19 @@ app.post('/api/render', async (req, res) => {
   }
 
   const jobId = crypto.randomUUID();
-  jobs.set(jobId, { status: 'queued', progress: 0, file: null, error: null, createdAt: Date.now() });
+  jobs.set(jobId, {
+    status: 'queued',
+    progress: 0,
+    file: null,
+    error: null,
+    ipHash,
+    deviceId: deviceId || null,
+    prompt,
+    createdAt: Date.now(),
+  });
   renderBusy = true;
 
-  // Fire and forget — the client polls GET /api/render/:jobId for status.
-  runRender(jobId, prompt);
+  runRender(jobId);
 
   res.status(202).json({ ok: true, jobId });
 });
