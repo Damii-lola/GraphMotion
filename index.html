@@ -3,190 +3,212 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>GraphMotion — Animated, not stitched.</title>
-<meta name="description" content="GraphMotion turns a prompt into a fully animated faceless video using code-generated motion graphics — not stock footage, not avatars, not templates." />
+<title>GraphMotion — describe a video, watch it get animated</title>
+<meta name="description" content="GraphMotion turns a prompt into a fully animated faceless video using code-generated motion graphics — not stock footage, not avatars, not templates. Try one free, right now." />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<div class="grain"></div>
-
 <header class="nav">
   <div class="nav-inner">
     <a href="#top" class="logo">
-      <span class="logo-mark" aria-hidden="true"></span>
+      <svg class="logo-mark" viewBox="0 0 28 28" aria-hidden="true">
+        <path d="M3 21 C 8 21, 8 7, 14 7 S 20 21, 25 21" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+      </svg>
       GraphMotion
     </a>
     <nav class="nav-links">
       <a href="#problem">Why</a>
       <a href="#how">How it works</a>
-      <a href="#demo">Try it</a>
       <a href="#compare">Comparison</a>
       <a href="#proof">Proof</a>
     </nav>
-    <a href="#signup" class="btn btn-small">Get early access</a>
+    <a href="#signup" class="btn btn-small">Join for $1</a>
   </div>
 </header>
 
 <main id="top">
 
-  <!-- HERO -->
+  <!-- HERO — the working generator, first thing visible -->
   <section class="hero">
-    <div class="hero-copy">
-      <p class="eyebrow">Code-driven motion graphics</p>
-      <h1>Animated, not stitched.</h1>
-      <p class="hero-sub">
-        GraphMotion turns a prompt into a fully animated faceless video —
-        built from freshly generated animation code, not stock clips,
-        not templates, not an AI avatar reading a script.
-      </p>
-      <div class="hero-actions">
-        <a href="#signup" class="btn btn-primary">Join for $1 →</a>
-        <a href="#how" class="btn btn-ghost">See how it renders</a>
-      </div>
-      <p class="hero-note">$1 gets you into the beta Discord and a say in what we build next.</p>
-    </div>
+    <p class="eyebrow">Prompt in. Motion out.</p>
+    <h1>Describe a video.<br>Watch it get animated.</h1>
+    <p class="hero-sub">
+      No stock footage, no AI avatar, no template — GraphMotion writes and renders
+      original motion-graphics code for whatever you describe. Try it free, right now.
+    </p>
 
-    <div class="hero-demo" role="img" aria-label="A prompt being typed, then rendered into an animated bar chart scene">
-      <div class="demo-window">
-        <div class="demo-titlebar">
-          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-          <span class="demo-titlebar-label">prompt.txt</span>
+    <div class="generator" id="generator">
+
+      <!-- INPUT STATE -->
+      <form id="generatorForm" class="generator-form">
+        <div class="prompt-pill">
+          <input
+            type="text"
+            id="promptInput"
+            placeholder="a 30-second explainer on how compound interest works, playful and colorful"
+            autocomplete="off"
+            required
+          />
+          <button type="submit" class="pill-submit" id="generatorSubmit" aria-label="Generate video">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M5 12h13M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
         </div>
-        <div class="demo-body">
-          <div class="prompt-line">
-            <span class="prompt-caret">&gt;</span>
-            <span id="typedPrompt" class="typed"></span><span class="cursor">▌</span>
+        <p class="generator-helper" id="generatorHelper">One free generation. No signup, no card.</p>
+      </form>
+
+      <!-- LOCKED STATE (shown instead of the form once the free generation is used) -->
+      <div class="locked-banner" id="lockedBanner" hidden>
+        <p class="locked-label">Your free generation</p>
+        <p class="locked-prompt" id="lockedPrompt"></p>
+        <a href="#signup" class="btn btn-primary">Join for $1 to save, download, and get unlimited generations</a>
+      </div>
+
+      <p class="generator-error" id="generatorError" role="status" aria-live="polite"></p>
+
+      <!-- PREVIEW FRAME -->
+      <div class="preview-frame" id="previewFrame">
+        <div class="preview-inner" id="previewInner">
+
+          <!-- idle state: small looping placeholder motion graphic -->
+          <div class="preview-idle" id="previewIdle">
+            <svg viewBox="0 0 220 220" class="idle-loop" aria-hidden="true">
+              <circle cx="110" cy="70" r="18" class="idle-shape idle-shape-1"/>
+              <rect x="70" y="110" width="80" height="80" rx="14" class="idle-shape idle-shape-2"/>
+              <path d="M60 60 L160 160" class="idle-shape idle-shape-3" stroke-linecap="round"/>
+            </svg>
+            <p>Your video renders here</p>
           </div>
 
-          <div class="render-divider">
-            <span>renders as</span>
+          <!-- loading state: easing-curve loader -->
+          <div class="preview-loading" id="previewLoading" hidden>
+            <svg viewBox="0 0 160 100" class="curve-loader" aria-hidden="true">
+              <path d="M10 90 C 40 90, 40 10, 80 10 S 120 90, 150 90" fill="none" class="curve-track"/>
+              <path d="M10 90 C 40 90, 40 10, 80 10 S 120 90, 150 90" fill="none" class="curve-fill" id="curveFill"/>
+              <circle r="4" class="curve-dot" id="curveDot"/>
+            </svg>
+            <p id="loadingLabel">Writing the animation code…</p>
           </div>
 
-          <svg class="scene" viewBox="0 0 400 180" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <line x1="20" y1="150" x2="380" y2="150" stroke="var(--line)" stroke-width="1.5"/>
-            <rect class="bar bar-1" x="50"  y="150" width="34" height="0" rx="3"/>
-            <rect class="bar bar-2" x="120" y="150" width="34" height="0" rx="3"/>
-            <rect class="bar bar-3" x="190" y="150" width="34" height="0" rx="3"/>
-            <rect class="bar bar-4" x="260" y="150" width="34" height="0" rx="3"/>
-            <rect class="bar bar-5" x="330" y="150" width="34" height="0" rx="3"/>
-            <circle class="scene-dot" cx="67" cy="0" r="4" />
-          </svg>
-
-          <div class="timeline">
-            <div class="timeline-track"><div class="timeline-fill"></div></div>
-            <div class="timeline-labels">
-              <span>00:00</span><span>keyframes rendering…</span><span>00:12</span>
-            </div>
-          </div>
+          <!-- result video -->
+          <video id="resultVideo" class="preview-video" controls playsinline hidden></video>
         </div>
       </div>
     </div>
   </section>
 
+  <div class="curve-divider" aria-hidden="true">
+    <svg viewBox="0 0 400 40" preserveAspectRatio="none">
+      <path d="M0 30 C 100 30, 100 10, 200 10 S 300 30, 400 30" fill="none" class="divider-path"/>
+    </svg>
+  </div>
+
   <!-- PROBLEM -->
   <section id="problem" class="section">
-    <div class="section-inner narrow">
+    <div class="section-inner narrow center">
       <p class="eyebrow">The problem</p>
-      <h2>Every "AI video generator" outputs the same footage.</h2>
+      <h2>Every &ldquo;AI video generator&rdquo; outputs the same footage.</h2>
       <p class="lead">
         Faceless content is one of the biggest openings in short- and long-form video right now.
         But almost every tool making it draws from the same well: stock clips stitched together,
         or a stiff AI avatar reading a script. It looks templated because it is templated —
         the building blocks are identical for every user, on every topic.
       </p>
-      <p class="lead">
-        Creators end up sounding automated because their videos <em>look</em> automated.
-      </p>
+      <p class="lead">Creators end up sounding automated because their videos <em>look</em> automated.</p>
     </div>
   </section>
 
   <!-- SOLUTION / HOW IT WORKS -->
-  <section id="how" class="section section-alt">
+  <section id="how" class="section section-tint">
     <div class="section-inner">
       <p class="eyebrow">The solution</p>
-      <h2>Every video is written and rendered fresh — as code.</h2>
-      <p class="lead narrow">
+      <h2 class="center-h2">Every video is written and rendered fresh — as code.</h2>
+      <p class="lead narrow center">
         GraphMotion generates video as code-driven motion graphics: charts, diagrams,
         animated typography, and illustrated scenes, built new for each prompt.
-        There's no shared stock library to draw from, which makes the sameness problem
-        structurally harder to hit in the first place.
+        There's no shared stock library to draw from.
       </p>
 
-      <ol class="steps">
-        <li class="step">
+      <div class="steps">
+        <div class="step">
           <span class="step-num">01</span>
           <h3>Describe the video</h3>
           <p>Topic, tone, and an optional style direction — that's the whole brief.</p>
-        </li>
-        <li class="step">
+        </div>
+        <div class="step">
           <span class="step-num">02</span>
           <h3>GraphMotion writes the animation</h3>
-          <p>Original Motion Canvas–based code is generated and rendered: text reveals, charts, diagrams, illustrated scenes — whatever the prompt calls for.</p>
-        </li>
-        <li class="step">
+          <p>Original motion-graphics code is generated and rendered: text reveals, charts, diagrams, illustrated scenes.</p>
+        </div>
+        <div class="step">
           <span class="step-num">03</span>
           <h3>Nudge specific scenes</h3>
-          <p>"Make this scene blue." "Slow down that transition." GraphMotion updates just that part — no full regeneration.</p>
-        </li>
-        <li class="step">
+          <p>"Make this scene blue." "Slow down that transition." Just that part updates — no full regeneration.</p>
+        </div>
+        <div class="step">
           <span class="step-num">04</span>
           <h3>Export and post</h3>
           <p>The finished render comes out ready for TikTok, Shorts, Reels, or YouTube.</p>
-        </li>
-      </ol>
+        </div>
+      </div>
     </div>
   </section>
 
-  <!-- LIVE DEMO -->
-  <section id="demo" class="section section-alt">
+  <!-- PROOF -->
+  <section id="proof" class="section">
     <div class="section-inner narrow">
-      <p class="eyebrow">Try it live</p>
-      <h2>Type a prompt. Get a rendered scene.</h2>
-      <p class="lead">
-        This calls the real GraphMotion pipeline — Mistral writes the animation
-        code, then it's rendered headlessly and streamed back here. A render
-        usually takes a minute or two, since a fresh video is being written and
-        drawn frame by frame, not pulled off a shelf.
-      </p>
+      <p class="eyebrow">Where things actually stand</p>
+      <h2>What's proven, and what isn't — no spin.</h2>
 
-      <form id="demoForm" class="demo-form" novalidate>
-        <label for="demoPrompt" class="sr-only">Describe the video you want</label>
-        <textarea
-          id="demoPrompt"
-          rows="2"
-          placeholder="e.g. explain compound interest, upbeat and visual"
-          required
-        ></textarea>
-        <button type="submit" class="btn btn-primary" id="demoSubmit">Render preview</button>
-      </form>
-
-      <div id="demoStatusWrap" class="demo-status-wrap" hidden>
-        <div class="timeline">
-          <div class="timeline-track"><div id="demoProgressFill" class="timeline-fill" style="animation:none; width:0%;"></div></div>
-          <div class="timeline-labels">
-            <span id="demoStatusLabel">Queued…</span>
-            <span id="demoStatusPercent">0%</span>
+      <div class="proof-list">
+        <div class="proof-row proof-proven">
+          <span class="proof-marker" aria-hidden="true"></span>
+          <div>
+            <span class="proof-tag">Proven</span>
+            <p>The AI reliably generates coherent, working animation code from a prompt with zero manual correction — tested across unrelated topics, first-shot.</p>
+          </div>
+        </div>
+        <div class="proof-row proof-proven">
+          <span class="proof-marker" aria-hidden="true"></span>
+          <div>
+            <span class="proof-tag">Proven</span>
+            <p>The system follows explicit visual direction — color, mood, layout — and meaningfully shifts away from a default look when instructed.</p>
+          </div>
+        </div>
+        <div class="proof-row proof-open">
+          <span class="proof-marker" aria-hidden="true"></span>
+          <div>
+            <span class="proof-tag proof-tag-open">Open question</span>
+            <p>Whether lightly-detailed, average prompts still produce distinct visual identities, or default to a house style.</p>
+          </div>
+        </div>
+        <div class="proof-row proof-open">
+          <span class="proof-marker" aria-hidden="true"></span>
+          <div>
+            <span class="proof-tag proof-tag-open">Open question</span>
+            <p>Full-length reliability and native narration/voiceover sync are still being hardened.</p>
           </div>
         </div>
       </div>
 
-      <div id="demoVideoWrap" class="demo-video-wrap" hidden>
-        <video id="demoVideo" class="demo-video" controls playsinline></video>
-      </div>
-
-      <p id="demoError" class="form-status error" role="status" aria-live="polite"></p>
+      <p class="lead" style="margin-top: 2.2rem;">
+        We're validating real demand with a public 7-day content test — one video a day,
+        in the actual target niche, each ending with a signup call-to-action. Real interest,
+        not view counts, decides what happens next.
+      </p>
     </div>
   </section>
 
   <!-- COMPARISON -->
-  <section id="compare" class="section">
+  <section id="compare" class="section section-tint">
     <div class="section-inner">
       <p class="eyebrow">Differentiation</p>
-      <h2>Not another timeline editor with a stock library.</h2>
+      <h2 class="center-h2">Not another timeline editor with a stock library.</h2>
 
       <div class="table-wrap">
         <table class="compare-table">
@@ -224,46 +246,13 @@
     </div>
   </section>
 
-  <!-- PROOF / HONEST STATE -->
-  <section id="proof" class="section section-alt">
-    <div class="section-inner narrow">
-      <p class="eyebrow">Where things actually stand</p>
-      <h2>What's proven, and what isn't — no spin.</h2>
-
-      <div class="proof-grid">
-        <div class="proof-card proof-good">
-          <span class="proof-tag">Proven</span>
-          <p>The AI reliably generates coherent, working animation code from a prompt with zero manual correction — tested across unrelated topics, first-shot.</p>
-        </div>
-        <div class="proof-card proof-good">
-          <span class="proof-tag">Proven</span>
-          <p>The system follows explicit visual direction — color, mood, layout — and meaningfully shifts away from a default look when instructed.</p>
-        </div>
-        <div class="proof-card proof-open">
-          <span class="proof-tag">Open question</span>
-          <p>Whether lightly-detailed, average prompts still produce distinct visual identities, or default to a house style.</p>
-        </div>
-        <div class="proof-card proof-open">
-          <span class="proof-tag">Open question</span>
-          <p>Full-length reliability and native narration/voiceover sync are still being hardened.</p>
-        </div>
-      </div>
-
-      <p class="lead" style="margin-top: 2.5rem;">
-        We're validating real demand with a public 7-day content test — one video a day,
-        in the actual target niche, each ending with a signup call-to-action. Real interest,
-        not view counts, decides what happens next.
-      </p>
-    </div>
-  </section>
-
   <!-- SIGNUP -->
   <section id="signup" class="section signup">
     <div class="section-inner narrow center">
       <p class="eyebrow">Early access</p>
       <h2>Get in before the public launch.</h2>
       <p class="lead">
-        $1 gets you into the beta Discord, first access to renders, and a real vote
+        $1 gets you into the beta Discord, unlimited generations, downloads, and a real vote
         in what GraphMotion builds next. Not a free-email list — just people who are actually in.
       </p>
 
