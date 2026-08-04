@@ -7,7 +7,7 @@
 # Render should auto-detect this Dockerfile. If it offers "native
 # environment" instead, switch the environment to "Docker".
 
-FROM node:20-slim
+FROM node:22-slim
 
 # Chromium (for Puppeteer, used by Revideo's render) + ffmpeg (for encoding)
 # + the font/graphics libs Chromium needs headless.
