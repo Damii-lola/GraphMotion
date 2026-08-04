@@ -233,7 +233,14 @@ app.post('/api/generate', async (req, res) => {
 // ---------------------------------------------------------------------------
 const RENDER_DIR = path.join(__dirname, 'render');
 const SCENE_FILE = path.join(RENDER_DIR, 'src', 'scenes', 'generated.tsx');
-const PROJECT_FILE = path.join(RENDER_DIR, 'src', 'project.ts');
+const PROJECT_FILE_ABS = path.join(RENDER_DIR, 'src', 'project.ts');
+const VITE_CONFIG_ABS = path.join(RENDER_DIR, 'vite.config.ts');
+// Revideo's own examples always pass a path relative to process.cwd()
+// (e.g. './src/project.ts'), never an absolute one — matching that
+// pattern avoids edge cases in how their Vite plugin resolves project
+// root internally. Our Docker WORKDIR is /app, so this resolves the
+// same way every time regardless of how the process was launched.
+const PROJECT_FILE = './' + path.relative(process.cwd(), PROJECT_FILE_ABS);
 const OUTPUT_DIR = path.join(RENDER_DIR, 'output');
 
 if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -309,16 +316,32 @@ async function runRender(jobId) {
 
     job.status = 'rendering';
 
+    // Pre-flight check: if these files are missing, fail fast with a clear
+    // error instead of letting Vite fail silently inside the headless
+    // browser, which produces a render that hangs forever with no signal
+    // back to this process (that's what caused the earlier stuck jobs).
+    if (!fs.existsSync(PROJECT_FILE_ABS)) {
+      throw new Error(`Missing project file at ${PROJECT_FILE_ABS} — check it's committed and pushed to the repo.`);
+    }
+    if (!fs.existsSync(VITE_CONFIG_ABS)) {
+      throw new Error(`Missing vite.config.ts at ${VITE_CONFIG_ABS} — check it's committed and pushed to the repo.`);
+    }
+
     const { renderVideo } = await import('@revideo/renderer');
 
     const outFile = `${jobId}.mp4`;
 
-    const file = await renderVideo({
+    const RENDER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+    const renderPromise = renderVideo({
       projectFile: PROJECT_FILE,
       settings: {
         outDir: OUTPUT_DIR,
         outFile,
+        dimensions: [1080, 1920], // 9:16 vertical
         logProgress: true,
+        ffmpeg: {
+          ffmpegPath: '/usr/bin/ffmpeg', // matches the apt-installed binary in the Dockerfile
+        },
         puppeteer: {
           args: ['--no-sandbox', '--disable-setuid-sandbox'],
         },
@@ -327,6 +350,12 @@ async function runRender(jobId) {
         },
       },
     });
+
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Render timed out after 5 minutes.')), RENDER_TIMEOUT_MS)
+    );
+
+    const file = await Promise.race([renderPromise, timeoutPromise]);
 
     const finalFile = path.basename(file || outFile);
     const videoUrl = `/renders/${finalFile}`;
