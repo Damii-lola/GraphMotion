@@ -214,7 +214,8 @@ generically):
 - Depth staging: what sits in the background, midground, and foreground.
 - ONE or TWO deliberate hero effects from: film grain, chromatic
   aberration at a transition, a light leak, a glitch moment at a reveal,
-  a procedural particle field. Do not pile on more than two.
+  a procedural particle field, a tilted frosted-glass panel with
+  embossed/extruded title type. Do not pile on more than two.
 - A specific 2-3 color palette (name actual colors/hex-ish tones) that
   suits the subject and mood — never generic black-on-white.
 - The rough beat structure across the 8 seconds (what happens first,
@@ -321,7 +322,28 @@ specific techniques:
      foreground, and rack focus by animating blur amount on a layer
      over a few frames to simulate a focus pull.
 
-5. TASTE / RESTRAINT (critical):
+5. GLASS SURFACES & DIMENSIONAL TYPE (high-end product-promo look):
+   - GLASS/FROSTED PANELS: rounded-corner divs with a semi-transparent
+     background (e.g. rgba fill at 10-20% opacity), a 1px semi-transparent
+     border for the edge highlight, and backdrop-filter: blur(12-20px).
+     Tilt these in 3D with perspective + rotateX (10-20deg) on the parent
+     so the panel reads as a floating surface in space, not a flat card.
+     Have it "settle" into position with a spring-like overshoot on
+     rotateX/translateY/scale rather than easing straight to rest.
+   - EMBOSSED / EXTRUDED TITLE TEXT: fake letter depth with 4-8 stacked
+     text-shadow layers, each offset by ~1px more than the last in the
+     same direction, darkening slightly each step, topped with a crisp
+     light-colored top layer — this reads as extruded/embossed rather
+     than flat. Optionally overlay a subtle repeating horizontal-line
+     pattern (a scanline/hologram texture) clipped to the text shape via
+     background-clip: text on a background-image of thin repeating
+     gradient stripes.
+   - Pair glass panels + embossed type with the fog/atmosphere background
+     from the light-leak/vignette techniques above — soft, irregular,
+     slowly-drifting blurred glow shapes reading as fog, never a flat
+     solid background behind a "premium" scene.
+
+6. TASTE / RESTRAINT (critical):
    - Pick ONE or TWO hero effects per scene, not all of them at once.
      A scene with grain + chromatic aberration + glitch + particles +
      light leaks simultaneously will look cluttered and cheap, not
@@ -370,6 +392,98 @@ async function generateSceneCode(directedBrief) {
 }
 
 // ---------------------------------------------------------------------------
+// Refinement passes: take the brief + current code, tell Mistral the
+// current version is too simple/flat for a premium result, and have it
+// rewrite the whole thing at a higher level of craft. Run 3 times in a
+// row, each pass building on the previous rewrite.
+//
+// Real cost of this: 3 extra sequential Mistral calls, each generating a
+// full scene file — this adds real, noticeable latency on top of the
+// enhance + initial-generate calls already happening. That's the direct
+// tradeoff for pushing quality further per request.
+// ---------------------------------------------------------------------------
+const REFINE_SYSTEM_PROMPT = `You are a ruthless creative director reviewing Remotion motion-graphics code for GraphMotion. You will be given the original creative brief and the current code for the scene. The current code is not good enough — it reads as too simple, too flat, and nowhere near a premium After-Effects-style result. Rewrite it into a dramatically more sophisticated version.
+
+You MUST still follow these hard rules exactly, no exceptions:
+- Exactly one import line, importing only from 'remotion'.
+- Exactly one export, in this exact shape (named export, not default):
+  export function GeneratedScene() { ... }
+- Use useCurrentFrame() and interpolate()/spring() to drive all animation —
+  never CSS @keyframes or setTimeout/setInterval.
+- No external images, video, audio, or font files — inline styles, inline
+  SVG, and system fonts only.
+- The composition is 1080x1920 (9:16), 30fps, 240 frames total (8 seconds).
+  The whole scene must read as complete within frame 0–240.
+
+Push further on depth staging, camera-like drift across the full
+duration, materials (glass panels, embossed type, lighting), and
+executing one or two hero effects with real craft and precise timing —
+not by piling on more elements, but by making the existing ideas read as
+more expensive and deliberate. Keep one clear atmospheric identity;
+don't let effects fight each other.
+
+Output ONLY the rewritten .tsx file. No markdown fences, no explanation,
+no notes about what changed.`;
+
+function looksLikeValidScene(code) {
+  return /function\s+GeneratedScene/.test(code) && /from\s+['"]remotion['"]/.test(code);
+}
+
+async function refineSceneCode(directedBrief, currentCode) {
+  const mistralRes = await fetch('https://api.mistral.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${MISTRAL_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'mistral-large-latest',
+      messages: [
+        { role: 'system', content: REFINE_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: `CREATIVE BRIEF:\n${directedBrief}\n\nCURRENT CODE (too simple — needs a major upgrade):\n${currentCode}`,
+        },
+      ],
+    }),
+  });
+
+  if (!mistralRes.ok) {
+    const errText = await mistralRes.text();
+    throw new Error(`Mistral refinement failed: ${mistralRes.status} ${errText}`);
+  }
+
+  const data = await mistralRes.json();
+  let code = data?.choices?.[0]?.message?.content || '';
+
+  code = code.trim();
+  if (code.startsWith('```')) {
+    code = code.replace(/^```[a-zA-Z]*\n?/, '').replace(/```$/, '').trim();
+  }
+
+  return code;
+}
+
+async function refineSceneCodeMultiPass(directedBrief, initialCode, passes) {
+  let code = initialCode;
+
+  for (let i = 1; i <= passes; i++) {
+    try {
+      const candidate = await refineSceneCode(directedBrief, code);
+      if (looksLikeValidScene(candidate)) {
+        code = candidate;
+      } else {
+        console.warn(`Refinement pass ${i} produced invalid code — keeping the previous version.`);
+      }
+    } catch (err) {
+      console.error(`Refinement pass ${i} failed — keeping the previous version.`, err);
+    }
+  }
+
+  return code;
+}
+
+// ---------------------------------------------------------------------------
 // Free preview: prompt -> Mistral writes Remotion code -> returned directly.
 // No render, no polling — the browser plays it live via @remotion/player.
 // ---------------------------------------------------------------------------
@@ -395,7 +509,8 @@ app.post('/api/render', async (req, res) => {
     }
 
     const directedBrief = await enhancePrompt(prompt);
-    const code = await generateSceneCode(directedBrief);
+    const initialCode = await generateSceneCode(directedBrief);
+    const code = await refineSceneCodeMultiPass(directedBrief, initialCode, 3);
 
     const { error } = await supabase.from('free_generations').insert([
       { ip_hash: ipHash, device_id: deviceId || null, prompt, code },
