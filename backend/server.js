@@ -1,8 +1,16 @@
 // GraphMotion backend
 // Single server.js, complete code, no hardcoded data.
 //
-// Wiring: GitHub (this repo) -> Render (Docker service) -> Supabase (service role) -> Mistral (AI text calls)
-//                                        -> Revideo/Motion Canvas (.tsx render -> mp4, via headless Chromium + ffmpeg)
+// Wiring: GitHub (this repo) -> Render (native Node service) -> Supabase (service role) -> Mistral (AI text calls)
+//
+// Free preview is now 100% client-side: this server generates Remotion
+// component code via Mistral and hands the code straight back — the
+// browser transpiles and plays it live via @remotion/player. No headless
+// Chromium, no ffmpeg, no waiting, for the free path.
+//
+// Server-side rendering (headless Chromium + ffmpeg, via @remotion/bundler
+// + @remotion/renderer) only happens in /api/export, for a real mp4 file —
+// that's meant for the future paid tier and isn't wired to any button yet.
 //
 // Required env vars (set these in Render's dashboard, NOT in code):
 //   SUPABASE_URL               - your Supabase project URL
@@ -12,8 +20,15 @@
 //   IP_HASH_SALT                 - any random string, used to hash visitor IPs before storing them
 //   PORT                        - Render sets this automatically, defaults to 3000 locally
 //
-// Deploy this as a Render DOCKER service (see Dockerfile) — rendering needs
-// headless Chromium + ffmpeg, which Render's native Node runtime doesn't have.
+// Deployed as a plain Render Node service — no Dockerfile, no Chromium,
+// no ffmpeg. That's intentional: the free preview path (Mistral -> code
+// -> browser) needs none of that. /api/export below still calls
+// @remotion/renderer, which needs a real Chromium to actually run — it
+// will not work on this native environment as-is. It's left in as real,
+// working code for whenever the paid export tier gets built; at that
+// point this service needs to move back to a Docker environment with
+// Chromium + ffmpeg installed (an earlier version of this file's
+// Dockerfile had the exact apt-get list for that).
 
 require('dotenv').config();
 
@@ -43,16 +58,10 @@ if (!IP_HASH_SALT) {
   console.warn('IP_HASH_SALT not set — using an insecure default. Set this in Render.');
 }
 
-// Service role key => server-side only client, full DB access, bypasses RLS.
-// Never send this key to the frontend.
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const app = express();
-// Render sits in front of this service as a proxy — without this, req.ip
-// resolves to Render's internal proxy address, not the visitor's real IP,
-// and the free-generation limit becomes trivially bypassable.
 app.set('trust proxy', true);
-
 app.use(express.json());
 app.use(
   cors({
@@ -68,7 +77,6 @@ function hashIp(ip) {
 }
 
 function getClientIp(req) {
-  // req.ip already respects X-Forwarded-For once 'trust proxy' is set.
   return req.ip || req.socket.remoteAddress || 'unknown';
 }
 
@@ -80,7 +88,7 @@ app.get('/health', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Waitlist signup — stores an email from the landing page into Supabase
+// Waitlist signup
 //
 //   create table waitlist (
 //     id uuid primary key default gen_random_uuid(),
@@ -121,21 +129,25 @@ app.post('/api/waitlist', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Free-generation gate
 //
-// One free render per visitor, enforced server-side by IP hash AND a
-// client-generated device id — either match locks them out, so clearing
-// localStorage alone (new device id, same IP) or switching networks alone
-// (new IP, same device id) doesn't get around it.
+// One free generation per visitor, enforced server-side by IP hash AND a
+// client-generated device id. Stores the generated CODE (not a video file —
+// there isn't one for the free tier), so a locked-out visitor's previous
+// result can be replayed client-side from the stored code.
 //
 //   create table free_generations (
 //     id uuid primary key default gen_random_uuid(),
 //     ip_hash text not null,
 //     device_id text,
 //     prompt text,
+//     code text,
 //     video_url text,
 //     created_at timestamptz default now()
 //   );
 //   create index free_generations_ip_hash_idx on free_generations (ip_hash);
 //   create index free_generations_device_id_idx on free_generations (device_id);
+//
+// If you already created this table for the old video_url-only version,
+// just run: alter table free_generations add column code text;
 // ---------------------------------------------------------------------------
 async function findExistingFreeGeneration(ipHash, deviceId) {
   const filters = [`ip_hash.eq.${ipHash}`];
@@ -143,7 +155,7 @@ async function findExistingFreeGeneration(ipHash, deviceId) {
 
   const { data, error } = await supabase
     .from('free_generations')
-    .select('prompt, video_url, created_at')
+    .select('prompt, code, created_at')
     .or(filters.join(','))
     .order('created_at', { ascending: true })
     .limit(1);
@@ -155,9 +167,6 @@ async function findExistingFreeGeneration(ipHash, deviceId) {
   return data && data[0] ? data[0] : null;
 }
 
-// Lets the frontend know, on page load, whether this visitor already has a
-// free generation on file — so it can render the locked state immediately
-// instead of flashing the input then locking it after a request.
 app.get('/api/free-status', async (req, res) => {
   try {
     const deviceId = typeof req.query.deviceId === 'string' ? req.query.deviceId : null;
@@ -166,14 +175,8 @@ app.get('/api/free-status', async (req, res) => {
     const existing = await findExistingFreeGeneration(ipHash, deviceId);
 
     if (existing) {
-      return res.json({
-        ok: true,
-        used: true,
-        prompt: existing.prompt,
-        url: existing.video_url,
-      });
+      return res.json({ ok: true, used: true, prompt: existing.prompt, code: existing.code });
     }
-
     return res.json({ ok: true, used: false });
   } catch (err) {
     console.error('Unexpected /api/free-status error:', err);
@@ -182,92 +185,32 @@ app.get('/api/free-status', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Mistral-powered scene plan (text only, no render) — kept for internal use.
+// Mistral -> Remotion component code
+//
+// The exact same code shape is used for both the free client-side preview
+// (transpiled and eval'd in-browser, imports stripped first) and the
+// server-side export pipeline (used as a real ES module, imports intact).
 // ---------------------------------------------------------------------------
-app.post('/api/generate', async (req, res) => {
-  try {
-    const { prompt } = req.body || {};
-
-    if (!prompt || typeof prompt !== 'string') {
-      return res.status(400).json({ ok: false, error: 'A prompt string is required.' });
-    }
-
-    const mistralRes = await fetch('https://api.mistral.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${MISTRAL_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'mistral-small-latest',
-        messages: [
-          {
-            role: 'system',
-            content:
-              "You are GraphMotion's generation engine. Given a video topic prompt, respond with a short scene-by-scene plan for a code-driven motion graphics video (no stock footage, no avatars).",
-          },
-          { role: 'user', content: prompt },
-        ],
-      }),
-    });
-
-    if (!mistralRes.ok) {
-      const errText = await mistralRes.text();
-      console.error('Mistral API error:', mistralRes.status, errText);
-      return res.status(502).json({ ok: false, error: 'Generation service failed.' });
-    }
-
-    const mistralData = await mistralRes.json();
-    const text = mistralData?.choices?.[0]?.message?.content || '';
-
-    return res.json({ ok: true, plan: text });
-  } catch (err) {
-    console.error('Unexpected /api/generate error:', err);
-    return res.status(500).json({ ok: false, error: 'Unexpected server error.' });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// Render pipeline: prompt -> Mistral writes a Revideo/Motion Canvas .tsx
-// scene -> Revideo renders it headlessly to mp4 -> file is served back.
-// ---------------------------------------------------------------------------
-const RENDER_DIR = path.join(__dirname, 'render');
-const SCENE_FILE = path.join(RENDER_DIR, 'src', 'scenes', 'generated.tsx');
-const PROJECT_FILE_ABS = path.join(RENDER_DIR, 'src', 'project.ts');
-const VITE_CONFIG_ABS = path.join(RENDER_DIR, 'vite.config.ts');
-// Revideo's own examples always pass a path relative to process.cwd()
-// (e.g. './src/project.ts'), never an absolute one — matching that
-// pattern avoids edge cases in how their Vite plugin resolves project
-// root internally. Our Docker WORKDIR is /app, so this resolves the
-// same way every time regardless of how the process was launched.
-const PROJECT_FILE = './' + path.relative(process.cwd(), PROJECT_FILE_ABS);
-const OUTPUT_DIR = path.join(RENDER_DIR, 'output');
-
-if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-
-app.use('/renders', express.static(OUTPUT_DIR));
-
-const jobs = new Map(); // jobId -> { status, progress, file, error, ipHash, deviceId, prompt, createdAt }
-let renderBusy = false;
-
-const SCENE_SYSTEM_PROMPT = `You write Revideo/Motion Canvas .tsx scene code for GraphMotion.
+const SCENE_SYSTEM_PROMPT = `You write Remotion component code for GraphMotion.
 
 Output ONLY the contents of a single .tsx file. No markdown fences, no
 explanation, no text before or after the code.
 
 Hard rules:
-- Imports allowed: only from '@revideo/2d' and '@revideo/core'.
-- Must have exactly one default export, in this exact shape:
-  export default makeScene2D('generated', function* (view) { ... });
-- Start the generator with view.fill('#0B0C10') (or another appropriate hex) to set the background.
-- Build the scene from primitives such as Txt, Rect, Circle, Line, and Node.
-- Animate with generator-style tweens driven by yield*, e.g.
-  yield* someRef().opacity(1, 0.8);
-  yield* waitFor(1);
-- Do not reference any image, video, audio, or font file that doesn't already
-  exist in the project — text and vector shapes only.
-- Keep the whole scene under ~20 seconds of animated content.
-- Frame the scene for a 9:16 vertical video.`;
+- Exactly one import line, importing only from 'remotion', e.g.:
+  import {AbsoluteFill, useCurrentFrame, interpolate, spring, useVideoConfig, Sequence, Easing} from 'remotion';
+  Only import the named exports you actually use.
+- Exactly one export, in this exact shape (named export, not default):
+  export function GeneratedScene() { ... }
+- Use useCurrentFrame() and interpolate()/spring() to drive all animation —
+  never use CSS @keyframes or setTimeout/setInterval.
+- Build the scene from AbsoluteFill, plain <div>/<span> with inline style
+  objects, and Sequence for timing offsets. No external images, video,
+  audio, or font files — inline styles and system fonts only.
+- The composition is 1080x1920 (9:16), 30fps, 240 frames total (8 seconds).
+  Design the whole scene to read as complete within frame 0–240.
+- Pick a deliberate color palette in your inline styles — don't default to
+  plain black text on white.`;
 
 async function generateSceneCode(prompt) {
   const mistralRes = await fetch('https://api.mistral.ai/v1/chat/completions', {
@@ -301,156 +244,116 @@ async function generateSceneCode(prompt) {
   return code;
 }
 
-async function runRender(jobId) {
-  const job = jobs.get(jobId);
+// ---------------------------------------------------------------------------
+// Free preview: prompt -> Mistral writes Remotion code -> returned directly.
+// No render, no polling — the browser plays it live via @remotion/player.
+// ---------------------------------------------------------------------------
+app.post('/api/render', async (req, res) => {
   try {
-    job.status = 'generating';
-    const sceneCode = await generateSceneCode(job.prompt);
+    const { prompt, deviceId } = req.body || {};
 
-    // Defensive: make sure the scenes directory actually exists before
-    // writing into it. This is what was throwing ENOENT — writeFileSync
-    // fails if the parent directory is missing, it doesn't create it.
-    fs.mkdirSync(path.dirname(SCENE_FILE), { recursive: true });
-    fs.writeFileSync(SCENE_FILE, sceneCode, 'utf-8');
-    job.code = sceneCode;
-
-    job.status = 'rendering';
-
-    // Pre-flight check: if these files are missing, fail fast with a clear
-    // error instead of letting Vite fail silently inside the headless
-    // browser, which produces a render that hangs forever with no signal
-    // back to this process (that's what caused the earlier stuck jobs).
-    if (!fs.existsSync(PROJECT_FILE_ABS)) {
-      throw new Error(`Missing project file at ${PROJECT_FILE_ABS} — check it's committed and pushed to the repo.`);
-    }
-    if (!fs.existsSync(VITE_CONFIG_ABS)) {
-      throw new Error(`Missing vite.config.ts at ${VITE_CONFIG_ABS} — check it's committed and pushed to the repo.`);
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ ok: false, error: 'A prompt string is required.' });
     }
 
-    const { renderVideo } = await import('@revideo/renderer');
+    const ipHash = hashIp(getClientIp(req));
 
-    const outFile = `${jobId}.mp4`;
+    const existing = await findExistingFreeGeneration(ipHash, deviceId);
+    if (existing) {
+      return res.status(403).json({
+        ok: false,
+        locked: true,
+        error: 'Free generation already used.',
+        prompt: existing.prompt,
+        code: existing.code,
+      });
+    }
 
-    const RENDER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-    const renderPromise = renderVideo({
-      projectFile: PROJECT_FILE,
-      settings: {
-        outDir: OUTPUT_DIR,
-        outFile,
-        dimensions: [1080, 1920], // 9:16 vertical
-        logProgress: true,
-        ffmpeg: {
-          ffmpegPath: '/usr/bin/ffmpeg', // matches the apt-installed binary in the Dockerfile
-        },
-        puppeteer: {
-          args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        },
-        progressCallback: (_workerId, progress) => {
-          job.progress = progress;
-        },
-      },
-    });
+    const code = await generateSceneCode(prompt);
 
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Render timed out after 5 minutes.')), RENDER_TIMEOUT_MS)
-    );
-
-    const file = await Promise.race([renderPromise, timeoutPromise]);
-
-    const finalFile = path.basename(file || outFile);
-    const videoUrl = `/renders/${finalFile}`;
-
-    // Record this as the visitor's one free generation.
     const { error } = await supabase.from('free_generations').insert([
-      {
-        ip_hash: job.ipHash,
-        device_id: job.deviceId || null,
-        prompt: job.prompt,
-        video_url: videoUrl,
-      },
+      { ip_hash: ipHash, device_id: deviceId || null, prompt, code },
     ]);
     if (error) console.error('Failed to record free_generation:', error);
 
-    job.status = 'done';
-    job.progress = 1;
-    job.file = finalFile;
+    res.json({ ok: true, code });
   } catch (err) {
-    console.error(`Render job ${jobId} failed:`, err);
-    job.status = 'error';
-    job.error = err.message || 'Unknown render error.';
-  } finally {
-    renderBusy = false;
+    console.error('Unexpected /api/render error:', err);
+    res.status(500).json({ ok: false, error: err.message || 'Unexpected server error.' });
   }
-}
-
-// Kick off a render job. Returns immediately with a jobId to poll.
-app.post('/api/render', async (req, res) => {
-  const { prompt, deviceId } = req.body || {};
-
-  if (!prompt || typeof prompt !== 'string') {
-    return res.status(400).json({ ok: false, error: 'A prompt string is required.' });
-  }
-
-  const ipHash = hashIp(getClientIp(req));
-
-  const existing = await findExistingFreeGeneration(ipHash, deviceId);
-  if (existing) {
-    return res.status(403).json({
-      ok: false,
-      locked: true,
-      error: 'Free generation already used.',
-      prompt: existing.prompt,
-      url: existing.video_url,
-    });
-  }
-
-  if (renderBusy) {
-    return res.status(409).json({ ok: false, error: 'A render is already in progress. Try again shortly.' });
-  }
-
-  const jobId = crypto.randomUUID();
-  jobs.set(jobId, {
-    status: 'queued',
-    progress: 0,
-    file: null,
-    error: null,
-    ipHash,
-    deviceId: deviceId || null,
-    prompt,
-    createdAt: Date.now(),
-  });
-  renderBusy = true;
-
-  runRender(jobId);
-
-  res.status(202).json({ ok: true, jobId });
 });
 
-// Poll a render job's status. When status is "done", `url` points at the mp4.
-app.get('/api/render/:jobId', (req, res) => {
-  const job = jobs.get(req.params.jobId);
-  if (!job) {
-    return res.status(404).json({ ok: false, error: 'Unknown job id.' });
+// ---------------------------------------------------------------------------
+// Export: real mp4 via headless Chromium + ffmpeg. Not gated by payment yet
+// (that needs a payment flow this codebase doesn't have) and not called by
+// any button in the UI today — it's here so the paid tier has something
+// real to build on top of rather than starting from scratch later.
+// ---------------------------------------------------------------------------
+const SCENE_FILE = path.join(__dirname, 'GeneratedScene.tsx');
+const ENTRY_FILE = path.join(__dirname, 'index.ts');
+const OUTPUT_DIR = path.join(__dirname, 'output');
+
+if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+app.use('/exports', express.static(OUTPUT_DIR));
+
+let exportBusy = false;
+
+app.post('/api/export', async (req, res) => {
+  try {
+    const { code } = req.body || {};
+
+    if (!code || typeof code !== 'string') {
+      return res.status(400).json({ ok: false, error: 'Scene code is required.' });
+    }
+    if (exportBusy) {
+      return res.status(409).json({ ok: false, error: 'An export is already in progress. Try again shortly.' });
+    }
+
+    exportBusy = true;
+
+    fs.mkdirSync(path.dirname(SCENE_FILE), { recursive: true });
+    fs.writeFileSync(SCENE_FILE, code, 'utf-8');
+
+    if (!fs.existsSync(ENTRY_FILE)) {
+      throw new Error(`Missing Remotion entry file at ${ENTRY_FILE} — check it's committed and pushed to the repo.`);
+    }
+
+    const { bundle } = await import('@remotion/bundler');
+    const { renderMedia, selectComposition } = await import('@remotion/renderer');
+
+    const bundleLocation = await bundle({
+      entryPoint: ENTRY_FILE,
+      onProgress: () => {},
+    });
+
+    const composition = await selectComposition({
+      serveUrl: bundleLocation,
+      id: 'generated',
+    });
+
+    const outFile = `${crypto.randomUUID()}.mp4`;
+    const outputLocation = path.join(OUTPUT_DIR, outFile);
+
+    await renderMedia({
+      composition,
+      serveUrl: bundleLocation,
+      codec: 'h264',
+      outputLocation,
+      // No browserExecutable override here — there's no Docker-installed
+      // Chromium on this native Node environment. This endpoint needs a
+      // Docker deploy with Chromium/ffmpeg (see the note above) before
+      // it'll actually run; Remotion will error clearly if Chromium isn't
+      // found rather than hanging.
+      chromiumOptions: { disableWebSecurity: false, ignoreCertificateErrors: false },
+    });
+
+    res.json({ ok: true, url: `/exports/${outFile}` });
+  } catch (err) {
+    console.error('Unexpected /api/export error:', err);
+    res.status(500).json({ ok: false, error: err.message || 'Export failed.' });
+  } finally {
+    exportBusy = false;
   }
-
-  const payload = {
-    ok: true,
-    status: job.status,
-    progress: job.progress,
-    error: job.error,
-  };
-
-  // Send the generated .tsx as soon as it exists so the UI can reveal it
-  // in the code panel while the render itself is still in progress.
-  if (job.code) {
-    payload.code = job.code;
-  }
-
-  if (job.status === 'done' && job.file) {
-    payload.url = `/renders/${job.file}`;
-  }
-
-  res.json(payload);
 });
 
 const port = PORT || 3000;
