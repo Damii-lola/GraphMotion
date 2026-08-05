@@ -191,16 +191,69 @@ app.get('/api/free-status', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Mistral -> Remotion component code
 //
+// Two Mistral calls, not one: first the person's short prompt gets
+// expanded by a "creative director" pass into a detailed cinematic brief
+// (camera movement, depth staging, a deliberate palette, one or two hero
+// effects) — then THAT brief, not the raw prompt, is what actually gets
+// turned into code. This is what makes a two-word prompt like "a circle"
+// come back looking directed instead of literal.
+//
 // The exact same code shape is used for both the free client-side preview
 // (transpiled and eval'd in-browser, imports stripped first) and the
 // server-side export pipeline (used as a real ES module, imports intact).
 // ---------------------------------------------------------------------------
-const SCENE_SYSTEM_PROMPT = `You write Remotion component code for GraphMotion.
+const PROMPT_DIRECTOR_SYSTEM_PROMPT = `You are a creative director for GraphMotion, an AI motion-graphics video generator.
 
+Given a short, plain user prompt describing a video, rewrite it into a
+detailed creative brief for an 8-second, 1080x1920 animated scene.
+
+Your brief must specify, concretely and specifically to this topic (not
+generically):
+- A camera-like move for the shot (a slow push-in, a drift, a rack focus —
+  pick one that fits the subject).
+- Depth staging: what sits in the background, midground, and foreground.
+- ONE or TWO deliberate hero effects from: film grain, chromatic
+  aberration at a transition, a light leak, a glitch moment at a reveal,
+  a procedural particle field. Do not pile on more than two.
+- A specific 2-3 color palette (name actual colors/hex-ish tones) that
+  suits the subject and mood — never generic black-on-white.
+- The rough beat structure across the 8 seconds (what happens first,
+  what happens at the midpoint, how it resolves).
+
+Output ONLY the brief itself, as 4-8 sentences of plain prose. No headers,
+no bullet points, no markdown, no code, no preamble.`;
+
+async function enhancePrompt(rawPrompt) {
+  const mistralRes = await fetch('https://api.mistral.ai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${MISTRAL_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'mistral-large-latest',
+      messages: [
+        { role: 'system', content: PROMPT_DIRECTOR_SYSTEM_PROMPT },
+        { role: 'user', content: rawPrompt },
+      ],
+    }),
+  });
+
+  if (!mistralRes.ok) {
+    const errText = await mistralRes.text();
+    throw new Error(`Mistral prompt enhancement failed: ${mistralRes.status} ${errText}`);
+  }
+
+  const data = await mistralRes.json();
+  const brief = data?.choices?.[0]?.message?.content || '';
+  return brief.trim() || rawPrompt; // fall back to the raw prompt if this comes back empty
+}
+
+const SCENE_SYSTEM_PROMPT = `You write Remotion component code for GraphMotion.
 Output ONLY the contents of a single .tsx file. No markdown fences, no
 explanation, no text before or after the code.
 
-Hard rules:
+HARD RULES (unchanged):
 - Exactly one import line, importing only from 'remotion', e.g.:
   import {AbsoluteFill, useCurrentFrame, interpolate, spring, useVideoConfig, Sequence, Easing} from 'remotion';
   Only import the named exports you actually use.
@@ -208,15 +261,83 @@ Hard rules:
   export function GeneratedScene() { ... }
 - Use useCurrentFrame() and interpolate()/spring() to drive all animation —
   never use CSS @keyframes or setTimeout/setInterval.
-- Build the scene from AbsoluteFill, plain <div>/<span> with inline style
-  objects, and Sequence for timing offsets. No external images, video,
-  audio, or font files — inline styles and system fonts only.
+- Build the scene from AbsoluteFill, plain <div>/<span>/<svg> with inline
+  style objects, and Sequence for timing offsets. No external images,
+  video, audio, or font files — inline styles, inline SVG, and system
+  fonts only.
 - The composition is 1080x1920 (9:16), 30fps, 240 frames total (8 seconds).
   Design the whole scene to read as complete within frame 0–240.
-- Pick a deliberate color palette in your inline styles — don't default to
-  plain black text on white.`;
 
-async function generateSceneCode(prompt) {
+VISUAL DIRECTION — cinematic, dimensional, After-Effects-style:
+This must NOT read as flat slides with text fading in. Every scene needs
+fake depth, atmosphere, and camera-like movement, built from these
+specific techniques:
+
+1. DEPTH & FAKE 3D (all via CSS transforms, no 3D engine):
+   - Layer the scene into at least 3 depth planes (background, midground,
+     foreground). Background layers move slower and are more blurred
+     (filter: blur()) than foreground layers — this parallax difference
+     is what sells depth.
+   - Use \`perspective\`, \`rotateX\`, \`rotateY\`, \`translateZ\`, and \`scale\`
+     together on container divs to simulate camera tilt/dolly moves.
+     Animate these with interpolate() tied to frame, not just opacity.
+   - Fake a "dolly zoom" by scaling the background up while scaling
+     foreground text down slightly at the same time.
+   - Use soft drop shadows (filter: drop-shadow) with an offset that
+     matches an implied light direction — this alone adds significant
+     dimensionality to flat shapes/text.
+
+2. CAMERA MOVEMENT:
+   - Every scene should have at least one continuous subtle camera-like
+     motion across its full duration (slow scale-up "push in," a slight
+     pan via translateX/Y, or a slow rotateZ drift) — never a fully
+     static frame. Stillness reads as flat; drift reads as cinematic.
+
+3. PARTICLE SYSTEMS (procedural, no assets):
+   - Generate 20-60 small divs or SVG circles in a loop, each with a
+     seeded pseudo-random position, size, and speed (derive randomness
+     from a fixed seed + index, not Math.random(), so it's deterministic
+     across renders).
+   - Animate each particle's position/opacity/scale independently via
+     interpolate() using its own phase offset, so they don't move in
+     unison. Add slight blur to background-plane particles for depth.
+
+4. POST-PROCESSING LOOKS (all achievable in pure CSS/SVG):
+   - FILM GRAIN: an inline <svg> with a <filter> using <feTurbulence> +
+     <feColorMatrix>, applied as a semi-transparent full-frame overlay.
+   - CHROMATIC ABERRATION: duplicate a text/shape element 2-3 times in
+     red/green/blue tints, each offset by 1-3px in slightly different
+     directions, with mix-blend-mode: screen — apply only at high-energy
+     moments (transitions, impacts), not constantly.
+   - LIGHT LEAKS / GLOW: large soft radial-gradient divs with
+     mix-blend-mode: screen or overlay, positioned off-frame-edge,
+     slowly drifting.
+   - VIGNETTE: a full-frame radial-gradient overlay, transparent center
+     to dark edges, low opacity.
+   - GLITCH MOMENTS: brief (2-5 frame) jitter using clip-path slices
+     offset horizontally, plus a quick RGB-channel-split flash — use
+     sparingly, only at hard cuts/reveals, not throughout.
+   - DEPTH OF FIELD: blur background-plane elements more than
+     foreground, and rack focus by animating blur amount on a layer
+     over a few frames to simulate a focus pull.
+
+5. TASTE / RESTRAINT (critical):
+   - Pick ONE or TWO hero effects per scene, not all of them at once.
+     A scene with grain + chromatic aberration + glitch + particles +
+     light leaks simultaneously will look cluttered and cheap, not
+     premium. Premium reads as restrained with one clear focal move.
+   - Grain and vignette can run subtly throughout as a constant "look."
+     Glitch and chromatic aberration should be reserved for transition
+     moments only.
+   - Maintain a deliberate, limited color palette per scene (2-3 core
+     colors + neutrals) — do not default to plain black-on-white or
+     rainbow gradients.
+
+Design the whole 240-frame scene as one continuous cinematic shot with
+depth, drift, and one clear atmospheric identity — not a slideshow with
+effects sprinkled on top.`;
+
+async function generateSceneCode(directedBrief) {
   const mistralRes = await fetch('https://api.mistral.ai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -227,7 +348,7 @@ async function generateSceneCode(prompt) {
       model: 'mistral-large-latest',
       messages: [
         { role: 'system', content: SCENE_SYSTEM_PROMPT },
-        { role: 'user', content: prompt },
+        { role: 'user', content: directedBrief },
       ],
     }),
   });
@@ -273,7 +394,8 @@ app.post('/api/render', async (req, res) => {
       });
     }
 
-    const code = await generateSceneCode(prompt);
+    const directedBrief = await enhancePrompt(prompt);
+    const code = await generateSceneCode(directedBrief);
 
     const { error } = await supabase.from('free_generations').insert([
       { ip_hash: ipHash, device_id: deviceId || null, prompt, code },
