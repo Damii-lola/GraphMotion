@@ -65,7 +65,11 @@ app.set('trust proxy', true);
 app.use(express.json());
 app.use(
   cors({
-    origin: ALLOWED_ORIGIN ? ALLOWED_ORIGIN.split(',') : '*',
+    // .trim() each entry — a stray space after a comma in the Render env
+    // var (e.g. "https://a.com, https://b.com") makes an exact string
+    // match fail silently: the cors package just skips the header
+    // instead of erroring, which is exactly what produced this bug.
+    origin: ALLOWED_ORIGIN ? ALLOWED_ORIGIN.split(',').map((o) => o.trim()) : '*',
   })
 );
 
