@@ -191,7 +191,7 @@ h3 { font-size: 1.1rem; margin-bottom: 0.4rem; }
 .workspace {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  min-height: 380px;
+  height: 460px; /* fixed, not min — code panel scrolls inside this instead of growing the page */
 }
 .workspace-preview {
   display: flex;
@@ -433,7 +433,7 @@ h3 { font-size: 1.1rem; margin-bottom: 0.4rem; }
   .steps { grid-template-columns: 1fr 1fr; }
   .ba-grid { grid-template-columns: 1fr; }
   .nav-links { display: none; }
-  .workspace { grid-template-columns: 1fr; }
+  .workspace { grid-template-columns: 1fr; height: auto; }
   .workspace-preview { border-right: none; border-bottom: 1px solid var(--line); }
   .code-panel-body { max-height: 220px; }
 }
