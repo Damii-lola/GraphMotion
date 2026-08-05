@@ -8,6 +8,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<!-- Transpiles the Mistral-generated .tsx in-browser so it can be previewed
+     live via @remotion/player, without any server-side render step. -->
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -43,7 +46,7 @@
 
     <div class="generator-panel" id="generator">
       <div class="generator-panel-top">
-        <span class="rec-dot"></span> GraphMotion — live render
+        <span class="rec-dot"></span> GraphMotion — preview
       </div>
 
       <div class="workspace">
@@ -66,7 +69,7 @@
                 <p id="loadingLabel">Writing the animation code…</p>
               </div>
 
-              <video id="resultVideo" class="preview-video" controls playsinline hidden></video>
+              <div id="previewPlayer" class="preview-player" hidden></div>
             </div>
           </div>
         </div>
