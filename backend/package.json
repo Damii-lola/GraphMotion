@@ -1,7 +1,7 @@
 {
   "name": "graphmotion-backend",
-  "version": "1.1.0",
-  "description": "GraphMotion backend \u2014 Express API wiring GitHub -> Render -> Supabase, Mistral generation, and Revideo/Motion Canvas .tsx rendering.",
+  "version": "2.0.0",
+  "description": "GraphMotion backend — Express API wiring GitHub -> Render -> Supabase, Mistral generation, and Remotion for instant client-side preview + server-side export.",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
@@ -16,12 +16,10 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "@revideo/core": "^0.11.0",
-    "@revideo/2d": "^0.11.0",
-    "@revideo/renderer": "^0.11.0",
-    "@revideo/vite-plugin": "^0.11.0",
-    "@revideo/ui": "^0.11.0",
-    "vite": "^5.4.0",
-    "typescript": "^5.5.4"
+    "remotion": "^4.0.506",
+    "@remotion/bundler": "^4.0.506",
+    "@remotion/renderer": "^4.0.506",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   }
 }
