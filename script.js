@@ -1,6 +1,8 @@
 // GraphMotion frontend — the hero generator calls the real backend.
-// No hardcoded data beyond UI copy; every render and every lock decision
-// comes from the server.
+// Preview is fully client-side: Mistral's generated Remotion code is
+// transpiled in-browser (Babel Standalone) and played live via
+// @remotion/player, loaded from esm.sh. No server-side render for the
+// free tier — that's the whole point, it's what makes this fast.
 
 const API_BASE = "https://graphmotion.onrender.com";
 const DEVICE_ID_KEY = "gm_device_id";
@@ -12,6 +14,110 @@ function getDeviceId() {
     localStorage.setItem(DEVICE_ID_KEY, id);
   }
   return id;
+}
+
+// ---------------------------------------------------------------------
+// Client-side Remotion: load once from a CDN, cache the modules, then
+// transpile + mount whatever scene code the backend hands back.
+// ---------------------------------------------------------------------
+const REMOTION_VERSION = '4.0.506';
+const REACT_VERSION = '18.3.1';
+const CDN = {
+  react: `https://esm.sh/react@${REACT_VERSION}`,
+  reactDomClient: `https://esm.sh/react-dom@${REACT_VERSION}/client?deps=react@${REACT_VERSION}`,
+  remotion: `https://esm.sh/remotion@${REMOTION_VERSION}?deps=react@${REACT_VERSION},react-dom@${REACT_VERSION}`,
+  player: `https://esm.sh/@remotion/player@${REMOTION_VERSION}?deps=react@${REACT_VERSION},react-dom@${REACT_VERSION}`,
+};
+
+let modulesPromise = null;
+function loadRemotionModules() {
+  if (!modulesPromise) {
+    modulesPromise = Promise.all([
+      import(CDN.react),
+      import(CDN.reactDomClient),
+      import(CDN.remotion),
+      import(CDN.player),
+    ]).then(([ReactMod, ReactDOMClientMod, Remotion, PlayerMod]) => ({
+      React: ReactMod.default || ReactMod,
+      createRoot: ReactDOMClientMod.createRoot,
+      Remotion,
+      Player: PlayerMod.Player,
+    }));
+  }
+  return modulesPromise;
+}
+
+// The backend sends a plain, real Remotion .tsx file (with a normal
+// `import {...} from 'remotion'` line) — the same shape used for the
+// future server-side export. For the live browser preview we strip that
+// import line and inject the matching bindings as function arguments
+// instead, since there's no module loader for an eval'd string.
+function compileScene(rawCode) {
+  if (typeof Babel === 'undefined') {
+    throw new Error('Preview engine failed to load. Check your connection and try again.');
+  }
+
+  const withoutImport = rawCode.replace(
+    /^\s*import\s*\{[^}]*\}\s*from\s*['"]remotion['"];?\s*$/m,
+    ''
+  );
+  const withoutExport = withoutImport.replace(
+    /export\s+function\s+GeneratedScene/,
+    'function GeneratedScene'
+  );
+
+  if (!/function\s+GeneratedScene/.test(withoutExport)) {
+    throw new Error('Generated code was missing the expected GeneratedScene component.');
+  }
+
+  const transpiled = Babel.transform(withoutExport, {
+    presets: ['react', 'typescript'],
+    filename: 'generated.tsx',
+  }).code;
+
+  const factory = new Function(
+    'React',
+    'AbsoluteFill', 'useCurrentFrame', 'useVideoConfig', 'interpolate', 'spring', 'Sequence', 'Easing', 'Img', 'staticFile',
+    `${transpiled}\nreturn GeneratedScene;`
+  );
+
+  return factory;
+}
+
+let playerRoot = null;
+
+async function mountScene(rawCode, container) {
+  const { React, createRoot, Remotion, Player } = await loadRemotionModules();
+
+  const factory = compileScene(rawCode);
+  const GeneratedScene = factory(
+    React,
+    Remotion.AbsoluteFill,
+    Remotion.useCurrentFrame,
+    Remotion.useVideoConfig,
+    Remotion.interpolate,
+    Remotion.spring,
+    Remotion.Sequence,
+    Remotion.Easing,
+    Remotion.Img,
+    Remotion.staticFile
+  );
+
+  if (!playerRoot) playerRoot = createRoot(container);
+
+  playerRoot.render(
+    React.createElement(Player, {
+      component: GeneratedScene,
+      durationInFrames: 240,
+      fps: 30,
+      compositionWidth: 1080,
+      compositionHeight: 1920,
+      controls: true,
+      autoPlay: true,
+      loop: true,
+      style: { width: '100%', height: '100%' },
+    })
+  );
 }
 
 // ---------------------------------------------------------------------
@@ -28,17 +134,11 @@ function getDeviceId() {
   const previewIdle = document.getElementById('previewIdle');
   const previewLoading = document.getElementById('previewLoading');
   const loadingLabel = document.getElementById('loadingLabel');
-  const resultVideo = document.getElementById('resultVideo');
+  const previewPlayer = document.getElementById('previewPlayer');
   const codeContent = document.getElementById('codeContent');
   const timelinePlayhead = document.getElementById('timelinePlayhead');
 
   if (!form) return;
-
-  const STATUS_LABELS = {
-    queued: 'Queued…',
-    generating: 'Writing the animation code…',
-    rendering: 'Generating your preview…',
-  };
 
   let codeRevealed = false;
   let typeTimer = null;
@@ -49,91 +149,55 @@ function getDeviceId() {
     codeContent.textContent = '// waiting for a prompt…';
   }
 
-  // Reveals the generated .tsx a chunk at a time rather than dumping it in
-  // all at once — the code is already fully generated server-side by the
-  // time we have it, this just makes it readable as it appears.
   function revealCode(code) {
     if (codeRevealed || !code) return;
     codeRevealed = true;
     if (typeTimer) clearInterval(typeTimer);
 
     codeContent.textContent = '';
-    const chunkSize = Math.max(1, Math.ceil(code.length / 120));
+    const chunkSize = Math.max(1, Math.ceil(code.length / 100));
     let i = 0;
     typeTimer = setInterval(() => {
       i += chunkSize;
       codeContent.textContent = code.slice(0, i);
       if (i >= code.length) clearInterval(typeTimer);
-    }, 16);
+    }, 12);
   }
 
   function showIdle() {
     previewIdle.hidden = false;
     previewLoading.hidden = true;
-    resultVideo.hidden = true;
+    previewPlayer.hidden = true;
     resetCodePanel();
   }
 
-  function showLoading(status, progress) {
+  function showLoading(label) {
     previewIdle.hidden = true;
     previewLoading.hidden = false;
-    resultVideo.hidden = true;
-    loadingLabel.textContent = STATUS_LABELS[status] || 'Generating your preview…';
-
-    // Real progress, not a decorative loop: 'generating' has no numeric
-    // progress from Mistral, so it just nudges the playhead to show
-    // something's happening; 'rendering' reflects the actual frame
-    // progress reported by Revideo's progressCallback.
-    const pct = status === 'generating' ? 8 : Math.round((progress || 0) * 98);
-    timelinePlayhead.style.left = `${pct}%`;
+    previewPlayer.hidden = true;
+    loadingLabel.textContent = label || 'Writing the animation code…';
+    timelinePlayhead.style.left = '30%';
   }
 
-  function showResult(url) {
-    previewIdle.hidden = true;
-    previewLoading.hidden = true;
-    resultVideo.src = `${API_BASE}${url}`;
-    resultVideo.hidden = false;
+  async function showResult(code) {
+    revealCode(code);
+    try {
+      previewIdle.hidden = true;
+      previewLoading.hidden = true;
+      previewPlayer.hidden = false;
+      await mountScene(code, previewPlayer);
+    } catch (err) {
+      console.error('Preview mount failed:', err);
+      previewPlayer.hidden = true;
+      previewIdle.hidden = false;
+      errorEl.textContent = 'Could not preview this scene — try a different prompt.';
+    }
   }
 
   function lockUI(prompt) {
     form.hidden = true;
     lockedBanner.hidden = false;
     lockedPrompt.textContent = `"${prompt}"`;
-  }
-
-  let pollTimer = null;
-  function stopPolling() {
-    if (pollTimer) clearTimeout(pollTimer);
-    pollTimer = null;
-  }
-
-  async function pollJob(jobId, prompt) {
-    try {
-      const res = await fetch(`${API_BASE}/api/render/${jobId}`);
-      const data = await res.json();
-
-      if (!res.ok || !data.ok) throw new Error(data.error || 'Render failed.');
-
-      if (data.status === 'error') throw new Error(data.error || 'Render failed.');
-
-      showLoading(data.status, data.progress);
-      if (data.code) revealCode(data.code);
-
-      if (data.status === 'done' && data.url) {
-        stopPolling();
-        showResult(data.url);
-        lockUI(prompt);
-        submitBtn.disabled = false;
-        return;
-      }
-
-      pollTimer = setTimeout(() => pollJob(jobId, prompt), 2500);
-    } catch (err) {
-      stopPolling();
-      showIdle();
-      errorEl.textContent = err.message || 'Could not reach the render service.';
-      submitBtn.disabled = false;
-    }
   }
 
   // On load: ask the server whether this visitor already used their free
@@ -146,25 +210,22 @@ function getDeviceId() {
 
       if (data.ok && data.used) {
         lockUI(data.prompt || '');
-        if (data.url) showResult(data.url);
+        if (data.code) showResult(data.code);
       }
     } catch (err) {
-      // If the status check fails, leave the form usable — the render
-      // endpoint itself still enforces the limit server-side either way.
       console.error('free-status check failed', err);
     }
   })();
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    stopPolling();
 
     const prompt = promptInput.value.trim();
     if (!prompt) return;
 
     errorEl.textContent = '';
     submitBtn.disabled = true;
-    showLoading('queued');
+    showLoading('Writing the animation code…');
 
     try {
       const res = await fetch(`${API_BASE}/api/render`, {
@@ -175,19 +236,20 @@ function getDeviceId() {
       const data = await res.json();
 
       if (res.status === 403 && data.locked) {
-        // Already used, caught late (e.g. two tabs). Lock the UI instead of erroring.
         lockUI(data.prompt || prompt);
-        if (data.url) showResult(data.url);
+        if (data.code) showResult(data.code);
         submitBtn.disabled = false;
         return;
       }
 
-      if (!res.ok || !data.ok) throw new Error(data.error || 'Could not start the render.');
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Could not generate a preview.');
 
-      pollJob(data.jobId, prompt);
+      await showResult(data.code);
+      lockUI(prompt);
+      submitBtn.disabled = false;
     } catch (err) {
       showIdle();
-      errorEl.textContent = err.message || 'Could not reach the render service.';
+      errorEl.textContent = err.message || 'Could not reach the generation service.';
       submitBtn.disabled = false;
     }
   });
