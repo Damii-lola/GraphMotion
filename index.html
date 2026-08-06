@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>GraphMotion</title>
+<title>Shortform AI — Test Console</title>
 <style>
   :root {
     --bg: #0a0a0b;
@@ -290,6 +290,52 @@
   promptInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") generate();
   });
+
+  // --- Keep-alive pinger ---------------------------------------------
+  // Render's free tier spins the service down after ~15 min of no
+  // traffic, which means the NEXT real request eats a 30-60s cold-start
+  // on top of generation time. This pings /health every 10 minutes to
+  // keep it warm while this tab stays open.
+  //
+  // Limitation: only works while this page is open in a browser tab -
+  // it is NOT a real uptime solution. For that, use an external cron
+  // pinger (cron-job.org, UptimeRobot, or a scheduled GitHub Action)
+  // that hits API_BASE + "/health" independently of any browser.
+  const KEEP_ALIVE_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+  let keepAliveTimer = null;
+
+  async function pingHealth() {
+    try {
+      const res = await fetch(`${API_BASE}/health`);
+      const ok = res.ok;
+      updateKeepAliveIndicator(ok ? "awake" : "error");
+    } catch (err) {
+      updateKeepAliveIndicator("error");
+    }
+  }
+
+  function updateKeepAliveIndicator(state) {
+    const el = document.getElementById("apiTarget");
+    const dot = state === "awake" ? "🟢" : state === "error" ? "🔴" : "🟡";
+    el.textContent = `${API_BASE} ${dot}`;
+  }
+
+  function startKeepAlive() {
+    pingHealth(); // immediate ping on load
+    keepAliveTimer = setInterval(pingHealth, KEEP_ALIVE_INTERVAL_MS);
+  }
+
+  // Pause pinging when the tab isn't visible to avoid pointless calls,
+  // resume (with an immediate ping) when it becomes visible again.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      clearInterval(keepAliveTimer);
+    } else {
+      startKeepAlive();
+    }
+  });
+
+  startKeepAlive();
 </script>
 
 </body>
