@@ -357,17 +357,21 @@
   function pollJob(jobId) {
     const POLL_INTERVAL_MS = 2000;
     const MAX_WAIT_MS = 6 * 60 * 1000; // give up after 6 minutes
+    const MAX_CONSECUTIVE_FAILURES = 5; // tolerate ~10s of blips (e.g. a server restart) before giving up
     const startedAt = Date.now();
+    let consecutiveFailures = 0;
 
     return new Promise((resolve, reject) => {
       const tick = async () => {
         try {
           const res = await fetch(`${API_BASE}/api/jobs/${jobId}`);
-          const data = await res.json();
 
           if (!res.ok) {
-            throw new Error(data.error || `Failed to fetch job status (${res.status})`);
+            throw new Error(`Failed to fetch job status (${res.status})`);
           }
+
+          const data = await res.json();
+          consecutiveFailures = 0; // reset on any successful response
 
           const job = data.job;
           updateProgressUI(job);
@@ -385,7 +389,18 @@
 
           setTimeout(tick, POLL_INTERVAL_MS);
         } catch (err) {
-          reject(err);
+          // A single failed poll is often just a transient blip (e.g.
+          // the server briefly restarting after a memory-related crash
+          // mid-render) rather than the job actually failing - retry a
+          // few times before giving up, instead of surfacing an error
+          // on the very first hiccup.
+          consecutiveFailures++;
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            return reject(err);
+          }
+          const statusEl = document.getElementById("loadingStatus");
+          if (statusEl) statusEl.textContent = "Connection hiccup, retrying...";
+          setTimeout(tick, POLL_INTERVAL_MS);
         }
       };
 
