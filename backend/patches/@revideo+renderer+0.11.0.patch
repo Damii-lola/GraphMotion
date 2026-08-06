@@ -1,0 +1,13 @@
+diff --git a/node_modules/@revideo/renderer/lib/server/render-video.js b/node_modules/@revideo/renderer/lib/server/render-video.js
+index 40cc5c1..fd4e1fb 100644
+--- a/node_modules/@revideo/renderer/lib/server/render-video.js
++++ b/node_modules/@revideo/renderer/lib/server/render-video.js
+@@ -160,7 +160,7 @@ async function renderVideoOnPage(id, browser, server, url, progressTracker, prog
+             reject(new Error(message));
+         });
+     });
+-    await page.goto(url);
++    await page.goto(url, { timeout: 120000 });
+     return renderingComplete;
+ }
+ /**
