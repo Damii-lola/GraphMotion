@@ -12,10 +12,10 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
+const path = require('path');
+const { fork } = require('child_process');
 const rateLimit = require('express-rate-limit');
 
-const { generateSceneJSON } = require('./mistralClient');
-const { renderJobToFile } = require('./renderService');
 const {
   createJob,
   updateJob,
@@ -66,17 +66,21 @@ app.get('/health', (req, res) => {
  * POST /api/generate
  * body: { prompt: string, userId?: string }
  *
- * Responds immediately with the job (status: queued) once the job row
- * exists, then runs Mistral + render + upload in the background. The
- * client polls GET /api/jobs/:id to watch status/progress and grab the
- * video_url once status is 'done'.
+ * Responds immediately with the job (status: queued), then hands the
+ * actual work to a forked child process (renderWorker.js) rather than
+ * running it in this process.
  *
- * This used to run synchronously and block the response until the whole
- * pipeline finished - fine for quick manual testing, but Render's proxy
- * has its own request timeout and will return a 502 (which looks like a
- * CORS error in the browser, since a proxy-killed connection has no
- * response headers at all) once a render runs long. Returning fast and
- * polling is the actual fix, not a proxy/CORS config tweak.
+ * Why a child process specifically, not just "don't await it": the
+ * render pipeline (Mistral call + Vite bundling + Puppeteer/Chrome
+ * orchestration) is heavy enough to monopolize this process's event
+ * loop even when not awaited on the request - which meant the ENTIRE
+ * server, including trivial GET /api/jobs/:id reads, went unresponsive
+ * for the whole render duration (that's what sustained 502s on every
+ * endpoint were, not a proxy-timeout fluke). A forked child process has
+ * its own event loop, so this server stays responsive no matter how
+ * busy - or even crashed - the render process is. If the child gets
+ * OOM-killed, only that one job dies; this server and every other
+ * in-flight job keep running.
  */
 app.post('/api/generate', generateLimiter, async (req, res) => {
   const { prompt, userId } = req.body || {};
@@ -102,41 +106,79 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
     return res.status(500).json({ error: 'Failed to create job' });
   }
 
-  // Respond immediately - do NOT await the pipeline below.
   res.status(202).json({ job });
 
-  // Fire-and-forget from the request's point of view. Errors here are
-  // caught and written to the job row (and to the process-level
-  // handlers above as a last resort) - they can no longer reach the
-  // client via the HTTP response since it's already sent.
-  runPipeline(job.id, prompt.trim()).catch((err) => {
-    console.error(`[runPipeline] job ${job.id} uncaught failure:`, err);
-  });
+  startRenderWorker(job.id, prompt.trim());
 });
 
-async function runPipeline(jobId, prompt) {
-  try {
-    await updateJob(jobId, { status: 'writing_scenes' });
-    const sceneJSON = await generateSceneJSON(prompt);
-    await updateJob(jobId, { scene_json: sceneJSON, status: 'rendering', progress: 0 });
+function startRenderWorker(jobId, prompt) {
+  const child = fork(path.join(__dirname, 'renderWorker.js'), {
+    // Keep the child's own stdout/stderr visible in the same log stream
+    // for debugging, but its execution is fully isolated from this
+    // process otherwise.
+    stdio: 'inherit',
+  });
 
-    const localFilePath = await renderJobToFile(jobId, sceneJSON, (pct) => {
-      // Best-effort progress updates - don't let a failed write here
-      // take down the render itself.
-      updateJob(jobId, { progress: pct }).catch(() => {});
-    });
+  let settled = false;
 
-    await updateJob(jobId, { status: 'uploading', progress: 100 });
-    const fileBuffer = fs.readFileSync(localFilePath);
-    const videoUrl = await uploadRenderedVideo(jobId, localFilePath, fileBuffer);
+  child.on('message', async (msg) => {
+    if (!msg || msg.jobId !== jobId) return;
 
-    fs.unlink(localFilePath, () => {});
+    try {
+      switch (msg.type) {
+        case 'status':
+          await updateJob(jobId, {
+            status: msg.status,
+            ...(msg.progress !== undefined ? { progress: msg.progress } : {}),
+          });
+          break;
 
-    await updateJob(jobId, { status: 'done', video_url: videoUrl });
-  } catch (err) {
-    console.error(`[runPipeline] job ${jobId} failed:`, err);
-    await updateJob(jobId, { status: 'failed', error: String(err.message || err) }).catch(() => {});
-  }
+        case 'scenes_ready':
+          await updateJob(jobId, { scene_json: msg.sceneJSON });
+          break;
+
+        case 'progress':
+          // Best-effort - don't let a failed write interrupt anything.
+          updateJob(jobId, { progress: msg.progress }).catch(() => {});
+          break;
+
+        case 'render_complete': {
+          settled = true;
+          await updateJob(jobId, { status: 'uploading', progress: 100 });
+          const fileBuffer = fs.readFileSync(msg.localFilePath);
+          const videoUrl = await uploadRenderedVideo(jobId, msg.localFilePath, fileBuffer);
+          fs.unlink(msg.localFilePath, () => {});
+          await updateJob(jobId, { status: 'done', video_url: videoUrl });
+          break;
+        }
+
+        case 'failed':
+          settled = true;
+          console.error(`[renderWorker] job ${jobId} failed:`, msg.error);
+          await updateJob(jobId, { status: 'failed', error: String(msg.error) });
+          break;
+      }
+    } catch (err) {
+      console.error(`[startRenderWorker] job ${jobId} handling "${msg.type}" failed:`, err);
+    }
+  });
+
+  child.on('exit', (code) => {
+    if (!settled) {
+      // The child died without ever sending 'render_complete' or
+      // 'failed' - most likely an OOM kill (Linux SIGKILL bypasses
+      // our uncaughtException handler entirely, so this is the only
+      // place a silent kill like that can be detected and recorded,
+      // rather than leaving the job stuck at "rendering" forever).
+      console.error(`[renderWorker] job ${jobId} child exited unexpectedly (code ${code}), likely OOM-killed`);
+      updateJob(jobId, {
+        status: 'failed',
+        error: `Render process exited unexpectedly (code ${code}), likely out of memory.`,
+      }).catch(() => {});
+    }
+  });
+
+  child.send({ jobId, prompt });
 }
 
 app.get('/api/jobs/:id', async (req, res) => {
