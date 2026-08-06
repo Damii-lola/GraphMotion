@@ -1,5 +1,5 @@
 import { makeScene2D, Rect } from '@revideo/2d';
-import { createRef, waitFor } from '@revideo/core';
+import { createRef, waitFor, useScene } from '@revideo/core';
 import { renderTemplate } from './templateRenderers';
 import { playTransition } from './transitionRenderers';
 
@@ -13,7 +13,10 @@ import { playTransition } from './transitionRenderers';
  * choreography engine - content flows in as data only.
  */
 export const mainScene = makeScene2D('main', function* (view) {
-  const sceneJSON = view.variables.get('sceneJSON', { scenes: [] })();
+  // Variables live on the Scene instance, not on `view` (the 2D root
+  // node) - useScene() is how a generator function gets a reference
+  // to the current Scene to read project variables off of.
+  const sceneJSON = useScene().variables.get('sceneJSON', { scenes: [] })();
 
   // Root container all templates render into. Kept as a ref so
   // transitions can grab/animate the whole current scene as one unit.
