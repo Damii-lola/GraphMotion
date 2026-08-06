@@ -1,70 +1,58 @@
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
-const { renderVideo } = require('@revideo/renderer');
+// This file runs as a SEPARATE PROCESS via child_process.fork() in
+// server.js - not required/imported directly by the main server.
+//
+// Why: the render pipeline (Mistral call + Vite bundling + Puppeteer/
+// Chrome orchestration) is heavy enough that running it in-process
+// alongside Express was making the ENTIRE server unresponsive for the
+// whole render duration - including trivial GET /api/jobs/:id reads.
+// That's what produced sustained 502s on every endpoint, not just slow
+// renders. Running it in a child process means:
+//   1. The main server's event loop stays free to serve requests no
+//      matter how busy this process is.
+//   2. If THIS process gets OOM-killed, only this one job dies - the
+//      main server (and every other in-flight job) keeps running.
+//
+// The finished mp4 is left on local disk and only its PATH is sent
+// back over IPC - the parent process (which already has Supabase
+// wired up) reads the file and uploads it. Sending the actual file
+// bytes through IPC would get JSON-serialized byte-by-byte, which is
+// both slow and memory-heavy for a multi-MB video.
 
-/**
- * Renders one job's validated scene JSON via Revideo (headless Chromium
- * under the hood) and returns the local path to the produced mp4.
- * The caller (server.js) is responsible for uploading it to Supabase
- * and cleaning up the temp file afterward.
- *
- * onProgress, if provided, is called with an integer 0-100 as Revideo
- * reports rendering progress (its own callback reports 0-1).
- */
-async function renderJobToFile(jobId, sceneJSON, onProgress) {
-  const outDir = path.join(os.tmpdir(), 'shortform-renders');
-  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+process.env.PUPPETEER_CACHE_DIR =
+  process.env.PUPPETEER_CACHE_DIR || require('path').join(__dirname, '.puppeteer-cache');
 
-  const outputFileName = `${jobId}.mp4`;
+const { generateSceneJSON } = require('./mistralClient');
+const { renderJobToFile } = require('./renderService');
 
-  await renderVideo({
-    projectFile: path.join(__dirname, 'project.ts'),
-    variables: { sceneJSON },
-    settings: {
-      outDir,
-      outFile: outputFileName,
-      logProgress: true,
-      // Vertical short-form: 1080x1920. Adjust if you add landscape too.
-      workers: 1,
-      // Render's containers (and most PaaS/Docker environments) don't
-      // support Chrome's sandbox without extra privileges - without
-      // these flags Chrome fails to launch at all in that environment.
-      puppeteer: {
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          // Everything below reduces Chrome's memory footprint - not
-          // optional extras. On a 512MB instance (Render's free tier),
-          // Chrome's default GPU/compositor/extension overhead is
-          // often enough by itself to get the whole process OOM-killed
-          // mid-render, which takes the entire Node server down with
-          // it (not just the one job) - that's the most likely cause
-          // of jobs endpoints going down, not just the render itself.
-          '--disable-gpu',
-          '--disable-software-rasterizer',
-          '--disable-extensions',
-          '--disable-background-networking',
-          '--disable-default-apps',
-          '--disable-sync',
-          '--disable-translate',
-          '--mute-audio',
-          '--no-first-run',
-          '--single-process',
-        ],
-      },
-      progressCallback: onProgress
-        ? (_id, progress) => onProgress(Math.round(progress * 100))
-        : undefined,
-    },
-  });
-
-  const outputPath = path.join(outDir, outputFileName);
-  if (!fs.existsSync(outputPath)) {
-    throw new Error('Revideo render finished but output file was not found');
-  }
-  return outputPath;
+function send(message) {
+  if (process.send) process.send(message);
 }
 
-module.exports = { renderJobToFile };
+let currentJobId = null;
+
+process.on('message', async ({ jobId, prompt }) => {
+  currentJobId = jobId;
+
+  try {
+    send({ type: 'status', jobId, status: 'writing_scenes' });
+    const sceneJSON = await generateSceneJSON(prompt);
+
+    send({ type: 'scenes_ready', jobId, sceneJSON });
+    send({ type: 'status', jobId, status: 'rendering', progress: 0 });
+
+    const localFilePath = await renderJobToFile(jobId, sceneJSON, (pct) => {
+      send({ type: 'progress', jobId, progress: pct });
+    });
+
+    send({ type: 'render_complete', jobId, localFilePath });
+  } catch (err) {
+    send({ type: 'failed', jobId, error: String((err && err.message) || err) });
+  } finally {
+    process.exit(0);
+  }
+});
+
+process.on('uncaughtException', (err) => {
+  send({ type: 'failed', jobId: currentJobId, error: String((err && err.message) || err) });
+  process.exit(1);
+});
