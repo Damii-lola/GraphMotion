@@ -8,8 +8,11 @@ const { renderVideo } = require('@revideo/renderer');
  * under the hood) and returns the local path to the produced mp4.
  * The caller (server.js) is responsible for uploading it to Supabase
  * and cleaning up the temp file afterward.
+ *
+ * onProgress, if provided, is called with an integer 0-100 as Revideo
+ * reports rendering progress (its own callback reports 0-1).
  */
-async function renderJobToFile(jobId, sceneJSON) {
+async function renderJobToFile(jobId, sceneJSON, onProgress) {
   const outDir = path.join(os.tmpdir(), 'shortform-renders');
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
@@ -30,6 +33,9 @@ async function renderJobToFile(jobId, sceneJSON) {
       puppeteer: {
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
       },
+      progressCallback: onProgress
+        ? (_id, progress) => onProgress(Math.round(progress * 100))
+        : undefined,
     },
   });
 
