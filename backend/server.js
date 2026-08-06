@@ -1,3 +1,13 @@
+// Must be set before anything (transitively) requires puppeteer, since
+// puppeteer-core resolves its Chrome executable path from this env var.
+// Render's build and runtime don't reliably share the default cache
+// path (/opt/render/.cache), so Chrome downloaded during `postinstall`
+// can vanish by the time the server actually starts. Pointing the
+// cache at a path inside the project directory keeps it in whatever
+// Render actually deploys.
+process.env.PUPPETEER_CACHE_DIR =
+  process.env.PUPPETEER_CACHE_DIR || require('path').join(__dirname, '.puppeteer-cache');
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -15,6 +25,13 @@ const {
 } = require('./supabaseClient');
 
 const app = express();
+
+// Render (and most PaaS) sits behind a reverse proxy, so Express needs
+// this to correctly read X-Forwarded-For - without it, express-rate-limit
+// can't reliably tell users apart by IP, and req.ip used for the
+// anonymous free-tier key falls back to the proxy's IP for everyone.
+app.set('trust proxy', 1);
+
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
