@@ -66,10 +66,17 @@ app.get('/health', (req, res) => {
  * POST /api/generate
  * body: { prompt: string, userId?: string }
  *
- * This kicks the job off SYNCHRONOUSLY for now (simplest correct version).
- * Once render times grow, swap this for: create job -> return jobId
- * immediately -> render in background -> client polls /api/jobs/:id.
- * The job row + status columns already support that without changes.
+ * Responds immediately with the job (status: queued) once the job row
+ * exists, then runs Mistral + render + upload in the background. The
+ * client polls GET /api/jobs/:id to watch status/progress and grab the
+ * video_url once status is 'done'.
+ *
+ * This used to run synchronously and block the response until the whole
+ * pipeline finished - fine for quick manual testing, but Render's proxy
+ * has its own request timeout and will return a 502 (which looks like a
+ * CORS error in the browser, since a proxy-killed connection has no
+ * response headers at all) once a render runs long. Returning fast and
+ * polling is the actual fix, not a proxy/CORS config tweak.
  */
 app.post('/api/generate', generateLimiter, async (req, res) => {
   const { prompt, userId } = req.body || {};
@@ -95,27 +102,42 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
     return res.status(500).json({ error: 'Failed to create job' });
   }
 
+  // Respond immediately - do NOT await the pipeline below.
+  res.status(202).json({ job });
+
+  // Fire-and-forget from the request's point of view. Errors here are
+  // caught and written to the job row (and to the process-level
+  // handlers above as a last resort) - they can no longer reach the
+  // client via the HTTP response since it's already sent.
+  runPipeline(job.id, prompt.trim()).catch((err) => {
+    console.error(`[runPipeline] job ${job.id} uncaught failure:`, err);
+  });
+});
+
+async function runPipeline(jobId, prompt) {
   try {
-    await updateJob(job.id, { status: 'writing_scenes' });
-    const sceneJSON = await generateSceneJSON(prompt.trim());
-    await updateJob(job.id, { scene_json: sceneJSON, status: 'rendering' });
+    await updateJob(jobId, { status: 'writing_scenes' });
+    const sceneJSON = await generateSceneJSON(prompt);
+    await updateJob(jobId, { scene_json: sceneJSON, status: 'rendering', progress: 0 });
 
-    const localFilePath = await renderJobToFile(job.id, sceneJSON);
+    const localFilePath = await renderJobToFile(jobId, sceneJSON, (pct) => {
+      // Best-effort progress updates - don't let a failed write here
+      // take down the render itself.
+      updateJob(jobId, { progress: pct }).catch(() => {});
+    });
 
-    await updateJob(job.id, { status: 'uploading' });
+    await updateJob(jobId, { status: 'uploading', progress: 100 });
     const fileBuffer = fs.readFileSync(localFilePath);
-    const videoUrl = await uploadRenderedVideo(job.id, localFilePath, fileBuffer);
+    const videoUrl = await uploadRenderedVideo(jobId, localFilePath, fileBuffer);
 
     fs.unlink(localFilePath, () => {});
 
-    const finalJob = await updateJob(job.id, { status: 'done', video_url: videoUrl });
-    return res.json({ job: finalJob });
+    await updateJob(jobId, { status: 'done', video_url: videoUrl });
   } catch (err) {
-    console.error(`[POST /api/generate] job ${job.id} failed:`, err);
-    await updateJob(job.id, { status: 'failed', error: String(err.message || err) }).catch(() => {});
-    return res.status(500).json({ error: 'Video generation failed', jobId: job.id });
+    console.error(`[runPipeline] job ${jobId} failed:`, err);
+    await updateJob(jobId, { status: 'failed', error: String(err.message || err) }).catch(() => {});
   }
-});
+}
 
 app.get('/api/jobs/:id', async (req, res) => {
   try {
