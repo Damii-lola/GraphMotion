@@ -24,6 +24,12 @@ async function renderJobToFile(jobId, sceneJSON) {
       logProgress: true,
       // Vertical short-form: 1080x1920. Adjust if you add landscape too.
       workers: 1,
+      // Render's containers (and most PaaS/Docker environments) don't
+      // support Chrome's sandbox without extra privileges - without
+      // these flags Chrome fails to launch at all in that environment.
+      puppeteer: {
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      },
     },
   });
 
