@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "postinstall": "PUPPETEER_CACHE_DIR=./.puppeteer-cache npx puppeteer browsers install chrome"
+    "postinstall": "patch-package && PUPPETEER_CACHE_DIR=./.puppeteer-cache npx puppeteer browsers install chrome"
   },
   "dependencies": {
     "@revideo/2d": "^0.11.0",
@@ -22,5 +22,8 @@
     "express-rate-limit": "^7.4.0",
     "node-fetch": "^2.7.0",
     "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "patch-package": "^8.0.1"
   }
 }
