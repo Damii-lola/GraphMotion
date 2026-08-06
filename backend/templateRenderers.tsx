@@ -31,10 +31,15 @@ export function* renderTemplate(name: string, params: any, stage: Rect) {
     case 'statCounter':
       yield* statCounter(params, stage);
       break;
-    // splitCompare, iconCallout, imageRevealZoom follow the exact same
-    // structure as the three below (createRef -> add with initial
-    // "pre-motion" props -> all() choreographed tween -> settle -> hold
-    // -> cleanup). Build these the same way when you extend the set.
+    case 'splitCompare':
+      yield* splitCompare(params, stage);
+      break;
+    case 'iconCallout':
+      yield* iconCallout(params, stage);
+      break;
+    case 'imageRevealZoom':
+      yield* imageRevealZoom(params, stage);
+      break;
     default:
       throw new Error(`No renderer implemented for template "${name}"`);
   }
@@ -170,4 +175,198 @@ function* statCounter(params: any, stage: Rect) {
   yield* waitFor(duration * 0.15);
 
   wrap().remove();
+}
+
+const ICON_GLYPHS: Record<string, string> = {
+  alert: '⚠',
+  check: '✓',
+  spark: '✦',
+  clock: '⏱',
+  money: '$',
+  chart: '📈',
+  lock: '🔒',
+  heart: '♥',
+};
+
+function* splitCompare(params: any, stage: Rect) {
+  const { leftLabel, rightLabel, leftText, rightText, duration } = params;
+
+  const leftPanel = createRef<Layout>();
+  const rightPanel = createRef<Layout>();
+  const divider = createRef<Rect>();
+
+  // Two halves start off-screen on opposite sides (parallax slide-in),
+  // not just faded in place - this is what sells "split screen" as a
+  // deliberate camera move rather than two boxes appearing.
+  stage.add(
+    <>
+      <Layout
+        ref={leftPanel}
+        direction={'column'}
+        alignItems={'center'}
+        justifyContent={'center'}
+        width={'50%'}
+        height={'100%'}
+        x={-960}
+        opacity={0}
+      >
+        <Txt text={leftLabel} fontSize={28} fontWeight={700} fill={'#FF5C1A'} marginBottom={16} />
+        <Txt text={leftText} fontSize={36} fontWeight={600} fill={'#F5F5F5'} textAlign={'center'} width={'80%'} />
+      </Layout>
+      <Rect ref={divider} width={4} height={0} fill={'#3a3a3e'} x={0} y={0} />
+      <Layout
+        ref={rightPanel}
+        direction={'column'}
+        alignItems={'center'}
+        justifyContent={'center'}
+        width={'50%'}
+        height={'100%'}
+        x={960}
+        opacity={0}
+      >
+        <Txt text={rightLabel} fontSize={28} fontWeight={700} fill={'#2EFFD5'} marginBottom={16} />
+        <Txt text={rightText} fontSize={36} fontWeight={600} fill={'#F5F5F5'} textAlign={'center'} width={'80%'} />
+      </Layout>
+    </>
+  );
+
+  // Left slides in from the left, right slides in from the right,
+  // simultaneously but with slightly offset easing so they don't feel
+  // mechanically synced - secondary "settle" via overshoot on x.
+  yield* all(
+    leftPanel().position.x(-340, duration * 0.4, easeOutBack),
+    leftPanel().opacity(1, duration * 0.3, easeOutCubic),
+    rightPanel().position.x(340, duration * 0.4, easeOutBack),
+    rightPanel().opacity(1, duration * 0.3, easeOutCubic),
+  );
+
+  // Divider grows AFTER both panels land - secondary motion beat that
+  // visually "locks" the split into place.
+  yield* divider().height(700, duration * 0.2, easeOutExpo);
+
+  yield* waitFor(Math.max(0, duration * 0.35));
+
+  leftPanel().remove();
+  rightPanel().remove();
+  divider().remove();
+}
+
+function* iconCallout(params: any, stage: Rect) {
+  const { icon, text, position, duration } = params;
+  const glyph = ICON_GLYPHS[icon] || '✦';
+
+  const xOffset = position === 'left' ? -260 : position === 'right' ? 260 : 0;
+
+  const wrap = createRef<Layout>();
+  const iconTxt = createRef<Txt>();
+  const labelTxt = createRef<Txt>();
+
+  stage.add(
+    <Layout
+      ref={wrap}
+      direction={'row'}
+      alignItems={'center'}
+      gap={20}
+      x={xOffset}
+      y={0}
+      opacity={0}
+      scale={0.6}
+    >
+      <Txt ref={iconTxt} text={glyph} fontSize={56} fill={'#FF5C1A'} shadowColor={'#FF5C1A'} shadowBlur={0} />
+      <Txt ref={labelTxt} text={text} fontSize={34} fontWeight={600} fill={'#F5F5F5'} width={360} />
+    </Layout>
+  );
+
+  // Spring-pop entrance on the whole group, then the icon gets its own
+  // extra "kick" (rotation flick) after landing - layered secondary
+  // motion on top of the group's primary motion.
+  yield* all(
+    wrap().opacity(1, duration * 0.3, easeOutCubic),
+    wrap().scale(1, duration * 0.4, easeOutBack),
+  );
+  yield* all(
+    iconTxt().rotation(-12, duration * 0.1, easeOutCubic),
+    iconTxt().shadowBlur(24, duration * 0.15, easeOutExpo),
+  );
+  yield* iconTxt().rotation(0, duration * 0.15, easeOutBack);
+
+  yield* waitFor(Math.max(0, duration * 0.3));
+
+  wrap().remove();
+}
+
+function* imageRevealZoom(params: any, stage: Rect) {
+  const { imageQuery, caption, duration } = params;
+
+  // NOTE: real stock-photo fetching (Pexels/Pixabay) isn't wired up yet
+  // (flagged in the README as a known gap) - this renders a placeholder
+  // gradient background with the query text visible for debugging, so
+  // the template is fully functional structurally and just needs a real
+  // image URL swapped in once that fetch step exists.
+  const bg = createRef<Rect>();
+  const captionTxt = createRef<Txt>();
+  const debugTag = createRef<Txt>();
+
+  stage.add(
+    <>
+      <Rect
+        ref={bg}
+        width={'120%'}
+        height={'120%'}
+        fill={'#1a1a1c'}
+        x={0}
+        y={0}
+        opacity={0}
+        scale={1.25}
+      />
+      <Txt
+        ref={debugTag}
+        text={`[stock photo: "${imageQuery}"]`}
+        fontSize={18}
+        fill={'#5a5a5e'}
+        y={-700}
+        opacity={0}
+      />
+      {caption ? (
+        <Txt
+          ref={captionTxt}
+          text={caption}
+          fontSize={40}
+          fontWeight={700}
+          fill={'#F5F5F5'}
+          y={760}
+          opacity={0}
+          shadowColor={'#000000'}
+          shadowBlur={20}
+        />
+      ) : null}
+    </>
+  );
+
+  // Fake dolly-zoom: background scales down for the whole duration (the
+  // "camera" pulling back) while the caption settles in partway through -
+  // both run concurrently via all(), with the caption's own delay
+  // sequenced inside its own generator so timing stays correct.
+  yield* all(
+    bg().opacity(1, duration * 0.25, easeOutCubic),
+    debugTag().opacity(1, duration * 0.25, easeOutCubic),
+  );
+
+  function* captionSequence() {
+    if (!caption) return;
+    yield* waitFor(duration * 0.2);
+    yield* all(
+      captionTxt().opacity(1, duration * 0.25, easeOutCubic),
+      captionTxt().y(680, duration * 0.3, easeOutBack),
+    );
+  }
+
+  yield* all(
+    bg().scale(1.0, duration * 0.85, easeInOutCubic),
+    captionSequence(),
+  );
+
+  bg().remove();
+  debugTag().remove();
+  if (caption) captionTxt().remove();
 }
