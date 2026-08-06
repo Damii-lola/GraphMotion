@@ -18,6 +18,20 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
+// Safety net: rendering runs headless Chrome via Puppeteer deep inside
+// @revideo/renderer, and library-internal bugs there can throw in a way
+// that bypasses the try/catch around renderJobToFile (an unhandled
+// promise rejection instead of a rejection our await sees). Without
+// these handlers that takes down the ENTIRE process - not just the one
+// job - which drops every other in-flight/future request until Render
+// notices and restarts the service. Log and stay up instead.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection] server staying up despite:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException] server staying up despite:', err);
+});
+
 const FREE_TIER_DAILY_LIMIT = Number(process.env.FREE_TIER_DAILY_LIMIT || 3);
 
 const generateLimiter = rateLimit({
