@@ -31,7 +31,28 @@ async function renderJobToFile(jobId, sceneJSON, onProgress) {
       // support Chrome's sandbox without extra privileges - without
       // these flags Chrome fails to launch at all in that environment.
       puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          // Everything below reduces Chrome's memory footprint - not
+          // optional extras. On a 512MB instance (Render's free tier),
+          // Chrome's default GPU/compositor/extension overhead is
+          // often enough by itself to get the whole process OOM-killed
+          // mid-render, which takes the entire Node server down with
+          // it (not just the one job) - that's the most likely cause
+          // of jobs endpoints going down, not just the render itself.
+          '--disable-gpu',
+          '--disable-software-rasterizer',
+          '--disable-extensions',
+          '--disable-background-networking',
+          '--disable-default-apps',
+          '--disable-sync',
+          '--disable-translate',
+          '--mute-audio',
+          '--no-first-run',
+          '--single-process',
+        ],
       },
       progressCallback: onProgress
         ? (_id, progress) => onProgress(Math.round(progress * 100))
