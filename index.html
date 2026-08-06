@@ -3,253 +3,294 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>GraphMotion — describe a video, watch it get animated</title>
-<meta name="description" content="GraphMotion turns a prompt into a fully animated video using code-generated motion graphics — not stock footage, not avatars, not templates. Try one free, right now." />
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,400;1,9..144,500&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<!-- Transpiles the Mistral-generated .tsx in-browser so it can be previewed
-     live via @remotion/player, without any server-side render step. -->
-<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
-<link rel="stylesheet" href="style.css">
+<title>Shortform AI — Test Console</title>
+<style>
+  :root {
+    --bg: #0a0a0b;
+    --panel: #1a1a1c;
+    --border: #2c2c30;
+    --accent: #ff5c1a;
+    --text: #f0f0f0;
+    --muted: #8a8a90;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    gap: 16px;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.3px;
+  }
+  header span {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .main-row {
+    flex: 1;
+    display: flex;
+    gap: 12px;
+    min-height: 0;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .panel-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  #videoPanel { flex: 2; align-items: center; justify-content: center; }
+  #codePanel { flex: 1; }
+
+  #videoWrap {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  video {
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 8px;
+    background: #000;
+  }
+  .placeholder {
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    padding: 24px;
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 0 auto 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #codeOutput {
+    flex: 1;
+    overflow: auto;
+    background: #101012;
+    border-radius: 8px;
+    padding: 10px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #9be89b;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .status-line {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+
+  .prompt-bar {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 12px;
+    display: flex;
+    gap: 10px;
+  }
+  .prompt-bar input {
+    flex: 1;
+    background: #101012;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+  }
+  .prompt-bar input:focus { border-color: var(--accent); }
+  .prompt-bar button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    padding: 0 22px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .prompt-bar button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .error-box {
+    background: #2a1414;
+    border: 1px solid #5c2020;
+    color: #ff9d9d;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    margin-top: 8px;
+  }
+</style>
 </head>
 <body>
 
-<header class="nav">
-  <div class="nav-inner">
-    <a href="#top" class="logo">
-      <span class="logo-dot"></span>
-      GraphMotion
-    </a>
-    <nav class="nav-links">
-      <a href="#before-after">Why</a>
-      <a href="#how">How it works</a>
-      <a href="#compare">Comparison</a>
-    </nav>
-    <a href="#signup" class="btn btn-small">Join for $1</a>
-  </div>
+<header>
+  <h1>Shortform AI — Test Console</h1>
+  <span id="apiTarget"></span>
 </header>
 
-<main id="top">
-
-  <!-- HERO — the working generator, first thing visible -->
-  <section class="hero">
-    <p class="eyebrow">Prompt in. Motion out.</p>
-    <h1 class="glitch-heading">
-      <span class="glitch-line glitch-heavy" data-text="Describe a video.">Describe a video.</span>
-      <span class="glitch-line glitch-italic" data-text="Watch it get animated.">Watch it get animated.</span>
-    </h1>
-    <p class="hero-sub">
-      No stock footage, no AI avatar, no template — GraphMotion writes and renders
-      original motion-graphics code for whatever you describe. Try it free, right now.
-    </p>
-
-    <div class="generator-panel" id="generator">
-      <div class="generator-panel-top">
-        <span class="rec-dot"></span> GraphMotion — preview
+<div class="main-row">
+  <div class="panel" id="videoPanel">
+    <div id="videoWrap">
+      <div class="placeholder" id="videoPlaceholder">
+        Enter a prompt below to generate a video
       </div>
-
-      <div class="workspace">
-
-        <!-- PREVIEW: left/main — nothing until a prompt is submitted -->
-        <div class="workspace-preview">
-          <div class="preview-frame" id="previewFrame">
-            <div class="preview-inner" id="previewInner">
-              <div class="preview-idle" id="previewIdle"></div>
-
-              <div class="preview-loading" id="previewLoading" hidden>
-                <div class="timeline-loader">
-                  <div class="timeline-track">
-                    <div class="timeline-segment seg-1"></div>
-                    <div class="timeline-segment seg-2"></div>
-                    <div class="timeline-segment seg-3"></div>
-                    <div class="timeline-playhead" id="timelinePlayhead"></div>
-                  </div>
-                </div>
-                <p id="loadingLabel">Writing the animation code…</p>
-              </div>
-
-              <div id="previewPlayer" class="preview-player" hidden></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- CODE: right — the actual generated .tsx, revealed as it's written -->
-        <div class="workspace-code">
-          <div class="code-panel-header"><span class="code-dot"></span> generated.tsx</div>
-          <pre class="code-panel-body"><code id="codeContent">// waiting for a prompt…</code></pre>
-        </div>
-
-      </div>
-
-      <!-- BOTTOM: full-width prompt bar -->
-      <form id="generatorForm" class="generator-form-full">
-        <div class="prompt-pill prompt-pill-wide">
-          <input
-            type="text"
-            id="promptInput"
-            placeholder="a 30-second explainer on how compound interest works, playful and colorful"
-            autocomplete="off"
-            required
-          />
-          <button type="submit" class="pill-submit" id="generatorSubmit" aria-label="Generate video">
-            Generate
-          </button>
-        </div>
-        <p class="generator-helper" id="generatorHelper">One free generation. No signup, no card.</p>
-      </form>
-
-      <!-- LOCKED STATE — replaces the prompt bar once the free generation is used -->
-      <div class="locked-banner" id="lockedBanner" hidden>
-        <p class="locked-label">Your free generation</p>
-        <p class="locked-prompt" id="lockedPrompt"></p>
-        <a href="#signup" class="btn btn-primary">Join for $1 to save, download, and get unlimited generations</a>
-      </div>
-
-      <p class="generator-error" id="generatorError" role="status" aria-live="polite"></p>
-    </div>
-  </section>
-
-  <div class="timeline-divider" aria-hidden="true">
-    <div class="timeline-divider-track">
-      <span></span><span></span><span></span><span></span><span></span><span></span>
     </div>
   </div>
 
-  <!-- BEFORE / AFTER — problem + solution, shown not told -->
-  <section id="before-after" class="section">
-    <div class="section-inner">
-      <p class="eyebrow center">The problem, and the fix</p>
-      <h2 class="center-h2">Same footage in, same footage out.</h2>
-
-      <div class="ba-grid">
-        <div class="ba-panel ba-before">
-          <span class="ba-tag">Before</span>
-          <div class="ba-visual ba-visual-before">
-            <div class="ba-stock-block"></div>
-            <div class="ba-stock-block"></div>
-            <div class="ba-stock-block"></div>
-          </div>
-          <h3>Typical AI video tools</h3>
-          <p>Stock clips stitched together, or a stiff AI avatar reading a script — pulled from the same shared library every other user draws from. It looks templated because it is.</p>
-        </div>
-
-        <div class="ba-panel ba-after">
-          <span class="ba-tag ba-tag-after">After</span>
-          <div class="ba-visual ba-visual-after">
-            <svg viewBox="0 0 200 120" aria-hidden="true">
-              <polyline points="10,90 50,60 90,75 130,30 170,45" class="ba-chart-line"/>
-              <circle cx="170" cy="45" r="4" class="ba-chart-dot"/>
-            </svg>
-          </div>
-          <h3>GraphMotion</h3>
-          <p>Original motion-graphics code, written and rendered fresh for your prompt — charts, diagrams, typography, illustrated scenes. No shared footage library to sound like.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- HOW IT WORKS -->
-  <section id="how" class="section section-tint">
-    <div class="section-inner">
-      <p class="eyebrow center">The process</p>
-      <h2 class="center-h2">From prompt to finished render.</h2>
-
-      <div class="steps">
-        <div class="step-card">
-          <span class="step-num">01</span>
-          <h3>Describe the video</h3>
-          <p>Topic, tone, and an optional style direction — that's the whole brief.</p>
-        </div>
-        <div class="step-card">
-          <span class="step-num">02</span>
-          <h3>GraphMotion writes the animation</h3>
-          <p>Original motion-graphics code is generated and rendered: text reveals, charts, diagrams, illustrated scenes.</p>
-        </div>
-        <div class="step-card">
-          <span class="step-num">03</span>
-          <h3>Nudge specific scenes</h3>
-          <p>"Make this scene blue." "Slow down that transition." Just that part updates — no full regeneration.</p>
-        </div>
-        <div class="step-card">
-          <span class="step-num">04</span>
-          <h3>Export and post</h3>
-          <p>The finished render comes out ready for TikTok, Shorts, Reels, or YouTube.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- COMPARISON -->
-  <section id="compare" class="section">
-    <div class="section-inner">
-      <p class="eyebrow center">Differentiation</p>
-      <h2 class="center-h2">Not another timeline editor with a stock library.</h2>
-
-      <div class="table-wrap">
-        <table class="compare-table">
-          <thead>
-            <tr>
-              <th></th>
-              <th>Typical AI video tools</th>
-              <th class="highlight">GraphMotion</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Visual building blocks</td>
-              <td>Stock footage, AI avatars, templates</td>
-              <td class="highlight">Freshly generated animation code, per video</td>
-            </tr>
-            <tr>
-              <td>Editing model</td>
-              <td>Timeline editing or full regeneration</td>
-              <td class="highlight">Targeted natural-language nudges to specific scenes</td>
-            </tr>
-            <tr>
-              <td>Best-fit content</td>
-              <td>General faceless content, avatars, voiceover-over-footage</td>
-              <td class="highlight">Explainer, educational, data/concept-driven content</td>
-            </tr>
-            <tr>
-              <td>"Look" risk</td>
-              <td>Shared stock library → visual sameness across users</td>
-              <td class="highlight">No shared footage library → structurally harder to template</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </section>
-
-  <!-- SIGNUP -->
-  <section id="signup" class="section signup">
-    <div class="section-inner narrow center">
-      <p class="eyebrow">Early access</p>
-      <h2>Get in before the public launch.</h2>
-      <p class="lead">
-        $1 gets you into the beta Discord, unlimited generations, downloads, and a real vote
-        in what GraphMotion builds next. Not a free-email list — just people who are actually in.
-      </p>
-
-      <form id="waitlistForm" class="signup-form" novalidate>
-        <label for="email" class="sr-only">Email address</label>
-        <input type="email" id="email" name="email" placeholder="you@domain.com" required autocomplete="email">
-        <button type="submit" class="btn btn-primary">Join for $1</button>
-      </form>
-      <p id="formStatus" class="form-status" role="status" aria-live="polite"></p>
-    </div>
-  </section>
-
-</main>
-
-<footer class="footer">
-  <div class="section-inner footer-inner">
-    <span>GraphMotion</span>
-    <span class="footer-note">Built with code. Rendered as motion.</span>
+  <div class="panel" id="codePanel">
+    <div class="panel-label">Code Preview (scene JSON)</div>
+    <div id="codeOutput">// Waiting for a prompt...</div>
+    <div class="status-line" id="statusLine"></div>
   </div>
-</footer>
+</div>
 
-<script src="script.js"></script>
+<div class="prompt-bar">
+  <input
+    id="promptInput"
+    type="text"
+    placeholder="e.g. why budgeting apps fail"
+    autocomplete="off"
+  />
+  <button id="generateBtn">Generate</button>
+</div>
+
+<script>
+  // Point this at your live Render backend.
+  const API_BASE = "https://graphmotion.onrender.com";
+
+  const promptInput = document.getElementById("promptInput");
+  const generateBtn = document.getElementById("generateBtn");
+  const videoWrap = document.getElementById("videoWrap");
+  const codeOutput = document.getElementById("codeOutput");
+  const statusLine = document.getElementById("statusLine");
+  document.getElementById("apiTarget").textContent = API_BASE;
+
+  // Simple persisted anonymous id so the backend's free-tier daily
+  // limit (per userId) works across page reloads during testing.
+  function getUserId() {
+    let id = localStorage.getItem("shortform_test_uid");
+    if (!id) {
+      id = "test-" + Math.random().toString(36).slice(2, 10);
+      localStorage.setItem("shortform_test_uid", id);
+    }
+    return id;
+  }
+
+  function setLoading() {
+    videoWrap.innerHTML = `
+      <div class="placeholder">
+        <div class="spinner"></div>
+        Generating video… this can take a minute or two.
+      </div>`;
+    codeOutput.textContent = "// Waiting for Mistral to write scene JSON...";
+    statusLine.textContent = "";
+    generateBtn.disabled = true;
+    generateBtn.textContent = "Generating...";
+  }
+
+  function setError(message) {
+    videoWrap.innerHTML = `<div class="placeholder">Generation failed.</div>
+      <div class="error-box">${escapeHtml(message)}</div>`;
+    statusLine.textContent = "";
+    generateBtn.disabled = false;
+    generateBtn.textContent = "Generate";
+  }
+
+  function setResult(job) {
+    if (job.video_url) {
+      videoWrap.innerHTML = `<video src="${job.video_url}" controls autoplay loop></video>`;
+    } else {
+      videoWrap.innerHTML = `<div class="placeholder">Job finished with status "${job.status}" but no video_url was returned.</div>`;
+    }
+
+    if (job.scene_json) {
+      // Only show a partial snippet, per the "not fully, just a small part" request.
+      const full = JSON.stringify(job.scene_json, null, 2);
+      const snippet = full.length > 600 ? full.slice(0, 600) + "\n\n... (truncated)" : full;
+      codeOutput.textContent = snippet;
+    } else {
+      codeOutput.textContent = "// No scene JSON returned.";
+    }
+
+    statusLine.textContent = `status: ${job.status} · job id: ${job.id}`;
+    generateBtn.disabled = false;
+    generateBtn.textContent = "Generate";
+  }
+
+  async function generate() {
+    const prompt = promptInput.value.trim();
+    if (!prompt) return;
+
+    setLoading();
+
+    try {
+      const res = await fetch(`${API_BASE}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, userId: getUserId() }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || `Request failed with status ${res.status}`);
+      }
+
+      setResult(data.job);
+    } catch (err) {
+      setError(err.message || String(err));
+    }
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  generateBtn.addEventListener("click", generate);
+  promptInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") generate();
+  });
+</script>
+
 </body>
 </html>
