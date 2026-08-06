@@ -4,7 +4,6 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Shortform AI — Test Console</title>
-  
 <style>
   :root {
     --bg: #0a0a0b;
@@ -96,6 +95,29 @@
     margin: 0 auto 12px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  .progress-track {
+    width: 240px;
+    height: 6px;
+    background: var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+    margin: 14px auto 6px;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 999px;
+    transition: width 0.4s ease;
+  }
+  #progressPct {
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  #loadingStatus {
+    font-size: 13px;
+  }
 
   #codeOutput {
     flex: 1;
@@ -194,7 +216,7 @@
 </div>
 
 <script>
-  // Point this at nder backend.
+  // Point this at your live Render backend.
   const API_BASE = "https://graphmotion.onrender.com";
 
   const promptInput = document.getElementById("promptInput");
@@ -215,16 +237,61 @@
     return id;
   }
 
-  function setLoading() {
+  function setLoading(statusText) {
     videoWrap.innerHTML = `
       <div class="placeholder">
         <div class="spinner"></div>
-        Generating video… this can take a minute or two.
+        <div id="loadingStatus">${escapeHtml(statusText || "Starting...")}</div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+        </div>
+        <div id="progressPct">0%</div>
       </div>`;
     codeOutput.textContent = "// Waiting for Mistral to write scene JSON...";
     statusLine.textContent = "";
     generateBtn.disabled = true;
     generateBtn.textContent = "Generating...";
+  }
+
+  // Maps backend job status to a human label + a rough progress
+  // percentage for the stages that don't have a real 0-100 value
+  // (writing_scenes, uploading) so the bar always moves forward,
+  // then switches to the real Revideo-reported percentage once
+  // status is 'rendering'.
+  function updateProgressUI(job) {
+    const statusEl = document.getElementById("loadingStatus");
+    const fillEl = document.getElementById("progressFill");
+    const pctEl = document.getElementById("progressPct");
+    if (!statusEl || !fillEl || !pctEl) return;
+
+    let label = "Starting...";
+    let pct = 0;
+
+    switch (job.status) {
+      case "queued":
+        label = "Queued...";
+        pct = 2;
+        break;
+      case "writing_scenes":
+        label = "Mistral is writing the scene JSON...";
+        pct = 8;
+        break;
+      case "rendering":
+        label = "Rendering video...";
+        // job.progress is a real 0-100 from Revideo once rendering starts.
+        pct = 10 + Math.round((Number(job.progress) || 0) * 0.85); // maps 0-100 -> 10-95
+        break;
+      case "uploading":
+        label = "Uploading to storage...";
+        pct = 97;
+        break;
+      default:
+        label = job.status;
+    }
+
+    statusEl.textContent = label;
+    fillEl.style.width = `${pct}%`;
+    pctEl.textContent = `${pct}%`;
   }
 
   function setError(message) {
@@ -260,9 +327,13 @@
     const prompt = promptInput.value.trim();
     if (!prompt) return;
 
-    setLoading();
+    setLoading("Starting...");
 
     try {
+      // Step 1: kick the job off. The server responds immediately
+      // (status 202) with a queued job - it does NOT wait for the
+      // render to finish, since that can take well over a minute and
+      // Render's own proxy will kill a request that sits open that long.
       const res = await fetch(`${API_BASE}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -275,10 +346,51 @@
         throw new Error(data.error || `Request failed with status ${res.status}`);
       }
 
-      setResult(data.job);
+      // Step 2: poll GET /api/jobs/:id until status is done or failed,
+      // updating the progress bar from each response along the way.
+      await pollJob(data.job.id);
     } catch (err) {
       setError(err.message || String(err));
     }
+  }
+
+  function pollJob(jobId) {
+    const POLL_INTERVAL_MS = 2000;
+    const MAX_WAIT_MS = 6 * 60 * 1000; // give up after 6 minutes
+    const startedAt = Date.now();
+
+    return new Promise((resolve, reject) => {
+      const tick = async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/jobs/${jobId}`);
+          const data = await res.json();
+
+          if (!res.ok) {
+            throw new Error(data.error || `Failed to fetch job status (${res.status})`);
+          }
+
+          const job = data.job;
+          updateProgressUI(job);
+
+          if (job.status === "done") {
+            setResult(job);
+            return resolve();
+          }
+          if (job.status === "failed") {
+            return reject(new Error(job.error || "Generation failed"));
+          }
+          if (Date.now() - startedAt > MAX_WAIT_MS) {
+            return reject(new Error("Timed out waiting for the video to finish rendering."));
+          }
+
+          setTimeout(tick, POLL_INTERVAL_MS);
+        } catch (err) {
+          reject(err);
+        }
+      };
+
+      tick();
+    });
   }
 
   function escapeHtml(str) {
