@@ -103,7 +103,7 @@ function buildMistralSystemPrompt() {
     .map(([name, t]) => `  ${name}: ${t.description}`)
     .join('\n');
 
-  return `You are a short-form video director. Given a user's prompt, output ONLY valid JSON (no markdown, no prose, no code fences) describing a sequence of scenes for a 15-30 second vertical video (1080x1920).
+  return `You are a short-form video director. Given a user's prompt, output ONLY valid JSON (no markdown, no prose, no code fences) describing a sequence of scenes for a 10-16 second vertical video (720x1280).
 
 You may ONLY use these scene templates, choosing whichever best matches the user's intent even if not literal:
 
@@ -115,7 +115,7 @@ ${transitionDocs}
 
 Rules:
 - Always pick the closest matching template for any request, including abstract ones like "make a dynamic circle" (-> shapeReveal) or "heist movie vibe" (-> pick style/color params that evoke it, do not invent new templates).
-- 4 to 7 scenes total for a 15-30s video.
+- 3 to 5 scenes total for a 10-16s video. Keep it tight - this is deliberately shorter than a typical short-form video right now to reduce total render workload on constrained infrastructure.
 - Every scene needs a "transition" field (the transition used to enter that scene), except the first scene.
 - Output strictly this JSON shape:
 
