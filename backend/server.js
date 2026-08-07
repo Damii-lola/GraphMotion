@@ -51,6 +51,33 @@ process.on('uncaughtException', (err) => {
 
 const FREE_TIER_DAILY_LIMIT = Number(process.env.FREE_TIER_DAILY_LIMIT || 3);
 
+// Hard concurrency limit: only one render (one forked Chrome instance)
+// runs at a time - everything else queues. Nothing previously stopped
+// multiple renders running simultaneously; two or three Chrome
+// instances at once on a 512MB Render instance is enough by itself to
+// exhaust memory regardless of any per-render optimization. This is
+// the single biggest remaining lever before touching infrastructure.
+const MAX_CONCURRENT_RENDERS = 1;
+let activeRenders = 0;
+const renderQueue = [];
+
+function scheduleRender(jobId, prompt) {
+  renderQueue.push({ jobId, prompt });
+  drainQueue();
+}
+
+function drainQueue() {
+  if (activeRenders >= MAX_CONCURRENT_RENDERS) return;
+  const next = renderQueue.shift();
+  if (!next) return;
+
+  activeRenders++;
+  startRenderWorker(next.jobId, next.prompt, () => {
+    activeRenders--;
+    drainQueue();
+  });
+}
+
 const generateLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 6,
@@ -108,10 +135,10 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
 
   res.status(202).json({ job });
 
-  startRenderWorker(job.id, prompt.trim());
+  scheduleRender(job.id, prompt.trim());
 });
 
-function startRenderWorker(jobId, prompt) {
+function startRenderWorker(jobId, prompt, onSettled) {
   const child = fork(path.join(__dirname, 'renderWorker.js'), {
     // Keep the child's own stdout/stderr visible in the same log stream
     // for debugging, but its execution is fully isolated from this
@@ -149,6 +176,7 @@ function startRenderWorker(jobId, prompt) {
           const videoUrl = await uploadRenderedVideo(jobId, msg.localFilePath, fileBuffer);
           fs.unlink(msg.localFilePath, () => {});
           await updateJob(jobId, { status: 'done', video_url: videoUrl });
+          onSettled();
           break;
         }
 
@@ -156,6 +184,7 @@ function startRenderWorker(jobId, prompt) {
           settled = true;
           console.error(`[renderWorker] job ${jobId} failed:`, msg.error);
           await updateJob(jobId, { status: 'failed', error: String(msg.error) });
+          onSettled();
           break;
       }
     } catch (err) {
@@ -180,6 +209,7 @@ function startRenderWorker(jobId, prompt) {
 
       console.error(`[renderWorker] job ${jobId} child exited unexpectedly - code: ${code}, signal: ${signal}`);
       updateJob(jobId, { status: 'failed', error: reason }).catch(() => {});
+      onSettled();
     }
   });
 
