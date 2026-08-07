@@ -1,29 +1,19 @@
 {
-  "name": "shortform-ai-backend",
+  "name": "shortform-ai-api",
   "version": "1.0.0",
-  "description": "AI shortform video generator - prompt -> Mistral (scene JSON) -> Revideo (render) -> Supabase (storage/jobs)",
+  "description": "Lightweight API service - handles requests, job records, and free-tier limits. Hands actual rendering off to a separate render-service/ deployment over HTTP.",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js",
-    "postinstall": "patch-package && PUPPETEER_CACHE_DIR=./.puppeteer-cache npx puppeteer browsers install chrome"
+    "dev": "node --watch server.js"
   },
   "dependencies": {
-    "@revideo/2d": "^0.11.0",
-    "@revideo/core": "^0.11.0",
-    "@revideo/renderer": "^0.11.0",
-    "@revideo/ui": "^0.11.0",
-    "@revideo/vite-plugin": "^0.11.0",
     "@supabase/supabase-js": "^2.45.4",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
-    "node-fetch": "^2.7.0",
-    "uuid": "^9.0.1"
-  },
-  "devDependencies": {
-    "patch-package": "^8.0.1"
+    "node-fetch": "^2.7.0"
   }
 }
