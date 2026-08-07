@@ -1,19 +1,7 @@
-// Must be set before anything (transitively) requires puppeteer, since
-// puppeteer-core resolves its Chrome executable path from this env var.
-// Render's build and runtime don't reliably share the default cache
-// path (/opt/render/.cache), so Chrome downloaded during `postinstall`
-// can vanish by the time the server actually starts. Pointing the
-// cache at a path inside the project directory keeps it in whatever
-// Render actually deploys.
-process.env.PUPPETEER_CACHE_DIR =
-  process.env.PUPPETEER_CACHE_DIR || require('path').join(__dirname, '.puppeteer-cache');
-
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
-const { fork } = require('child_process');
+const fetch = require('node-fetch');
 const rateLimit = require('express-rate-limit');
 
 const {
@@ -21,7 +9,6 @@ const {
   updateJob,
   getJob,
   countJobsToday,
-  uploadRenderedVideo,
 } = require('./supabaseClient');
 
 const app = express();
@@ -35,13 +22,6 @@ app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
-// Safety net: rendering runs headless Chrome via Puppeteer deep inside
-// @revideo/renderer, and library-internal bugs there can throw in a way
-// that bypasses the try/catch around renderJobToFile (an unhandled
-// promise rejection instead of a rejection our await sees). Without
-// these handlers that takes down the ENTIRE process - not just the one
-// job - which drops every other in-flight/future request until Render
-// notices and restarts the service. Log and stay up instead.
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection] server staying up despite:', reason);
 });
@@ -51,32 +31,15 @@ process.on('uncaughtException', (err) => {
 
 const FREE_TIER_DAILY_LIMIT = Number(process.env.FREE_TIER_DAILY_LIMIT || 3);
 
-// Hard concurrency limit: only one render (one forked Chrome instance)
-// runs at a time - everything else queues. Nothing previously stopped
-// multiple renders running simultaneously; two or three Chrome
-// instances at once on a 512MB Render instance is enough by itself to
-// exhaust memory regardless of any per-render optimization. This is
-// the single biggest remaining lever before touching infrastructure.
-const MAX_CONCURRENT_RENDERS = 1;
-let activeRenders = 0;
-const renderQueue = [];
-
-function scheduleRender(jobId, prompt) {
-  renderQueue.push({ jobId, prompt });
-  drainQueue();
-}
-
-function drainQueue() {
-  if (activeRenders >= MAX_CONCURRENT_RENDERS) return;
-  const next = renderQueue.shift();
-  if (!next) return;
-
-  activeRenders++;
-  startRenderWorker(next.jobId, next.prompt, () => {
-    activeRenders--;
-    drainQueue();
-  });
-}
+// This service no longer renders anything itself - it hands the actual
+// work off to a SEPARATE Render service (render-service/) dedicated
+// purely to rendering, over a simple authenticated HTTP call. That
+// service has its own independent memory budget instead of sharing
+// this one, and this service in turn stays extremely light (no
+// Puppeteer, no Vite, no @revideo/* packages at all) since it never
+// touches any of that anymore.
+const RENDERER_SERVICE_URL = process.env.RENDERER_SERVICE_URL;
+const RENDER_SHARED_SECRET = process.env.RENDER_SHARED_SECRET;
 
 const generateLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -93,27 +56,23 @@ app.get('/health', (req, res) => {
  * POST /api/generate
  * body: { prompt: string, userId?: string }
  *
- * Responds immediately with the job (status: queued), then hands the
- * actual work to a forked child process (renderWorker.js) rather than
- * running it in this process.
- *
- * Why a child process specifically, not just "don't await it": the
- * render pipeline (Mistral call + Vite bundling + Puppeteer/Chrome
- * orchestration) is heavy enough to monopolize this process's event
- * loop even when not awaited on the request - which meant the ENTIRE
- * server, including trivial GET /api/jobs/:id reads, went unresponsive
- * for the whole render duration (that's what sustained 502s on every
- * endpoint were, not a proxy-timeout fluke). A forked child process has
- * its own event loop, so this server stays responsive no matter how
- * busy - or even crashed - the render process is. If the child gets
- * OOM-killed, only that one job dies; this server and every other
- * in-flight job keep running.
+ * Responds immediately with the job (status: queued), then triggers
+ * the separate renderer service over HTTP. This request does NOT wait
+ * for that render to finish - it only waits for the renderer to
+ * acknowledge it received the job (a fast, trivial response), then
+ * returns. The client polls GET /api/jobs/:id (this service, reading
+ * the same shared Supabase the renderer writes to) to watch progress.
  */
 app.post('/api/generate', generateLimiter, async (req, res) => {
   const { prompt, userId } = req.body || {};
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
     return res.status(400).json({ error: 'prompt is required (min 3 chars)' });
+  }
+
+  if (!RENDERER_SERVICE_URL || !RENDER_SHARED_SECRET) {
+    console.error('[POST /api/generate] RENDERER_SERVICE_URL or RENDER_SHARED_SECRET not configured');
+    return res.status(500).json({ error: 'Server misconfigured - renderer service not set up' });
   }
 
   const identifier = userId || req.ip;
@@ -135,85 +94,34 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
 
   res.status(202).json({ job });
 
-  scheduleRender(job.id, prompt.trim());
+  // Fire-and-forget from this request's point of view. If the renderer
+  // is asleep (free tier spin-down), this call itself will take up to
+  // ~30-60s to wake it - that's fine since we already responded to the
+  // client above; the job just sits at 'queued' a bit longer, visible
+  // via polling, not a failure.
+  triggerRemoteRender(job.id, prompt.trim()).catch((err) => {
+    console.error(`[triggerRemoteRender] job ${job.id} failed to reach renderer service:`, err);
+    updateJob(job.id, {
+      status: 'failed',
+      error: `Could not reach the render service: ${err.message || err}`,
+    }).catch(() => {});
+  });
 });
 
-function startRenderWorker(jobId, prompt, onSettled) {
-  const child = fork(path.join(__dirname, 'renderWorker.js'), {
-    // Keep the child's own stdout/stderr visible in the same log stream
-    // for debugging, but its execution is fully isolated from this
-    // process otherwise.
-    stdio: 'inherit',
+async function triggerRemoteRender(jobId, prompt) {
+  const res = await fetch(`${RENDERER_SERVICE_URL}/render`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${RENDER_SHARED_SECRET}`,
+    },
+    body: JSON.stringify({ jobId, prompt }),
   });
 
-  let settled = false;
-
-  child.on('message', async (msg) => {
-    if (!msg || msg.jobId !== jobId) return;
-
-    try {
-      switch (msg.type) {
-        case 'status':
-          await updateJob(jobId, {
-            status: msg.status,
-            ...(msg.progress !== undefined ? { progress: msg.progress } : {}),
-          });
-          break;
-
-        case 'scenes_ready':
-          await updateJob(jobId, { scene_json: msg.sceneJSON });
-          break;
-
-        case 'progress':
-          // Best-effort - don't let a failed write interrupt anything.
-          updateJob(jobId, { progress: msg.progress }).catch(() => {});
-          break;
-
-        case 'render_complete': {
-          settled = true;
-          await updateJob(jobId, { status: 'uploading', progress: 100 });
-          const fileBuffer = fs.readFileSync(msg.localFilePath);
-          const videoUrl = await uploadRenderedVideo(jobId, msg.localFilePath, fileBuffer);
-          fs.unlink(msg.localFilePath, () => {});
-          await updateJob(jobId, { status: 'done', video_url: videoUrl });
-          onSettled();
-          break;
-        }
-
-        case 'failed':
-          settled = true;
-          console.error(`[renderWorker] job ${jobId} failed:`, msg.error);
-          await updateJob(jobId, { status: 'failed', error: String(msg.error) });
-          onSettled();
-          break;
-      }
-    } catch (err) {
-      console.error(`[startRenderWorker] job ${jobId} handling "${msg.type}" failed:`, err);
-    }
-  });
-
-  child.on('exit', (code, signal) => {
-    if (!settled) {
-      // Distinguish an actual OOM kill from an ordinary crash instead
-      // of guessing: Linux delivers SIGKILL (code becomes null, signal
-      // 'SIGKILL') when the OOM killer takes a process down - that
-      // bypasses uncaughtException entirely, so this exit handler is
-      // the only place it's observable at all. A plain crash (e.g. an
-      // error our own handler already reported via IPC but this fired
-      // before 'settled' got set for some other reason) shows up as a
-      // numeric exit code with no signal instead.
-      const isLikelyOOM = signal === 'SIGKILL' || code === 137;
-      const reason = isLikelyOOM
-        ? 'Render process was killed (SIGKILL) - almost certainly ran out of memory.'
-        : `Render process exited unexpectedly (code ${code}, signal ${signal || 'none'}). Check server logs for the actual error.`;
-
-      console.error(`[renderWorker] job ${jobId} child exited unexpectedly - code: ${code}, signal: ${signal}`);
-      updateJob(jobId, { status: 'failed', error: reason }).catch(() => {});
-      onSettled();
-    }
-  });
-
-  child.send({ jobId, prompt });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Renderer service responded ${res.status}: ${text}`);
+  }
 }
 
 app.get('/api/jobs/:id', async (req, res) => {
