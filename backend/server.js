@@ -163,18 +163,23 @@ function startRenderWorker(jobId, prompt) {
     }
   });
 
-  child.on('exit', (code) => {
+  child.on('exit', (code, signal) => {
     if (!settled) {
-      // The child died without ever sending 'render_complete' or
-      // 'failed' - most likely an OOM kill (Linux SIGKILL bypasses
-      // our uncaughtException handler entirely, so this is the only
-      // place a silent kill like that can be detected and recorded,
-      // rather than leaving the job stuck at "rendering" forever).
-      console.error(`[renderWorker] job ${jobId} child exited unexpectedly (code ${code}), likely OOM-killed`);
-      updateJob(jobId, {
-        status: 'failed',
-        error: `Render process exited unexpectedly (code ${code}), likely out of memory.`,
-      }).catch(() => {});
+      // Distinguish an actual OOM kill from an ordinary crash instead
+      // of guessing: Linux delivers SIGKILL (code becomes null, signal
+      // 'SIGKILL') when the OOM killer takes a process down - that
+      // bypasses uncaughtException entirely, so this exit handler is
+      // the only place it's observable at all. A plain crash (e.g. an
+      // error our own handler already reported via IPC but this fired
+      // before 'settled' got set for some other reason) shows up as a
+      // numeric exit code with no signal instead.
+      const isLikelyOOM = signal === 'SIGKILL' || code === 137;
+      const reason = isLikelyOOM
+        ? 'Render process was killed (SIGKILL) - almost certainly ran out of memory.'
+        : `Render process exited unexpectedly (code ${code}, signal ${signal || 'none'}). Check server logs for the actual error.`;
+
+      console.error(`[renderWorker] job ${jobId} child exited unexpectedly - code: ${code}, signal: ${signal}`);
+      updateJob(jobId, { status: 'failed', error: reason }).catch(() => {});
     }
   });
 
