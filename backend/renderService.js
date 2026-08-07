@@ -25,8 +25,17 @@ async function renderJobToFile(jobId, sceneJSON, onProgress) {
       outDir,
       outFile: outputFileName,
       logProgress: true,
-      // Vertical short-form: 1080x1920. Adjust if you add landscape too.
+      // Vertical short-form. Deliberately 720x1280, not full 1080x1920 -
+      // see project.ts for why (memory: pixel count scales with
+      // width*height, so this is a ~55% cut in per-frame raster memory).
+      // Set redundantly here too via projectSettings (the actual
+      // documented key for a per-render-call override, confirmed
+      // against @revideo/renderer's own type definitions rather than
+      // assumed) as a second guarantee on top of project.ts's default.
       workers: 1,
+      projectSettings: {
+        size: { x: 720, y: 1280 },
+      },
       // Render's containers (and most PaaS/Docker environments) don't
       // support Chrome's sandbox without extra privileges - without
       // these flags Chrome fails to launch at all in that environment.
