@@ -13,17 +13,22 @@ const HEIGHT = 1280;
 const FPS = 30;
 
 /**
- * Builds a flat list of timeline "segments" (scenes and the
- * transitions between them) with absolute start/end times, so a given
- * global frame time can be mapped to exactly one segment plus a local
- * time within it. This is the direct replacement for what Revideo's
- * generator-based scene sequencing did automatically.
+ * Builds the timeline AND locks one consistent accent color for the
+ * whole video (taken from the first scene that specifies one, default
+ * otherwise) - per the notes, a consistent single accent color is a
+ * deliberate system, not a per-scene decision. Every scene's own color
+ * param is overridden to match, so nothing can drift independently.
  */
 function buildTimeline(sceneJSON) {
+  const firstColorScene = sceneJSON.scenes.find((s) => s.params && s.params.color);
+  const accentColor = (firstColorScene && firstColorScene.params.color) || '#FF5C1A';
+
   const segments = [];
   let cursor = 0;
 
   sceneJSON.scenes.forEach((scene, i) => {
+    const params = { ...scene.params, color: accentColor };
+
     if (i > 0 && scene.transition) {
       segments.push({
         kind: 'transition',
@@ -37,14 +42,14 @@ function buildTimeline(sceneJSON) {
     segments.push({
       kind: 'scene',
       template: scene.template,
-      params: scene.params,
+      params,
       start: cursor,
-      end: cursor + scene.params.duration,
+      end: cursor + params.duration,
     });
-    cursor += scene.params.duration;
+    cursor += params.duration;
   });
 
-  return { segments, totalDuration: cursor };
+  return { segments, totalDuration: cursor, accentColor };
 }
 
 function findSegment(segments, globalTime) {
@@ -54,13 +59,8 @@ function findSegment(segments, globalTime) {
   return segments[segments.length - 1];
 }
 
-/**
- * Renders the full video for one job's validated scene JSON to
- * outputPath (an mp4). onProgress, if given, is called with an
- * integer 0-100 as frames are produced.
- */
 async function renderJobToFile(jobId, sceneJSON, onProgress) {
-  const { segments, totalDuration } = buildTimeline(sceneJSON);
+  const { segments, totalDuration, accentColor } = buildTimeline(sceneJSON);
   const totalFrames = Math.ceil(totalDuration * FPS);
 
   const outDir = path.join(os.tmpdir(), 'shortform-renders');
@@ -100,16 +100,13 @@ async function renderJobToFile(jobId, sceneJSON, onProgress) {
     const localTime = globalTime - segment.start;
 
     if (segment.kind === 'scene') {
-      drawTemplate(ctx, segment.template, segment.params, localTime, WIDTH, HEIGHT);
+      drawTemplate(ctx, segment.template, segment.params, localTime, globalTime, WIDTH, HEIGHT);
     } else {
-      drawTransition(ctx, segment.name, localTime, WIDTH, HEIGHT);
+      drawTransition(ctx, segment.name, localTime, WIDTH, HEIGHT, accentColor);
     }
 
     const raw = ctx.getImageData(0, 0, WIDTH, HEIGHT).data;
 
-    // Backpressure: wait for the write to actually drain before
-    // producing the next frame, rather than buffering the whole video
-    // in memory if ffmpeg can't keep up.
     const canContinue = ffmpeg.stdin.write(Buffer.from(raw));
     if (!canContinue) {
       await new Promise((resolve) => ffmpeg.stdin.once('drain', resolve));
