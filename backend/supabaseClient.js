@@ -12,10 +12,6 @@ const supabase = createClient(
 
 const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'rendered-videos';
 
-/**
- * Create a new render job row. Status flows:
- * queued -> writing_scenes -> rendering -> uploading -> done | failed
- */
 async function createJob({ userId, prompt }) {
   const { data, error } = await supabase
     .from('render_jobs')
@@ -50,10 +46,6 @@ async function getJob(jobId) {
   return data;
 }
 
-/**
- * Counts jobs created by this identifier (user id or IP) since midnight UTC,
- * used to enforce the free tier daily limit.
- */
 async function countJobsToday(identifier) {
   const startOfDay = new Date();
   startOfDay.setUTCHours(0, 0, 0, 0);
