@@ -1,7 +1,9 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch');
+const fs = require('fs');
+const path = require('path');
+const { fork } = require('child_process');
 const rateLimit = require('express-rate-limit');
 
 const {
@@ -9,16 +11,11 @@ const {
   updateJob,
   getJob,
   countJobsToday,
+  uploadRenderedVideo,
 } = require('./supabaseClient');
 
 const app = express();
-
-// Render (and most PaaS) sits behind a reverse proxy, so Express needs
-// this to correctly read X-Forwarded-For - without it, express-rate-limit
-// can't reliably tell users apart by IP, and req.ip used for the
-// anonymous free-tier key falls back to the proxy's IP for everyone.
 app.set('trust proxy', 1);
-
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
 
@@ -31,15 +28,29 @@ process.on('uncaughtException', (err) => {
 
 const FREE_TIER_DAILY_LIMIT = Number(process.env.FREE_TIER_DAILY_LIMIT || 3);
 
-// This service no longer renders anything itself - it hands the actual
-// work off to a SEPARATE Render service (render-service/) dedicated
-// purely to rendering, over a simple authenticated HTTP call. That
-// service has its own independent memory budget instead of sharing
-// this one, and this service in turn stays extremely light (no
-// Puppeteer, no Vite, no @revideo/* packages at all) since it never
-// touches any of that anymore.
-const RENDERER_SERVICE_URL = process.env.RENDERER_SERVICE_URL;
-const RENDER_SHARED_SECRET = process.env.RENDER_SHARED_SECRET;
+// One render at a time, everything else queues. Cheap insurance -
+// Skia rendering is lightweight, but there's no reason to risk
+// multiple ffmpeg encodes competing for CPU simultaneously either.
+const MAX_CONCURRENT_RENDERS = 1;
+let activeRenders = 0;
+const renderQueue = [];
+
+function scheduleRender(jobId, prompt) {
+  renderQueue.push({ jobId, prompt });
+  drainQueue();
+}
+
+function drainQueue() {
+  if (activeRenders >= MAX_CONCURRENT_RENDERS) return;
+  const next = renderQueue.shift();
+  if (!next) return;
+
+  activeRenders++;
+  startRenderWorker(next.jobId, next.prompt, () => {
+    activeRenders--;
+    drainQueue();
+  });
+}
 
 const generateLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -52,27 +63,11 @@ app.get('/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
-/**
- * POST /api/generate
- * body: { prompt: string, userId?: string }
- *
- * Responds immediately with the job (status: queued), then triggers
- * the separate renderer service over HTTP. This request does NOT wait
- * for that render to finish - it only waits for the renderer to
- * acknowledge it received the job (a fast, trivial response), then
- * returns. The client polls GET /api/jobs/:id (this service, reading
- * the same shared Supabase the renderer writes to) to watch progress.
- */
 app.post('/api/generate', generateLimiter, async (req, res) => {
   const { prompt, userId } = req.body || {};
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
     return res.status(400).json({ error: 'prompt is required (min 3 chars)' });
-  }
-
-  if (!RENDERER_SERVICE_URL || !RENDER_SHARED_SECRET) {
-    console.error('[POST /api/generate] RENDERER_SERVICE_URL or RENDER_SHARED_SECRET not configured');
-    return res.status(500).json({ error: 'Server misconfigured - renderer service not set up' });
   }
 
   const identifier = userId || req.ip;
@@ -94,34 +89,70 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
 
   res.status(202).json({ job });
 
-  // Fire-and-forget from this request's point of view. If the renderer
-  // is asleep (free tier spin-down), this call itself will take up to
-  // ~30-60s to wake it - that's fine since we already responded to the
-  // client above; the job just sits at 'queued' a bit longer, visible
-  // via polling, not a failure.
-  triggerRemoteRender(job.id, prompt.trim()).catch((err) => {
-    console.error(`[triggerRemoteRender] job ${job.id} failed to reach renderer service:`, err);
-    updateJob(job.id, {
-      status: 'failed',
-      error: `Could not reach the render service: ${err.message || err}`,
-    }).catch(() => {});
-  });
+  scheduleRender(job.id, prompt.trim());
 });
 
-async function triggerRemoteRender(jobId, prompt) {
-  const res = await fetch(`${RENDERER_SERVICE_URL}/render`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${RENDER_SHARED_SECRET}`,
-    },
-    body: JSON.stringify({ jobId, prompt }),
+function startRenderWorker(jobId, prompt, onSettled) {
+  const child = fork(path.join(__dirname, 'renderWorker.js'), { stdio: 'inherit' });
+
+  let settled = false;
+
+  child.on('message', async (msg) => {
+    if (!msg || msg.jobId !== jobId) return;
+
+    try {
+      switch (msg.type) {
+        case 'status':
+          await updateJob(jobId, {
+            status: msg.status,
+            ...(msg.progress !== undefined ? { progress: msg.progress } : {}),
+          });
+          break;
+
+        case 'scenes_ready':
+          await updateJob(jobId, { scene_json: msg.sceneJSON });
+          break;
+
+        case 'progress':
+          updateJob(jobId, { progress: msg.progress }).catch(() => {});
+          break;
+
+        case 'render_complete': {
+          settled = true;
+          await updateJob(jobId, { status: 'uploading', progress: 100 });
+          const fileBuffer = fs.readFileSync(msg.localFilePath);
+          const videoUrl = await uploadRenderedVideo(jobId, msg.localFilePath, fileBuffer);
+          fs.unlink(msg.localFilePath, () => {});
+          await updateJob(jobId, { status: 'done', video_url: videoUrl });
+          onSettled();
+          break;
+        }
+
+        case 'failed':
+          settled = true;
+          console.error(`[renderWorker] job ${jobId} failed:`, msg.error);
+          await updateJob(jobId, { status: 'failed', error: String(msg.error) });
+          onSettled();
+          break;
+      }
+    } catch (err) {
+      console.error(`[startRenderWorker] job ${jobId} handling "${msg.type}" failed:`, err);
+    }
   });
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Renderer service responded ${res.status}: ${text}`);
-  }
+  child.on('exit', (code, signal) => {
+    if (!settled) {
+      console.error(`[renderWorker] job ${jobId} child exited unexpectedly - code: ${code}, signal: ${signal}`);
+      updateJob(jobId, {
+        status: 'failed',
+        error: `Render process exited unexpectedly (code ${code}, signal ${signal || 'none'}).`,
+      }).catch(() => {});
+      settled = true;
+      onSettled();
+    }
+  });
+
+  child.send({ jobId, prompt });
 }
 
 app.get('/api/jobs/:id', async (req, res) => {
