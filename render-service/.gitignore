@@ -1,4 +1,0 @@
-node_modules/
-.puppeteer-cache/
-.env
-*.log
