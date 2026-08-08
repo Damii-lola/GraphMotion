@@ -1,23 +1,31 @@
 const { easeOutCubic, easeOutBack, easeOutExpo, easeInOutCubic, lerp, clamp01 } = require('./easing');
+const { drawAtmosphere } = require('./atmosphere');
 
 /**
- * ---------------------------------------------------------------
- * ARCHITECTURE: each template is a pure function of TIME, not a
- * generator/sequence like the old Revideo version. Given (ctx, params,
- * localTime, duration, width, height), it must compute and draw
- * exactly what the frame should look like AT THAT INSTANT. This is
- * the fundamental adaptation needed to move off a browser-based
- * animation engine onto a plain canvas we drive frame-by-frame
- * ourselves.
- *
- * FLAIR RULES (unchanged from the original design, engine-independent):
- *   1. Multi-property choreography, never a single opacity fade.
- *   2. Overshoot/spring easing on entrances, never linear.
- *   3. A secondary "settle" motion after the primary motion lands.
- * ---------------------------------------------------------------
+ * FLAIR RULES v2 (upgraded from the direct critique of our own v1
+ * output - every point below maps to a specific note):
+ *   1. Every scene sits on the shared atmosphere layer, never flat
+ *      color - "text on a void" was the single biggest complaint.
+ *   2. Text animates per-CHARACTER with a stagger, not as one block -
+ *      the single highest-leverage typography fix identified.
+ *   3. Landing motions overshoot and settle - nothing arrives at
+ *      exactly its target value and stops.
+ *   4. Impacts get squash/stretch, not uniform scale - implies mass.
+ *   5. A slow, continuous "camera push" (subtle scale creep) runs
+ *      under every scene, tied to global time so it's continuous
+ *      across cuts, not reset each scene.
+ *   6. Icons draw themselves on via animated stroke paths where the
+ *      shape is stroke-based, instead of a flat scale-pop.
+ * `globalT` (the video's total elapsed time, not scene-local) is
+ * threaded through every template now so atmosphere/camera motion
+ * stays continuous across scene boundaries.
  */
 
-function drawTemplate(ctx, template, params, localTime, width, height) {
+function drawTemplate(ctx, template, params, localTime, globalT, width, height) {
+  const accentColor = params.color || '#FF5C1A';
+  drawAtmosphere(ctx, globalT, width, height, accentColor);
+  applyCameraPush(ctx, globalT, width, height);
+
   switch (template) {
     case 'kineticTextReveal':
       kineticTextReveal(ctx, params, localTime, width, height);
@@ -37,49 +45,119 @@ function drawTemplate(ctx, template, params, localTime, width, height) {
     default:
       throw new Error(`No renderer implemented for template "${template}"`);
   }
+
+  ctx.restore(); // matches the save() in applyCameraPush
 }
 
-function clearBackground(ctx, width, height) {
-  ctx.fillStyle = '#0A0A0B';
-  ctx.fillRect(0, 0, width, height);
-}
-
-function kineticTextReveal(ctx, params, t, width, height) {
-  const { text, duration } = params;
-  clearBackground(ctx, width, height);
-
-  const entranceT = clamp01(t / (duration * 0.35));
-  const opacity = easeOutCubic(entranceT);
-  const scaleT = clamp01(t / (duration * 0.45));
-  const scale = lerp(1.35, 1, easeOutBack(scaleT));
-
-  // Secondary motion: glow ramps in AFTER the text has mostly landed,
-  // then pulses gently while held on screen.
-  const glowStartT = duration * 0.25;
-  const glowT = clamp01((t - glowStartT) / (duration * 0.25));
-  const baseGlow = lerp(0, 30, easeOutExpo(glowT));
-  const pulse = t > duration * 0.5 ? Math.sin((t - duration * 0.5) * 3) * 6 : 0;
-  const glow = Math.max(0, baseGlow + pulse);
-
+/**
+ * A near-imperceptible continuous zoom (1.0 -> ~1.035 over 20s, then
+ * loops) applied as a transform around the canvas center before any
+ * content draws. This alone was named as "the single biggest missing
+ * ingredient" in the notes - a video where nothing ever looks static
+ * because the camera never stops moving, even subtly.
+ */
+function applyCameraPush(ctx, globalT, width, height) {
   ctx.save();
-  ctx.globalAlpha = opacity;
+  const cycle = (globalT % 20) / 20;
+  const scale = lerp(1, 1.035, easeInOutCubic(Math.sin(cycle * Math.PI * 2) * 0.5 + 0.5));
   ctx.translate(width / 2, height / 2);
   ctx.scale(scale, scale);
+  ctx.translate(-width / 2, -height / 2);
+}
 
-  ctx.font = 'bold 52px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.shadowColor = '#FF5C1A';
-  ctx.shadowBlur = glow;
-  ctx.fillStyle = '#F5F5F5';
-
-  wrapText(ctx, text, 0, 0, width * 0.8, 60);
+function drawContactShadow(ctx, x, y, radiusX, radiusY, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const grad = ctx.createRadialGradient(x, y, 0, x, y, radiusX);
+  grad.addColorStop(0, 'rgba(0,0,0,0.6)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.ellipse(x, y, radiusX, radiusY, 0, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 
+/**
+ * Character-level staggered reveal, replacing the old single-block
+ * fade+scale. Each character gets its own entrance offset in time (a
+ * "stagger") so the line assembles with a ripple instead of switching
+ * on as one flat unit - directly the #1 typography note.
+ */
+function kineticTextReveal(ctx, params, t, width, height) {
+  const { text, duration } = params;
+  const accentColor = params.color || '#FF5C1A';
+
+  ctx.font = 'bold 50px sans-serif';
+  const words = text.split(' ');
+  const lineHeight = 58;
+
+  // Wrap into lines first (measuring against a max width), same
+  // constraint as before, but now we need per-CHARACTER positions
+  // rather than just per-line, so layout happens before animation.
+  const maxWidth = width * 0.82;
+  const lines = [];
+  let current = '';
+  for (const word of words) {
+    const test = current ? `${current} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = test;
+    }
+  }
+  if (current) lines.push(current);
+
+  const totalHeight = lines.length * lineHeight;
+  const startY = height / 2 - totalHeight / 2 + lineHeight / 2;
+
+  // Flatten to characters with their target (x, y) so we can stagger
+  // each one's entrance independently.
+  const chars = [];
+  lines.forEach((line, li) => {
+    const lineWidth = ctx.measureText(line).width;
+    let cx = width / 2 - lineWidth / 2;
+    const cy = startY + li * lineHeight;
+    for (const ch of line) {
+      const w = ctx.measureText(ch).width;
+      chars.push({ ch, x: cx + w / 2, y: cy, index: chars.length });
+      cx += w;
+    }
+  });
+
+  const staggerWindow = duration * 0.4; // all characters finish entering by 40% of scene duration
+  const perCharDelay = chars.length > 1 ? staggerWindow / chars.length : 0;
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (const c of chars) {
+    const charStart = c.index * perCharDelay;
+    const charT = clamp01((t - charStart) / (duration * 0.28));
+    if (charT <= 0) continue;
+
+    const opacity = easeOutCubic(charT);
+    const scale = lerp(1.4, 1, easeOutBack(charT));
+    // Tiny per-character vertical offset ("baseline jitter") so the
+    // line reads as handmade rather than a perfectly uniform grid.
+    const jitter = Math.sin(c.index * 12.9898) * 1.5;
+
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.translate(c.x, c.y + jitter);
+    ctx.scale(scale, scale);
+    ctx.shadowColor = accentColor;
+    ctx.shadowBlur = lerp(0, 16, clamp01((t - charStart - duration * 0.15) / (duration * 0.2)));
+    ctx.fillStyle = '#F5F5F5';
+    ctx.fillText(c.ch, 0, 0);
+    ctx.restore();
+  }
+}
+
 function rippleDrop(ctx, params, t, width, height) {
-  const { caption, color, duration } = params;
-  clearBackground(ctx, width, height);
+  const { caption, duration } = params;
+  const color = params.color || '#FF5C1A';
 
   const centerX = width / 2;
   const landY = height * 0.38;
@@ -88,13 +166,25 @@ function rippleDrop(ctx, params, t, width, height) {
   const dropT = clamp01(t / (duration * 0.55));
   const y = lerp(startY, landY, easeOutCubic(dropT));
 
-  // Ripple rings fire once the ball lands.
+  // Squash/stretch on impact: right at landing, the ball briefly
+  // flattens (wide, short) then springs back to round - implies mass
+  // and impact instead of a rigid circle just stopping.
+  const impactWindow = 0.12;
+  const timeSinceLand = t - duration * 0.55;
+  let squashX = 1, squashY = 1;
+  if (dropT >= 1 && timeSinceLand < impactWindow) {
+    const impactT = timeSinceLand / impactWindow;
+    const squashAmount = Math.sin(impactT * Math.PI) * 0.35;
+    squashX = 1 + squashAmount;
+    squashY = 1 - squashAmount;
+  }
+
   if (dropT >= 1) {
     const rippleT = (t - duration * 0.55) / (duration * 0.45);
     for (let ring = 0; ring < 3; ring++) {
       const ringT = clamp01(rippleT - ring * 0.15);
       if (ringT <= 0) continue;
-      const radius = lerp(30, 150, ringT);
+      const radius = lerp(30, 150, easeOutExpo(ringT));
       const alpha = (1 - ringT) * 0.4;
       ctx.strokeStyle = `rgba(255,255,255,${alpha.toFixed(3)})`;
       ctx.lineWidth = 2;
@@ -104,13 +194,17 @@ function rippleDrop(ctx, params, t, width, height) {
     }
   }
 
+  drawContactShadow(ctx, centerX, landY + 12, 34 * squashX, 10, dropT >= 1 ? 0.5 : lerp(0.1, 0.5, dropT));
+
   ctx.save();
+  ctx.translate(centerX, y);
+  ctx.scale(squashX, squashY);
   ctx.globalCompositeOperation = 'screen';
   ctx.shadowColor = color;
   ctx.shadowBlur = 30;
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.arc(centerX, y, 20, 0, Math.PI * 2);
+  ctx.arc(0, 0, 20, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
@@ -128,155 +222,165 @@ function rippleDrop(ctx, params, t, width, height) {
 
 function statCounter(ctx, params, t, width, height) {
   const { label, fromValue, toValue, suffix, duration } = params;
-  clearBackground(ctx, width, height);
+  const accentColor = params.color || '#FF5C1A';
 
   const entranceT = clamp01(t / (duration * 0.3));
   const opacity = easeOutCubic(entranceT);
   const yOffset = lerp(20, 0, easeOutBack(clamp01(t / (duration * 0.35))));
 
-  const countT = clamp01((t - 0) / (duration * 0.55));
+  const countT = clamp01(t / (duration * 0.55));
   const current = Math.round(lerp(fromValue, toValue, easeOutExpo(countT)));
 
-  const landedGlow = countT >= 1 ? lerp(0, 25, clamp01((t - duration * 0.55) / (duration * 0.15))) : 0;
+  // Overshoot-punch on landing: the final number briefly scales past
+  // 100% then eases back, so it "hits" instead of just arriving -
+  // directly the notes' counter-finale note.
+  const landT = clamp01((t - duration * 0.55) / (duration * 0.2));
+  const punchScale = countT >= 1 ? lerp(1.15, 1, easeOutBack(landT)) : 1;
+  const landedGlow = countT >= 1 ? lerp(0, 28, landT) : 0;
+
+  drawContactShadow(ctx, width / 2, height / 2 + 60, 90, 18, opacity * 0.4);
 
   ctx.save();
   ctx.globalAlpha = opacity;
   ctx.translate(width / 2, height / 2 + yOffset);
 
+  ctx.save();
+  ctx.scale(punchScale, punchScale);
   ctx.textAlign = 'center';
-  ctx.shadowColor = '#FF5C1A';
+  ctx.shadowColor = accentColor;
   ctx.shadowBlur = landedGlow;
   ctx.font = '900 76px sans-serif';
   ctx.fillStyle = '#F5F5F5';
   ctx.fillText(`${current}${suffix}`, 0, -10);
+  ctx.restore();
 
-  ctx.shadowBlur = 0;
   ctx.font = '500 26px sans-serif';
   ctx.fillStyle = '#B5B5B8';
+  ctx.textAlign = 'center';
   ctx.fillText(label, 0, 40);
   ctx.restore();
 }
 
 /**
- * Icons are hand-drawn vector shapes, NOT font glyphs/emoji. This is
- * deliberate: a bare Linux render server has no emoji font installed
- * by default (unlike a browser, which bundles its own) - confirmed by
- * actually rendering a test frame and seeing a missing-glyph box
- * instead of a lock icon. Drawing paths ourselves guarantees identical
- * output regardless of what fonts happen to be installed on whatever
- * box this runs on.
+ * Icons are hand-drawn vector paths (not fonts - see earlier fix) and
+ * now draw themselves on via an animated stroke offset where the icon
+ * is stroke-based, rather than popping in at full opacity/scale. This
+ * is the canvas equivalent of an AE trim-paths reveal.
  */
-function drawIcon(ctx, icon, size) {
+function drawIconPath(ctx, icon, size) {
   const s = size;
-  ctx.save();
-  ctx.lineWidth = s * 0.1;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-
+  ctx.beginPath();
   switch (icon) {
-    case 'lock': {
-      ctx.strokeStyle = ctx.fillStyle;
-      ctx.beginPath();
+    case 'lock':
       ctx.arc(0, -s * 0.15, s * 0.28, Math.PI, 0, false);
-      ctx.stroke();
-      ctx.fillRect(-s * 0.4, -s * 0.15, s * 0.8, s * 0.55);
-      break;
-    }
-    case 'check': {
-      ctx.strokeStyle = ctx.fillStyle;
-      ctx.beginPath();
+      return { strokeOnly: true, filledBody: () => ctx.fillRect(-s * 0.4, -s * 0.15, s * 0.8, s * 0.55) };
+    case 'check':
       ctx.moveTo(-s * 0.35, 0);
       ctx.lineTo(-s * 0.1, s * 0.3);
       ctx.lineTo(s * 0.4, -s * 0.3);
-      ctx.stroke();
-      break;
-    }
-    case 'alert': {
-      ctx.beginPath();
+      return { strokeOnly: true };
+    case 'clock':
+      ctx.arc(0, 0, s * 0.42, 0, Math.PI * 2);
+      ctx.moveTo(0, 0); ctx.lineTo(0, -s * 0.28);
+      ctx.moveTo(0, 0); ctx.lineTo(s * 0.18, s * 0.08);
+      return { strokeOnly: true };
+    case 'alert':
       ctx.moveTo(0, -s * 0.4);
       ctx.lineTo(s * 0.4, s * 0.35);
       ctx.lineTo(-s * 0.4, s * 0.35);
       ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#0A0A0B';
-      ctx.fillRect(-s * 0.05, -s * 0.15, s * 0.1, s * 0.25);
-      ctx.beginPath();
-      ctx.arc(0, s * 0.22, s * 0.05, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-    case 'spark': {
-      ctx.beginPath();
+      return { strokeOnly: false };
+    case 'spark':
       for (let i = 0; i < 4; i++) {
         const angle = (Math.PI / 2) * i;
-        const tipX = Math.cos(angle) * s * 0.45;
-        const tipY = Math.sin(angle) * s * 0.45;
+        const tipX = Math.cos(angle) * s * 0.45, tipY = Math.sin(angle) * s * 0.45;
         const midAngle = angle + Math.PI / 4;
-        const midX = Math.cos(midAngle) * s * 0.12;
-        const midY = Math.sin(midAngle) * s * 0.12;
-        if (i === 0) ctx.moveTo(tipX, tipY);
-        else ctx.lineTo(tipX, tipY);
+        const midX = Math.cos(midAngle) * s * 0.12, midY = Math.sin(midAngle) * s * 0.12;
+        if (i === 0) ctx.moveTo(tipX, tipY); else ctx.lineTo(tipX, tipY);
         ctx.lineTo(midX, midY);
       }
       ctx.closePath();
-      ctx.fill();
-      break;
-    }
-    case 'clock': {
-      ctx.strokeStyle = ctx.fillStyle;
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 0.42, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(0, -s * 0.28);
-      ctx.moveTo(0, 0);
-      ctx.lineTo(s * 0.18, s * 0.08);
-      ctx.stroke();
-      break;
-    }
-    case 'heart': {
-      ctx.beginPath();
+      return { strokeOnly: false };
+    case 'heart':
       ctx.moveTo(0, s * 0.32);
       ctx.bezierCurveTo(-s * 0.6, -s * 0.15, -s * 0.2, -s * 0.5, 0, -s * 0.15);
       ctx.bezierCurveTo(s * 0.2, -s * 0.5, s * 0.6, -s * 0.15, 0, s * 0.32);
-      ctx.fill();
-      break;
-    }
-    case 'chart': {
-      ctx.fillRect(-s * 0.35, -s * 0.1, s * 0.18, s * 0.5);
-      ctx.fillRect(-s * 0.09, -s * 0.3, s * 0.18, s * 0.7);
-      ctx.fillRect(s * 0.17, -s * 0.45, s * 0.18, s * 0.85);
-      break;
-    }
+      return { strokeOnly: false };
+    case 'chart':
+      return { strokeOnly: false, isChart: true };
     case 'money':
-    default: {
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.font = `${Math.round(s * 0.9)}px sans-serif`;
-      ctx.fillText('$', 0, s * 0.05);
-      break;
-    }
+    default:
+      return { strokeOnly: false, isText: true };
   }
-  ctx.restore();
 }
 
 function iconCallout(ctx, params, t, width, height) {
   const { icon, text, duration } = params;
-  clearBackground(ctx, width, height);
+  const accentColor = params.color || '#FF5C1A';
 
-  const entranceT = clamp01(t / (duration * 0.4));
-  const opacity = easeOutCubic(clamp01(t / (duration * 0.3)));
-  const scale = easeOutBack(entranceT);
+  const drawT = clamp01(t / (duration * 0.4));
+  const opacity = easeOutCubic(clamp01(t / (duration * 0.25)));
+  const popScale = easeOutBack(clamp01(t / (duration * 0.4)));
+
+  drawContactShadow(ctx, width / 2, height / 2 - 20, 44, 12, opacity * 0.35);
 
   ctx.save();
   ctx.globalAlpha = opacity;
   ctx.translate(width / 2, height / 2 - 60);
-  ctx.scale(scale, scale);
-  ctx.shadowColor = '#FF5C1A';
-  ctx.shadowBlur = 20;
-  ctx.fillStyle = '#FF5C1A';
-  drawIcon(ctx, icon, 70);
+  ctx.scale(popScale, popScale);
+  ctx.shadowColor = accentColor;
+  ctx.shadowBlur = 18;
+  ctx.strokeStyle = accentColor;
+  ctx.fillStyle = accentColor;
+  ctx.lineWidth = 7;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  const size = 70;
+  if (icon === 'money') {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `${Math.round(size * 0.9)}px sans-serif`;
+    ctx.globalAlpha = opacity * drawT;
+    ctx.fillText('$', 0, size * 0.05);
+  } else if (icon === 'chart') {
+    const bars = [
+      { x: -size * 0.35, h: size * 0.5 },
+      { x: -size * 0.09, h: size * 0.7 },
+      { x: size * 0.17, h: size * 0.85 },
+    ];
+    bars.forEach((bar, i) => {
+      const barT = clamp01((drawT - i * 0.15) / 0.5);
+      const h = bar.h * easeOutCubic(barT);
+      ctx.fillRect(bar.x, size * 0.4 - h, size * 0.18, h);
+    });
+  } else {
+    const shape = drawIconPath(ctx, icon, size);
+    if (shape.strokeOnly !== undefined) {
+      const approxLength = size * 4;
+      ctx.setLineDash([approxLength]);
+      ctx.lineDashOffset = approxLength * (1 - easeOutCubic(drawT));
+      if (!shape.strokeOnly) ctx.globalAlpha = opacity * drawT;
+      ctx.stroke();
+      if (!shape.strokeOnly) ctx.fill();
+      ctx.setLineDash([]);
+      if (shape.filledBody && drawT > 0.6) {
+        ctx.globalAlpha = opacity * clamp01((drawT - 0.6) / 0.4);
+        shape.filledBody();
+      }
+      // Alert's exclamation mark is carved out after the triangle
+      // fills in - lost in an earlier pass of this rewrite, restored
+      // here as its own follow-up draw once the triangle is mostly in.
+      if (icon === 'alert' && drawT > 0.5) {
+        ctx.globalAlpha = clamp01((drawT - 0.5) / 0.3);
+        ctx.fillStyle = '#08080A';
+        ctx.fillRect(-size * 0.05, -size * 0.15, size * 0.1, size * 0.25);
+        ctx.beginPath();
+        ctx.arc(0, size * 0.22, size * 0.05, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
   ctx.restore();
 
   ctx.save();
@@ -289,19 +393,23 @@ function iconCallout(ctx, params, t, width, height) {
 }
 
 function shapeReveal(ctx, params, t, width, height) {
-  const { shape, motion, color, duration } = params;
-  clearBackground(ctx, width, height);
+  const { shape, motion, duration } = params;
+  const color = params.color || '#FF5C1A';
 
   const entranceT = clamp01(t / (duration * 0.35));
   const opacity = easeOutCubic(entranceT);
   let scale = easeOutBack(entranceT);
 
   const holdT = clamp01((t - duration * 0.35) / (duration * 0.65));
+  let squashX = 1, squashY = 1;
   if (motion === 'pulse') {
-    scale *= 1 + Math.sin(holdT * Math.PI * 2) * 0.06;
+    const pulse = Math.sin(holdT * Math.PI * 2) * 0.06;
+    squashX = 1 + pulse; squashY = 1 - pulse * 0.6;
   } else if (motion === 'grow') {
     scale *= lerp(1, 1.4, easeOutCubic(holdT));
   }
+
+  drawContactShadow(ctx, width / 2, height / 2 + 110, 70 * scale, 16, opacity * 0.4);
 
   ctx.save();
   ctx.globalAlpha = opacity;
@@ -310,7 +418,7 @@ function shapeReveal(ctx, params, t, width, height) {
   ctx.shadowBlur = 35;
   ctx.fillStyle = color;
   ctx.translate(width / 2, height / 2);
-  ctx.scale(scale, scale);
+  ctx.scale(scale * squashX, scale * squashY);
 
   if (shape === 'square') {
     ctx.fillRect(-90, -90, 180, 180);
@@ -322,12 +430,10 @@ function shapeReveal(ctx, params, t, width, height) {
   ctx.restore();
 }
 
-/** Simple word-wrap helper shared by templates that render body text. */
 function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
   const words = text.split(' ');
   const lines = [];
   let current = '';
-
   for (const word of words) {
     const test = current ? `${current} ${word}` : word;
     if (ctx.measureText(test).width > maxWidth && current) {
@@ -338,11 +444,8 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
     }
   }
   if (current) lines.push(current);
-
   const startY = y - ((lines.length - 1) * lineHeight) / 2;
-  lines.forEach((line, i) => {
-    ctx.fillText(line, x, startY + i * lineHeight);
-  });
+  lines.forEach((line, i) => ctx.fillText(line, x, startY + i * lineHeight));
 }
 
 module.exports = { drawTemplate };
