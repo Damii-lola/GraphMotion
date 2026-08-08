@@ -69,8 +69,8 @@ const TEMPLATES = {
 };
 
 const TRANSITIONS = {
-  glitchWipe: { description: 'RGB-split glitch wipe between scenes. Default, punchy.' },
-  lightStreakDrag: { description: 'A bright light streak drags across the screen between scenes.' },
+  luminanceFlashCut: { description: 'The outgoing scene glows to a full white flash and the next scene emerges from it. Use as the default - a match cut through light.' },
+  irisMorph: { description: 'A glowing circular iris closes to a point then reopens into the next scene. Use for a more deliberate, dramatic beat change.' },
 };
 
 function buildMistralSystemPrompt() {
@@ -110,7 +110,7 @@ Rules:
   "title": "short internal title",
   "scenes": [
     { "template": "kineticTextReveal", "transition": null, "params": { "text": "...", "style": "bold-glow", "duration": 3 } },
-    { "template": "statCounter", "transition": "glitchWipe", "params": { "label": "...", "fromValue": 0, "toValue": 73, "suffix": "%", "duration": 2.5 } }
+    { "template": "statCounter", "transition": "luminanceFlashCut", "params": { "label": "...", "fromValue": 0, "toValue": 73, "suffix": "%", "duration": 2.5 } }
   ]
 }
 
@@ -163,7 +163,7 @@ function validateSceneJSON(json) {
 
     return {
       template: scene.template,
-      transition: i === 0 ? null : (scene.transition || 'glitchWipe'),
+      transition: i === 0 ? null : (scene.transition || 'luminanceFlashCut'),
       params: cleanParams,
     };
   });
