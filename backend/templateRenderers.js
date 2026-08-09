@@ -1,30 +1,32 @@
 const { easeOutCubic, easeOutBack, easeOutExpo, easeInOutCubic, lerp, clamp01 } = require('./easing');
 const { drawAtmosphere } = require('./atmosphere');
+const { drawComposition } = require('./sceneComposition');
 
 /**
- * FLAIR RULES v2 (upgraded from the direct critique of our own v1
- * output - every point below maps to a specific note):
- *   1. Every scene sits on the shared atmosphere layer, never flat
- *      color - "text on a void" was the single biggest complaint.
- *   2. Text animates per-CHARACTER with a stagger, not as one block -
- *      the single highest-leverage typography fix identified.
- *   3. Landing motions overshoot and settle - nothing arrives at
- *      exactly its target value and stops.
- *   4. Impacts get squash/stretch, not uniform scale - implies mass.
- *   5. A slow, continuous "camera push" (subtle scale creep) runs
- *      under every scene, tied to global time so it's continuous
- *      across cuts, not reset each scene.
- *   6. Icons draw themselves on via animated stroke paths where the
- *      shape is stroke-based, instead of a flat scale-pop.
- * `globalT` (the video's total elapsed time, not scene-local) is
- * threaded through every template now so atmosphere/camera motion
- * stays continuous across scene boundaries.
+ * FLAIR RULES v3 - v2 added polish (glow/grain/shadow/stagger) to a
+ * composition that was still structurally ONE element alone on
+ * screen. That was the real problem, and polish never fixes a
+ * structural problem. v3's actual fix: drawComposition() below
+ * GUARANTEES a background motif + corner tag + secondary accent
+ * shape on every single scene, before the hero content ever draws -
+ * it is now structurally impossible to render "one lonely thing
+ * again," and hero content is positioned off dead-center (rule of
+ * thirds) instead of always centered.
  */
+
+const SCENE_TAGS = {
+  kineticTextReveal: 'INSIGHT',
+  rippleDrop: 'ALERT',
+  statCounter: 'DATA',
+  iconCallout: 'NOTE',
+  shapeReveal: 'FOCUS',
+};
 
 function drawTemplate(ctx, template, params, localTime, globalT, width, height) {
   const accentColor = params.color || '#FF5C1A';
   drawAtmosphere(ctx, globalT, width, height, accentColor);
   applyCameraPush(ctx, globalT, width, height);
+  drawComposition(ctx, SCENE_TAGS[template], localTime, params.duration, globalT, width, height, accentColor);
 
   switch (template) {
     case 'kineticTextReveal':
@@ -110,7 +112,7 @@ function kineticTextReveal(ctx, params, t, width, height) {
   if (current) lines.push(current);
 
   const totalHeight = lines.length * lineHeight;
-  const startY = height / 2 - totalHeight / 2 + lineHeight / 2;
+  const startY = height * 0.42 - totalHeight / 2 + lineHeight / 2;
 
   // Flatten to characters with their target (x, y) so we can stagger
   // each one's entrance independently.
@@ -238,11 +240,11 @@ function statCounter(ctx, params, t, width, height) {
   const punchScale = countT >= 1 ? lerp(1.15, 1, easeOutBack(landT)) : 1;
   const landedGlow = countT >= 1 ? lerp(0, 28, landT) : 0;
 
-  drawContactShadow(ctx, width / 2, height / 2 + 60, 90, 18, opacity * 0.4);
+  drawContactShadow(ctx, width / 2, height * 0.42 + 60, 90, 18, opacity * 0.4);
 
   ctx.save();
   ctx.globalAlpha = opacity;
-  ctx.translate(width / 2, height / 2 + yOffset);
+  ctx.translate(width / 2, height * 0.42 + yOffset);
 
   ctx.save();
   ctx.scale(punchScale, punchScale);
@@ -322,11 +324,11 @@ function iconCallout(ctx, params, t, width, height) {
   const opacity = easeOutCubic(clamp01(t / (duration * 0.25)));
   const popScale = easeOutBack(clamp01(t / (duration * 0.4)));
 
-  drawContactShadow(ctx, width / 2, height / 2 - 20, 44, 12, opacity * 0.35);
+  drawContactShadow(ctx, width / 2, height * 0.42 - 20, 44, 12, opacity * 0.35);
 
   ctx.save();
   ctx.globalAlpha = opacity;
-  ctx.translate(width / 2, height / 2 - 60);
+  ctx.translate(width / 2, height * 0.42 - 60);
   ctx.scale(popScale, popScale);
   ctx.shadowColor = accentColor;
   ctx.shadowBlur = 18;
@@ -388,7 +390,7 @@ function iconCallout(ctx, params, t, width, height) {
   ctx.textAlign = 'center';
   ctx.font = '600 32px sans-serif';
   ctx.fillStyle = '#F5F5F5';
-  wrapText(ctx, text, width / 2, height / 2 + 20, width * 0.75, 40);
+  wrapText(ctx, text, width / 2, height * 0.42 + 20, width * 0.75, 40);
   ctx.restore();
 }
 
@@ -409,7 +411,7 @@ function shapeReveal(ctx, params, t, width, height) {
     scale *= lerp(1, 1.4, easeOutCubic(holdT));
   }
 
-  drawContactShadow(ctx, width / 2, height / 2 + 110, 70 * scale, 16, opacity * 0.4);
+  drawContactShadow(ctx, width / 2, height * 0.42 + 110, 70 * scale, 16, opacity * 0.4);
 
   ctx.save();
   ctx.globalAlpha = opacity;
@@ -417,7 +419,7 @@ function shapeReveal(ctx, params, t, width, height) {
   ctx.shadowColor = color;
   ctx.shadowBlur = 35;
   ctx.fillStyle = color;
-  ctx.translate(width / 2, height / 2);
+  ctx.translate(width / 2, height * 0.42);
   ctx.scale(scale * squashX, scale * squashY);
 
   if (shape === 'square') {
