@@ -1,57 +1,87 @@
 const { easeOutCubic, easeOutBack, easeInOutCubic, lerp, clamp01 } = require('./easing');
 
 /**
- * THE ACTUAL FIX for "only one thing happens on screen": every scene
- * used to be (atmosphere) + (one hero element), full stop. Adding
- * glow/grain/shadow to that is polish on emptiness - it was never
- * going to look "busy" or "god-tier" because there was structurally
- * only ever one object in the frame.
- *
- * This module draws THREE additional, ALWAYS-PRESENT layers around
- * whatever the hero content is, each with its own independent timing
- * so nothing moves in lockstep:
- *   1. A background motif (moving grid lines) - gives the eye
- *      something to travel across even during "empty" beats.
- *   2. A corner tag/badge - a small independently-animated label,
- *      the "screen-within-screen" density trick from the notes.
- *   3. A secondary accent shape - positioned OFF from the hero
- *      (rule-of-thirds, not dead center), at a different depth
- *      (dimmer/blurred) so there's real foreground/background
- *      separation, not everything on one flat plane.
- * The hero content (text/icon/number) still renders on top via each
- * template's own function - this just guarantees it's never alone.
+ * v4 - v3 added a motif grid + one corner tag + one tiny accent shape,
+ * which was still visually mostly empty frame with three small
+ * decorations. That's not "multiple things happening" - it's still
+ * one lonely composition with a few extra dots. This version fills
+ * the frame with genuinely many simultaneous, independently-timed
+ * elements: a stronger dual-layer grid, a continuous scan-line sweep,
+ * THREE secondary accent shapes at different positions/depths/scales
+ * (not one), floating mini "data chip" UI cards for screen-within-
+ * screen density, and a second corner indicator - all always present,
+ * all moving independently, all beneath the hero content in z-order
+ * so the message still reads clearly on top of a genuinely busy frame.
  */
 
 function drawMotifGrid(ctx, globalT, width, height, accentColor) {
   ctx.save();
   ctx.strokeStyle = accentColor;
-  ctx.globalAlpha = 0.06;
   ctx.lineWidth = 1;
 
+  // Primary grid - stronger than before (0.06 -> 0.1).
+  ctx.globalAlpha = 0.1;
   const spacing = 64;
   const drift = (globalT * 6) % spacing;
-
   for (let x = -spacing + drift; x < width + spacing; x += spacing) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, height);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
   }
   for (let y = -spacing + (drift * 0.4); y < height + spacing; y += spacing) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
   }
+
+  // Secondary diagonal grid - different spacing/angle/speed so it
+  // doesn't read as a simple duplicate, adds real visual texture.
+  ctx.globalAlpha = 0.05;
+  ctx.strokeStyle = '#FFFFFF';
+  const diagSpacing = 90;
+  const diagDrift = (globalT * -4) % diagSpacing;
+  ctx.save();
+  ctx.translate(width / 2, height / 2);
+  ctx.rotate(Math.PI / 6);
+  for (let x = -width + diagDrift; x < width * 1.5; x += diagSpacing) {
+    ctx.beginPath(); ctx.moveTo(x, -height); ctx.lineTo(x, height * 1.5); ctx.stroke();
+  }
+  ctx.restore();
   ctx.restore();
 }
 
 /**
- * Small pill-shaped tag in a top corner - its own entrance timing
- * (staggered against the hero content, never simultaneous), its own
- * subtle idle motion (drifts very slightly) so it reads as alive.
+ * A bright horizontal line continuously sweeping top to bottom -
+ * cheap (a couple of fillRect/gradient calls, same safe primitives as
+ * everything else) but reads as constant motion across the ENTIRE
+ * frame, not just in one corner.
  */
-function drawCornerTag(ctx, label, sceneLocalT, sceneDuration, width, height, accentColor) {
+function drawScanline(ctx, globalT, width, height, accentColor) {
+  const cycleT = (globalT % 6) / 6;
+  const y = cycleT * height;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  const grad = ctx.createLinearGradient(0, y - 40, 0, y + 40);
+  grad.addColorStop(0, 'rgba(255,255,255,0)');
+  grad.addColorStop(0.5, accentColor + '40');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, y - 40, width, 80);
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/**
+ * Small pill-shaped tag in a top corner - unchanged mechanic from v3,
+ * still the primary content-aware label.
+ */
+function drawCornerTag(ctx, label, sceneLocalT, width, height, accentColor) {
   const entranceT = clamp01((sceneLocalT - 0.1) / 0.4);
   if (entranceT <= 0) return;
 
@@ -65,7 +95,7 @@ function drawCornerTag(ctx, label, sceneLocalT, sceneDuration, width, height, ac
 
   ctx.font = '600 18px sans-serif';
   const textWidth = ctx.measureText(label).width;
-  const padX = 14, padY = 8;
+  const padX = 14;
   const boxW = textWidth + padX * 2;
   const boxH = 30;
 
@@ -88,11 +118,83 @@ function drawCornerTag(ctx, label, sceneLocalT, sceneDuration, width, height, ac
 }
 
 /**
- * Six genuinely distinct shapes, not one bracket reskinned - each
- * drawn in local space centered at origin so the caller's
- * translate/rotate/scale applies uniformly regardless of which shape
- * is picked.
+ * A second, smaller indicator in the OPPOSITE corner - a scene
+ * counter styled like a camera/recording UI readout ("01 / 03"),
+ * reinforcing the "screen-within-screen" nested-UI density from the
+ * reference videos, and giving the top-right corner something to look
+ * at instead of leaving it empty while the tag occupies top-left.
  */
+function drawCornerCounter(ctx, sceneIndex, sceneCount, sceneLocalT, width, height, accentColor) {
+  const entranceT = clamp01((sceneLocalT - 0.2) / 0.4);
+  if (entranceT <= 0) return;
+
+  const opacity = easeOutCubic(entranceT) * 0.85;
+  const label = `${String(sceneIndex + 1).padStart(2, '0')} / ${String(sceneCount).padStart(2, '0')}`;
+
+  ctx.save();
+  ctx.globalAlpha = opacity;
+  ctx.translate(width - 60, 90);
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.font = '600 15px monospace';
+  ctx.fillStyle = accentColor;
+  ctx.fillText(label, 0, 0);
+
+  ctx.beginPath();
+  ctx.arc(10, 0, 3, 0, Math.PI * 2);
+  ctx.globalAlpha = opacity * (0.5 + Math.sin(sceneLocalT * 4) * 0.5);
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * Small floating "data chip" mini-cards - miniature UI-card shapes
+ * (rounded rect outline + a tiny label + a tiny bar) scattered at
+ * fixed positions, each drifting independently and at a different
+ * "depth" (dimmer/smaller = further back). This is the direct
+ * implementation of the "screen-within-screen" / nested-frame density
+ * trick named in the reference breakdown - multiple small UI-like
+ * elements the eye can travel across, not just the hero content.
+ */
+const CHIP_LAYOUT = [
+  { x: 0.14, y: 0.72, label: 'A', depth: 0.4 },
+  { x: 0.85, y: 0.28, label: 'B', depth: 0.6 },
+  { x: 0.18, y: 0.2, label: 'C', depth: 0.3 },
+];
+
+function drawDataChips(ctx, sceneLocalT, width, height, accentColor) {
+  CHIP_LAYOUT.forEach((chip, i) => {
+    const entranceT = clamp01((sceneLocalT - 0.25 - i * 0.1) / 0.4);
+    if (entranceT <= 0) return;
+
+    const opacity = easeOutCubic(entranceT) * lerp(0.15, 0.4, chip.depth);
+    const drift = Math.sin(sceneLocalT * 0.6 + i * 2) * 6 * chip.depth;
+    const w = lerp(50, 70, chip.depth);
+    const h = 24;
+
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.translate(chip.x * width, chip.y * height + drift);
+    ctx.strokeStyle = accentColor;
+    ctx.lineWidth = 1;
+    roundRect(ctx, -w / 2, -h / 2, w, h, 6);
+    ctx.stroke();
+
+    ctx.fillStyle = accentColor;
+    ctx.beginPath();
+    ctx.arc(-w / 2 + 10, 0, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.globalAlpha = opacity * 0.6;
+    ctx.beginPath();
+    ctx.moveTo(-w / 2 + 18, 0);
+    ctx.lineTo(w / 2 - 8, 0);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
 function drawAccentShape(ctx, shape) {
   ctx.beginPath();
   switch (shape) {
@@ -106,101 +208,94 @@ function drawAccentShape(ctx, shape) {
       ctx.arc(0, 0, 6, 0, Math.PI * 2);
       ctx.stroke();
       return;
-
     case 'dots': {
       const positions = [[-20, -10], [0, 15], [20, -15], [8, 5]];
       for (const [dx, dy] of positions) {
-        ctx.beginPath();
-        ctx.arc(dx, dy, 3.5, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.beginPath(); ctx.arc(dx, dy, 3.5, 0, Math.PI * 2); ctx.fill();
       }
       return;
     }
-
     case 'arrow':
-      ctx.moveTo(-25, 15);
-      ctx.lineTo(20, -15);
-      ctx.moveTo(4, -15);
-      ctx.lineTo(20, -15);
-      ctx.lineTo(20, 1);
+      ctx.moveTo(-25, 15); ctx.lineTo(20, -15);
+      ctx.moveTo(4, -15); ctx.lineTo(20, -15); ctx.lineTo(20, 1);
       ctx.stroke();
       return;
-
     case 'plus':
       ctx.moveTo(-22, 0); ctx.lineTo(22, 0);
       ctx.moveTo(0, -22); ctx.lineTo(0, 22);
       ctx.stroke();
       return;
-
     case 'triangle':
-      ctx.moveTo(0, -28);
-      ctx.lineTo(26, 20);
-      ctx.lineTo(-26, 20);
-      ctx.closePath();
-      ctx.stroke();
+      ctx.moveTo(0, -28); ctx.lineTo(26, 20); ctx.lineTo(-26, 20);
+      ctx.closePath(); ctx.stroke();
       return;
-
     case 'bracket':
     default:
-      ctx.moveTo(-30, -30);
-      ctx.lineTo(30, -30);
-      ctx.lineTo(30, 30);
+      ctx.moveTo(-30, -30); ctx.lineTo(30, -30); ctx.lineTo(30, 30);
       ctx.stroke();
       return;
   }
 }
 
-/**
- * A dim, blurred-feeling secondary shape sitting off-center (rule of
- * thirds, not dead center) at a different visual "depth" than the
- * hero content - it's what actually creates foreground/background
- * separation instead of one flat plane. `shape` now varies per scene
- * (Mistral picks it, tied to that scene's meaning) instead of always
- * being the same generic bracket.
- */
-function drawSecondaryAccent(ctx, shape, sceneLocalT, sceneDuration, width, height, accentColor) {
-  const entranceT = clamp01((sceneLocalT - 0.15) / 0.5);
-  if (entranceT <= 0) return;
+// Fixed layout of 4 accent positions across the frame - the scene's
+// chosen shape renders at full size/opacity in the primary slot, and
+// three OTHER shapes from the enum fill the remaining slots at
+// smaller scale/lower opacity, so the frame always has multiple
+// distinct accent shapes at once, not a single repeated one.
+const ACCENT_SHAPES_ALL = ['bracket', 'crosshair', 'dots', 'arrow', 'plus', 'triangle'];
+const ACCENT_SLOTS = [
+  { x: 0.82, y: 0.78, scaleMul: 1, opacityMul: 1, rotSpeed: 0.15 },
+  { x: 0.16, y: 0.85, scaleMul: 0.6, opacityMul: 0.5, rotSpeed: -0.1 },
+  { x: 0.88, y: 0.14, scaleMul: 0.5, opacityMul: 0.4, rotSpeed: 0.22 },
+  { x: 0.55, y: 0.92, scaleMul: 0.45, opacityMul: 0.35, rotSpeed: -0.18 },
+];
 
-  const opacity = easeOutCubic(entranceT) * 0.35;
-  const x = width * 0.82;
-  const y = height * 0.78;
-  const rotation = sceneLocalT * 0.15;
-  const scale = lerp(0.7, 1, easeOutCubic(entranceT));
-
-  ctx.save();
-  ctx.globalAlpha = opacity;
-  ctx.translate(x, y);
-  ctx.rotate(rotation);
-  ctx.scale(scale, scale);
-  ctx.strokeStyle = accentColor;
-  ctx.fillStyle = accentColor;
-  ctx.lineWidth = 2;
-  drawAccentShape(ctx, shape);
-  ctx.restore();
+function pickSecondaryShape(primaryShape, slotIndex) {
+  const others = ACCENT_SHAPES_ALL.filter((s) => s !== primaryShape);
+  return others[slotIndex % others.length];
 }
 
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+function drawSecondaryAccents(ctx, primaryShape, sceneLocalT, width, height, accentColor) {
+  ACCENT_SLOTS.forEach((slot, i) => {
+    const entranceT = clamp01((sceneLocalT - 0.15 - i * 0.08) / 0.5);
+    if (entranceT <= 0) return;
+
+    const shape = i === 0 ? primaryShape : pickSecondaryShape(primaryShape, i - 1);
+    const opacity = easeOutCubic(entranceT) * 0.35 * slot.opacityMul;
+    const rotation = sceneLocalT * slot.rotSpeed;
+    const scale = lerp(0.7, 1, easeOutCubic(entranceT)) * slot.scaleMul;
+
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.translate(slot.x * width, slot.y * height);
+    ctx.rotate(rotation);
+    ctx.scale(scale, scale);
+    ctx.strokeStyle = accentColor;
+    ctx.fillStyle = accentColor;
+    ctx.lineWidth = 2;
+    drawAccentShape(ctx, shape);
+    ctx.restore();
+  });
 }
 
 /**
  * Call this AFTER atmosphere and BEFORE the hero content in every
- * template - draws the motif + tag + secondary accent as one
- * guaranteed layer, so it's structurally impossible for a scene to
- * render as "one lonely element again."
+ * template. Draws, all simultaneously and independently timed: dual
+ * grid layers, a continuous scan-line sweep, FOUR accent shapes
+ * (varied), three floating data chips, a corner tag, and a corner
+ * counter - a genuinely dense, always-multi-element frame instead of
+ * a hero element plus a couple of small decorations.
  */
-function drawComposition(ctx, tagLabel, accentShape, sceneLocalT, sceneDuration, globalT, width, height, accentColor) {
+function drawComposition(ctx, tagLabel, accentShape, sceneLocalT, sceneDuration, globalT, width, height, accentColor, sceneIndex, sceneCount) {
   drawMotifGrid(ctx, globalT, width, height, accentColor);
-  drawSecondaryAccent(ctx, accentShape, sceneLocalT, sceneDuration, width, height, accentColor);
+  drawScanline(ctx, globalT, width, height, accentColor);
+  drawDataChips(ctx, sceneLocalT, width, height, accentColor);
+  drawSecondaryAccents(ctx, accentShape, sceneLocalT, width, height, accentColor);
   if (tagLabel) {
-    drawCornerTag(ctx, tagLabel, sceneLocalT, sceneDuration, width, height, accentColor);
+    drawCornerTag(ctx, tagLabel, sceneLocalT, width, height, accentColor);
+  }
+  if (typeof sceneIndex === 'number' && typeof sceneCount === 'number') {
+    drawCornerCounter(ctx, sceneIndex, sceneCount, sceneLocalT, width, height, accentColor);
   }
 }
 
