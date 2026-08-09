@@ -1,19 +1,15 @@
 const { clamp01, lerp } = require('./easing');
 
 /**
- * Every scene currently sat on flat #0A0A0B with nothing else - the
- * single biggest reason the output reads as "text on a void" instead
- * of "a designed environment". This module is the fix: a gradient
- * base (implies a light source instead of dead flat color), a vignette
- * (frames attention, implies a lens), procedural grain (kills banding
- * on the glow/gradient combo, gives black actual texture instead of
- * reading as a flat digital fill), and a slow-drifting particle field
- * (the environment is never fully static - "static backgrounds get
- * scrolled past").
- *
- * Deterministic per-frame: particle positions are seeded from a fixed
- * list computed once, not Math.random() per frame, so drift is smooth
- * and repeatable rather than flickering noise.
+ * Every function here now takes `system` (a config object from
+ * visualSystems.js) and branches its behavior on it - same safe,
+ * benchmarked primitives underneath (particles via fillRect/arc, grain
+ * via sparse speckles, glow via ctx.filter blur on a shape - never
+ * drawImage-of-canvas, confirmed leaky and removed permanently), but
+ * genuinely different output depending on which system is active.
+ * hudTerminal keeps exactly the look this file always had; the other
+ * two systems turn off/replace pieces of it rather than just
+ * recoloring the same elements.
  */
 
 const PARTICLE_COUNT = 70;
@@ -21,9 +17,6 @@ let particleSeeds = null;
 
 function getParticleSeeds() {
   if (particleSeeds) return particleSeeds;
-  // Simple deterministic PRNG (mulberry32) so the same seed always
-  // produces the same particle field - reproducible renders, no
-  // per-frame randomness causing flicker.
   let seed = 1337;
   function rand() {
     seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
@@ -31,45 +24,27 @@ function getParticleSeeds() {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
-
   particleSeeds = Array.from({ length: PARTICLE_COUNT }, () => ({
-    x: rand(),
-    y: rand(),
-    depth: rand(), // 0 = far/background (slow, dim, small), 1 = near (faster, brighter, bigger)
-    phase: rand() * Math.PI * 2,
+    x: rand(), y: rand(), depth: rand(), phase: rand() * Math.PI * 2,
   }));
   return particleSeeds;
 }
 
-/**
- * Draws the full atmosphere: gradient base, drifting particles,
- * vignette, grain - in that back-to-front order. `globalT` is the
- * video's overall elapsed time in seconds (not scene-local), so the
- * particle drift and subtle camera push are continuous across scene
- * cuts rather than resetting each scene, which is part of what makes
- * disconnected beats read as one continuous "world" instead of eight
- * separate exports stitched together.
- */
-function drawAtmosphere(ctx, globalT, width, height, accentColor) {
-  drawGradientBase(ctx, width, height);
-  drawGlowBlob(ctx, globalT, width, height, accentColor);
-  drawParticles(ctx, globalT, width, height, accentColor);
-  drawVignette(ctx, width, height);
-  drawGrain(ctx, globalT, width, height);
+function drawAtmosphere(ctx, globalT, width, height, accentColor, system) {
+  drawGradientBase(ctx, width, height, system);
+  if (system.showGlowBlob) drawGlowBlob(ctx, globalT, width, height, accentColor);
+  if (system.showParticles) drawParticles(ctx, globalT, width, height, accentColor, system);
+  if (system.flatBlockAccent) drawFlatBlocks(ctx, globalT, width, height, accentColor);
+  drawVignette(ctx, width, height, system);
+  // Grain reads as "video texture" on the dark HUD look but would
+  // just look like dirt on a light editorial background or muddy a
+  // flat poster-graphic block - only draw it for hudTerminal.
+  if (system.name === 'hudTerminal') drawGrain(ctx, globalT, width, height);
 }
 
-/**
- * A large, heavily-blurred soft glow drifting slowly in the deep
- * background - real depth-of-field feel (confirmed safe: ctx.filter
- * blur on a plain shape, not drawImage, benchmarked at ~0.4MB growth
- * over 660 frames vs the gigabytes drawImage-based approaches leaked).
- * Gives the frame an actual light source with presence, not just a
- * gradient implying one.
- */
 function drawGlowBlob(ctx, globalT, width, height, accentColor) {
   const x = width * 0.5 + Math.sin(globalT * 0.15) * width * 0.15;
   const y = height * 0.3 + Math.cos(globalT * 0.1) * height * 0.08;
-
   ctx.save();
   ctx.filter = 'blur(80px)';
   ctx.globalAlpha = 0.12;
@@ -82,89 +57,80 @@ function drawGlowBlob(ctx, globalT, width, height, accentColor) {
   ctx.restore();
 }
 
-function drawGradientBase(ctx, width, height) {
-  // Near-black, not pure #000 (pure black crushes/bands on phone
-  // screens per the notes) with a very faint implied light source
-  // from upper area, instead of one flat fill color.
+function drawGradientBase(ctx, width, height, system) {
   const grad = ctx.createRadialGradient(
     width / 2, height * 0.35, 0,
     width / 2, height * 0.35, height * 0.9
   );
-  grad.addColorStop(0, '#141416');
-  grad.addColorStop(1, '#08080A');
+  grad.addColorStop(0, system.bgColorInner);
+  grad.addColorStop(1, system.bgColorOuter);
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, width, height);
 }
 
-function drawParticles(ctx, globalT, width, height, accentColor) {
+/**
+ * boldGraphic's signature move: instead of soft glowing particles, a
+ * few large FLAT saturated color blocks anchored at frame edges - no
+ * gradient, no blur, no glow. Reads as poster/graphic-design, not a
+ * dimmer version of the HUD look.
+ */
+function drawFlatBlocks(ctx, globalT, width, height, accentColor) {
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = accentColor;
+  const slide = Math.sin(globalT * 0.2) * 20;
+  ctx.fillRect(0, 0, width * 0.22 + slide, height);
+  ctx.globalAlpha = 0.85;
+  ctx.fillRect(width - (width * 0.12), 0, width * 0.12, height);
+  ctx.restore();
+}
+
+function drawParticles(ctx, globalT, width, height, accentColor, system) {
   const seeds = getParticleSeeds();
   ctx.save();
   for (const p of seeds) {
-    // Depth cue: far particles drift slower and stay dimmer/smaller,
-    // near particles move more and read brighter/bigger - parallax
-    // and atmospheric-perspective cues from a single loop.
     const speed = lerp(0.004, 0.02, p.depth);
     const size = lerp(1, 3, p.depth);
-    const baseAlpha = lerp(0.04, 0.13, p.depth);
+    // softEditorial: calmer, dimmer, no accent-color particles at all
+    // (pure neutral dust motes, not "HUD data points").
+    const alphaMul = system.name === 'softEditorial' ? 0.5 : 1;
+    const baseAlpha = lerp(0.04, 0.13, p.depth) * alphaMul;
 
     const driftX = Math.sin(globalT * speed * 20 + p.phase) * 20 * p.depth;
     const driftY = (globalT * speed * 15 + p.y * height) % (height + 40) - 20;
 
-    const x = p.x * width + driftX;
-    const y = driftY;
-
     ctx.globalAlpha = baseAlpha;
-    ctx.fillStyle = p.depth > 0.75 ? accentColor : '#FFFFFF';
+    ctx.fillStyle = (system.name === 'hudTerminal' && p.depth > 0.75) ? accentColor : system.mutedTextColor;
     ctx.beginPath();
-    ctx.arc(x, y, size, 0, Math.PI * 2);
+    ctx.arc(p.x * width + driftX, driftY, size, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
 }
 
-function drawVignette(ctx, width, height) {
+function drawVignette(ctx, width, height, system) {
+  if (system.vignetteStrength <= 0) return;
   const grad = ctx.createRadialGradient(
     width / 2, height / 2, height * 0.35,
     width / 2, height / 2, height * 0.75
   );
   grad.addColorStop(0, 'rgba(0,0,0,0)');
-  grad.addColorStop(1, 'rgba(0,0,0,0.55)');
+  grad.addColorStop(1, `rgba(0,0,0,${system.vignetteStrength})`);
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, width, height);
 }
 
-// Grain via drawImage-of-a-separate-canvas was tested and found to
-// leak severely in this Skia binding - confirmed by direct benchmark
-// (a plain, unscaled, blend-mode-free drawImage of a canvas source,
-// repeated 300 times, grew RSS from 90MB to over 1.1GB on its own).
-// This is a known class of issue across canvas implementations
-// generally (documented in Mozilla's own bug tracker historically,
-// and in node-canvas's issue tracker), not unique to this project's
-// code. Our actual render loop only ever does ONE read-only
-// getImageData call per frame to hand pixels to ffmpeg - no
-// putImageData, no drawImage-of-canvas anywhere else - and that
-// specific pattern is confirmed safe. Grain now uses the same
-// primitive already proven safe (many small fillRect calls, same
-// category as the particle field) instead of any image-buffer
-// operation, even though it's a coarser texture as a result - a
-// real, deliberate quality tradeoff in exchange for not crashing.
 function drawGrain(ctx, globalT, width, height) {
   ctx.save();
   ctx.globalAlpha = 0.05;
   ctx.fillStyle = '#FFFFFF';
-  // Deterministic-per-frame sparse speckle field, reseeded each call
-  // from globalT so it changes frame to frame without needing to
-  // store/redraw any separate image buffer.
   let seed = Math.floor(globalT * 1000) % 100000;
   function rand() {
     seed = (seed * 9301 + 49297) % 233280;
     return seed / 233280;
   }
-  const speckleCount = 90;
-  for (let i = 0; i < speckleCount; i++) {
-    const x = rand() * width;
-    const y = rand() * height;
-    ctx.fillRect(x, y, 1, 1);
+  for (let i = 0; i < 90; i++) {
+    ctx.fillRect(rand() * width, rand() * height, 1, 1);
   }
   ctx.restore();
 }
