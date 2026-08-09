@@ -43,6 +43,8 @@ function buildTimeline(sceneJSON) {
       kind: 'scene',
       template: scene.template,
       params,
+      sceneIndex: i,
+      sceneCount: sceneJSON.scenes.length,
       start: cursor,
       end: cursor + params.duration,
     });
@@ -100,7 +102,7 @@ async function renderJobToFile(jobId, sceneJSON, onProgress) {
     const localTime = globalTime - segment.start;
 
     if (segment.kind === 'scene') {
-      drawTemplate(ctx, segment.template, segment.params, localTime, globalTime, WIDTH, HEIGHT);
+      drawTemplate(ctx, segment.template, segment.params, localTime, globalTime, WIDTH, HEIGHT, segment.sceneIndex, segment.sceneCount);
     } else {
       drawTransition(ctx, segment.name, localTime, WIDTH, HEIGHT, accentColor);
     }
