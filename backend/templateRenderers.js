@@ -14,7 +14,12 @@ const { drawComposition } = require('./sceneComposition');
  * thirds) instead of always centered.
  */
 
-const SCENE_TAGS = {
+/**
+ * Fallback only - used if a scene somehow arrives without a tag
+ * (shouldn't happen now that sceneTemplates.js gives every template a
+ * defaulted "tag" param, but a hardcoded default here doesn't hurt).
+ */
+const FALLBACK_TAGS = {
   kineticTextReveal: 'INSIGHT',
   rippleDrop: 'ALERT',
   statCounter: 'DATA',
@@ -24,9 +29,12 @@ const SCENE_TAGS = {
 
 function drawTemplate(ctx, template, params, localTime, globalT, width, height) {
   const accentColor = params.color || '#FF5C1A';
+  const tag = params.tag || FALLBACK_TAGS[template] || 'INSIGHT';
+  const accentShape = params.accentShape || 'bracket';
+
   drawAtmosphere(ctx, globalT, width, height, accentColor);
   applyCameraPush(ctx, globalT, width, height);
-  drawComposition(ctx, SCENE_TAGS[template], localTime, params.duration, globalT, width, height, accentColor);
+  drawComposition(ctx, tag, accentShape, localTime, params.duration, globalT, width, height, accentColor);
 
   switch (template) {
     case 'kineticTextReveal':
