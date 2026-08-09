@@ -27,14 +27,14 @@ const FALLBACK_TAGS = {
   shapeReveal: 'FOCUS',
 };
 
-function drawTemplate(ctx, template, params, localTime, globalT, width, height) {
+function drawTemplate(ctx, template, params, localTime, globalT, width, height, sceneIndex, sceneCount) {
   const accentColor = params.color || '#FF5C1A';
   const tag = params.tag || FALLBACK_TAGS[template] || 'INSIGHT';
   const accentShape = params.accentShape || 'bracket';
 
   drawAtmosphere(ctx, globalT, width, height, accentColor);
   applyCameraPush(ctx, globalT, width, height);
-  drawComposition(ctx, tag, accentShape, localTime, params.duration, globalT, width, height, accentColor);
+  drawComposition(ctx, tag, accentShape, localTime, params.duration, globalT, width, height, accentColor, sceneIndex, sceneCount);
 
   switch (template) {
     case 'kineticTextReveal':
