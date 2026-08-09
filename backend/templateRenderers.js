@@ -1,24 +1,21 @@
 const { easeOutCubic, easeOutBack, easeOutExpo, easeInOutCubic, lerp, clamp01 } = require('./easing');
 const { drawAtmosphere } = require('./atmosphere');
 const { drawComposition } = require('./sceneComposition');
+const { getVisualSystem } = require('./visualSystems');
 
 /**
- * FLAIR RULES v3 - v2 added polish (glow/grain/shadow/stagger) to a
- * composition that was still structurally ONE element alone on
- * screen. That was the real problem, and polish never fixes a
- * structural problem. v3's actual fix: drawComposition() below
- * GUARANTEES a background motif + corner tag + secondary accent
- * shape on every single scene, before the hero content ever draws -
- * it is now structurally impossible to render "one lonely thing
- * again," and hero content is positioned off dead-center (rule of
- * thirds) instead of always centered.
+ * FLAIR RULES v4 - v3 fixed "one lonely element" via drawComposition.
+ * This version fixes a DIFFERENT real problem: every video looked the
+ * same regardless of topic, because atmosphere/composition/hero-content
+ * colors and treatment were hardcoded to one dark-glow look. Every
+ * hero-content function now takes `system` (from visualSystems.js) and
+ * uses system.heroTextColor/fontFamily/fontWeight instead of hardcoded
+ * '#F5F5F5'/sans-serif, and gates its glow (shadowBlur) on
+ * system.heroUsesGlow - softEditorial and boldGraphic render flat,
+ * no neon glow, matching their register instead of being a recolor of
+ * hudTerminal.
  */
 
-/**
- * Fallback only - used if a scene somehow arrives without a tag
- * (shouldn't happen now that sceneTemplates.js gives every template a
- * defaulted "tag" param, but a hardcoded default here doesn't hurt).
- */
 const FALLBACK_TAGS = {
   kineticTextReveal: 'INSIGHT',
   rippleDrop: 'ALERT',
@@ -27,30 +24,31 @@ const FALLBACK_TAGS = {
   shapeReveal: 'FOCUS',
 };
 
-function drawTemplate(ctx, template, params, localTime, globalT, width, height, sceneIndex, sceneCount) {
+function drawTemplate(ctx, template, params, localTime, globalT, width, height, sceneIndex, sceneCount, visualSystemName) {
   const accentColor = params.color || '#FF5C1A';
   const tag = params.tag || FALLBACK_TAGS[template] || 'INSIGHT';
   const accentShape = params.accentShape || 'bracket';
+  const system = getVisualSystem(visualSystemName);
 
-  drawAtmosphere(ctx, globalT, width, height, accentColor);
+  drawAtmosphere(ctx, globalT, width, height, accentColor, system);
   applyCameraPush(ctx, globalT, width, height);
-  drawComposition(ctx, tag, accentShape, localTime, params.duration, globalT, width, height, accentColor, sceneIndex, sceneCount);
+  drawComposition(ctx, tag, accentShape, localTime, params.duration, globalT, width, height, accentColor, sceneIndex, sceneCount, system);
 
   switch (template) {
     case 'kineticTextReveal':
-      kineticTextReveal(ctx, params, localTime, width, height);
+      kineticTextReveal(ctx, params, localTime, width, height, system);
       break;
     case 'rippleDrop':
-      rippleDrop(ctx, params, localTime, width, height);
+      rippleDrop(ctx, params, localTime, width, height, system);
       break;
     case 'statCounter':
-      statCounter(ctx, params, localTime, width, height);
+      statCounter(ctx, params, localTime, width, height, system);
       break;
     case 'iconCallout':
-      iconCallout(ctx, params, localTime, width, height);
+      iconCallout(ctx, params, localTime, width, height, system);
       break;
     case 'shapeReveal':
-      shapeReveal(ctx, params, localTime, width, height);
+      shapeReveal(ctx, params, localTime, width, height, system);
       break;
     default:
       throw new Error(`No renderer implemented for template "${template}"`);
@@ -59,13 +57,6 @@ function drawTemplate(ctx, template, params, localTime, globalT, width, height, 
   ctx.restore(); // matches the save() in applyCameraPush
 }
 
-/**
- * A near-imperceptible continuous zoom (1.0 -> ~1.035 over 20s, then
- * loops) applied as a transform around the canvas center before any
- * content draws. This alone was named as "the single biggest missing
- * ingredient" in the notes - a video where nothing ever looks static
- * because the camera never stops moving, even subtly.
- */
 function applyCameraPush(ctx, globalT, width, height) {
   ctx.save();
   const cycle = (globalT % 20) / 20;
@@ -88,23 +79,14 @@ function drawContactShadow(ctx, x, y, radiusX, radiusY, alpha) {
   ctx.restore();
 }
 
-/**
- * Character-level staggered reveal, replacing the old single-block
- * fade+scale. Each character gets its own entrance offset in time (a
- * "stagger") so the line assembles with a ripple instead of switching
- * on as one flat unit - directly the #1 typography note.
- */
-function kineticTextReveal(ctx, params, t, width, height) {
+function kineticTextReveal(ctx, params, t, width, height, system) {
   const { text, duration } = params;
   const accentColor = params.color || '#FF5C1A';
 
-  ctx.font = 'bold 50px sans-serif';
+  ctx.font = `${system.fontWeight} 50px ${system.fontFamily}`;
   const words = text.split(' ');
   const lineHeight = 58;
 
-  // Wrap into lines first (measuring against a max width), same
-  // constraint as before, but now we need per-CHARACTER positions
-  // rather than just per-line, so layout happens before animation.
   const maxWidth = width * 0.82;
   const lines = [];
   let current = '';
@@ -122,8 +104,6 @@ function kineticTextReveal(ctx, params, t, width, height) {
   const totalHeight = lines.length * lineHeight;
   const startY = height * 0.42 - totalHeight / 2 + lineHeight / 2;
 
-  // Flatten to characters with their target (x, y) so we can stagger
-  // each one's entrance independently.
   const chars = [];
   lines.forEach((line, li) => {
     const lineWidth = ctx.measureText(line).width;
@@ -136,7 +116,7 @@ function kineticTextReveal(ctx, params, t, width, height) {
     }
   });
 
-  const staggerWindow = duration * 0.4; // all characters finish entering by 40% of scene duration
+  const staggerWindow = duration * 0.4;
   const perCharDelay = chars.length > 1 ? staggerWindow / chars.length : 0;
 
   ctx.textAlign = 'center';
@@ -149,23 +129,23 @@ function kineticTextReveal(ctx, params, t, width, height) {
 
     const opacity = easeOutCubic(charT);
     const scale = lerp(1.4, 1, easeOutBack(charT));
-    // Tiny per-character vertical offset ("baseline jitter") so the
-    // line reads as handmade rather than a perfectly uniform grid.
     const jitter = Math.sin(c.index * 12.9898) * 1.5;
 
     ctx.save();
     ctx.globalAlpha = opacity;
     ctx.translate(c.x, c.y + jitter);
     ctx.scale(scale, scale);
-    ctx.shadowColor = accentColor;
-    ctx.shadowBlur = lerp(0, 16, clamp01((t - charStart - duration * 0.15) / (duration * 0.2)));
-    ctx.fillStyle = '#F5F5F5';
+    if (system.heroUsesGlow) {
+      ctx.shadowColor = accentColor;
+      ctx.shadowBlur = lerp(0, 16, clamp01((t - charStart - duration * 0.15) / (duration * 0.2)));
+    }
+    ctx.fillStyle = system.heroTextColor;
     ctx.fillText(c.ch, 0, 0);
     ctx.restore();
   }
 }
 
-function rippleDrop(ctx, params, t, width, height) {
+function rippleDrop(ctx, params, t, width, height, system) {
   const { caption, duration } = params;
   const color = params.color || '#FF5C1A';
 
@@ -176,9 +156,6 @@ function rippleDrop(ctx, params, t, width, height) {
   const dropT = clamp01(t / (duration * 0.55));
   const y = lerp(startY, landY, easeOutCubic(dropT));
 
-  // Squash/stretch on impact: right at landing, the ball briefly
-  // flattens (wide, short) then springs back to round - implies mass
-  // and impact instead of a rigid circle just stopping.
   const impactWindow = 0.12;
   const timeSinceLand = t - duration * 0.55;
   let squashX = 1, squashY = 1;
@@ -196,7 +173,9 @@ function rippleDrop(ctx, params, t, width, height) {
       if (ringT <= 0) continue;
       const radius = lerp(30, 150, easeOutExpo(ringT));
       const alpha = (1 - ringT) * 0.4;
-      ctx.strokeStyle = `rgba(255,255,255,${alpha.toFixed(3)})`;
+      ctx.strokeStyle = system.name === 'softEditorial'
+        ? `rgba(42,38,34,${alpha.toFixed(3)})`
+        : `rgba(255,255,255,${alpha.toFixed(3)})`;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(centerX, landY, radius, 0, Math.PI * 2);
@@ -209,9 +188,11 @@ function rippleDrop(ctx, params, t, width, height) {
   ctx.save();
   ctx.translate(centerX, y);
   ctx.scale(squashX, squashY);
-  ctx.globalCompositeOperation = 'screen';
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 30;
+  if (system.heroUsesGlow) {
+    ctx.globalCompositeOperation = 'screen';
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 30;
+  }
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.arc(0, 0, 20, 0, Math.PI * 2);
@@ -222,15 +203,15 @@ function rippleDrop(ctx, params, t, width, height) {
     const captionT = clamp01((t - duration * 0.5) / (duration * 0.3));
     ctx.save();
     ctx.globalAlpha = easeOutCubic(captionT);
-    ctx.font = 'bold 34px sans-serif';
+    ctx.font = `${system.fontWeight} 34px ${system.fontFamily}`;
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#F5F5F5';
+    ctx.fillStyle = system.heroTextColor;
     ctx.fillText(caption, centerX, height * 0.62);
     ctx.restore();
   }
 }
 
-function statCounter(ctx, params, t, width, height) {
+function statCounter(ctx, params, t, width, height, system) {
   const { label, fromValue, toValue, suffix, duration } = params;
   const accentColor = params.color || '#FF5C1A';
 
@@ -241,9 +222,6 @@ function statCounter(ctx, params, t, width, height) {
   const countT = clamp01(t / (duration * 0.55));
   const current = Math.round(lerp(fromValue, toValue, easeOutExpo(countT)));
 
-  // Overshoot-punch on landing: the final number briefly scales past
-  // 100% then eases back, so it "hits" instead of just arriving -
-  // directly the notes' counter-finale note.
   const landT = clamp01((t - duration * 0.55) / (duration * 0.2));
   const punchScale = countT >= 1 ? lerp(1.15, 1, easeOutBack(landT)) : 1;
   const landedGlow = countT >= 1 ? lerp(0, 28, landT) : 0;
@@ -257,26 +235,22 @@ function statCounter(ctx, params, t, width, height) {
   ctx.save();
   ctx.scale(punchScale, punchScale);
   ctx.textAlign = 'center';
-  ctx.shadowColor = accentColor;
-  ctx.shadowBlur = landedGlow;
-  ctx.font = '900 76px sans-serif';
-  ctx.fillStyle = '#F5F5F5';
+  if (system.heroUsesGlow) {
+    ctx.shadowColor = accentColor;
+    ctx.shadowBlur = landedGlow;
+  }
+  ctx.font = `900 76px ${system.fontFamily}`;
+  ctx.fillStyle = system.heroTextColor;
   ctx.fillText(`${current}${suffix}`, 0, -10);
   ctx.restore();
 
-  ctx.font = '500 26px sans-serif';
-  ctx.fillStyle = '#B5B5B8';
+  ctx.font = `500 26px ${system.fontFamily}`;
+  ctx.fillStyle = system.mutedTextColor;
   ctx.textAlign = 'center';
   ctx.fillText(label, 0, 40);
   ctx.restore();
 }
 
-/**
- * Icons are hand-drawn vector paths (not fonts - see earlier fix) and
- * now draw themselves on via an animated stroke offset where the icon
- * is stroke-based, rather than popping in at full opacity/scale. This
- * is the canvas equivalent of an AE trim-paths reveal.
- */
 function drawIconPath(ctx, icon, size) {
   const s = size;
   ctx.beginPath();
@@ -324,7 +298,7 @@ function drawIconPath(ctx, icon, size) {
   }
 }
 
-function iconCallout(ctx, params, t, width, height) {
+function iconCallout(ctx, params, t, width, height, system) {
   const { icon, text, duration } = params;
   const accentColor = params.color || '#FF5C1A';
 
@@ -338,8 +312,10 @@ function iconCallout(ctx, params, t, width, height) {
   ctx.globalAlpha = opacity;
   ctx.translate(width / 2, height * 0.42 - 60);
   ctx.scale(popScale, popScale);
-  ctx.shadowColor = accentColor;
-  ctx.shadowBlur = 18;
+  if (system.heroUsesGlow) {
+    ctx.shadowColor = accentColor;
+    ctx.shadowBlur = 18;
+  }
   ctx.strokeStyle = accentColor;
   ctx.fillStyle = accentColor;
   ctx.lineWidth = 7;
@@ -350,7 +326,7 @@ function iconCallout(ctx, params, t, width, height) {
   if (icon === 'money') {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = `${Math.round(size * 0.9)}px sans-serif`;
+    ctx.font = `${Math.round(size * 0.9)}px ${system.fontFamily}`;
     ctx.globalAlpha = opacity * drawT;
     ctx.fillText('$', 0, size * 0.05);
   } else if (icon === 'chart') {
@@ -378,12 +354,9 @@ function iconCallout(ctx, params, t, width, height) {
         ctx.globalAlpha = opacity * clamp01((drawT - 0.6) / 0.4);
         shape.filledBody();
       }
-      // Alert's exclamation mark is carved out after the triangle
-      // fills in - lost in an earlier pass of this rewrite, restored
-      // here as its own follow-up draw once the triangle is mostly in.
       if (icon === 'alert' && drawT > 0.5) {
         ctx.globalAlpha = clamp01((drawT - 0.5) / 0.3);
-        ctx.fillStyle = '#08080A';
+        ctx.fillStyle = system.bgColorInner;
         ctx.fillRect(-size * 0.05, -size * 0.15, size * 0.1, size * 0.25);
         ctx.beginPath();
         ctx.arc(0, size * 0.22, size * 0.05, 0, Math.PI * 2);
@@ -396,13 +369,13 @@ function iconCallout(ctx, params, t, width, height) {
   ctx.save();
   ctx.globalAlpha = opacity;
   ctx.textAlign = 'center';
-  ctx.font = '600 32px sans-serif';
-  ctx.fillStyle = '#F5F5F5';
+  ctx.font = `600 32px ${system.fontFamily}`;
+  ctx.fillStyle = system.heroTextColor;
   wrapText(ctx, text, width / 2, height * 0.42 + 20, width * 0.75, 40);
   ctx.restore();
 }
 
-function shapeReveal(ctx, params, t, width, height) {
+function shapeReveal(ctx, params, t, width, height, system) {
   const { shape, motion, duration } = params;
   const color = params.color || '#FF5C1A';
 
@@ -423,9 +396,11 @@ function shapeReveal(ctx, params, t, width, height) {
 
   ctx.save();
   ctx.globalAlpha = opacity;
-  ctx.globalCompositeOperation = 'screen';
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 35;
+  if (system.heroUsesGlow) {
+    ctx.globalCompositeOperation = 'screen';
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 35;
+  }
   ctx.fillStyle = color;
   ctx.translate(width / 2, height * 0.42);
   ctx.scale(scale * squashX, scale * squashY);
