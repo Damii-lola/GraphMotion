@@ -132,7 +132,7 @@ function roundRect(ctx, x, y, w, h, r) {
  * Small pill-shaped tag in a top corner - unchanged mechanic from v3,
  * still the primary content-aware label.
  */
-function drawCornerTag(ctx, label, sceneLocalT, width, height, accentColor) {
+function drawCornerTag(ctx, label, sceneLocalT, width, height, accentColor, system) {
   const entranceT = clamp01((sceneLocalT - 0.1) / 0.4);
   if (entranceT <= 0) return;
 
@@ -144,7 +144,7 @@ function drawCornerTag(ctx, label, sceneLocalT, width, height, accentColor) {
   ctx.globalAlpha = opacity;
   ctx.translate(60 + slideX, 90 + idleFloat);
 
-  ctx.font = '600 18px sans-serif';
+  ctx.font = `600 18px ${system.fontFamily}`;
   const textWidth = ctx.measureText(label).width;
   const padX = 14;
   const boxW = textWidth + padX * 2;
@@ -162,7 +162,7 @@ function drawCornerTag(ctx, label, sceneLocalT, width, height, accentColor) {
   ctx.arc(padX - 6, 0, 3, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = '#F5F5F5';
+  ctx.fillStyle = system.heroTextColor;
   ctx.textBaseline = 'middle';
   ctx.fillText(label, padX + 4, 1);
   ctx.restore();
@@ -360,14 +360,23 @@ function drawSecondaryAccents(ctx, primaryShape, sceneLocalT, width, height, acc
  * counter - a genuinely dense, always-multi-element frame instead of
  * a hero element plus a couple of small decorations.
  */
-function drawComposition(ctx, tagLabel, accentShape, sceneLocalT, sceneDuration, globalT, width, height, accentColor, sceneIndex, sceneCount) {
-  drawMotifGrid(ctx, globalT, width, height, accentColor);
-  drawScanline(ctx, globalT, width, height, accentColor);
-  drawDataChips(ctx, sceneLocalT, width, height, accentColor);
+/**
+ * Call this AFTER atmosphere and BEFORE the hero content in every
+ * template. The HUD-specific chrome (grid, scanlines, timestamp/
+ * waveform, data chips) only draws for systems that opt into it
+ * (system.showGrid etc.) - softEditorial and boldGraphic are
+ * deliberately NOT "hudTerminal with different colors," they omit
+ * this chrome entirely. The corner tag, corner counter, and secondary
+ * accent shapes are universal across all three systems.
+ */
+function drawComposition(ctx, tagLabel, accentShape, sceneLocalT, sceneDuration, globalT, width, height, accentColor, sceneIndex, sceneCount, system) {
+  if (system.showGrid) drawMotifGrid(ctx, globalT, width, height, accentColor);
+  if (system.showScanlines) drawScanline(ctx, globalT, width, height, accentColor);
+  if (system.showDataChips) drawDataChips(ctx, sceneLocalT, width, height, accentColor);
   drawSecondaryAccents(ctx, accentShape, sceneLocalT, width, height, accentColor);
-  drawTimestamp(ctx, globalT, width, height, accentColor);
+  if (system.showTimestamp) drawTimestamp(ctx, globalT, width, height, accentColor);
   if (tagLabel) {
-    drawCornerTag(ctx, tagLabel, sceneLocalT, width, height, accentColor);
+    drawCornerTag(ctx, tagLabel, sceneLocalT, width, height, accentColor, system);
   }
   if (typeof sceneIndex === 'number' && typeof sceneCount === 'number') {
     drawCornerCounter(ctx, sceneIndex, sceneCount, sceneLocalT, width, height, accentColor);
