@@ -52,18 +52,69 @@ function drawMotifGrid(ctx, globalT, width, height, accentColor) {
  * everything else) but reads as constant motion across the ENTIRE
  * frame, not just in one corner.
  */
+/**
+ * Two scan-lines now, moving opposite directions at different speeds -
+ * more constant motion across the frame, reads as more "alive."
+ */
 function drawScanline(ctx, globalT, width, height, accentColor) {
-  const cycleT = (globalT % 6) / 6;
-  const y = cycleT * height;
+  const drawSweep = (period, offset, color, thickness) => {
+    const cycleT = ((globalT + offset) % period) / period;
+    const y = cycleT * height;
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    const grad = ctx.createLinearGradient(0, y - thickness, 0, y + thickness);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.5, color);
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, y - thickness, width, thickness * 2);
+    ctx.restore();
+  };
+  drawSweep(6, 0, accentColor + '40', 40);
+  drawSweep(9, 4.5, '#FFFFFF22', 25);
+}
+
+/**
+ * A running timestamp readout, bottom-left - "REC" style UI chrome,
+ * ties the whole thing to global elapsed time so it reads as a live
+ * feed rather than a static graphic.
+ */
+function drawTimestamp(ctx, globalT, width, height, accentColor) {
+  const mins = Math.floor(globalT / 60);
+  const secs = Math.floor(globalT % 60);
+  const label = `REC  ${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 
   ctx.save();
-  ctx.globalCompositeOperation = 'screen';
-  const grad = ctx.createLinearGradient(0, y - 40, 0, y + 40);
-  grad.addColorStop(0, 'rgba(255,255,255,0)');
-  grad.addColorStop(0.5, accentColor + '40');
-  grad.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, y - 40, width, 80);
+  ctx.globalAlpha = 0.5 + Math.sin(globalT * 4) * 0.15;
+  ctx.fillStyle = accentColor;
+  ctx.beginPath();
+  ctx.arc(50, height - 60, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.globalAlpha = 0.55;
+  ctx.font = '600 14px monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#F5F5F5';
+  ctx.fillText(label, 62, height - 60);
+  ctx.restore();
+
+  // Bottom audio-waveform-style visualizer strip - many thin animated
+  // bars, deterministic-per-frame (seeded from globalT, not random),
+  // gives constant fine-grained motion across the whole bottom edge.
+  const barCount = 24;
+  const barAreaW = width * 0.5;
+  const startX = width - barAreaW - 50;
+  ctx.save();
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = accentColor;
+  for (let i = 0; i < barCount; i++) {
+    const seed = i * 12.9898 + Math.floor(globalT * 6) * 78.233;
+    const pseudoRand = Math.abs(Math.sin(seed)) % 1;
+    const h = 4 + pseudoRand * 22;
+    const x = startX + i * (barAreaW / barCount);
+    ctx.fillRect(x, height - 60 - h / 2, 2.5, h);
+  }
   ctx.restore();
 }
 
@@ -157,14 +208,17 @@ function drawCornerCounter(ctx, sceneIndex, sceneCount, sceneLocalT, width, heig
  * elements the eye can travel across, not just the hero content.
  */
 const CHIP_LAYOUT = [
-  { x: 0.14, y: 0.72, label: 'A', depth: 0.4 },
-  { x: 0.85, y: 0.28, label: 'B', depth: 0.6 },
-  { x: 0.18, y: 0.2, label: 'C', depth: 0.3 },
+  { x: 0.14, y: 0.72, depth: 0.4, style: 'line' },
+  { x: 0.85, y: 0.28, depth: 0.6, style: 'bar' },
+  { x: 0.18, y: 0.2, depth: 0.3, style: 'line' },
+  { x: 0.8, y: 0.6, depth: 0.5, style: 'percent' },
+  { x: 0.1, y: 0.5, depth: 0.35, style: 'bar' },
+  { x: 0.9, y: 0.88, depth: 0.45, style: 'line' },
 ];
 
 function drawDataChips(ctx, sceneLocalT, width, height, accentColor) {
   CHIP_LAYOUT.forEach((chip, i) => {
-    const entranceT = clamp01((sceneLocalT - 0.25 - i * 0.1) / 0.4);
+    const entranceT = clamp01((sceneLocalT - 0.25 - i * 0.08) / 0.4);
     if (entranceT <= 0) return;
 
     const opacity = easeOutCubic(entranceT) * lerp(0.15, 0.4, chip.depth);
@@ -185,12 +239,30 @@ function drawDataChips(ctx, sceneLocalT, width, height, accentColor) {
     ctx.arc(-w / 2 + 10, 0, 2.5, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.strokeStyle = '#FFFFFF';
-    ctx.globalAlpha = opacity * 0.6;
-    ctx.beginPath();
-    ctx.moveTo(-w / 2 + 18, 0);
-    ctx.lineTo(w / 2 - 8, 0);
-    ctx.stroke();
+    if (chip.style === 'bar') {
+      // Three tiny animated bars instead of a plain line - mini chart.
+      for (let b = 0; b < 3; b++) {
+        const bh = 4 + Math.abs(Math.sin(sceneLocalT * 2 + b + i)) * 8;
+        ctx.fillStyle = accentColor;
+        ctx.globalAlpha = opacity * 0.7;
+        ctx.fillRect(-w / 2 + 20 + b * 8, 6 - bh, 5, bh);
+      }
+    } else if (chip.style === 'percent') {
+      const pct = Math.round(30 + Math.abs(Math.sin(sceneLocalT * 0.7 + i)) * 60);
+      ctx.globalAlpha = opacity * 0.9;
+      ctx.font = '600 11px monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#F5F5F5';
+      ctx.fillText(`${pct}%`, -w / 2 + 20, 0);
+    } else {
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.globalAlpha = opacity * 0.6;
+      ctx.beginPath();
+      ctx.moveTo(-w / 2 + 18, 0);
+      ctx.lineTo(w / 2 - 8, 0);
+      ctx.stroke();
+    }
     ctx.restore();
   });
 }
@@ -248,6 +320,8 @@ const ACCENT_SLOTS = [
   { x: 0.16, y: 0.85, scaleMul: 0.6, opacityMul: 0.5, rotSpeed: -0.1 },
   { x: 0.88, y: 0.14, scaleMul: 0.5, opacityMul: 0.4, rotSpeed: 0.22 },
   { x: 0.55, y: 0.92, scaleMul: 0.45, opacityMul: 0.35, rotSpeed: -0.18 },
+  { x: 0.08, y: 0.35, scaleMul: 0.4, opacityMul: 0.3, rotSpeed: 0.12 },
+  { x: 0.65, y: 0.08, scaleMul: 0.4, opacityMul: 0.3, rotSpeed: -0.2 },
 ];
 
 function pickSecondaryShape(primaryShape, slotIndex) {
@@ -291,6 +365,7 @@ function drawComposition(ctx, tagLabel, accentShape, sceneLocalT, sceneDuration,
   drawScanline(ctx, globalT, width, height, accentColor);
   drawDataChips(ctx, sceneLocalT, width, height, accentColor);
   drawSecondaryAccents(ctx, accentShape, sceneLocalT, width, height, accentColor);
+  drawTimestamp(ctx, globalT, width, height, accentColor);
   if (tagLabel) {
     drawCornerTag(ctx, tagLabel, sceneLocalT, width, height, accentColor);
   }
