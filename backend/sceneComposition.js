@@ -88,12 +88,77 @@ function drawCornerTag(ctx, label, sceneLocalT, sceneDuration, width, height, ac
 }
 
 /**
+ * Six genuinely distinct shapes, not one bracket reskinned - each
+ * drawn in local space centered at origin so the caller's
+ * translate/rotate/scale applies uniformly regardless of which shape
+ * is picked.
+ */
+function drawAccentShape(ctx, shape) {
+  ctx.beginPath();
+  switch (shape) {
+    case 'crosshair':
+      ctx.moveTo(-30, 0); ctx.lineTo(-12, 0);
+      ctx.moveTo(12, 0); ctx.lineTo(30, 0);
+      ctx.moveTo(0, -30); ctx.lineTo(0, -12);
+      ctx.moveTo(0, 12); ctx.lineTo(0, 30);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, 6, 0, Math.PI * 2);
+      ctx.stroke();
+      return;
+
+    case 'dots': {
+      const positions = [[-20, -10], [0, 15], [20, -15], [8, 5]];
+      for (const [dx, dy] of positions) {
+        ctx.beginPath();
+        ctx.arc(dx, dy, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return;
+    }
+
+    case 'arrow':
+      ctx.moveTo(-25, 15);
+      ctx.lineTo(20, -15);
+      ctx.moveTo(4, -15);
+      ctx.lineTo(20, -15);
+      ctx.lineTo(20, 1);
+      ctx.stroke();
+      return;
+
+    case 'plus':
+      ctx.moveTo(-22, 0); ctx.lineTo(22, 0);
+      ctx.moveTo(0, -22); ctx.lineTo(0, 22);
+      ctx.stroke();
+      return;
+
+    case 'triangle':
+      ctx.moveTo(0, -28);
+      ctx.lineTo(26, 20);
+      ctx.lineTo(-26, 20);
+      ctx.closePath();
+      ctx.stroke();
+      return;
+
+    case 'bracket':
+    default:
+      ctx.moveTo(-30, -30);
+      ctx.lineTo(30, -30);
+      ctx.lineTo(30, 30);
+      ctx.stroke();
+      return;
+  }
+}
+
+/**
  * A dim, blurred-feeling secondary shape sitting off-center (rule of
  * thirds, not dead center) at a different visual "depth" than the
  * hero content - it's what actually creates foreground/background
- * separation instead of one flat plane.
+ * separation instead of one flat plane. `shape` now varies per scene
+ * (Mistral picks it, tied to that scene's meaning) instead of always
+ * being the same generic bracket.
  */
-function drawSecondaryAccent(ctx, sceneLocalT, sceneDuration, width, height, accentColor) {
+function drawSecondaryAccent(ctx, shape, sceneLocalT, sceneDuration, width, height, accentColor) {
   const entranceT = clamp01((sceneLocalT - 0.15) / 0.5);
   if (entranceT <= 0) return;
 
@@ -109,12 +174,9 @@ function drawSecondaryAccent(ctx, sceneLocalT, sceneDuration, width, height, acc
   ctx.rotate(rotation);
   ctx.scale(scale, scale);
   ctx.strokeStyle = accentColor;
+  ctx.fillStyle = accentColor;
   ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(-30, -30);
-  ctx.lineTo(30, -30);
-  ctx.lineTo(30, 30);
-  ctx.stroke();
+  drawAccentShape(ctx, shape);
   ctx.restore();
 }
 
@@ -134,9 +196,9 @@ function roundRect(ctx, x, y, w, h, r) {
  * guaranteed layer, so it's structurally impossible for a scene to
  * render as "one lonely element again."
  */
-function drawComposition(ctx, tagLabel, sceneLocalT, sceneDuration, globalT, width, height, accentColor) {
+function drawComposition(ctx, tagLabel, accentShape, sceneLocalT, sceneDuration, globalT, width, height, accentColor) {
   drawMotifGrid(ctx, globalT, width, height, accentColor);
-  drawSecondaryAccent(ctx, sceneLocalT, sceneDuration, width, height, accentColor);
+  drawSecondaryAccent(ctx, accentShape, sceneLocalT, sceneDuration, width, height, accentColor);
   if (tagLabel) {
     drawCornerTag(ctx, tagLabel, sceneLocalT, sceneDuration, width, height, accentColor);
   }
