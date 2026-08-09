@@ -13,6 +13,8 @@
  * matures.
  */
 
+const { VISUAL_SYSTEMS } = require('./visualSystems');
+
 /**
  * These two apply to EVERY template regardless of which hero content
  * it draws, since the composition layer (background motif + corner
@@ -134,10 +136,12 @@ Rules:
 - 2 to 4 scenes total for a 8-14s video. Keep it tight.
 - Every scene needs a "transition" field (the transition used to enter that scene), except the first scene.
 - Every scene's params MUST include "tag" and "accentShape" (documented under every template above) - pick values specific to that scene's content, not the same tag/shape repeated on every scene. A video about budgeting failures might use tags like "WARNING", "FACT", "DATA" across its scenes, not "INSIGHT" three times in a row.
+- Pick ONE "visualSystem" for the WHOLE video (not per scene) from: "hudTerminal" (dark, glowing, data/HUD chrome - fits finance, tech, data, insider-info, urgency), "softEditorial" (light, calm, serif, no glow/chrome - fits reflective, lifestyle, psychology, personal-essay tones), "boldGraphic" (flat saturated color blocks, high contrast, no glow - fits punchy hooks, bold claims, hot takes). Choose based on the PROMPT's tone, not a default.
 - Output strictly this JSON shape:
 
 {
   "title": "short internal title",
+  "visualSystem": "hudTerminal",
   "scenes": [
     { "template": "kineticTextReveal", "transition": null, "params": { "text": "...", "style": "bold-glow", "duration": 3, "tag": "WARNING", "accentShape": "triangle" } },
     { "template": "statCounter", "transition": "luminanceFlashCut", "params": { "label": "...", "fromValue": 0, "toValue": 73, "suffix": "%", "duration": 2.5, "tag": "DATA", "accentShape": "crosshair" } }
@@ -198,8 +202,12 @@ function validateSceneJSON(json) {
     };
   });
 
+  const VALID_SYSTEMS = Object.keys(VISUAL_SYSTEMS);
+  const visualSystem = VALID_SYSTEMS.includes(json.visualSystem) ? json.visualSystem : 'hudTerminal';
+
   return {
     title: (json.title || 'Untitled').slice(0, 80),
+    visualSystem,
     scenes: cleanScenes,
   };
 }
