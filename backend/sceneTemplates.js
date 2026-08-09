@@ -13,6 +13,29 @@
  * matures.
  */
 
+/**
+ * These two apply to EVERY template regardless of which hero content
+ * it draws, since the composition layer (background motif + corner
+ * tag + secondary accent) wraps every scene universally, not per-
+ * template. Merged into each template's own params below so the
+ * existing per-template validation loop handles them with zero
+ * special-casing.
+ */
+const SHARED_PARAMS = {
+  tag: {
+    type: 'string',
+    maxLength: 16,
+    default: 'INSIGHT',
+    description: 'Short 1-2 word punchy label for the corner tag badge, relating to THIS scene\'s specific content (e.g. "WARNING", "FACT", "DATA", "TIP") - not generic filler.',
+  },
+  accentShape: {
+    type: 'enum',
+    values: ['bracket', 'crosshair', 'dots', 'arrow', 'plus', 'triangle'],
+    default: 'bracket',
+    description: 'Which secondary background accent shape best complements this scene\'s meaning.',
+  },
+};
+
 const TEMPLATES = {
   kineticTextReveal: {
     description:
@@ -21,6 +44,7 @@ const TEMPLATES = {
       text: { type: 'string', required: true, maxLength: 90 },
       style: { type: 'enum', values: ['bold-glow', 'mixed-weight'], default: 'bold-glow' },
       duration: { type: 'number', min: 1.5, max: 5, default: 3 },
+      ...SHARED_PARAMS,
     },
   },
 
@@ -31,6 +55,7 @@ const TEMPLATES = {
       caption: { type: 'string', maxLength: 60, default: '' },
       color: { type: 'string', default: '#FF5C1A' },
       duration: { type: 'number', min: 2, max: 4, default: 2.5 },
+      ...SHARED_PARAMS,
     },
   },
 
@@ -43,6 +68,7 @@ const TEMPLATES = {
       toValue: { type: 'number', required: true },
       suffix: { type: 'string', default: '' },
       duration: { type: 'number', min: 1.5, max: 4, default: 2.5 },
+      ...SHARED_PARAMS,
     },
   },
 
@@ -53,6 +79,7 @@ const TEMPLATES = {
       icon: { type: 'enum', values: ['alert', 'check', 'spark', 'clock', 'money', 'chart', 'lock', 'heart'], required: true },
       text: { type: 'string', required: true, maxLength: 60 },
       duration: { type: 'number', min: 1.5, max: 3.5, default: 2.2 },
+      ...SHARED_PARAMS,
     },
   },
 
@@ -64,6 +91,7 @@ const TEMPLATES = {
       motion: { type: 'enum', values: ['pulse', 'grow'], default: 'pulse' },
       color: { type: 'string', default: '#FF5C1A' },
       duration: { type: 'number', min: 1.5, max: 4, default: 2.5 },
+      ...SHARED_PARAMS,
     },
   },
 };
@@ -79,7 +107,8 @@ function buildMistralSystemPrompt() {
       const paramDocs = Object.entries(t.params)
         .map(([pname, p]) => {
           const constraint = p.type === 'enum' ? `one of [${p.values.join(', ')}]` : p.type;
-          return `      - ${pname} (${constraint}${p.required ? ', required' : `, default: ${JSON.stringify(p.default)}`})`;
+          const desc = p.description ? ` - ${p.description}` : '';
+          return `      - ${pname} (${constraint}${p.required ? ', required' : `, default: ${JSON.stringify(p.default)}`})${desc}`;
         })
         .join('\n');
       return `  ${name}: ${t.description}\n${paramDocs}`;
@@ -104,13 +133,14 @@ Rules:
 - Always pick the closest matching template for any request, including abstract ones - never invent a new template.
 - 2 to 4 scenes total for a 8-14s video. Keep it tight.
 - Every scene needs a "transition" field (the transition used to enter that scene), except the first scene.
+- Every scene's params MUST include "tag" and "accentShape" (documented under every template above) - pick values specific to that scene's content, not the same tag/shape repeated on every scene. A video about budgeting failures might use tags like "WARNING", "FACT", "DATA" across its scenes, not "INSIGHT" three times in a row.
 - Output strictly this JSON shape:
 
 {
   "title": "short internal title",
   "scenes": [
-    { "template": "kineticTextReveal", "transition": null, "params": { "text": "...", "style": "bold-glow", "duration": 3 } },
-    { "template": "statCounter", "transition": "luminanceFlashCut", "params": { "label": "...", "fromValue": 0, "toValue": 73, "suffix": "%", "duration": 2.5 } }
+    { "template": "kineticTextReveal", "transition": null, "params": { "text": "...", "style": "bold-glow", "duration": 3, "tag": "WARNING", "accentShape": "triangle" } },
+    { "template": "statCounter", "transition": "luminanceFlashCut", "params": { "label": "...", "fromValue": 0, "toValue": 73, "suffix": "%", "duration": 2.5, "tag": "DATA", "accentShape": "crosshair" } }
   ]
 }
 
