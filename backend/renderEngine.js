@@ -51,7 +51,7 @@ function buildTimeline(sceneJSON) {
     cursor += params.duration;
   });
 
-  return { segments, totalDuration: cursor, accentColor };
+  return { segments, totalDuration: cursor, accentColor, visualSystem: sceneJSON.visualSystem };
 }
 
 function findSegment(segments, globalTime) {
@@ -62,7 +62,7 @@ function findSegment(segments, globalTime) {
 }
 
 async function renderJobToFile(jobId, sceneJSON, onProgress) {
-  const { segments, totalDuration, accentColor } = buildTimeline(sceneJSON);
+  const { segments, totalDuration, accentColor, visualSystem } = buildTimeline(sceneJSON);
   const totalFrames = Math.ceil(totalDuration * FPS);
 
   const outDir = path.join(os.tmpdir(), 'shortform-renders');
@@ -102,9 +102,9 @@ async function renderJobToFile(jobId, sceneJSON, onProgress) {
     const localTime = globalTime - segment.start;
 
     if (segment.kind === 'scene') {
-      drawTemplate(ctx, segment.template, segment.params, localTime, globalTime, WIDTH, HEIGHT, segment.sceneIndex, segment.sceneCount);
+      drawTemplate(ctx, segment.template, segment.params, localTime, globalTime, WIDTH, HEIGHT, segment.sceneIndex, segment.sceneCount, visualSystem);
     } else {
-      drawTransition(ctx, segment.name, localTime, WIDTH, HEIGHT, accentColor);
+      drawTransition(ctx, segment.name, localTime, WIDTH, HEIGHT, accentColor, visualSystem);
     }
 
     const raw = ctx.getImageData(0, 0, WIDTH, HEIGHT).data;
