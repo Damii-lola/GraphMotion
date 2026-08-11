@@ -45,9 +45,14 @@ function drawAtmosphere(ctx, globalT, width, height, accentColor, system) {
 function drawGlowBlob(ctx, globalT, width, height, accentColor) {
   const x = width * 0.5 + Math.sin(globalT * 0.15) * width * 0.15;
   const y = height * 0.3 + Math.cos(globalT * 0.1) * height * 0.08;
+  // Slow "breathing" intensity, not a fixed constant - real graded
+  // footage never sits at exactly one brightness for a whole video.
+  // Period of ~11s so it never syncs suspiciously with the 20s camera
+  // cycle or any scene's own duration.
+  const breathe = 0.5 + Math.sin(globalT * (Math.PI * 2 / 11)) * 0.5;
   ctx.save();
   ctx.filter = 'blur(80px)';
-  ctx.globalAlpha = 0.12;
+  ctx.globalAlpha = lerp(0.08, 0.16, breathe);
   ctx.globalCompositeOperation = 'screen';
   ctx.fillStyle = accentColor;
   ctx.beginPath();
@@ -142,7 +147,10 @@ function drawVignette(ctx, width, height, system) {
 
 function drawGrain(ctx, globalT, width, height) {
   ctx.save();
-  ctx.globalAlpha = 0.05;
+  // Same breathing principle as the glow blob, different period (7s
+  // vs 11s) so the two never move in lockstep with each other.
+  const breathe = 0.5 + Math.sin(globalT * (Math.PI * 2 / 7)) * 0.5;
+  ctx.globalAlpha = lerp(0.03, 0.07, breathe);
   ctx.fillStyle = '#FFFFFF';
   let seed = Math.floor(globalT * 1000) % 100000;
   function rand() {
