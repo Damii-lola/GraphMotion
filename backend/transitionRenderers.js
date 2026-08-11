@@ -24,6 +24,12 @@ function drawTransition(ctx, name, t, width, height, accentColor, visualSystemNa
     case 'irisMorph':
       irisMorph(ctx, t, width, height, accentColor, visualSystemName);
       break;
+    case 'shapeMorph':
+      shapeMorph(ctx, t, width, height, accentColor, visualSystemName);
+      break;
+    case 'slideDisplace':
+      slideDisplace(ctx, t, width, height, accentColor, visualSystemName);
+      break;
     case 'luminanceFlashCut':
     default:
       luminanceFlashCut(ctx, t, width, height, accentColor, visualSystemName);
@@ -102,6 +108,95 @@ function irisMorph(ctx, t, width, height, accentColor, visualSystemName) {
     ctx.beginPath();
     ctx.arc(width / 2, height / 2, radius, 0, Math.PI * 2);
     ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/**
+ * A square rotates while scaling up to fully cover the frame, then
+ * continues rotating as it scales back down to reveal the next scene
+ * - angular, geometric motion language, genuinely distinct from
+ * irisMorph's circular close/reopen. The rotation never stops or
+ * reverses direction, so the whole transition reads as one continuous
+ * spin rather than two separate moves stitched together.
+ */
+function shapeMorph(ctx, t, width, height, accentColor, visualSystemName) {
+  const system = getVisualSystem(visualSystemName);
+  drawAtmosphere(ctx, t, width, height, accentColor, system);
+
+  const progress = clamp01(t / TRANSITION_DURATION);
+  const maxSize = Math.hypot(width, height) * 1.3;
+
+  let scale;
+  if (progress < 0.45) {
+    scale = lerp(0, 1, easeOutExpo(progress / 0.45));
+  } else if (progress < 0.55) {
+    scale = 1;
+  } else {
+    scale = lerp(1, 0, easeInOutCubic((progress - 0.55) / 0.45));
+  }
+  const rotation = progress * Math.PI * 1.5;
+
+  ctx.save();
+  ctx.translate(width / 2, height / 2);
+  ctx.rotate(rotation);
+  ctx.fillStyle = system.bgColorOuter;
+  const size = maxSize * scale;
+  ctx.fillRect(-size / 2, -size / 2, size, size);
+
+  if (scale > 0.02 && scale < 1) {
+    ctx.strokeStyle = accentColor;
+    ctx.globalCompositeOperation = 'screen';
+    ctx.shadowColor = accentColor;
+    ctx.shadowBlur = 20;
+    ctx.lineWidth = 3;
+    ctx.globalAlpha = 0.8;
+    ctx.strokeRect(-size / 2, -size / 2, size, size);
+  }
+  ctx.restore();
+}
+
+/**
+ * Two panes slide across horizontally at DIFFERENT speeds (a nearer,
+ * darker pane moving faster than a dimmer, further one behind it) -
+ * real parallax depth applied to a transition, not just a flat wipe.
+ * Directional, not radial - genuinely distinct feel from both flash
+ * and iris/morph.
+ */
+function slideDisplace(ctx, t, width, height, accentColor, visualSystemName) {
+  const system = getVisualSystem(visualSystemName);
+  drawAtmosphere(ctx, t, width, height, accentColor, system);
+
+  const progress = clamp01(t / TRANSITION_DURATION);
+  const eased = easeInOutCubic(progress);
+
+  // Back pane: slower, dimmer, arrives later - reads as "further away."
+  const backX = lerp(-width * 1.1, width * 1.1, easeInOutCubic(clamp01((progress - 0.08) / 0.84)));
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = system.mutedTextColor;
+  ctx.fillRect(backX, 0, width * 1.1, height);
+  ctx.restore();
+
+  // Front pane: faster, fully opaque, leads the motion.
+  const frontX = lerp(-width * 1.15, width * 1.15, eased);
+  ctx.save();
+  ctx.fillStyle = system.bgColorOuter;
+  ctx.fillRect(frontX, 0, width * 1.15, height);
+  ctx.restore();
+
+  // Bright leading edge on the front pane, like a light catching its
+  // moving border.
+  if (progress > 0.05 && progress < 0.95) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    const edgeX = frontX + width * 1.15;
+    const grad = ctx.createLinearGradient(edgeX - 30, 0, edgeX + 30, 0);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.5, accentColor);
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(edgeX - 30, 0, 60, height);
     ctx.restore();
   }
 }
