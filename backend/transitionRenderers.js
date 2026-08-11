@@ -1,4 +1,4 @@
-const { easeOutExpo, easeInOutCubic, easeOutBack, lerp, clamp01 } = require('./easing');
+const { easeOutExpo, easeInExpo, easeInOutCubic, easeOutBack, easeOutCubic, lerp, clamp01 } = require('./easing');
 const { drawAtmosphere } = require('./atmosphere');
 const { getVisualSystem } = require('./visualSystems');
 
@@ -181,44 +181,77 @@ function shapeMorph(ctx, t, width, height, accentColor, visualSystemName) {
  * Directional, not radial - genuinely distinct feel from both flash
  * and iris/morph.
  */
+/**
+ * Replaces the old slideDisplace, which was honestly just two flat
+ * rectangles sliding across the frame - the single most generic,
+ * recognizable "cheap template" transition move that exists,
+ * regardless of the parallax dressing it had. This is a genuine
+ * rebuild: the frame shatters into angular shard wedges that burst
+ * apart with independent rotation and staggered timing, rim-lit on
+ * their leading edges - built from angular polygon geometry, nothing
+ * about it reduces to a sliding rectangle.
+ */
 function slideDisplace(ctx, t, width, height, accentColor, visualSystemName) {
   const system = getVisualSystem(visualSystemName);
   drawAtmosphere(ctx, t, width, height, accentColor, system);
 
   const progress = clamp01(t / TRANSITION_DURATION);
-  const eased = easeInOutCubic(progress);
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const wedgeCount = 6;
+  const farRadius = Math.hypot(width, height) * 0.75;
 
-  // Back pane: slower, dimmer, arrives later - reads as "further away."
-  const backX = lerp(-width * 1.1, width * 1.1, easeInOutCubic(clamp01((progress - 0.08) / 0.84)));
-  ctx.save();
-  ctx.globalAlpha = 0.5;
-  ctx.fillStyle = system.mutedTextColor;
-  ctx.fillRect(backX, 0, width * 1.1, height);
-  ctx.restore();
+  for (let i = 0; i < wedgeCount; i++) {
+    const stagger = i * 0.025;
+    const wedgeT = clamp01((progress - stagger) / (1 - stagger));
+    if (wedgeT <= 0) continue;
 
-  // Front pane: faster, fully opaque, leads the motion.
-  const frontX = lerp(-width * 1.15, width * 1.15, eased);
-  ctx.save();
-  ctx.fillStyle = system.bgColorOuter;
-  ctx.fillRect(frontX, 0, width * 1.15, height);
-  ctx.restore();
+    const angleStart = (Math.PI * 2 * i) / wedgeCount;
+    const angleEnd = (Math.PI * 2 * (i + 1)) / wedgeCount;
+    const bisector = (angleStart + angleEnd) / 2;
 
-  // Bright leading edge on the front pane, like a light catching its
-  // moving border.
-  if (progress > 0.05 && progress < 0.95) {
+    // Burst outward with an accelerating start (shatter impulse), not
+    // a linear/eased-only slide - the wedge should feel like it's
+    // being flung, not gliding.
+    const flyDistance = lerp(0, farRadius * 0.9, easeInExpo(wedgeT));
+    const rotation = lerp(0, (i % 2 === 0 ? 1 : -1) * 0.6, easeOutCubic(wedgeT));
+    const fadeOut = lerp(1, 0, easeInOutCubic(clamp01((wedgeT - 0.5) / 0.5)));
+
+    const offsetX = Math.cos(bisector) * flyDistance;
+    const offsetY = Math.sin(bisector) * flyDistance;
+
     ctx.save();
-    ctx.globalCompositeOperation = 'screen';
-    const edgeX = frontX + width * 1.15;
-    const grad = ctx.createLinearGradient(edgeX - 30, 0, edgeX + 30, 0);
-    grad.addColorStop(0, 'rgba(255,255,255,0)');
-    grad.addColorStop(0.5, accentColor);
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(edgeX - 30, 0, 60, height);
+    ctx.translate(centerX + offsetX, centerY + offsetY);
+    ctx.rotate(rotation);
+    ctx.translate(-centerX, -centerY);
+
+    ctx.globalAlpha = fadeOut;
+    ctx.fillStyle = system.bgColorOuter;
+    ctx.beginPath();
+    ctx.moveTo(centerX, centerY);
+    ctx.lineTo(centerX + Math.cos(angleStart) * farRadius, centerY + Math.sin(angleStart) * farRadius);
+    ctx.lineTo(centerX + Math.cos(angleEnd) * farRadius, centerY + Math.sin(angleEnd) * farRadius);
+    ctx.closePath();
+    ctx.fill();
+
+    // Rim light on the wedge's leading radial edge only, not the whole
+    // outline - reads as a shard catching light as it tumbles, not a
+    // uniformly outlined shape.
+    if (fadeOut > 0.05) {
+      ctx.globalCompositeOperation = 'screen';
+      ctx.strokeStyle = accentColor;
+      ctx.shadowColor = accentColor;
+      ctx.shadowBlur = 15;
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = fadeOut * 0.8;
+      ctx.beginPath();
+      ctx.moveTo(centerX, centerY);
+      ctx.lineTo(centerX + Math.cos(angleStart) * farRadius, centerY + Math.sin(angleStart) * farRadius);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 }
-
 module.exports = { drawTransition, TRANSITION_DURATION };
 
 /**
@@ -450,38 +483,75 @@ function zoomPunch(ctx, t, width, height, accentColor, visualSystemName) {
  * degrees") - reads as fundamentally different from the horizontal
  * version, not a reskin.
  */
+/**
+ * Replaces the old verticalWipe, which was the vertical twin of the
+ * same generic sliding-pane problem. This simulates an actual fold -
+ * a panel hinged at the top, swinging shut via a perspective-
+ * narrowing trapezoid (the far edge compresses as it approaches the
+ * hinge, implying rotation through depth), closes fully, then swings
+ * back open with a slight overshoot for physical weight. Reads as a
+ * lid or page folding, not a flat rectangle dropping.
+ */
 function verticalWipe(ctx, t, width, height, accentColor, visualSystemName) {
   const system = getVisualSystem(visualSystemName);
   drawAtmosphere(ctx, t, width, height, accentColor, system);
 
   const progress = clamp01(t / TRANSITION_DURATION);
-  const eased = easeInOutCubic(progress);
+  let panelHeight, edgeInset;
 
-  // Rising pane from below: slower, dimmer, arrives later.
-  const riseY = lerp(height * 1.1, -height * 0.1, easeInOutCubic(clamp01((progress - 0.1) / 0.8)));
-  ctx.save();
-  ctx.globalAlpha = 0.5;
-  ctx.fillStyle = system.mutedTextColor;
-  ctx.fillRect(0, riseY, width, height * 1.1);
-  ctx.restore();
+  if (progress < 0.45) {
+    // Swinging shut: height grows from 0 to full, far edge narrows in
+    // (perspective) as it approaches closed.
+    const closeT = easeInOutCubic(progress / 0.45);
+    panelHeight = lerp(0, height, closeT);
+    edgeInset = lerp(width * 0.22, 0, closeT);
+  } else if (progress < 0.52) {
+    panelHeight = height;
+    edgeInset = 0;
+  } else {
+    // Swinging back open, with a slight overshoot past full-open
+    // before settling - the same "weight on landing" language used
+    // throughout every other transition in this file.
+    const openT = clamp01((progress - 0.52) / 0.48);
+    panelHeight = lerp(height, 0, easeOutBack(openT));
+    edgeInset = lerp(0, width * 0.22, easeOutCubic(openT));
+  }
 
-  // Dropping pane from above: faster, opaque, leads.
-  const dropY = lerp(-height * 1.15, height * 1.15, eased) - height * 1.15;
+  panelHeight = Math.max(0, panelHeight);
+  const farY = panelHeight;
+  const inset = Math.max(0, edgeInset);
+
   ctx.save();
   ctx.fillStyle = system.bgColorOuter;
-  ctx.fillRect(0, dropY, width, height * 1.15);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(width, 0);
+  ctx.lineTo(width - inset, farY);
+  ctx.lineTo(inset, farY);
+  ctx.closePath();
+  ctx.fill();
+
+  // Fold-crease shadow near the hinge - darkens toward the top,
+  // implying the panel catching less light right at the fold.
+  const creaseGrad = ctx.createLinearGradient(0, 0, 0, Math.min(80, farY));
+  creaseGrad.addColorStop(0, 'rgba(0,0,0,0.35)');
+  creaseGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = creaseGrad;
+  ctx.fill();
   ctx.restore();
 
-  if (progress > 0.05 && progress < 0.95) {
+  // Bright leading edge along the panel's moving (far) border only.
+  if (farY > 2 && farY < height - 2) {
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
-    const edgeY = dropY + height * 1.15;
-    const grad = ctx.createLinearGradient(0, edgeY - 25, 0, edgeY + 25);
-    grad.addColorStop(0, 'rgba(255,255,255,0)');
-    grad.addColorStop(0.5, accentColor);
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, edgeY - 25, width, 50);
+    ctx.strokeStyle = accentColor;
+    ctx.shadowColor = accentColor;
+    ctx.shadowBlur = 18;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(inset, farY);
+    ctx.lineTo(width - inset, farY);
+    ctx.stroke();
     ctx.restore();
   }
 }
