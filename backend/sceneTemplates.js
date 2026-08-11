@@ -36,11 +36,11 @@ const SHARED_PARAMS = {
     default: 'bracket',
     description: 'Which secondary background accent shape best complements this scene\'s meaning.',
   },
-  cameraStyle: {
+  heroVisual: {
     type: 'enum',
-    values: ['slowDrift', 'punchIn', 'settle'],
-    default: 'slowDrift',
-    description: 'Camera motion for this scene: slowDrift (gentle continuous breathing, use for calm/reflective beats), punchIn (accelerating push-in, use when something is building toward a landing/reveal at the end of the scene), settle (starts slightly zoomed, quickly settles - use right after a hard-cut transition for a "just landed" feel).',
+    values: ['ribbon', 'halo', 'mark', 'burst', 'alert', 'check', 'spark', 'clock', 'money', 'chart', 'lock', 'heart', 'watch', 'phone', 'house', 'car', 'gift', 'trophy', 'rocket', 'camera', 'briefcase', 'coffee'],
+    default: 'mark',
+    description: 'A LARGE bold shape/icon shown above this scene\'s text - the dominant visual, not decoration. Pick a concrete icon (watch, rocket, house, etc.) when the content names that literal thing; pick an abstract mark (ribbon, halo, mark, burst) otherwise. Every scene needs one - this is what makes the video eye-catching, not just text on a background.',
   },
 };
 
@@ -51,6 +51,7 @@ const TEMPLATES = {
     params: {
       text: { type: 'string', required: true, maxLength: 90 },
       style: { type: 'enum', values: ['bold-glow', 'mixed-weight'], default: 'bold-glow' },
+      textFrame: { type: 'enum', values: ['none', 'card', 'gradient'], default: 'none', description: 'Visual framing for the text itself: none (plain glow), card (a soft rounded card background behind the text), gradient (text fill sweeps from white to the accent color). Vary this across beats in the same video - don\'t use the same one every time.' },
       duration: { type: 'number', min: 1.5, max: 5, default: 3 },
       ...SHARED_PARAMS,
     },
@@ -93,7 +94,7 @@ const TEMPLATES = {
 
   shapeReveal: {
     description:
-      'Abstract shape (circle/square) with pulse/grow motion and glow. Use for transitions, emphasis, or literal shape requests.',
+      'Abstract shape (circle/square) with pulse/grow motion and glow. Use for emphasis, or literal shape requests.',
     params: {
       shape: { type: 'enum', values: ['circle', 'square'], default: 'circle' },
       motion: { type: 'enum', values: ['pulse', 'grow'], default: 'pulse' },
@@ -288,19 +289,6 @@ const TEMPLATES = {
   },
 };
 
-const TRANSITIONS = {
-  luminanceFlashCut: { description: 'The outgoing scene glows to a full white flash and the next scene emerges from it. Use as the default - a match cut through light.' },
-  irisMorph: { description: 'A glowing circular iris closes to a point then reopens into the next scene. Use for a more deliberate, dramatic beat change.' },
-  shapeMorph: { description: 'A square rotates while scaling up to cover the frame, then continues rotating as it scales back down. Angular, geometric feel - use for a punchier, more energetic beat change.' },
-  slideDisplace: { description: 'Two panes slide across horizontally at different speeds (parallax depth) with a bright leading edge. Directional feel - use when the content itself implies forward motion or progression.' },
-  zoomPunch: { description: 'A hard, fast scale-punch zoom past 100% with a brief whiteout at peak, then snaps to rest scale. High energy, front-loaded pace - use for fast, punchy beat changes, not calm/reflective content.' },
-  verticalWipe: { description: 'A pane drops from above while a dimmer pane rises from below at a different speed. Vertical directional feel, distinct from slideDisplace - use for "revealing" or "uncovering" beats.' },
-  cardFlip: { description: 'A fake-3D card flip - the frame squishes horizontally to a sliver then expands back out, with a glowing spine at the thinnest point. Use for a physical, tactile "turning the page" feel.' },
-  crossZoom: { description: 'Thin rays burst outward from center to fill the frame, hold, then the next scene resolves from that burst point. Explosive, radial energy - use for a big reveal or climactic beat change.' },
-  rippleWave: { description: 'Concentric rings expand outward from center like a wave through water. Curved, softer radial feel than crossZoom - use for a calmer "sending a signal" or ripple-effect beat.' },
-  glitchStatic: { description: 'A brief chaotic burst of blocky static/glitch rectangles. Fast, disruptive energy - use for a jarring, unstable, or "something\'s wrong" beat change, not calm content.' },
-};
-
 function buildMistralSystemPrompt(targetDurationSeconds = 12) {
   const duration = Math.max(8, Math.min(120, targetDurationSeconds));
   // Roughly: each scene averages ~3s of content + a 0.55s transition
@@ -330,36 +318,29 @@ function buildMistralSystemPrompt(targetDurationSeconds = 12) {
     })
     .join('\n\n');
 
-  const transitionDocs = Object.entries(TRANSITIONS)
-    .map(([name, t]) => `  ${name}: ${t.description}`)
-    .join('\n');
+  return `You are a short-form video director. Given a user's prompt, output ONLY valid JSON (no markdown, no prose, no code fences) describing a sequence of BEATS for a ${duration} second vertical video (720x1280).
 
-  return `You are a short-form video director. Given a user's prompt, output ONLY valid JSON (no markdown, no prose, no code fences) describing a sequence of scenes for a ${duration} second vertical video (720x1280).
+This is rendered as ONE continuous world, not a slideshow - a single camera pans smoothly between each beat's position, arriving to reveal it and leaving to reveal the next. There is no cut and no transition effect between beats - do not think in terms of "scene 1 ends, scene 2 begins with an effect." Each beat is simply the next thing the camera arrives at.
 
-You may ONLY use these scene templates, choosing whichever best matches the user's intent even if not literal:
+You may ONLY use these beat templates, choosing whichever best matches the user's intent even if not literal:
 
 ${templateDocs}
 
-You may ONLY use these transitions between scenes:
-
-${transitionDocs}
-
 Rules:
 - Always pick the closest matching template for any request, including abstract ones - never invent a new template.
-- Roughly ${minScenes} to ${maxScenes} scenes total for a ${duration}s video - pace scenes by content, don't pad with filler just to hit a number, and don't rush past ${maxScenes} scenes either.
-- Every scene needs a "transition" field (the transition used to enter that scene), except the first scene.
-- Every scene's params MUST include "tag" and "accentShape" (documented under every template above) - pick values specific to that scene's content, not the same tag/shape repeated on every scene. A video about budgeting failures might use tags like "WARNING", "FACT", "DATA" across its scenes, not "INSIGHT" three times in a row.
-- Pick ONE "visualSystem" for the WHOLE video (not per scene) from: "hudTerminal" (dark, glowing, data/HUD chrome - fits finance, tech, data, insider-info, urgency), "softEditorial" (light, calm, serif, no glow/chrome - fits reflective, lifestyle, psychology, personal-essay tones), "boldGraphic" (flat saturated color blocks, high contrast, no glow - fits punchy hooks, bold claims, hot takes). Choose based on the PROMPT's tone, not a default.
+- Roughly ${minScenes} to ${maxScenes} beats total for a ${duration}s video - pace beats by content, don't pad with filler just to hit a number, and don't rush past ${maxScenes} either.
+- Every beat's params MUST include "tag", "accentShape", and "heroVisual" (documented under every template above) - pick values specific to that beat's content, not the same ones repeated every time. A video about budgeting failures might use tags like "WARNING", "FACT", "DATA" across its beats, not "INSIGHT" three times in a row, and heroVisual should vary too (a concrete icon like "watch" or "house" when the content names that literal thing, an abstract mark like "ribbon" or "halo" otherwise).
+- Pick ONE "visualSystem" for the WHOLE video (not per beat) from: "hudTerminal" (dark, glowing, data/HUD chrome - fits finance, tech, data, insider-info, urgency), "softEditorial" (light, calm, serif, no glow/chrome - fits reflective, lifestyle, psychology, personal-essay tones), "boldGraphic" (flat saturated color blocks, high contrast, no glow - fits punchy hooks, bold claims, hot takes). Choose based on the PROMPT's tone, not a default.
 - Output strictly this JSON shape:
 
 {
   "title": "short internal title",
   "visualSystem": "hudTerminal",
   "scenes": [
-    { "template": "kineticTextReveal", "transition": null, "params": { "text": "...", "style": "bold-glow", "duration": 3, "tag": "WARNING", "accentShape": "triangle" } },
-    { "template": "statCounter", "transition": "luminanceFlashCut", "params": { "label": "...", "fromValue": 0, "toValue": 73, "suffix": "%", "duration": 2.5, "tag": "DATA", "accentShape": "crosshair" } },
-    { "template": "listReveal", "transition": "shapeMorph", "params": { "items": ["...", "...", "..."], "duration": 4, "tag": "GUIDE", "accentShape": "dots" } },
-    { "template": "quoteCallout", "transition": "slideDisplace", "params": { "quote": "...", "attribution": "...", "duration": 3.5, "tag": "QUOTE", "accentShape": "plus" } }
+    { "template": "kineticTextReveal", "params": { "text": "...", "style": "bold-glow", "duration": 3, "tag": "WARNING", "accentShape": "triangle", "heroVisual": "halo" } },
+    { "template": "statCounter", "params": { "label": "...", "fromValue": 0, "toValue": 73, "suffix": "%", "duration": 2.5, "tag": "DATA", "accentShape": "crosshair", "heroVisual": "burst" } },
+    { "template": "listReveal", "params": { "items": ["...", "...", "..."], "duration": 4, "tag": "GUIDE", "accentShape": "dots", "heroVisual": "mark" } },
+    { "template": "quoteCallout", "params": { "quote": "...", "attribution": "...", "duration": 3.5, "tag": "QUOTE", "accentShape": "plus", "heroVisual": "ribbon" } }
   ]
 }
 
@@ -378,9 +359,6 @@ function validateSceneJSON(json) {
     const tmpl = TEMPLATES[scene.template];
     if (!tmpl) {
       throw new Error(`scene[${i}] uses unknown template "${scene.template}"`);
-    }
-    if (i > 0 && scene.transition && !TRANSITIONS[scene.transition]) {
-      throw new Error(`scene[${i}] uses unknown transition "${scene.transition}"`);
     }
 
     const cleanParams = {};
@@ -436,7 +414,6 @@ function validateSceneJSON(json) {
 
     return {
       template: scene.template,
-      transition: i === 0 ? null : (scene.transition || 'luminanceFlashCut'),
       params: cleanParams,
     };
   });
@@ -453,7 +430,6 @@ function validateSceneJSON(json) {
 
 module.exports = {
   TEMPLATES,
-  TRANSITIONS,
   buildMistralSystemPrompt,
   validateSceneJSON,
 };
