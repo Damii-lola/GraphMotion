@@ -225,10 +225,16 @@ const CHIP_LAYOUT = [
   { x: 0.9, y: 0.88, depth: 0.45, style: 'line' },
 ];
 
-function drawDataChips(ctx, sceneLocalT, width, height, accentColor) {
+function drawDataChips(ctx, sceneLocalT, width, height, accentColor, secondaryColor) {
   CHIP_LAYOUT.forEach((chip, i) => {
     const entranceT = clamp01((sceneLocalT - 0.25 - i * 0.08) / 0.4);
     if (entranceT <= 0) return;
+
+    // Every 3rd chip uses the secondary (hue-shifted) color instead of
+    // the primary accent - a sparing, deliberate use of a second color
+    // per the "one dominant, quiet secondary" color-grading principle,
+    // not every chip recolored (that would just look inconsistent).
+    const chipColor = (secondaryColor && i % 3 === 2) ? secondaryColor : accentColor;
 
     const opacity = easeOutCubic(entranceT) * lerp(0.15, 0.4, chip.depth);
     const drift = Math.sin(sceneLocalT * 0.6 + i * 2) * 6 * chip.depth;
@@ -238,12 +244,12 @@ function drawDataChips(ctx, sceneLocalT, width, height, accentColor) {
     ctx.save();
     ctx.globalAlpha = opacity;
     ctx.translate(chip.x * width, chip.y * height + drift);
-    ctx.strokeStyle = accentColor;
+    ctx.strokeStyle = chipColor;
     ctx.lineWidth = 1;
     roundRect(ctx, -w / 2, -h / 2, w, h, 6);
     ctx.stroke();
 
-    ctx.fillStyle = accentColor;
+    ctx.fillStyle = chipColor;
     ctx.beginPath();
     ctx.arc(-w / 2 + 10, 0, 2.5, 0, Math.PI * 2);
     ctx.fill();
@@ -252,7 +258,7 @@ function drawDataChips(ctx, sceneLocalT, width, height, accentColor) {
       // Three tiny animated bars instead of a plain line - mini chart.
       for (let b = 0; b < 3; b++) {
         const bh = 4 + Math.abs(Math.sin(sceneLocalT * 2 + b + i)) * 8;
-        ctx.fillStyle = accentColor;
+        ctx.fillStyle = chipColor;
         ctx.globalAlpha = opacity * 0.7;
         ctx.fillRect(-w / 2 + 20 + b * 8, 6 - bh, 5, bh);
       }
@@ -378,10 +384,10 @@ function drawSecondaryAccents(ctx, primaryShape, sceneLocalT, width, height, acc
  * this chrome entirely. The corner tag, corner counter, and secondary
  * accent shapes are universal across all three systems.
  */
-function drawComposition(ctx, tagLabel, accentShape, sceneLocalT, sceneDuration, globalT, width, height, accentColor, sceneIndex, sceneCount, system) {
+function drawComposition(ctx, tagLabel, accentShape, sceneLocalT, sceneDuration, globalT, width, height, accentColor, sceneIndex, sceneCount, system, secondaryColor) {
   if (system.showGrid) drawMotifGrid(ctx, globalT, width, height, accentColor);
   if (system.showScanlines) drawScanline(ctx, globalT, width, height, accentColor);
-  if (system.showDataChips) drawDataChips(ctx, sceneLocalT, width, height, accentColor);
+  if (system.showDataChips) drawDataChips(ctx, sceneLocalT, width, height, accentColor, secondaryColor);
   drawSecondaryAccents(ctx, accentShape, sceneLocalT, width, height, accentColor);
   if (system.showTimestamp) drawTimestamp(ctx, globalT, width, height, accentColor, system);
   if (tagLabel) {
