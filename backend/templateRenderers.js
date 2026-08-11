@@ -362,6 +362,14 @@ function statCounter(ctx, params, t, width, height, system) {
   ctx.restore();
 }
 
+function roundRectPathIcon(ctx, x, y, w, h, r) {
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+}
+
 function drawIconPath(ctx, icon, size) {
   const s = size;
   ctx.beginPath();
@@ -403,6 +411,144 @@ function drawIconPath(ctx, icon, size) {
       return { strokeOnly: false };
     case 'chart':
       return { strokeOnly: false, isChart: true };
+    case 'watch': {
+      ctx.arc(0, 0, s * 0.32, 0, Math.PI * 2);
+      // Crown (the little knob on the side used to set the time).
+      ctx.moveTo(s * 0.32, -s * 0.06);
+      ctx.lineTo(s * 0.42, -s * 0.06);
+      ctx.lineTo(s * 0.42, s * 0.06);
+      ctx.lineTo(s * 0.32, s * 0.06);
+      // Strap lugs, top and bottom.
+      ctx.moveTo(-s * 0.14, -s * 0.32);
+      ctx.lineTo(s * 0.14, -s * 0.32);
+      ctx.moveTo(-s * 0.14, s * 0.32);
+      ctx.lineTo(s * 0.14, s * 0.32);
+      // Hands, offset like a real clock face (not 12:00, reads as "set").
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, -s * 0.18);
+      ctx.moveTo(0, 0);
+      ctx.lineTo(s * 0.13, s * 0.09);
+      return { strokeOnly: true };
+    }
+    case 'phone': {
+      const w = s * 0.42, h = s * 0.68;
+      roundRectPathIcon(ctx, -w / 2, -h / 2, w, h, s * 0.1);
+      ctx.moveTo(-s * 0.08, s * 0.24);
+      ctx.lineTo(s * 0.08, s * 0.24);
+      return { strokeOnly: true };
+    }
+    case 'house': {
+      ctx.moveTo(-s * 0.4, s * 0.05);
+      ctx.lineTo(0, -s * 0.38);
+      ctx.lineTo(s * 0.4, s * 0.05);
+      ctx.moveTo(-s * 0.28, -s * 0.02);
+      ctx.lineTo(-s * 0.28, s * 0.35);
+      ctx.lineTo(s * 0.28, s * 0.35);
+      ctx.lineTo(s * 0.28, -s * 0.02);
+      ctx.moveTo(-s * 0.08, s * 0.35);
+      ctx.lineTo(-s * 0.08, s * 0.12);
+      ctx.lineTo(s * 0.1, s * 0.12);
+      ctx.lineTo(s * 0.1, s * 0.35);
+      return { strokeOnly: true };
+    }
+    case 'car': {
+      ctx.moveTo(-s * 0.42, s * 0.1);
+      ctx.lineTo(-s * 0.3, -s * 0.12);
+      ctx.lineTo(s * 0.3, -s * 0.12);
+      ctx.lineTo(s * 0.42, s * 0.1);
+      ctx.lineTo(s * 0.42, s * 0.22);
+      ctx.lineTo(-s * 0.42, s * 0.22);
+      ctx.closePath();
+      return { strokeOnly: false, hasCarWheels: true };
+    }
+    case 'gift': {
+      const w = s * 0.6, h = s * 0.45;
+      ctx.rect(-w / 2, -h / 2 + s * 0.08, w, h);
+      ctx.moveTo(0, -h / 2 + s * 0.08);
+      ctx.lineTo(0, h / 2 + s * 0.08);
+      ctx.moveTo(-w / 2, -s * 0.05);
+      ctx.lineTo(w / 2, -s * 0.05);
+      // Bow loops on top.
+      ctx.moveTo(0, -h / 2 + s * 0.08);
+      ctx.bezierCurveTo(-s * 0.05, -h / 2 - s * 0.15, -s * 0.28, -h / 2 - s * 0.1, -s * 0.02, -h / 2 + s * 0.06);
+      ctx.moveTo(0, -h / 2 + s * 0.08);
+      ctx.bezierCurveTo(s * 0.05, -h / 2 - s * 0.15, s * 0.28, -h / 2 - s * 0.1, s * 0.02, -h / 2 + s * 0.06);
+      return { strokeOnly: true };
+    }
+    case 'trophy': {
+      // Cup bowl: two bezier curves from a wide rim narrowing to the
+      // neck, mirrored left/right.
+      ctx.moveTo(-s * 0.26, -s * 0.32);
+      ctx.bezierCurveTo(-s * 0.26, -s * 0.05, -s * 0.12, s * 0.08, 0, s * 0.08);
+      ctx.bezierCurveTo(s * 0.12, s * 0.08, s * 0.26, -s * 0.05, s * 0.26, -s * 0.32);
+      ctx.closePath();
+      // Side handles.
+      ctx.moveTo(-s * 0.26, -s * 0.26);
+      ctx.bezierCurveTo(-s * 0.42, -s * 0.26, -s * 0.42, -s * 0.02, -s * 0.24, -s * 0.02);
+      ctx.moveTo(s * 0.26, -s * 0.26);
+      ctx.bezierCurveTo(s * 0.42, -s * 0.26, s * 0.42, -s * 0.02, s * 0.24, -s * 0.02);
+      // Stem and base.
+      ctx.moveTo(-s * 0.05, s * 0.08);
+      ctx.lineTo(-s * 0.05, s * 0.24);
+      ctx.lineTo(s * 0.05, s * 0.24);
+      ctx.lineTo(s * 0.05, s * 0.08);
+      ctx.moveTo(-s * 0.18, s * 0.24);
+      ctx.lineTo(s * 0.18, s * 0.24);
+      ctx.lineTo(s * 0.14, s * 0.34);
+      ctx.lineTo(-s * 0.14, s * 0.34);
+      ctx.closePath();
+      return { strokeOnly: false };
+    }
+    case 'rocket': {
+      ctx.moveTo(0, -s * 0.45);
+      ctx.bezierCurveTo(s * 0.22, -s * 0.15, s * 0.2, s * 0.15, s * 0.13, s * 0.28);
+      ctx.lineTo(-s * 0.13, s * 0.28);
+      ctx.bezierCurveTo(-s * 0.2, s * 0.15, -s * 0.22, -s * 0.15, 0, -s * 0.45);
+      ctx.closePath();
+      ctx.moveTo(-s * 0.13, s * 0.15);
+      ctx.lineTo(-s * 0.28, s * 0.32);
+      ctx.lineTo(-s * 0.1, s * 0.28);
+      ctx.moveTo(s * 0.13, s * 0.15);
+      ctx.lineTo(s * 0.28, s * 0.32);
+      ctx.lineTo(s * 0.1, s * 0.28);
+      return { strokeOnly: false, hasWindowCutout: true };
+    }
+    case 'camera': {
+      const w = s * 0.62, h = s * 0.45;
+      roundRectPathIcon(ctx, -w / 2, -h / 2 + s * 0.05, w, h, s * 0.06);
+      ctx.moveTo(-s * 0.12, -h / 2 + s * 0.05);
+      ctx.lineTo(-s * 0.06, -h / 2 - s * 0.06);
+      ctx.lineTo(s * 0.1, -h / 2 - s * 0.06);
+      ctx.lineTo(s * 0.16, -h / 2 + s * 0.05);
+      ctx.moveTo(s * 0.12, s * 0.05);
+      ctx.arc(0, s * 0.05, s * 0.14, 0, Math.PI * 2);
+      return { strokeOnly: true };
+    }
+    case 'briefcase': {
+      const w = s * 0.62, h = s * 0.4;
+      ctx.rect(-w / 2, -h / 2 + s * 0.08, w, h);
+      ctx.moveTo(-s * 0.12, -h / 2 + s * 0.08);
+      ctx.lineTo(-s * 0.12, -h / 2 - s * 0.04);
+      ctx.lineTo(s * 0.12, -h / 2 - s * 0.04);
+      ctx.lineTo(s * 0.12, -h / 2 + s * 0.08);
+      ctx.moveTo(-w / 2, s * 0.08);
+      ctx.lineTo(w / 2, s * 0.08);
+      return { strokeOnly: true };
+    }
+    case 'coffee': {
+      ctx.moveTo(-s * 0.22, -s * 0.12);
+      ctx.lineTo(-s * 0.18, s * 0.28);
+      ctx.lineTo(s * 0.18, s * 0.28);
+      ctx.lineTo(s * 0.22, -s * 0.12);
+      ctx.closePath();
+      ctx.moveTo(s * 0.22, -s * 0.04);
+      ctx.bezierCurveTo(s * 0.42, -s * 0.06, s * 0.42, s * 0.14, s * 0.2, s * 0.12);
+      ctx.moveTo(-s * 0.12, -s * 0.24);
+      ctx.bezierCurveTo(-s * 0.16, -s * 0.34, -s * 0.06, -s * 0.36, -s * 0.1, -s * 0.46);
+      ctx.moveTo(s * 0.05, -s * 0.24);
+      ctx.bezierCurveTo(s * 0.01, -s * 0.34, s * 0.11, -s * 0.36, s * 0.07, -s * 0.46);
+      return { strokeOnly: true };
+    }
     case 'money':
     default:
       return { strokeOnly: false, isText: true };
@@ -472,6 +618,28 @@ function iconCallout(ctx, params, t, width, height, system) {
         ctx.beginPath();
         ctx.arc(0, size * 0.22, size * 0.05, 0, Math.PI * 2);
         ctx.fill();
+      }
+      if (shape.hasWindowCutout && drawT > 0.5) {
+        ctx.globalAlpha = clamp01((drawT - 0.5) / 0.3);
+        ctx.fillStyle = system.bgColorInner;
+        ctx.beginPath();
+        ctx.arc(0, -size * 0.1, size * 0.08, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (shape.hasCarWheels && drawT > 0.5) {
+        const wheelAlpha = clamp01((drawT - 0.5) / 0.3);
+        [-size * 0.22, size * 0.22].forEach((wx) => {
+          ctx.globalAlpha = wheelAlpha;
+          ctx.fillStyle = system.bgColorInner;
+          ctx.beginPath();
+          ctx.arc(wx, size * 0.22, size * 0.1, 0, Math.PI * 2);
+          ctx.fill();
+          // Bright rim so the wheel reads as a distinct wheel, not just
+          // a hole punched in the body.
+          ctx.strokeStyle = accentColor;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        });
       }
     }
   }
