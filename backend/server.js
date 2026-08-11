@@ -67,11 +67,19 @@ const generateLimiter = rateLimit({
 // false, full stop, no more guessing about whether a deploy worked.
 app.get('/health', (req, res) => {
   let chunkHandoffFixPresent = false;
+  let liveChunkConfig = null;
   try {
     const orchestratorSource = fs.readFileSync(path.join(__dirname, 'longVideoOrchestrator.js'), 'utf8');
     chunkHandoffFixPresent = orchestratorSource.includes('hasExited') && orchestratorSource.includes('maybeFinish');
+    // Report the ACTUAL live numbers, not just "the old fix is
+    // present" - a binary check here would have stayed true even if
+    // the chunk-size reduction specifically never deployed, since
+    // that change didn't touch the hasExited/maybeFinish code at all.
+    // This removes that exact ambiguity.
+    const { CHUNK_THRESHOLD_SECONDS, CHUNK_SIZE_SECONDS } = require('./longVideoOrchestrator');
+    liveChunkConfig = { CHUNK_THRESHOLD_SECONDS, CHUNK_SIZE_SECONDS };
   } catch (err) {
-    chunkHandoffFixPresent = null; // file read failed, genuinely unknown
+    chunkHandoffFixPresent = null;
   }
 
   res.json({
@@ -79,7 +87,8 @@ app.get('/health', (req, res) => {
     time: new Date().toISOString(),
     build: {
       chunkHandoffFix: chunkHandoffFixPresent,
-      progressThrottleFix: true, // this line only runs if THIS file (server.js) is the updated version
+      progressThrottleFix: true,
+      liveChunkConfig,
     },
   });
 });
