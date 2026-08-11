@@ -98,8 +98,14 @@ function getCameraTransform(globalTime, beats, anchors) {
   // physical camera move reads.
   let camZoom;
   if (beatIndex === 0 || localT >= arrivalWindow) {
-    const settleT = beatIndex === 0 ? 1 : clamp01((localT - arrivalWindow) / (beat.duration * 0.2));
-    camZoom = lerp(0.94, 1, easeInOutCubic(Math.min(1, settleT)));
+    // Was settling zoom over an ADDITIONAL window after position had
+    // already finished arriving - position stops, then zoom keeps
+    // drifting alone for another beat.duration*0.2 seconds afterward.
+    // That disconnect between "the pan is done" and "the camera is
+    // still doing something" is exactly what reads as lag. Now both
+    // finish at the same instant - one unified move, not two
+    // staggered ones.
+    camZoom = 1;
   } else {
     const t = clamp01(localT / arrivalWindow);
     const bow = Math.sin(t * Math.PI); // 0 -> 1 -> 0 across the move
