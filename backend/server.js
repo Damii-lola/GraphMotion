@@ -35,8 +35,8 @@ const MAX_CONCURRENT_RENDERS = 1;
 let activeRenders = 0;
 const renderQueue = [];
 
-function scheduleRender(jobId, prompt) {
-  renderQueue.push({ jobId, prompt });
+function scheduleRender(jobId, prompt, targetDurationSeconds) {
+  renderQueue.push({ jobId, prompt, targetDurationSeconds });
   drainQueue();
 }
 
@@ -46,7 +46,7 @@ function drainQueue() {
   if (!next) return;
 
   activeRenders++;
-  startRenderWorker(next.jobId, next.prompt, () => {
+  startRenderWorker(next.jobId, next.prompt, next.targetDurationSeconds, () => {
     activeRenders--;
     drainQueue();
   });
@@ -64,11 +64,20 @@ app.get('/health', (req, res) => {
 });
 
 app.post('/api/generate', generateLimiter, async (req, res) => {
-  const { prompt, userId } = req.body || {};
+  const { prompt, userId, targetDurationSeconds } = req.body || {};
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
     return res.status(400).json({ error: 'prompt is required (min 3 chars)' });
   }
+
+  // Clamp to a sane range regardless of what the client sends - 8s
+  // floor matches the shortest videos already supported, 120s (2min)
+  // is the new ceiling. Defaults to the original short-form length
+  // when omitted, so existing callers get identical behavior to
+  // before this feature existed.
+  let duration = Number(targetDurationSeconds);
+  if (!Number.isFinite(duration)) duration = 12;
+  duration = Math.max(8, Math.min(120, Math.round(duration)));
 
   const identifier = userId || req.ip;
 
@@ -89,13 +98,26 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
 
   res.status(202).json({ job });
 
-  scheduleRender(job.id, prompt.trim());
+  scheduleRender(job.id, prompt.trim(), duration);
 });
 
-function startRenderWorker(jobId, prompt, onSettled) {
+function startRenderWorker(jobId, prompt, targetDurationSeconds, onSettled) {
   const child = fork(path.join(__dirname, 'renderWorker.js'), { stdio: 'inherit' });
 
   let settled = false;
+  // Progress messages arrive roughly 6x/second per chunk with zero
+  // throttling previously - every single one fired an immediate,
+  // un-awaited Supabase network call from THIS process (the main
+  // server, not a disposable worker). Over a multi-chunk render that's
+  // potentially hundreds of overlapping outbound requests piling up
+  // with no backpressure - a real, previously-unexamined way for the
+  // MAIN server to degrade, not just one render job, which fits
+  // "polling itself starts failing" better than a single-job crash
+  // would. Also just wasted work regardless: the frontend only polls
+  // every 2s, so updating Supabase faster than that is never even
+  // visible.
+  let lastProgressUpdateAt = 0;
+  const PROGRESS_UPDATE_MIN_INTERVAL_MS = 1500;
 
   child.on('message', async (msg) => {
     if (!msg || msg.jobId !== jobId) return;
@@ -113,9 +135,15 @@ function startRenderWorker(jobId, prompt, onSettled) {
           await updateJob(jobId, { scene_json: msg.sceneJSON });
           break;
 
-        case 'progress':
-          updateJob(jobId, { progress: msg.progress }).catch(() => {});
+        case 'progress': {
+          const now = Date.now();
+          const isFinal = msg.progress >= 100;
+          if (isFinal || now - lastProgressUpdateAt >= PROGRESS_UPDATE_MIN_INTERVAL_MS) {
+            lastProgressUpdateAt = now;
+            updateJob(jobId, { progress: msg.progress }).catch(() => {});
+          }
           break;
+        }
 
         case 'render_complete': {
           settled = true;
@@ -152,7 +180,7 @@ function startRenderWorker(jobId, prompt, onSettled) {
     }
   });
 
-  child.send({ jobId, prompt });
+  child.send({ jobId, prompt, targetDurationSeconds });
 }
 
 app.get('/api/jobs/:id', async (req, res) => {
