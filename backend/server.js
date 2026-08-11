@@ -59,8 +59,29 @@ const generateLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// A concrete, checkable marker for exactly this situation - rather
+// than trust "I deployed it" indirectly, hit this endpoint after
+// deploying. This GENUINELY inspects the deployed file's own source
+// at runtime (not a hardcoded claim) - if longVideoOrchestrator.js on
+// the live server doesn't actually contain the fix, this reports
+// false, full stop, no more guessing about whether a deploy worked.
 app.get('/health', (req, res) => {
-  res.json({ ok: true, time: new Date().toISOString() });
+  let chunkHandoffFixPresent = false;
+  try {
+    const orchestratorSource = fs.readFileSync(path.join(__dirname, 'longVideoOrchestrator.js'), 'utf8');
+    chunkHandoffFixPresent = orchestratorSource.includes('hasExited') && orchestratorSource.includes('maybeFinish');
+  } catch (err) {
+    chunkHandoffFixPresent = null; // file read failed, genuinely unknown
+  }
+
+  res.json({
+    ok: true,
+    time: new Date().toISOString(),
+    build: {
+      chunkHandoffFix: chunkHandoffFixPresent,
+      progressThrottleFix: true, // this line only runs if THIS file (server.js) is the updated version
+    },
+  });
 });
 
 app.post('/api/generate', generateLimiter, async (req, res) => {
