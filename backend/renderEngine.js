@@ -61,13 +61,31 @@ function findSegment(segments, globalTime) {
   return segments[segments.length - 1];
 }
 
-async function renderJobToFile(jobId, sceneJSON, onProgress) {
-  const { segments, totalDuration, accentColor, visualSystem } = buildTimeline(sceneJSON);
-  const totalFrames = Math.ceil(totalDuration * FPS);
+/**
+ * Renders frames for [timeStart, timeEnd) of the full timeline into
+ * outputPath. Used two ways: renderJobToFile calls this with the full
+ * range for short videos (the common case, one process, no extra
+ * complexity). For long videos, renderWorker.js instead calls this
+ * indirectly via renderChunkWorker.js - a FRESH forked process per
+ * time-slice, so memory is genuinely reclaimed by the OS between
+ * chunks. That second path exists because of a real, measured
+ * limitation: this Skia binding accumulates native (non-V8-heap)
+ * memory under high sustained draw-call volume over a long render -
+ * confirmed via forced-GC testing (JS heap stays flat, RSS does not),
+ * and confirmed NOT fixable by canvas recycling or per-frame yielding
+ * alone (both tested directly, neither fully resolved it on a real,
+ * fully-featured render). A fresh OS process per chunk is the only
+ * approach that reliably resets it, because process exit reclaims ALL
+ * memory unconditionally, native or not.
+ */
+async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, onProgress) {
+  const { segments, accentColor, visualSystem } = buildTimeline(sceneJSON);
+  const startFrame = Math.floor(timeStart * FPS);
+  const endFrame = Math.ceil(timeEnd * FPS);
+  const totalFrames = endFrame - startFrame;
 
-  const outDir = path.join(os.tmpdir(), 'shortform-renders');
+  const outDir = path.dirname(outputPath);
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-  const outputPath = path.join(outDir, `${jobId}.mp4`);
 
   const canvas = createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext('2d');
@@ -96,7 +114,7 @@ async function renderJobToFile(jobId, sceneJSON, onProgress) {
     ffmpeg.on('error', reject);
   });
 
-  for (let frame = 0; frame < totalFrames; frame++) {
+  for (let frame = startFrame; frame < endFrame; frame++) {
     const globalTime = frame / FPS;
     const segment = findSegment(segments, globalTime);
     const localTime = globalTime - segment.start;
@@ -112,10 +130,12 @@ async function renderJobToFile(jobId, sceneJSON, onProgress) {
     const canContinue = ffmpeg.stdin.write(Buffer.from(raw));
     if (!canContinue) {
       await new Promise((resolve) => ffmpeg.stdin.once('drain', resolve));
+    } else {
+      await new Promise((resolve) => setImmediate(resolve));
     }
 
-    if (onProgress && frame % 5 === 0) {
-      onProgress(Math.round((frame / totalFrames) * 100));
+    if (onProgress && (frame - startFrame) % 5 === 0) {
+      onProgress(Math.round(((frame - startFrame) / totalFrames) * 100));
     }
   }
 
@@ -126,4 +146,11 @@ async function renderJobToFile(jobId, sceneJSON, onProgress) {
   return outputPath;
 }
 
-module.exports = { renderJobToFile, WIDTH, HEIGHT, FPS };
+async function renderJobToFile(jobId, sceneJSON, onProgress) {
+  const { totalDuration } = buildTimeline(sceneJSON);
+  const outDir = path.join(os.tmpdir(), 'shortform-renders');
+  const outputPath = path.join(outDir, `${jobId}.mp4`);
+  return renderTimelineRange(sceneJSON, 0, totalDuration, outputPath, onProgress);
+}
+
+module.exports = { renderJobToFile, renderTimelineRange, buildTimeline, WIDTH, HEIGHT, FPS };
