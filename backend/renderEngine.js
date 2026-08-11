@@ -6,6 +6,7 @@ const os = require('os');
 const fs = require('fs');
 
 const { drawBeatContent } = require('./templateRenderers');
+const { drawHeroVisual } = require('./heroVisual');
 const { drawAtmosphere, drawWorldParticles } = require('./atmosphere');
 const { getVisualSystem } = require('./visualSystems');
 const { deriveSecondaryColor } = require('./colorUtils');
@@ -166,6 +167,16 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         // templateRenderers.js's drawBeatContent for the full
         // reasoning.
         ctx.translate(anchor.x + anchor.contentOffsetX - WIDTH / 2, anchor.y + anchor.contentOffsetY - HEIGHT / 2);
+        // iconCallout already draws its own icon as primary content -
+        // adding a separate hero visual on top duplicated the same
+        // shape twice in one frame, confirmed by actually looking at
+        // rendered output. Only templates that are purely text/number
+        // based (no icon of their own) get the added hero visual.
+        const TEMPLATES_WITH_OWN_ICON = new Set(['iconCallout', 'badgeUnlock']);
+        if (!TEMPLATES_WITH_OWN_ICON.has(beat.template)) {
+          const heroShape = beat.params.heroVisual || 'mark';
+          drawHeroVisual(ctx, heroShape, accentColor, localTime, beat.duration, WIDTH, HEIGHT, system);
+        }
         drawBeatContent(ctx, beat.template, beat.params, localTime, WIDTH, HEIGHT, visualSystem);
         ctx.restore();
       }
