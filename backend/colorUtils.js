@@ -86,4 +86,31 @@ function deriveSecondaryColor(primaryHex, hueShiftDegrees = 40) {
   }
 }
 
-module.exports = { deriveSecondaryColor };
+/**
+ * Derives a dark, desaturated background tint from the video's own
+ * accent color - genuinely different moods per video (dark blue,
+ * dark green, dark purple...) instead of the exact same near-black
+ * background every single time regardless of what color was chosen.
+ * Deliberately keeps lightness very low (5-8%) so white text stays
+ * legible on top regardless of which hue comes out - only the hue
+ * itself varies, not the fundamental dark/readable character.
+ */
+function deriveDarkBackgroundTint(primaryHex) {
+  if (typeof primaryHex !== 'string' || !/^#?[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(primaryHex)) {
+    return { inner: '#141416', outer: '#08080A' };
+  }
+  try {
+    const { r, g, b } = hexToRgb(primaryHex);
+    const { h } = rgbToHsl(r, g, b);
+    const innerRgb = hslToRgb(h, 0.35, 0.08);
+    const outerRgb = hslToRgb(h, 0.4, 0.035);
+    return {
+      inner: rgbToHex(innerRgb.r, innerRgb.g, innerRgb.b),
+      outer: rgbToHex(outerRgb.r, outerRgb.g, outerRgb.b),
+    };
+  } catch (err) {
+    return { inner: '#141416', outer: '#08080A' };
+  }
+}
+
+module.exports = { deriveSecondaryColor, deriveDarkBackgroundTint };
