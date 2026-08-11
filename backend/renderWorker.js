@@ -5,7 +5,7 @@
 // the main server and every other in-flight request keep running.
 
 const { generateSceneJSON } = require('./mistralClient');
-const { renderJobToFile } = require('./renderEngine');
+const { renderLongFormVideo } = require('./longVideoOrchestrator');
 
 let currentJobId = null;
 
@@ -23,17 +23,17 @@ function sendAndFlush(message) {
   });
 }
 
-process.on('message', async ({ jobId, prompt }) => {
+process.on('message', async ({ jobId, prompt, targetDurationSeconds }) => {
   currentJobId = jobId;
 
   try {
     await sendAndFlush({ type: 'status', jobId, status: 'writing_scenes' });
-    const sceneJSON = await generateSceneJSON(prompt);
+    const sceneJSON = await generateSceneJSON(prompt, targetDurationSeconds || 12);
 
     await sendAndFlush({ type: 'scenes_ready', jobId, sceneJSON });
     await sendAndFlush({ type: 'status', jobId, status: 'rendering', progress: 0 });
 
-    const localFilePath = await renderJobToFile(jobId, sceneJSON, (pct) => {
+    const localFilePath = await renderLongFormVideo(jobId, sceneJSON, (pct) => {
       if (process.send) process.send({ type: 'progress', jobId, progress: pct });
     });
 
