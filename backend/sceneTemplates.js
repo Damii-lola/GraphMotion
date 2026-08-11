@@ -44,6 +44,9 @@ const SHARED_PARAMS = {
   },
 };
 
+const TEXT_FRAME_PARAM = { type: 'enum', values: ['none', 'card', 'gradient'], default: 'none', description: 'Visual framing for the text/number itself: none (plain glow), card (a soft rounded card background), gradient (fill sweeps from white to the accent color). Vary this across beats in the same video - don\'t use the same one every time.' };
+const TEXT_FRAME_PARAM_CARD_ONLY = { type: 'enum', values: ['none', 'card'], default: 'none', description: 'Visual framing: none (plain glow) or card (a soft rounded card background). This template already has its own dynamic color behavior, so gradient isn\'t offered here - would compete with it.' };
+
 const TEMPLATES = {
   kineticTextReveal: {
     description:
@@ -76,6 +79,7 @@ const TEMPLATES = {
       fromValue: { type: 'number', required: true },
       toValue: { type: 'number', required: true },
       suffix: { type: 'string', default: '' },
+      textFrame: TEXT_FRAME_PARAM,
       duration: { type: 'number', min: 1.5, max: 4, default: 2.5 },
       ...SHARED_PARAMS,
     },
@@ -133,6 +137,7 @@ const TEMPLATES = {
     params: {
       quote: { type: 'string', required: true, maxLength: 100 },
       attribution: { type: 'string', maxLength: 40, default: '' },
+      textFrame: TEXT_FRAME_PARAM,
       duration: { type: 'number', min: 2.5, max: 5, default: 3.5 },
       ...SHARED_PARAMS,
     },
@@ -155,6 +160,7 @@ const TEMPLATES = {
     params: {
       label: { type: 'string', required: true, maxLength: 30 },
       fromValue: { type: 'number', required: true, min: 1, max: 999 },
+      textFrame: TEXT_FRAME_PARAM_CARD_ONLY,
       duration: { type: 'number', min: 2.5, max: 5, default: 4 },
       ...SHARED_PARAMS,
     },
@@ -187,6 +193,7 @@ const TEMPLATES = {
       value: { type: 'number', required: true },
       suffix: { type: 'string', default: '' },
       caption: { type: 'string', maxLength: 50, default: '' },
+      textFrame: TEXT_FRAME_PARAM,
       duration: { type: 'number', min: 2, max: 4, default: 3 },
       ...SHARED_PARAMS,
     },
