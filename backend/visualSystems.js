@@ -31,6 +31,7 @@ const VISUAL_SYSTEMS = {
     name: 'hudTerminal',
     bgColorInner: '#141416',
     bgColorOuter: '#08080A',
+    dynamicBackground: true,
     heroTextColor: '#F5F5F5',
     mutedTextColor: '#B5B5B8',
     fontFamily: 'sans-serif',
