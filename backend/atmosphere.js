@@ -1,4 +1,5 @@
 const { clamp01, lerp } = require('./easing');
+const { deriveDarkBackgroundTint } = require('./colorUtils');
 
 /**
  * Every function here now takes `system` (a config object from
@@ -44,7 +45,7 @@ function getParticleSeeds(worldWidth) {
 }
 
 function drawAtmosphere(ctx, globalT, width, height, accentColor, system) {
-  drawGradientBase(ctx, width, height, system);
+  drawGradientBase(ctx, width, height, system, accentColor);
   if (system.showGlowBlob) drawGlowBlob(ctx, globalT, width, height, accentColor);
   if (system.flatBlockAccent) drawFlatBlocks(ctx, globalT, width, height, accentColor);
   drawVignette(ctx, width, height, system);
@@ -123,13 +124,25 @@ function drawGlowBlob(ctx, globalT, width, height, accentColor) {
   ctx.restore();
 }
 
-function drawGradientBase(ctx, width, height, system) {
+function drawGradientBase(ctx, width, height, system, accentColor) {
+  // Real background color variety, not the same near-black every
+  // time regardless of the video's own accent color - direct
+  // response to "why is it only a black screen." Only systems that
+  // opt in get this (hudTerminal); softEditorial's light look and
+  // boldGraphic's flat-block identity stay exactly as designed.
+  let inner = system.bgColorInner;
+  let outer = system.bgColorOuter;
+  if (system.dynamicBackground && accentColor) {
+    const tint = deriveDarkBackgroundTint(accentColor);
+    inner = tint.inner;
+    outer = tint.outer;
+  }
   const grad = ctx.createRadialGradient(
     width / 2, height * 0.35, 0,
     width / 2, height * 0.35, height * 0.9
   );
-  grad.addColorStop(0, system.bgColorInner);
-  grad.addColorStop(1, system.bgColorOuter);
+  grad.addColorStop(0, inner);
+  grad.addColorStop(1, outer);
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, width, height);
 }
