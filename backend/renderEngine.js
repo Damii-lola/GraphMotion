@@ -19,6 +19,8 @@ const FPS = 30;
  * deliberate system, not a per-scene decision. Every scene's own color
  * param is overridden to match, so nothing can drift independently.
  */
+const { deriveSecondaryColor } = require('./colorUtils');
+
 function buildTimeline(sceneJSON) {
   const firstColorScene = sceneJSON.scenes.find((s) => s.params && s.params.color);
   const accentColor = (firstColorScene && firstColorScene.params.color) || '#FF5C1A';
@@ -51,7 +53,7 @@ function buildTimeline(sceneJSON) {
     cursor += params.duration;
   });
 
-  return { segments, totalDuration: cursor, accentColor, visualSystem: sceneJSON.visualSystem };
+  return { segments, totalDuration: cursor, accentColor, secondaryColor: deriveSecondaryColor(accentColor), visualSystem: sceneJSON.visualSystem };
 }
 
 function findSegment(segments, globalTime) {
@@ -79,7 +81,7 @@ function findSegment(segments, globalTime) {
  * memory unconditionally, native or not.
  */
 async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, onProgress) {
-  const { segments, accentColor, visualSystem } = buildTimeline(sceneJSON);
+  const { segments, accentColor, secondaryColor, visualSystem } = buildTimeline(sceneJSON);
   const startFrame = Math.floor(timeStart * FPS);
   const endFrame = Math.ceil(timeEnd * FPS);
   const totalFrames = endFrame - startFrame;
@@ -120,7 +122,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
     const localTime = globalTime - segment.start;
 
     if (segment.kind === 'scene') {
-      drawTemplate(ctx, segment.template, segment.params, localTime, globalTime, WIDTH, HEIGHT, segment.sceneIndex, segment.sceneCount, visualSystem);
+      drawTemplate(ctx, segment.template, segment.params, localTime, globalTime, WIDTH, HEIGHT, segment.sceneIndex, segment.sceneCount, visualSystem, secondaryColor);
     } else {
       drawTransition(ctx, segment.name, localTime, WIDTH, HEIGHT, accentColor, visualSystem);
     }
