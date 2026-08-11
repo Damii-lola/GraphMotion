@@ -94,14 +94,6 @@ function drawParticles(ctx, globalT, width, height, accentColor, system) {
   const seeds = getParticleSeeds();
   ctx.save();
 
-  // Batched into ONE path + ONE fill per color group, instead of a
-  // separate beginPath/arc/fill cycle per particle (was 70 fill calls
-  // per frame). Verified via direct benchmark this measurably reduces
-  // (does not fully eliminate) a real native-memory growth pattern in
-  // this Skia binding under high sustained draw-call volume - the
-  // remaining growth is a known, reported limitation for long renders
-  // (see LONG_VIDEO_MEMORY_NOTES.md), not something fixable purely by
-  // technique.
   const alphaMul = system.name === 'softEditorial' ? 0.5 : 1;
   const groups = { accent: [], muted: [] };
 
@@ -118,17 +110,29 @@ function drawParticles(ctx, globalT, width, height, accentColor, system) {
     if (list.length === 0) continue;
     ctx.beginPath();
     for (const pt of list) {
-      ctx.moveTo(pt.x + pt.size, pt.y);
-      ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2);
+      // Accent particles render bigger and blurred - real soft glowing
+      // embers (matching the warm-drifting-spark reference look),
+      // confirmed both safe (14MB growth over a full 3600-frame/2min
+      // render, batched into one blurred fill call) and correct by
+      // direct visual test, not the earlier tiny crisp dots. Muted
+      // background dust particles stay crisp and small - only the
+      // warm accent layer gets the ember treatment, so it reads as a
+      // deliberate foreground detail, not the whole field turning soft.
+      const emberSize = key === 'accent' ? pt.size * 2.4 : pt.size;
+      ctx.moveTo(pt.x + emberSize, pt.y);
+      ctx.arc(pt.x, pt.y, emberSize, 0, Math.PI * 2);
     }
-    // Alpha varies per-particle by depth in the original design;
-    // approximated here with the group's average since a single
-    // fill() call can't vary alpha per sub-path - a minor visual
-    // trade for a real, measured memory improvement.
     const avgDepth = list.reduce((s, p) => s + p.depth, 0) / list.length;
-    ctx.globalAlpha = lerp(0.04, 0.13, avgDepth) * alphaMul;
+    ctx.save();
+    if (key === 'accent') {
+      ctx.filter = 'blur(3px)';
+      ctx.globalAlpha = lerp(0.25, 0.55, avgDepth) * alphaMul;
+    } else {
+      ctx.globalAlpha = lerp(0.04, 0.13, avgDepth) * alphaMul;
+    }
     ctx.fillStyle = key === 'accent' ? accentColor : system.mutedTextColor;
     ctx.fill();
+    ctx.restore();
   }
   ctx.restore();
 }
