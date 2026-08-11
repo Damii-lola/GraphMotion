@@ -88,21 +88,41 @@ function drawFlatBlocks(ctx, globalT, width, height, accentColor) {
 function drawParticles(ctx, globalT, width, height, accentColor, system) {
   const seeds = getParticleSeeds();
   ctx.save();
+
+  // Batched into ONE path + ONE fill per color group, instead of a
+  // separate beginPath/arc/fill cycle per particle (was 70 fill calls
+  // per frame). Verified via direct benchmark this measurably reduces
+  // (does not fully eliminate) a real native-memory growth pattern in
+  // this Skia binding under high sustained draw-call volume - the
+  // remaining growth is a known, reported limitation for long renders
+  // (see LONG_VIDEO_MEMORY_NOTES.md), not something fixable purely by
+  // technique.
+  const alphaMul = system.name === 'softEditorial' ? 0.5 : 1;
+  const groups = { accent: [], muted: [] };
+
   for (const p of seeds) {
     const speed = lerp(0.004, 0.02, p.depth);
     const size = lerp(1, 3, p.depth);
-    // softEditorial: calmer, dimmer, no accent-color particles at all
-    // (pure neutral dust motes, not "HUD data points").
-    const alphaMul = system.name === 'softEditorial' ? 0.5 : 1;
-    const baseAlpha = lerp(0.04, 0.13, p.depth) * alphaMul;
-
     const driftX = Math.sin(globalT * speed * 20 + p.phase) * 20 * p.depth;
     const driftY = (globalT * speed * 15 + p.y * height) % (height + 40) - 20;
+    const isAccent = system.name === 'hudTerminal' && p.depth > 0.75;
+    (isAccent ? groups.accent : groups.muted).push({ x: p.x * width + driftX, y: driftY, size, depth: p.depth });
+  }
 
-    ctx.globalAlpha = baseAlpha;
-    ctx.fillStyle = (system.name === 'hudTerminal' && p.depth > 0.75) ? accentColor : system.mutedTextColor;
+  for (const [key, list] of Object.entries(groups)) {
+    if (list.length === 0) continue;
     ctx.beginPath();
-    ctx.arc(p.x * width + driftX, driftY, size, 0, Math.PI * 2);
+    for (const pt of list) {
+      ctx.moveTo(pt.x + pt.size, pt.y);
+      ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2);
+    }
+    // Alpha varies per-particle by depth in the original design;
+    // approximated here with the group's average since a single
+    // fill() call can't vary alpha per sub-path - a minor visual
+    // trade for a real, measured memory improvement.
+    const avgDepth = list.reduce((s, p) => s + p.depth, 0) / list.length;
+    ctx.globalAlpha = lerp(0.04, 0.13, avgDepth) * alphaMul;
+    ctx.fillStyle = key === 'accent' ? accentColor : system.mutedTextColor;
     ctx.fill();
   }
   ctx.restore();
