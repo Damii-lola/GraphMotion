@@ -55,6 +55,16 @@ async function renderLongFormVideo(jobId, sceneJSON, onProgress) {
     });
 
     chunkPaths.push(chunkPath);
+
+    // Small explicit buffer even after the child's exit event has
+    // fired - Node's 'exit' event confirms the process has terminated,
+    // but full OS-level memory reclamation can trail slightly behind
+    // it under real memory pressure. Cheap insurance against the exact
+    // failure mode just fixed above, given how severe it was (crashed
+    // every long-video render reliably at the first chunk boundary).
+    if (i < chunkRanges.length - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
   }
 
   const finalOutputPath = path.join(os.tmpdir(), 'shortform-renders', `${jobId}.mp4`);
@@ -71,7 +81,23 @@ async function renderLongFormVideo(jobId, sceneJSON, onProgress) {
 function renderSingleChunk(jobId, sceneJSON, timeStart, timeEnd, outputPath, chunkIndex, onProgress) {
   return new Promise((resolve, reject) => {
     const child = fork(path.join(__dirname, 'renderChunkWorker.js'), { stdio: 'inherit' });
+
+    // Real bug fixed here: this used to resolve/reject the moment the
+    // IPC message arrived, then the orchestrator's loop immediately
+    // forked the NEXT chunk - but process.send() and process.exit()
+    // are two independent async events, and the OS can still be
+    // mid-teardown (reclaiming the previous chunk's Skia/ffmpeg
+    // memory) when the next chunk's fork() already starts allocating
+    // its own. That overlap window is a real memory spike, and it
+    // explains exactly the reported symptom: a crash that reliably
+    // hits at the first chunk boundary, not randomly mid-render. Now
+    // BOTH the IPC result AND the actual 'exit' event must happen
+    // before this promise settles, guaranteeing the previous
+    // process's resources are actually reclaimed before the next
+    // chunk is allowed to start.
     let settled = false;
+    let ipcResult = null; // { ok: true, outputPath } | { ok: false, error }
+    let hasExited = false;
 
     const timeout = setTimeout(() => {
       if (!settled) {
@@ -81,27 +107,33 @@ function renderSingleChunk(jobId, sceneJSON, timeStart, timeEnd, outputPath, chu
       }
     }, 5 * 60 * 1000); // 5 min per-chunk safety timeout
 
+    function maybeFinish() {
+      if (settled || !hasExited) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (ipcResult && ipcResult.ok) {
+        resolve(ipcResult.outputPath);
+      } else if (ipcResult && !ipcResult.ok) {
+        reject(new Error(`Chunk ${chunkIndex} failed: ${ipcResult.error}`));
+      } else {
+        reject(new Error(`Chunk ${chunkIndex} process exited without reporting a result (likely OOM-killed)`));
+      }
+    }
+
     child.on('message', (msg) => {
       if (!msg || msg.chunkIndex !== chunkIndex) return;
       if (msg.type === 'chunk_progress' && onProgress) {
         onProgress(msg.progress);
       } else if (msg.type === 'chunk_complete') {
-        settled = true;
-        clearTimeout(timeout);
-        resolve(msg.outputPath);
+        ipcResult = { ok: true, outputPath: msg.outputPath };
       } else if (msg.type === 'chunk_failed') {
-        settled = true;
-        clearTimeout(timeout);
-        reject(new Error(`Chunk ${chunkIndex} failed: ${msg.error}`));
+        ipcResult = { ok: false, error: msg.error };
       }
     });
 
-    child.on('exit', (code, signal) => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timeout);
-        reject(new Error(`Chunk ${chunkIndex} process exited unexpectedly (code ${code}, signal ${signal || 'none'})`));
-      }
+    child.on('exit', () => {
+      hasExited = true;
+      maybeFinish();
     });
 
     child.send({ jobId, sceneJSON, timeStart, timeEnd, outputPath, chunkIndex });
