@@ -36,6 +36,12 @@ const SHARED_PARAMS = {
     default: 'bracket',
     description: 'Which secondary background accent shape best complements this scene\'s meaning.',
   },
+  cameraStyle: {
+    type: 'enum',
+    values: ['slowDrift', 'punchIn', 'settle'],
+    default: 'slowDrift',
+    description: 'Camera motion for this scene: slowDrift (gentle continuous breathing, use for calm/reflective beats), punchIn (accelerating push-in, use when something is building toward a landing/reveal at the end of the scene), settle (starts slightly zoomed, quickly settles - use right after a hard-cut transition for a "just landed" feel).',
+  },
 };
 
 const TEMPLATES = {
@@ -141,6 +147,145 @@ const TEMPLATES = {
       ...SHARED_PARAMS,
     },
   },
+
+  countdownTimer: {
+    description:
+      'A number counts DOWN to zero with rising urgency - color and glow shift warmer as it approaches zero. Use for deadlines, limited-time framing, or building urgency.',
+    params: {
+      label: { type: 'string', required: true, maxLength: 30 },
+      fromValue: { type: 'number', required: true, min: 1, max: 999 },
+      duration: { type: 'number', min: 2.5, max: 5, default: 4 },
+      ...SHARED_PARAMS,
+    },
+  },
+
+  gridReveal: {
+    description:
+      'A 2x2 grid of 4 short labeled cells, each revealing with its own stagger. Use for "4 features", "4 reasons", or any content that benefits from a dense grid layout instead of a single column.',
+    params: {
+      items: { type: 'stringArray', required: true, maxItems: 4, maxItemLength: 24 },
+      duration: { type: 'number', min: 3, max: 6, default: 4 },
+      ...SHARED_PARAMS,
+    },
+  },
+
+  checklistTick: {
+    description:
+      'A list where each item appears, then gets checked off with a checkmark and strikethrough - a genuine "completion" motion. Use for a sequence of steps being completed or a satisfying "done, done, done" beat, as opposed to listReveal which just builds up without completing.',
+    params: {
+      items: { type: 'stringArray', required: true, maxItems: 4, maxItemLength: 40 },
+      duration: { type: 'number', min: 3, max: 6, default: 4 },
+      ...SHARED_PARAMS,
+    },
+  },
+
+  bigNumberStat: {
+    description:
+      'One massive hero number with minimal supporting chrome and a dramatic glow bloom - use for the single biggest, most important stat in the whole video, the "impact moment" scene, not a routine number (use statCounter for those).',
+    params: {
+      value: { type: 'number', required: true },
+      suffix: { type: 'string', default: '' },
+      caption: { type: 'string', maxLength: 50, default: '' },
+      duration: { type: 'number', min: 2, max: 4, default: 3 },
+      ...SHARED_PARAMS,
+    },
+  },
+
+  pieChartReveal: {
+    description:
+      'An animated donut/pie arc sweeping to a target percentage with a center readout. Use for any percentage where a radial data-viz feel suits better than a bar (progressBar) or bare number (statCounter).',
+    params: {
+      label: { type: 'string', required: true, maxLength: 30 },
+      toPercent: { type: 'number', required: true, min: 0, max: 100 },
+      duration: { type: 'number', min: 2.5, max: 4.5, default: 3 },
+      ...SHARED_PARAMS,
+    },
+  },
+
+  duoStatCompare: {
+    description:
+      'Two numbers side by side BOTH counting up simultaneously, each with its own label. Use when the comparison IS the animation (e.g. before/after metrics), unlike splitCompare which is static text.',
+    params: {
+      leftLabel: { type: 'string', required: true, maxLength: 20 },
+      leftValue: { type: 'number', required: true },
+      rightLabel: { type: 'string', required: true, maxLength: 20 },
+      rightValue: { type: 'number', required: true },
+      duration: { type: 'number', min: 2.5, max: 4.5, default: 3 },
+      ...SHARED_PARAMS,
+    },
+  },
+
+  badgeUnlock: {
+    description:
+      'A celebratory badge/achievement pop with a radiating burst and checkmark. Use for a reward, milestone, "you did it" moment - a genuinely different, celebratory register from every information-delivery template.',
+    params: {
+      label: { type: 'string', required: true, maxLength: 40 },
+      duration: { type: 'number', min: 2.5, max: 4, default: 3 },
+      ...SHARED_PARAMS,
+    },
+  },
+
+  tickerScroll: {
+    description:
+      'A continuously horizontally-scrolling ticker of 2-5 short words/phrases, never settling for the whole scene. Use as a rhythm/texture beat, a rapid-fire list of keywords, or between heavier information scenes - NOT for anything that needs to be read carefully (it never stops moving).',
+    params: {
+      items: { type: 'stringArray', required: true, maxItems: 5, maxItemLength: 20 },
+      duration: { type: 'number', min: 2, max: 4, default: 3 },
+      ...SHARED_PARAMS,
+    },
+  },
+
+  statGrid: {
+    description:
+      'A 2x2 grid of 4 small numbers, each counting up independently with its own label - use for a cluster of related metrics shown together (unlike bigNumberStat which is ONE hero number, or duoStatCompare which is only 2).',
+    params: {
+      stats: { type: 'statArray', required: true, maxItems: 4 },
+      duration: { type: 'number', min: 3, max: 6, default: 4 },
+      ...SHARED_PARAMS,
+    },
+  },
+
+  arrowFlow: {
+    description:
+      'A horizontal sequence of 2-3 numbered steps connected by arrows, entering left to right - use for a process, workflow, or "how it works" content, distinct from listReveal\'s vertical list (this is explicitly a FLOW/sequence, not a list of independent items).',
+    params: {
+      steps: { type: 'stringArray', required: true, maxItems: 3, maxItemLength: 30 },
+      duration: { type: 'number', min: 3, max: 6, default: 4 },
+      ...SHARED_PARAMS,
+    },
+  },
+
+  calloutBubble: {
+    description:
+      'A speech-bubble callout with a tail pointer and optional speaker attribution - conversational framing, use for testimonials, quotes from a specific person in dialogue form, or "what people are saying" content. Distinct register from quoteCallout\'s more formal accent-bar treatment.',
+    params: {
+      text: { type: 'string', required: true, maxLength: 100 },
+      speaker: { type: 'string', maxLength: 40, default: '' },
+      duration: { type: 'number', min: 2.5, max: 5, default: 3.5 },
+      ...SHARED_PARAMS,
+    },
+  },
+
+  barChartCompare: {
+    description:
+      'Vertical animated bars (2-4) comparing values, each with a label - use for a genuine Cartesian bar-chart comparison (e.g. month over month, category comparison). Distinct from pieChartReveal (radial/percentage) and statGrid (independent numbers, not a proportional chart).',
+    params: {
+      bars: { type: 'statArray', required: true, maxItems: 4 },
+      duration: { type: 'number', min: 3, max: 6, default: 4 },
+      ...SHARED_PARAMS,
+    },
+  },
+
+  avatarStack: {
+    description:
+      'Overlapping circular avatars with initials plus a caption - a social-proof visual ("12k people use this"). Use for community size, user count, or "join others" framing - a genuinely different content register (people/community) from data, process, or feature templates.',
+    params: {
+      initials: { type: 'stringArray', required: true, maxItems: 5, maxItemLength: 3 },
+      caption: { type: 'string', maxLength: 50, default: '' },
+      duration: { type: 'number', min: 2.5, max: 4.5, default: 3 },
+      ...SHARED_PARAMS,
+    },
+  },
 };
 
 const TRANSITIONS = {
@@ -148,6 +293,12 @@ const TRANSITIONS = {
   irisMorph: { description: 'A glowing circular iris closes to a point then reopens into the next scene. Use for a more deliberate, dramatic beat change.' },
   shapeMorph: { description: 'A square rotates while scaling up to cover the frame, then continues rotating as it scales back down. Angular, geometric feel - use for a punchier, more energetic beat change.' },
   slideDisplace: { description: 'Two panes slide across horizontally at different speeds (parallax depth) with a bright leading edge. Directional feel - use when the content itself implies forward motion or progression.' },
+  zoomPunch: { description: 'A hard, fast scale-punch zoom past 100% with a brief whiteout at peak, then snaps to rest scale. High energy, front-loaded pace - use for fast, punchy beat changes, not calm/reflective content.' },
+  verticalWipe: { description: 'A pane drops from above while a dimmer pane rises from below at a different speed. Vertical directional feel, distinct from slideDisplace - use for "revealing" or "uncovering" beats.' },
+  cardFlip: { description: 'A fake-3D card flip - the frame squishes horizontally to a sliver then expands back out, with a glowing spine at the thinnest point. Use for a physical, tactile "turning the page" feel.' },
+  crossZoom: { description: 'Thin rays burst outward from center to fill the frame, hold, then the next scene resolves from that burst point. Explosive, radial energy - use for a big reveal or climactic beat change.' },
+  rippleWave: { description: 'Concentric rings expand outward from center like a wave through water. Curved, softer radial feel than crossZoom - use for a calmer "sending a signal" or ripple-effect beat.' },
+  glitchStatic: { description: 'A brief chaotic burst of blocky static/glitch rectangles. Fast, disruptive energy - use for a jarring, unstable, or "something\'s wrong" beat change, not calm content.' },
 };
 
 function buildMistralSystemPrompt(targetDurationSeconds = 12) {
@@ -168,7 +319,9 @@ function buildMistralSystemPrompt(targetDurationSeconds = 12) {
             ? `one of [${p.values.join(', ')}]`
             : p.type === 'stringArray'
               ? `array of strings, max ${p.maxItems || 10} items, each under ${p.maxItemLength || 60} chars`
-              : p.type;
+              : p.type === 'statArray'
+                ? `array of up to ${p.maxItems || 4} objects, each shaped {"value": number, "suffix": string, "label": string}`
+                : p.type;
           const desc = p.description ? ` - ${p.description}` : '';
           return `      - ${pname} (${constraint}${p.required ? ', required' : `, default: ${JSON.stringify(p.default)}`})${desc}`;
         })
@@ -261,6 +414,20 @@ function validateSceneJSON(json) {
           .slice(0, pdef.maxItems || 10);
         if (val.length === 0 && pdef.required) {
           throw new Error(`scene[${i}] (${scene.template}) param "${pname}" needs at least one item`);
+        }
+      }
+      if (pdef.type === 'statArray') {
+        if (!Array.isArray(val)) val = pdef.default || [];
+        val = val
+          .filter((item) => item && typeof item === 'object')
+          .map((item) => ({
+            value: Number(item.value) || 0,
+            suffix: typeof item.suffix === 'string' ? item.suffix.slice(0, 6) : '',
+            label: typeof item.label === 'string' ? item.label.slice(0, 20) : '',
+          }))
+          .slice(0, pdef.maxItems || 4);
+        if (val.length === 0 && pdef.required) {
+          throw new Error(`scene[${i}] (${scene.template}) param "${pname}" needs at least one stat object`);
         }
       }
 
