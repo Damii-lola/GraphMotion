@@ -5,83 +5,123 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 
-const { drawTemplate } = require('./templateRenderers');
-const { drawTransition, TRANSITION_DURATION } = require('./transitionRenderers');
+const { drawBeatContent } = require('./templateRenderers');
+const { drawAtmosphere, drawWorldParticles } = require('./atmosphere');
+const { getVisualSystem } = require('./visualSystems');
+const { deriveSecondaryColor } = require('./colorUtils');
+const {
+  layoutWorldAnchors,
+  getCameraTransform,
+  applyCameraTransform,
+  getVisibleBeatIndices,
+  getBeatCameraOpacity,
+} = require('./worldSpace');
 
 const WIDTH = 720;
 const HEIGHT = 1280;
 const FPS = 30;
 
-/**
- * Builds the timeline AND locks one consistent accent color for the
- * whole video (taken from the first scene that specifies one, default
- * otherwise) - per the notes, a consistent single accent color is a
- * deliberate system, not a per-scene decision. Every scene's own color
- * param is overridden to match, so nothing can drift independently.
- */
-const { deriveSecondaryColor } = require('./colorUtils');
+const FALLBACK_TAGS = {
+  kineticTextReveal: 'INSIGHT', rippleDrop: 'ALERT', statCounter: 'DATA',
+  iconCallout: 'NOTE', shapeReveal: 'FOCUS', splitCompare: 'COMPARE',
+  listReveal: 'GUIDE', quoteCallout: 'QUOTE', progressBar: 'PROGRESS',
+  countdownTimer: 'URGENT', gridReveal: 'FEATURES', checklistTick: 'STEPS',
+  bigNumberStat: 'KEY STAT', pieChartReveal: 'DATA', duoStatCompare: 'COMPARE',
+  badgeUnlock: 'UNLOCKED', tickerScroll: 'HIGHLIGHTS', statGrid: 'METRICS',
+  arrowFlow: 'PROCESS', calloutBubble: 'TESTIMONIAL', barChartCompare: 'DATA',
+  avatarStack: 'COMMUNITY',
+};
 
-function buildTimeline(sceneJSON) {
+/**
+ * THE REBUILD. Every scene used to be an independent slideshow slide
+ * stitched to the next by a transition effect - a hard cut dressed
+ * up. This builds ONE continuous world instead: every beat gets a
+ * fixed position in world space (worldSpace.js), and the camera
+ * physically pans/zooms between them over the whole video's duration.
+ * There is no transition step anymore - the camera arriving at a
+ * beat's position IS how it's revealed, and it leaving IS how the
+ * previous one goes. transitionRenderers.js is now genuinely unused
+ * by this path, not just deprioritized.
+ */
+function buildWorldTimeline(sceneJSON) {
   const firstColorScene = sceneJSON.scenes.find((s) => s.params && s.params.color);
   const accentColor = (firstColorScene && firstColorScene.params.color) || '#FF5C1A';
 
-  const segments = [];
+  const beats = [];
   let cursor = 0;
-
   sceneJSON.scenes.forEach((scene, i) => {
     const params = { ...scene.params, color: accentColor };
-
-    if (i > 0 && scene.transition) {
-      segments.push({
-        kind: 'transition',
-        name: scene.transition,
-        start: cursor,
-        end: cursor + TRANSITION_DURATION,
-      });
-      cursor += TRANSITION_DURATION;
-    }
-
-    segments.push({
-      kind: 'scene',
+    const duration = params.duration || 3;
+    beats.push({
       template: scene.template,
       params,
-      sceneIndex: i,
-      sceneCount: sceneJSON.scenes.length,
+      tag: params.tag || FALLBACK_TAGS[scene.template] || 'INSIGHT',
       start: cursor,
-      end: cursor + params.duration,
+      end: cursor + duration,
+      duration,
     });
-    cursor += params.duration;
+    cursor += duration;
   });
 
-  return { segments, totalDuration: cursor, accentColor, secondaryColor: deriveSecondaryColor(accentColor), visualSystem: sceneJSON.visualSystem };
-}
+  const anchors = layoutWorldAnchors(beats.length, WIDTH, HEIGHT);
+  const worldWidth = beats.length > 0 ? anchors[anchors.length - 1].x + WIDTH * 1.5 : WIDTH;
 
-function findSegment(segments, globalTime) {
-  for (const seg of segments) {
-    if (globalTime >= seg.start && globalTime < seg.end) return seg;
-  }
-  return segments[segments.length - 1];
+  return {
+    beats,
+    anchors,
+    totalDuration: cursor,
+    accentColor,
+    secondaryColor: deriveSecondaryColor(accentColor),
+    visualSystem: sceneJSON.visualSystem,
+    worldWidth,
+  };
 }
 
 /**
- * Renders frames for [timeStart, timeEnd) of the full timeline into
- * outputPath. Used two ways: renderJobToFile calls this with the full
- * range for short videos (the common case, one process, no extra
- * complexity). For long videos, renderWorker.js instead calls this
- * indirectly via renderChunkWorker.js - a FRESH forked process per
- * time-slice, so memory is genuinely reclaimed by the OS between
- * chunks. That second path exists because of a real, measured
- * limitation: this Skia binding accumulates native (non-V8-heap)
- * memory under high sustained draw-call volume over a long render -
- * confirmed via forced-GC testing (JS heap stays flat, RSS does not),
- * and confirmed NOT fixable by canvas recycling or per-frame yielding
- * alone (both tested directly, neither fully resolved it on a real,
- * fully-featured render). A fresh OS process per chunk is the only
- * approach that reliably resets it, because process exit reclaims ALL
- * memory unconditionally, native or not.
+ * Screen-locked corner tag, cross-fading between the outgoing and
+ * incoming beat's label during a camera move - the one piece of UI
+ * that stays fixed to the screen rather than panning with the world,
+ * like a persistent HUD readout.
  */
+function drawScreenTag(ctx, visibleBeatIndices, beats, globalTime, width, height, accentColor, system) {
+  visibleBeatIndices.forEach((idx) => {
+    const beat = beats[idx];
+    const opacity = getBeatCameraOpacity(idx, globalTime, beats);
+    if (opacity <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.translate(60, 90);
+    ctx.font = `600 18px ${system.fontFamily}`;
+    const label = beat.tag;
+    const textWidth = ctx.measureText(label).width;
+    const padX = 14, boxH = 30;
+    const boxW = textWidth + padX * 2;
+    ctx.strokeStyle = accentColor;
+    ctx.globalAlpha = opacity * 0.7;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(boxH / 2, -boxH / 2);
+    ctx.arcTo(boxW, -boxH / 2, boxW, boxH / 2, boxH / 2);
+    ctx.arcTo(boxW, boxH / 2, 0, boxH / 2, boxH / 2);
+    ctx.arcTo(0, boxH / 2, 0, -boxH / 2, boxH / 2);
+    ctx.arcTo(0, -boxH / 2, boxW, -boxH / 2, boxH / 2);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.globalAlpha = opacity;
+    ctx.fillStyle = accentColor;
+    ctx.beginPath();
+    ctx.arc(padX - 6, 0, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = system.heroTextColor;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, padX + 4, 1);
+    ctx.restore();
+  });
+}
+
 async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, onProgress) {
-  const { segments, accentColor, secondaryColor, visualSystem } = buildTimeline(sceneJSON);
+  const { beats, anchors, accentColor, secondaryColor, visualSystem, worldWidth } = buildWorldTimeline(sceneJSON);
+  const system = getVisualSystem(visualSystem);
   const startFrame = Math.floor(timeStart * FPS);
   const endFrame = Math.ceil(timeEnd * FPS);
   const totalFrames = endFrame - startFrame;
@@ -89,15 +129,6 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   const outDir = path.dirname(outputPath);
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-  // PNG-sequence-to-disk instead of raw-pixel-piping to ffmpeg's stdin.
-  // Verified directly: getImageData()-based piping leaked catastrophically
-  // under sustained rendering (confirmed reproducible: 3.7GB and an OOM
-  // kill within 30s of simulated video, in isolation, nothing else
-  // running). The identical draw workload switched to
-  // canvas.encodeSync('png') + writing files to disk instead stayed
-  // essentially flat (~35MB growth) under the exact same test. This
-  // isn't a tuning tweak - it's a different code path in the underlying
-  // native binding with fundamentally different memory behavior.
   const framesDir = path.join(outDir, `.frames-${path.basename(outputPath, '.mp4')}`);
   fs.mkdirSync(framesDir, { recursive: true });
 
@@ -107,30 +138,50 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   try {
     for (let frame = startFrame; frame < endFrame; frame++) {
       const globalTime = frame / FPS;
-      const segment = findSegment(segments, globalTime);
-      const localTime = globalTime - segment.start;
 
-      if (segment.kind === 'scene') {
-        drawTemplate(ctx, segment.template, segment.params, localTime, globalTime, WIDTH, HEIGHT, segment.sceneIndex, segment.sceneCount, visualSystem, secondaryColor);
-      } else {
-        drawTransition(ctx, segment.name, localTime, WIDTH, HEIGHT, accentColor, visualSystem);
+      // Screen-space lighting (gradient/vignette/grain/glow) - fixed
+      // to the screen, doesn't pan with the world.
+      drawAtmosphere(ctx, globalTime, WIDTH, HEIGHT, accentColor, system);
+
+      const cam = getCameraTransform(globalTime, beats, anchors);
+      applyCameraTransform(ctx, cam.camX, cam.camY, cam.camZoom, WIDTH, HEIGHT);
+
+      // World-space embers - pan with the camera like real objects
+      // living in the world, giving actual parallax continuity.
+      drawWorldParticles(ctx, globalTime, worldWidth, HEIGHT, accentColor, system);
+
+      const visibleBeatIndices = getVisibleBeatIndices(globalTime, beats);
+      for (const idx of visibleBeatIndices) {
+        const beat = beats[idx];
+        const anchor = anchors[idx];
+        const localTime = globalTime - beat.start;
+        const opacity = getBeatCameraOpacity(idx, globalTime, beats);
+        if (opacity <= 0.01) continue;
+
+        ctx.save();
+        ctx.globalAlpha = opacity;
+        // Compensating translate, not a translate to (0,0) - lands
+        // this beat's UNCHANGED internal width/2-based drawing at its
+        // actual world anchor instead of screen-center. See
+        // templateRenderers.js's drawBeatContent for the full
+        // reasoning.
+        ctx.translate(anchor.x + anchor.contentOffsetX - WIDTH / 2, anchor.y + anchor.contentOffsetY - HEIGHT / 2);
+        drawBeatContent(ctx, beat.template, beat.params, localTime, WIDTH, HEIGHT, visualSystem);
+        ctx.restore();
       }
+
+      ctx.restore(); // end camera transform
+
+      drawScreenTag(ctx, visibleBeatIndices, beats, globalTime, WIDTH, HEIGHT, accentColor, system);
 
       const png = canvas.encodeSync('png');
       const frameIndex = frame - startFrame;
       fs.writeFileSync(path.join(framesDir, `f${String(frameIndex).padStart(6, '0')}.png`), png);
 
-      // Still yield periodically even though isolated testing showed
-      // this path doesn't need it to stay safe - cheap insurance, and
-      // keeps the event loop responsive for progress/IPC during a long
-      // frame-writing pass.
       if (frameIndex % 10 === 0) {
         await new Promise((resolve) => setImmediate(resolve));
       }
-
       if (onProgress && frameIndex % 5 === 0) {
-        // Frame-writing is ~90% of the work, the final ffmpeg mux pass
-        // is fast - reserve the last 10% of progress for that.
         onProgress(Math.round((frameIndex / totalFrames) * 90));
       }
     }
@@ -156,9 +207,6 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       ffmpeg.on('error', reject);
     });
   } finally {
-    // Always clean up frame files, success or failure - these
-    // accumulate real disk usage across many renders on a small
-    // instance otherwise.
     fs.rm(framesDir, { recursive: true, force: true }, () => {});
   }
 
@@ -167,10 +215,10 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
 }
 
 async function renderJobToFile(jobId, sceneJSON, onProgress) {
-  const { totalDuration } = buildTimeline(sceneJSON);
+  const { totalDuration } = buildWorldTimeline(sceneJSON);
   const outDir = path.join(os.tmpdir(), 'shortform-renders');
   const outputPath = path.join(outDir, `${jobId}.mp4`);
   return renderTimelineRange(sceneJSON, 0, totalDuration, outputPath, onProgress);
 }
 
-module.exports = { renderJobToFile, renderTimelineRange, buildTimeline, WIDTH, HEIGHT, FPS };
+module.exports = { renderJobToFile, renderTimelineRange, buildTimeline: buildWorldTimeline, WIDTH, HEIGHT, FPS };
