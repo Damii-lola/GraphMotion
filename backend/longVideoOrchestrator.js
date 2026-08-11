@@ -13,7 +13,14 @@ const { buildTimeline, renderJobToFile } = require('./renderEngine');
 // binding accumulates native memory under long sustained renders in
 // a way that survives canvas recycling and per-frame yielding within
 // one process, but is fully reclaimed when that process exits.
-const CHUNK_THRESHOLD_SECONDS = 25;
+// The PNG-based frame pipeline (renderEngine.js) resolved the actual
+// memory issue directly - the old raw-pixel-piping approach leaked
+// catastrophically under sustained rendering regardless of chunk size;
+// this doesn't. These no longer need to be pushed to their previous
+// safety-margin extremes (5s/6s) - restored to more reasonable values
+// that reduce per-chunk process-spawn overhead, now that the
+// underlying cause is actually fixed rather than worked around.
+const CHUNK_THRESHOLD_SECONDS = 20;
 const CHUNK_SIZE_SECONDS = 15;
 
 /**
