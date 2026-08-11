@@ -2,6 +2,7 @@ const { easeOutCubic, easeOutBack, easeOutExpo, easeInOutCubic, lerp, clamp01 } 
 const { drawAtmosphere } = require('./atmosphere');
 const { drawComposition } = require('./sceneComposition');
 const { getVisualSystem } = require('./visualSystems');
+const { splitCompare, listReveal, quoteCallout, progressBar } = require('./templateRenderersExtended');
 
 /**
  * FLAIR RULES v4 - v3 fixed "one lonely element" via drawComposition.
@@ -22,6 +23,10 @@ const FALLBACK_TAGS = {
   statCounter: 'DATA',
   iconCallout: 'NOTE',
   shapeReveal: 'FOCUS',
+  splitCompare: 'COMPARE',
+  listReveal: 'GUIDE',
+  quoteCallout: 'QUOTE',
+  progressBar: 'PROGRESS',
 };
 
 function drawTemplate(ctx, template, params, localTime, globalT, width, height, sceneIndex, sceneCount, visualSystemName) {
@@ -49,6 +54,18 @@ function drawTemplate(ctx, template, params, localTime, globalT, width, height, 
       break;
     case 'shapeReveal':
       shapeReveal(ctx, params, localTime, width, height, system);
+      break;
+    case 'splitCompare':
+      splitCompare(ctx, params, localTime, width, height, system);
+      break;
+    case 'listReveal':
+      listReveal(ctx, params, localTime, width, height, system);
+      break;
+    case 'quoteCallout':
+      quoteCallout(ctx, params, localTime, width, height, system);
+      break;
+    case 'progressBar':
+      progressBar(ctx, params, localTime, width, height, system);
       break;
     default:
       throw new Error(`No renderer implemented for template "${template}"`);
