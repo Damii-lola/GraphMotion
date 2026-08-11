@@ -79,29 +79,38 @@ function drawScanline(ctx, globalT, width, height, accentColor) {
  * ties the whole thing to global elapsed time so it reads as a live
  * feed rather than a static graphic.
  */
-function drawTimestamp(ctx, globalT, width, height, accentColor) {
+// Platform safe zone: TikTok/Reels/Shorts overlay their own caption
+// text and interaction UI (like/comment/share, username) over the
+// bottom ~15-20% and a strip down the right edge of every vertical
+// video. Anything meant to actually be READ (not just decorative
+// background texture) needs to stay clear of this, or it gets covered
+// on the real platform - a real, previously-flagged, never-fixed gap.
+const SAFE_ZONE_BOTTOM = 0.82; // nothing readable below this fraction of height
+
+function drawTimestamp(ctx, globalT, width, height, accentColor, system) {
   const mins = Math.floor(globalT / 60);
   const secs = Math.floor(globalT % 60);
   const label = `REC  ${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  const y = height * SAFE_ZONE_BOTTOM;
 
   ctx.save();
   ctx.globalAlpha = 0.5 + Math.sin(globalT * 4) * 0.15;
   ctx.fillStyle = accentColor;
   ctx.beginPath();
-  ctx.arc(50, height - 60, 4, 0, Math.PI * 2);
+  ctx.arc(50, y, 4, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.globalAlpha = 0.55;
   ctx.font = '600 14px monospace';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#F5F5F5';
-  ctx.fillText(label, 62, height - 60);
+  // Was hardcoded '#F5F5F5' - invisible on softEditorial's light
+  // background, the same class of bug already fixed in drawCornerTag
+  // but missed here since this function never received `system`.
+  ctx.fillStyle = system.heroTextColor;
+  ctx.fillText(label, 62, y);
   ctx.restore();
 
-  // Bottom audio-waveform-style visualizer strip - many thin animated
-  // bars, deterministic-per-frame (seeded from globalT, not random),
-  // gives constant fine-grained motion across the whole bottom edge.
   const barCount = 24;
   const barAreaW = width * 0.5;
   const startX = width - barAreaW - 50;
@@ -113,7 +122,7 @@ function drawTimestamp(ctx, globalT, width, height, accentColor) {
     const pseudoRand = Math.abs(Math.sin(seed)) % 1;
     const h = 4 + pseudoRand * 22;
     const x = startX + i * (barAreaW / barCount);
-    ctx.fillRect(x, height - 60 - h / 2, 2.5, h);
+    ctx.fillRect(x, y - h / 2, 2.5, h);
   }
   ctx.restore();
 }
@@ -374,7 +383,7 @@ function drawComposition(ctx, tagLabel, accentShape, sceneLocalT, sceneDuration,
   if (system.showScanlines) drawScanline(ctx, globalT, width, height, accentColor);
   if (system.showDataChips) drawDataChips(ctx, sceneLocalT, width, height, accentColor);
   drawSecondaryAccents(ctx, accentShape, sceneLocalT, width, height, accentColor);
-  if (system.showTimestamp) drawTimestamp(ctx, globalT, width, height, accentColor);
+  if (system.showTimestamp) drawTimestamp(ctx, globalT, width, height, accentColor, system);
   if (tagLabel) {
     drawCornerTag(ctx, tagLabel, sceneLocalT, width, height, accentColor, system);
   }
