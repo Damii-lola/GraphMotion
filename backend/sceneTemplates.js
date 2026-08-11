@@ -82,9 +82,9 @@ const TEMPLATES = {
 
   iconCallout: {
     description:
-      'Icon + short text that pops in with spring overshoot. Use for quick points/features.',
+      'Icon + short text that pops in with spring overshoot. Use for quick points/features, or when the prompt names a concrete everyday object (a watch, phone, house, car, gift, trophy, rocket, camera, briefcase, coffee) - these render as real hand-drawn vector objects, not abstract icons, and are the closest thing this system has to depicting a literal object without image generation.',
     params: {
-      icon: { type: 'enum', values: ['alert', 'check', 'spark', 'clock', 'money', 'chart', 'lock', 'heart'], required: true },
+      icon: { type: 'enum', values: ['alert', 'check', 'spark', 'clock', 'money', 'chart', 'lock', 'heart', 'watch', 'phone', 'house', 'car', 'gift', 'trophy', 'rocket', 'camera', 'briefcase', 'coffee'], required: true },
       text: { type: 'string', required: true, maxLength: 60 },
       duration: { type: 'number', min: 1.5, max: 3.5, default: 2.2 },
       ...SHARED_PARAMS,
