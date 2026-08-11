@@ -143,9 +143,14 @@ function drawContactShadow(ctx, x, y, radiusX, radiusY, alpha) {
 }
 
 function kineticTextReveal(ctx, params, t, width, height, system) {
-  const { text, duration, style } = params;
+  const { text, duration, style, textFrame } = params;
   const accentColor = params.color || '#FF5C1A';
   const isMixedWeight = style === 'mixed-weight';
+  // Real per-beat framing variety, not the same flat-glow treatment
+  // every time - direct response to reference feedback ("sometimes
+  // the box containing text changes, sometimes the color changes
+  // with a gradient"). 'none' keeps the exact original look.
+  const frame = ['card', 'gradient'].includes(textFrame) ? textFrame : 'none';
 
   // mixed-weight: the single longest word gets rendered larger/heavier
   // than the rest, creating real typographic hierarchy within the
@@ -211,6 +216,50 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
   const staggerWindow = duration * 0.4;
   const perCharDelay = chars.length > 1 ? staggerWindow / chars.length : 0;
 
+  // Card background: drawn ONCE behind all characters, using the real
+  // bounding box of the laid-out text (not a guessed size) - sized
+  // and revealed together with the overall entrance, not per-character.
+  if (frame === 'card' && chars.length > 0) {
+    const minX = Math.min(...chars.map((c) => c.x)) - 24;
+    const maxX = Math.max(...chars.map((c) => c.x)) + 24;
+    const minY = startY - lineHeight / 2 - 16;
+    const maxY = startY + (lines.length - 1) * lineHeight + lineHeight / 2 + 16;
+    const cardT = easeOutCubic(clamp01(t / (duration * 0.3)));
+    const cardWidth = lerp(0, maxX - minX, cardT);
+    ctx.save();
+    ctx.globalAlpha = cardT * 0.14;
+    ctx.fillStyle = accentColor;
+    const cx = (minX + maxX) / 2;
+    ctx.beginPath();
+    const r = 14;
+    const cw = cardWidth, ch2 = maxY - minY;
+    ctx.moveTo(cx - cw / 2 + r, minY);
+    ctx.arcTo(cx + cw / 2, minY, cx + cw / 2, minY + r, r);
+    ctx.arcTo(cx + cw / 2, maxY, cx + cw / 2 - r, maxY, r);
+    ctx.arcTo(cx - cw / 2, maxY, cx - cw / 2, maxY - r, r);
+    ctx.arcTo(cx - cw / 2, minY, cx - cw / 2 + r, minY, r);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = accentColor;
+    ctx.globalAlpha = cardT * 0.5;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Gradient fill: computed once (not per-character) for performance,
+  // spanning the full text width so the gradient reads as one
+  // continuous sweep across the whole line, not a repeating pattern
+  // per letter.
+  let gradientFill = null;
+  if (frame === 'gradient' && chars.length > 0) {
+    const minX = Math.min(...chars.map((c) => c.x));
+    const maxX = Math.max(...chars.map((c) => c.x));
+    gradientFill = ctx.createLinearGradient(minX, 0, maxX, 0);
+    gradientFill.addColorStop(0, system.heroTextColor);
+    gradientFill.addColorStop(1, accentColor);
+  }
+
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
@@ -234,7 +283,7 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
       // hierarchy instead of every character getting identical glow.
       ctx.shadowBlur = lerp(0, c.isEmphasis ? 24 : 16, clamp01((t - charStart - duration * 0.15) / (duration * 0.2)));
     }
-    ctx.fillStyle = system.heroTextColor;
+    ctx.fillStyle = gradientFill || system.heroTextColor;
     ctx.fillText(c.ch, 0, 0);
     ctx.restore();
   }
@@ -685,7 +734,7 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
   lines.forEach((line, i) => ctx.fillText(line, x, startY + i * lineHeight));
 }
 
-module.exports = { drawBeatContent };
+module.exports = { drawBeatContent, drawIconPath };
 
 /**
  * Slot-machine / odometer style digit roll - each digit position locks
