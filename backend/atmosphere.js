@@ -12,11 +12,20 @@ const { clamp01, lerp } = require('./easing');
  * recoloring the same elements.
  */
 
-const PARTICLE_COUNT = 70;
+const BASE_PARTICLE_COUNT = 35;
 let particleSeeds = null;
+let particleSeedsWorldWidth = 0;
 
-function getParticleSeeds() {
-  if (particleSeeds) return particleSeeds;
+/**
+ * Particles now live across the WHOLE world extent, not one screen -
+ * seeded once per render (deterministic), count scales modestly with
+ * world size (capped) so a long video doesn't need proportionally
+ * more particles forever. This is what makes the background feel
+ * continuous as the camera pans instead of the old behavior where
+ * every scene's particle field started over.
+ */
+function getParticleSeeds(worldWidth) {
+  if (particleSeeds && particleSeedsWorldWidth === worldWidth) return particleSeeds;
   let seed = 1337;
   function rand() {
     seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
@@ -24,22 +33,74 @@ function getParticleSeeds() {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
-  particleSeeds = Array.from({ length: PARTICLE_COUNT }, () => ({
-    x: rand(), y: rand(), depth: rand(), phase: rand() * Math.PI * 2,
+  const screenWidths = Math.max(1, worldWidth / 720);
+  const count = Math.min(140, Math.round(BASE_PARTICLE_COUNT * Math.sqrt(screenWidths)));
+  particleSeeds = Array.from({ length: count }, () => ({
+    worldX: rand() * worldWidth,
+    y: rand(), depth: rand(), phase: rand() * Math.PI * 2,
   }));
+  particleSeedsWorldWidth = worldWidth;
   return particleSeeds;
 }
 
 function drawAtmosphere(ctx, globalT, width, height, accentColor, system) {
   drawGradientBase(ctx, width, height, system);
   if (system.showGlowBlob) drawGlowBlob(ctx, globalT, width, height, accentColor);
-  if (system.showParticles) drawParticles(ctx, globalT, width, height, accentColor, system);
   if (system.flatBlockAccent) drawFlatBlocks(ctx, globalT, width, height, accentColor);
   drawVignette(ctx, width, height, system);
   // Grain reads as "video texture" on the dark HUD look but would
   // just look like dirt on a light editorial background or muddy a
   // flat poster-graphic block - only draw it for hudTerminal.
   if (system.name === 'hudTerminal') drawGrain(ctx, globalT, width, height);
+}
+
+/**
+ * Called separately from drawAtmosphere, WITHIN the camera-transformed
+ * block (see renderEngine.js) - these particles exist at fixed WORLD
+ * positions and pan with the camera like real objects in the world,
+ * unlike the gradient/vignette/grain above which stay locked to the
+ * screen as lighting/lens effects.
+ */
+function drawWorldParticles(ctx, globalT, worldWidth, height, accentColor, system) {
+  if (!system.showParticles) return;
+  const seeds = getParticleSeeds(worldWidth);
+  ctx.save();
+
+  const alphaMul = system.name === 'softEditorial' ? 0.5 : 1;
+  const groups = { accent: [], muted: [] };
+
+  for (const p of seeds) {
+    const speed = lerp(0.004, 0.02, p.depth);
+    const size = lerp(1, 3, p.depth);
+    const driftX = Math.sin(globalT * speed * 20 + p.phase) * 20 * p.depth;
+    const driftY = (globalT * speed * 15 + p.y * height) % (height + 40) - 20;
+    const isAccent = system.name === 'hudTerminal' && p.depth > 0.75;
+    (isAccent ? groups.accent : groups.muted).push({ x: p.worldX + driftX, y: driftY, size, depth: p.depth });
+  }
+
+  for (const [key, list] of Object.entries(groups)) {
+    if (list.length === 0) continue;
+    ctx.beginPath();
+    for (const pt of list) {
+      // Accent particles render bigger and blurred - real soft glowing
+      // embers, confirmed safe and correct in earlier testing.
+      const emberSize = key === 'accent' ? pt.size * 2.4 : pt.size;
+      ctx.moveTo(pt.x + emberSize, pt.y);
+      ctx.arc(pt.x, pt.y, emberSize, 0, Math.PI * 2);
+    }
+    const avgDepth = list.reduce((s, p) => s + p.depth, 0) / list.length;
+    ctx.save();
+    if (key === 'accent') {
+      ctx.filter = 'blur(3px)';
+      ctx.globalAlpha = lerp(0.25, 0.55, avgDepth) * alphaMul;
+    } else {
+      ctx.globalAlpha = lerp(0.04, 0.13, avgDepth) * alphaMul;
+    }
+    ctx.fillStyle = key === 'accent' ? accentColor : system.mutedTextColor;
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
 }
 
 function drawGlowBlob(ctx, globalT, width, height, accentColor) {
@@ -90,53 +151,6 @@ function drawFlatBlocks(ctx, globalT, width, height, accentColor) {
   ctx.restore();
 }
 
-function drawParticles(ctx, globalT, width, height, accentColor, system) {
-  const seeds = getParticleSeeds();
-  ctx.save();
-
-  const alphaMul = system.name === 'softEditorial' ? 0.5 : 1;
-  const groups = { accent: [], muted: [] };
-
-  for (const p of seeds) {
-    const speed = lerp(0.004, 0.02, p.depth);
-    const size = lerp(1, 3, p.depth);
-    const driftX = Math.sin(globalT * speed * 20 + p.phase) * 20 * p.depth;
-    const driftY = (globalT * speed * 15 + p.y * height) % (height + 40) - 20;
-    const isAccent = system.name === 'hudTerminal' && p.depth > 0.75;
-    (isAccent ? groups.accent : groups.muted).push({ x: p.x * width + driftX, y: driftY, size, depth: p.depth });
-  }
-
-  for (const [key, list] of Object.entries(groups)) {
-    if (list.length === 0) continue;
-    ctx.beginPath();
-    for (const pt of list) {
-      // Accent particles render bigger and blurred - real soft glowing
-      // embers (matching the warm-drifting-spark reference look),
-      // confirmed both safe (14MB growth over a full 3600-frame/2min
-      // render, batched into one blurred fill call) and correct by
-      // direct visual test, not the earlier tiny crisp dots. Muted
-      // background dust particles stay crisp and small - only the
-      // warm accent layer gets the ember treatment, so it reads as a
-      // deliberate foreground detail, not the whole field turning soft.
-      const emberSize = key === 'accent' ? pt.size * 2.4 : pt.size;
-      ctx.moveTo(pt.x + emberSize, pt.y);
-      ctx.arc(pt.x, pt.y, emberSize, 0, Math.PI * 2);
-    }
-    const avgDepth = list.reduce((s, p) => s + p.depth, 0) / list.length;
-    ctx.save();
-    if (key === 'accent') {
-      ctx.filter = 'blur(3px)';
-      ctx.globalAlpha = lerp(0.25, 0.55, avgDepth) * alphaMul;
-    } else {
-      ctx.globalAlpha = lerp(0.04, 0.13, avgDepth) * alphaMul;
-    }
-    ctx.fillStyle = key === 'accent' ? accentColor : system.mutedTextColor;
-    ctx.fill();
-    ctx.restore();
-  }
-  ctx.restore();
-}
-
 function drawVignette(ctx, width, height, system) {
   if (system.vignetteStrength <= 0) return;
   const grad = ctx.createRadialGradient(
@@ -167,4 +181,4 @@ function drawGrain(ctx, globalT, width, height) {
   ctx.restore();
 }
 
-module.exports = { drawAtmosphere };
+module.exports = { drawAtmosphere, drawWorldParticles };
