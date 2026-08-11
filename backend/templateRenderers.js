@@ -1,6 +1,4 @@
 const { easeOutCubic, easeOutBack, easeOutExpo, easeInOutCubic, lerp, clamp01 } = require('./easing');
-const { drawAtmosphere } = require('./atmosphere');
-const { drawComposition } = require('./sceneComposition');
 const { getVisualSystem } = require('./visualSystems');
 const { splitCompare, listReveal, quoteCallout, progressBar, countdownTimer, gridReveal, checklistTick, bigNumberStat, pieChartReveal, duoStatCompare, badgeUnlock, tickerScroll, statGrid, arrowFlow, calloutBubble, barChartCompare, avatarStack } = require('./templateRenderersExtended');
 
@@ -42,15 +40,22 @@ const FALLBACK_TAGS = {
   avatarStack: 'COMMUNITY',
 };
 
-function drawTemplate(ctx, template, params, localTime, globalT, width, height, sceneIndex, sceneCount, visualSystemName, secondaryColor) {
-  const accentColor = params.color || '#FF5C1A';
-  const tag = params.tag || FALLBACK_TAGS[template] || 'INSIGHT';
-  const accentShape = params.accentShape || 'bracket';
+/**
+ * Renders ONLY a beat's hero content - no atmosphere, no per-scene
+ * camera push, no composition chrome. Those all moved to the
+ * top-level render loop (renderEngine.js), which now draws atmosphere
+ * ONCE per frame (screen-space) and applies ONE continuous world
+ * camera transform before calling this for each visible beat,
+ * translated to that beat's own world position. Every individual
+ * template function below is completely UNCHANGED internally - they
+ * still reference width/2, height*0.42, etc. exactly as before; the
+ * caller compensates by translating so that "width/2, height/2" in
+ * this local coordinate system lands at the beat's actual world
+ * anchor instead of screen-center. This avoids having to rewrite
+ * twenty-plus template functions individually.
+ */
+function drawBeatContent(ctx, template, params, localTime, width, height, visualSystemName) {
   const system = getVisualSystem(visualSystemName);
-
-  drawAtmosphere(ctx, globalT, width, height, accentColor, system);
-  applyCameraPush(ctx, localTime, params.duration, params.cameraStyle, width, height, sceneIndex);
-  drawComposition(ctx, tag, accentShape, localTime, params.duration, globalT, width, height, accentColor, sceneIndex, sceneCount, system, secondaryColor);
 
   switch (template) {
     case 'kineticTextReveal':
@@ -122,53 +127,6 @@ function drawTemplate(ctx, template, params, localTime, globalT, width, height, 
     default:
       throw new Error(`No renderer implemented for template "${template}"`);
   }
-
-  ctx.restore(); // matches the save() in applyCameraPush
-}
-
-function applyCameraPush(ctx, localTime, duration, cameraStyle, width, height, sceneIndex) {
-  ctx.save();
-  let scale;
-
-  if (cameraStyle === 'punchIn') {
-    // Accelerating push-in across the whole scene - energy building
-    // toward whatever lands at the end (a stat, a number, a reveal).
-    const t = clamp01(localTime / Math.max(duration, 0.01));
-    scale = lerp(1, 1.08, t * t);
-  } else if (cameraStyle === 'settle') {
-    // Starts slightly zoomed in (as if just landing from a hard cut)
-    // and settles back to rest quickly - a "camera catching its
-    // breath" beat, distinct from a continuous drift.
-    const t = clamp01(localTime / (duration * 0.3));
-    scale = lerp(1.06, 1, easeOutCubic(t));
-  } else {
-    // slowDrift (default): a gentle continuous breathing motion
-    // within the scene, not a global cycle spanning the whole video -
-    // each scene gets its own subtle drift instead of the camera
-    // being on a fixed clock unrelated to scene boundaries.
-    const cycle = clamp01(localTime / Math.max(duration, 0.01));
-    scale = lerp(1, 1.03, easeInOutCubic(Math.sin(cycle * Math.PI) ));
-  }
-
-  // Real pan, not just zoom - was the actual root of "everything is
-  // always dead center" across every template, since all of them
-  // anchor to width/2 & textAlign='center'. Rather than patch dozens
-  // of individual call sites, the whole canvas now pans as a unit
-  // before any content draws, so the fix applies uniformly and also
-  // reads as camera movement, not a static frame. Direction
-  // alternates by scene index so consecutive scenes don't drift the
-  // same way every time - one continuous move per scene, not a
-  // back-and-forth oscillation that would keep passing back through
-  // center.
-  const panDirection = (typeof sceneIndex === 'number' && sceneIndex % 2 === 1) ? -1 : 1;
-  const panT = easeInOutCubic(clamp01(localTime / Math.max(duration, 0.01)));
-  const panX = lerp(-width * 0.06, width * 0.06, panT) * panDirection;
-  const panY = lerp(height * 0.02, -height * 0.02, panT) * panDirection;
-
-  ctx.translate(width / 2 + panX, height / 2 + panY);
-  ctx.scale(scale, scale);
-  ctx.translate(-width / 2, -height / 2);
-  return ctx;
 }
 
 function drawContactShadow(ctx, x, y, radiusX, radiusY, alpha) {
@@ -727,7 +685,7 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
   lines.forEach((line, i) => ctx.fillText(line, x, startY + i * lineHeight));
 }
 
-module.exports = { drawTemplate };
+module.exports = { drawBeatContent };
 
 /**
  * Slot-machine / odometer style digit roll - each digit position locks
@@ -783,7 +741,13 @@ function drawDigitRoll(ctx, fromValue, toValue, suffix, t, duration, useGlow, ba
     } else {
       const settleT = clamp01((t - digitLockT) / (duration * 0.15));
       digitScale = lerp(1.25, 1, easeOutBack(settleT));
-      digitGlow = useGlow ? lerp(30, 12, settleT) : 0;
+      // Was a permanent resting glow (lerp down to 12, never to 0) -
+      // meaning every digit kept paying per-frame shadowBlur cost for
+      // the rest of the scene after settling, not just during the
+      // brief settle beat itself. Now fades fully to 0 once settled,
+      // cutting sustained per-frame cost for the remainder of the
+      // scene while keeping the actual landing punch untouched.
+      digitGlow = useGlow ? lerp(30, 0, Math.min(1, settleT * 1.6)) : 0;
     }
 
     if (digitOpacity > 0) {
