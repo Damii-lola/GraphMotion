@@ -49,7 +49,7 @@ function drawTemplate(ctx, template, params, localTime, globalT, width, height, 
   const system = getVisualSystem(visualSystemName);
 
   drawAtmosphere(ctx, globalT, width, height, accentColor, system);
-  applyCameraPush(ctx, localTime, params.duration, params.cameraStyle, width, height);
+  applyCameraPush(ctx, localTime, params.duration, params.cameraStyle, width, height, sceneIndex);
   drawComposition(ctx, tag, accentShape, localTime, params.duration, globalT, width, height, accentColor, sceneIndex, sceneCount, system, secondaryColor);
 
   switch (template) {
@@ -126,7 +126,7 @@ function drawTemplate(ctx, template, params, localTime, globalT, width, height, 
   ctx.restore(); // matches the save() in applyCameraPush
 }
 
-function applyCameraPush(ctx, localTime, duration, cameraStyle, width, height) {
+function applyCameraPush(ctx, localTime, duration, cameraStyle, width, height, sceneIndex) {
   ctx.save();
   let scale;
 
@@ -150,7 +150,22 @@ function applyCameraPush(ctx, localTime, duration, cameraStyle, width, height) {
     scale = lerp(1, 1.03, easeInOutCubic(Math.sin(cycle * Math.PI) ));
   }
 
-  ctx.translate(width / 2, height / 2);
+  // Real pan, not just zoom - was the actual root of "everything is
+  // always dead center" across every template, since all of them
+  // anchor to width/2 & textAlign='center'. Rather than patch dozens
+  // of individual call sites, the whole canvas now pans as a unit
+  // before any content draws, so the fix applies uniformly and also
+  // reads as camera movement, not a static frame. Direction
+  // alternates by scene index so consecutive scenes don't drift the
+  // same way every time - one continuous move per scene, not a
+  // back-and-forth oscillation that would keep passing back through
+  // center.
+  const panDirection = (typeof sceneIndex === 'number' && sceneIndex % 2 === 1) ? -1 : 1;
+  const panT = easeInOutCubic(clamp01(localTime / Math.max(duration, 0.01)));
+  const panX = lerp(-width * 0.06, width * 0.06, panT) * panDirection;
+  const panY = lerp(height * 0.02, -height * 0.02, panT) * panDirection;
+
+  ctx.translate(width / 2 + panX, height / 2 + panY);
   ctx.scale(scale, scale);
   ctx.translate(-width / 2, -height / 2);
   return ctx;
