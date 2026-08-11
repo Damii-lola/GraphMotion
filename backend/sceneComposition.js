@@ -19,7 +19,6 @@ function drawMotifGrid(ctx, globalT, width, height, accentColor) {
   ctx.strokeStyle = accentColor;
   ctx.lineWidth = 1;
 
-  // Primary grid - stronger than before (0.06 -> 0.1).
   ctx.globalAlpha = 0.1;
   const spacing = 64;
   const drift = (globalT * 6) % spacing;
@@ -29,29 +28,9 @@ function drawMotifGrid(ctx, globalT, width, height, accentColor) {
   for (let y = -spacing + (drift * 0.4); y < height + spacing; y += spacing) {
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
   }
-
-  // Secondary diagonal grid - different spacing/angle/speed so it
-  // doesn't read as a simple duplicate, adds real visual texture.
-  ctx.globalAlpha = 0.05;
-  ctx.strokeStyle = '#FFFFFF';
-  const diagSpacing = 90;
-  const diagDrift = (globalT * -4) % diagSpacing;
-  ctx.save();
-  ctx.translate(width / 2, height / 2);
-  ctx.rotate(Math.PI / 6);
-  for (let x = -width + diagDrift; x < width * 1.5; x += diagSpacing) {
-    ctx.beginPath(); ctx.moveTo(x, -height); ctx.lineTo(x, height * 1.5); ctx.stroke();
-  }
-  ctx.restore();
   ctx.restore();
 }
 
-/**
- * A bright horizontal line continuously sweeping top to bottom -
- * cheap (a couple of fillRect/gradient calls, same safe primitives as
- * everything else) but reads as constant motion across the ENTIRE
- * frame, not just in one corner.
- */
 /**
  * Two scan-lines now, moving opposite directions at different speeds -
  * more constant motion across the frame, reads as more "alive."
