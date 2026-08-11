@@ -2,7 +2,7 @@ const { easeOutCubic, easeOutBack, easeOutExpo, easeInOutCubic, lerp, clamp01 } 
 const { drawAtmosphere } = require('./atmosphere');
 const { drawComposition } = require('./sceneComposition');
 const { getVisualSystem } = require('./visualSystems');
-const { splitCompare, listReveal, quoteCallout, progressBar } = require('./templateRenderersExtended');
+const { splitCompare, listReveal, quoteCallout, progressBar, countdownTimer, gridReveal, checklistTick, bigNumberStat, pieChartReveal, duoStatCompare, badgeUnlock, tickerScroll, statGrid, arrowFlow, calloutBubble, barChartCompare, avatarStack } = require('./templateRenderersExtended');
 
 /**
  * FLAIR RULES v4 - v3 fixed "one lonely element" via drawComposition.
@@ -27,17 +27,30 @@ const FALLBACK_TAGS = {
   listReveal: 'GUIDE',
   quoteCallout: 'QUOTE',
   progressBar: 'PROGRESS',
+  countdownTimer: 'URGENT',
+  gridReveal: 'FEATURES',
+  checklistTick: 'STEPS',
+  bigNumberStat: 'KEY STAT',
+  pieChartReveal: 'DATA',
+  duoStatCompare: 'COMPARE',
+  badgeUnlock: 'UNLOCKED',
+  tickerScroll: 'HIGHLIGHTS',
+  statGrid: 'METRICS',
+  arrowFlow: 'PROCESS',
+  calloutBubble: 'TESTIMONIAL',
+  barChartCompare: 'DATA',
+  avatarStack: 'COMMUNITY',
 };
 
-function drawTemplate(ctx, template, params, localTime, globalT, width, height, sceneIndex, sceneCount, visualSystemName) {
+function drawTemplate(ctx, template, params, localTime, globalT, width, height, sceneIndex, sceneCount, visualSystemName, secondaryColor) {
   const accentColor = params.color || '#FF5C1A';
   const tag = params.tag || FALLBACK_TAGS[template] || 'INSIGHT';
   const accentShape = params.accentShape || 'bracket';
   const system = getVisualSystem(visualSystemName);
 
   drawAtmosphere(ctx, globalT, width, height, accentColor, system);
-  applyCameraPush(ctx, globalT, width, height);
-  drawComposition(ctx, tag, accentShape, localTime, params.duration, globalT, width, height, accentColor, sceneIndex, sceneCount, system);
+  applyCameraPush(ctx, localTime, params.duration, params.cameraStyle, width, height);
+  drawComposition(ctx, tag, accentShape, localTime, params.duration, globalT, width, height, accentColor, sceneIndex, sceneCount, system, secondaryColor);
 
   switch (template) {
     case 'kineticTextReveal':
@@ -67,6 +80,45 @@ function drawTemplate(ctx, template, params, localTime, globalT, width, height, 
     case 'progressBar':
       progressBar(ctx, params, localTime, width, height, system);
       break;
+    case 'countdownTimer':
+      countdownTimer(ctx, params, localTime, width, height, system);
+      break;
+    case 'gridReveal':
+      gridReveal(ctx, params, localTime, width, height, system);
+      break;
+    case 'checklistTick':
+      checklistTick(ctx, params, localTime, width, height, system);
+      break;
+    case 'bigNumberStat':
+      bigNumberStat(ctx, params, localTime, width, height, system);
+      break;
+    case 'pieChartReveal':
+      pieChartReveal(ctx, params, localTime, width, height, system);
+      break;
+    case 'duoStatCompare':
+      duoStatCompare(ctx, params, localTime, width, height, system);
+      break;
+    case 'badgeUnlock':
+      badgeUnlock(ctx, params, localTime, width, height, system);
+      break;
+    case 'tickerScroll':
+      tickerScroll(ctx, params, localTime, width, height, system);
+      break;
+    case 'statGrid':
+      statGrid(ctx, params, localTime, width, height, system);
+      break;
+    case 'arrowFlow':
+      arrowFlow(ctx, params, localTime, width, height, system);
+      break;
+    case 'calloutBubble':
+      calloutBubble(ctx, params, localTime, width, height, system);
+      break;
+    case 'barChartCompare':
+      barChartCompare(ctx, params, localTime, width, height, system);
+      break;
+    case 'avatarStack':
+      avatarStack(ctx, params, localTime, width, height, system);
+      break;
     default:
       throw new Error(`No renderer implemented for template "${template}"`);
   }
@@ -74,13 +126,34 @@ function drawTemplate(ctx, template, params, localTime, globalT, width, height, 
   ctx.restore(); // matches the save() in applyCameraPush
 }
 
-function applyCameraPush(ctx, globalT, width, height) {
+function applyCameraPush(ctx, localTime, duration, cameraStyle, width, height) {
   ctx.save();
-  const cycle = (globalT % 20) / 20;
-  const scale = lerp(1, 1.035, easeInOutCubic(Math.sin(cycle * Math.PI * 2) * 0.5 + 0.5));
+  let scale;
+
+  if (cameraStyle === 'punchIn') {
+    // Accelerating push-in across the whole scene - energy building
+    // toward whatever lands at the end (a stat, a number, a reveal).
+    const t = clamp01(localTime / Math.max(duration, 0.01));
+    scale = lerp(1, 1.08, t * t);
+  } else if (cameraStyle === 'settle') {
+    // Starts slightly zoomed in (as if just landing from a hard cut)
+    // and settles back to rest quickly - a "camera catching its
+    // breath" beat, distinct from a continuous drift.
+    const t = clamp01(localTime / (duration * 0.3));
+    scale = lerp(1.06, 1, easeOutCubic(t));
+  } else {
+    // slowDrift (default): a gentle continuous breathing motion
+    // within the scene, not a global cycle spanning the whole video -
+    // each scene gets its own subtle drift instead of the camera
+    // being on a fixed clock unrelated to scene boundaries.
+    const cycle = clamp01(localTime / Math.max(duration, 0.01));
+    scale = lerp(1, 1.03, easeInOutCubic(Math.sin(cycle * Math.PI) ));
+  }
+
   ctx.translate(width / 2, height / 2);
   ctx.scale(scale, scale);
   ctx.translate(-width / 2, -height / 2);
+  return ctx;
 }
 
 function drawContactShadow(ctx, x, y, radiusX, radiusY, alpha) {
@@ -97,40 +170,69 @@ function drawContactShadow(ctx, x, y, radiusX, radiusY, alpha) {
 }
 
 function kineticTextReveal(ctx, params, t, width, height, system) {
-  const { text, duration } = params;
+  const { text, duration, style } = params;
   const accentColor = params.color || '#FF5C1A';
+  const isMixedWeight = style === 'mixed-weight';
 
-  ctx.font = `${system.fontWeight} 50px ${system.fontFamily}`;
+  // mixed-weight: the single longest word gets rendered larger/heavier
+  // than the rest, creating real typographic hierarchy within the
+  // sentence - per the original craft notes ("emphasis animated, not
+  // just typed in caps"). This was declared in the schema since round
+  // 1 but never actually implemented - params.style was never even
+  // read. bold-glow's behavior is completely unchanged below.
   const words = text.split(' ');
-  const lineHeight = 58;
-
-  const maxWidth = width * 0.82;
-  const lines = [];
-  let current = '';
-  for (const word of words) {
-    const test = current ? `${current} ${word}` : word;
-    if (ctx.measureText(test).width > maxWidth && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = test;
-    }
+  let emphasisWordIndex = -1;
+  if (isMixedWeight && words.length > 1) {
+    let longest = 0;
+    words.forEach((w, i) => { if (w.length > longest) { longest = w.length; emphasisWordIndex = i; } });
   }
-  if (current) lines.push(current);
+
+  const baseFontSize = 50;
+  const emphasisFontSize = 66;
+  const lineHeight = 58;
+  const maxWidth = width * 0.82;
+
+  // Word-wrap using the base font size for measurement - emphasis
+  // words run larger, but the wrap boundary uses base size consistently
+  // so layout stays predictable rather than reflowing unexpectedly.
+  ctx.font = `${system.fontWeight} ${baseFontSize}px ${system.fontFamily}`;
+  const lines = [];
+  let current = [];
+  let currentWidth = 0;
+  words.forEach((word, wi) => {
+    const wordFontSize = (isMixedWeight && wi === emphasisWordIndex) ? emphasisFontSize : baseFontSize;
+    ctx.font = `${system.fontWeight} ${wordFontSize}px ${system.fontFamily}`;
+    const wordWidth = ctx.measureText(word + ' ').width;
+    if (currentWidth + wordWidth > maxWidth && current.length > 0) {
+      lines.push(current);
+      current = [];
+      currentWidth = 0;
+    }
+    current.push({ word, wordIndex: wi, fontSize: wordFontSize });
+    currentWidth += wordWidth;
+  });
+  if (current.length) lines.push(current);
 
   const totalHeight = lines.length * lineHeight;
   const startY = height * 0.42 - totalHeight / 2 + lineHeight / 2;
 
   const chars = [];
-  lines.forEach((line, li) => {
-    const lineWidth = ctx.measureText(line).width;
+  lines.forEach((lineWords, li) => {
+    ctx.font = `${system.fontWeight} ${baseFontSize}px ${system.fontFamily}`;
+    const lineWidth = lineWords.reduce((sum, w) => {
+      ctx.font = `${system.fontWeight} ${w.fontSize}px ${system.fontFamily}`;
+      return sum + ctx.measureText(w.word + ' ').width;
+    }, 0);
     let cx = width / 2 - lineWidth / 2;
     const cy = startY + li * lineHeight;
-    for (const ch of line) {
-      const w = ctx.measureText(ch).width;
-      chars.push({ ch, x: cx + w / 2, y: cy, index: chars.length });
-      cx += w;
-    }
+    lineWords.forEach(({ word, wordIndex, fontSize }) => {
+      ctx.font = `${system.fontWeight} ${fontSize}px ${system.fontFamily}`;
+      for (const ch of word + ' ') {
+        const w = ctx.measureText(ch).width;
+        chars.push({ ch, x: cx + w / 2, y: cy, index: chars.length, fontSize, isEmphasis: wordIndex === emphasisWordIndex });
+        cx += w;
+      }
+    });
   });
 
   const staggerWindow = duration * 0.4;
@@ -148,13 +250,16 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
     const scale = lerp(1.4, 1, easeOutBack(charT));
     const jitter = Math.sin(c.index * 12.9898) * 1.5;
 
+    ctx.font = `${system.fontWeight} ${c.fontSize}px ${system.fontFamily}`;
     ctx.save();
     ctx.globalAlpha = opacity;
     ctx.translate(c.x, c.y + jitter);
     ctx.scale(scale, scale);
     if (system.heroUsesGlow) {
       ctx.shadowColor = accentColor;
-      ctx.shadowBlur = lerp(0, 16, clamp01((t - charStart - duration * 0.15) / (duration * 0.2)));
+      // Emphasis word glows a bit brighter, reinforcing the size
+      // hierarchy instead of every character getting identical glow.
+      ctx.shadowBlur = lerp(0, c.isEmphasis ? 24 : 16, clamp01((t - charStart - duration * 0.15) / (duration * 0.2)));
     }
     ctx.fillStyle = system.heroTextColor;
     ctx.fillText(c.ch, 0, 0);
@@ -236,13 +341,6 @@ function statCounter(ctx, params, t, width, height, system) {
   const opacity = easeOutCubic(entranceT);
   const yOffset = lerp(20, 0, easeOutBack(clamp01(t / (duration * 0.35))));
 
-  const countT = clamp01(t / (duration * 0.55));
-  const current = Math.round(lerp(fromValue, toValue, easeOutExpo(countT)));
-
-  const landT = clamp01((t - duration * 0.55) / (duration * 0.2));
-  const punchScale = countT >= 1 ? lerp(1.15, 1, easeOutBack(landT)) : 1;
-  const landedGlow = countT >= 1 ? lerp(0, 28, landT) : 0;
-
   drawContactShadow(ctx, width / 2, height * 0.42 + 60, 90, 18, opacity * 0.4);
 
   ctx.save();
@@ -250,15 +348,11 @@ function statCounter(ctx, params, t, width, height, system) {
   ctx.translate(width / 2, height * 0.42 + yOffset);
 
   ctx.save();
-  ctx.scale(punchScale, punchScale);
   ctx.textAlign = 'center';
-  if (system.heroUsesGlow) {
-    ctx.shadowColor = accentColor;
-    ctx.shadowBlur = landedGlow;
-  }
+  if (system.heroUsesGlow) ctx.shadowColor = accentColor;
   ctx.font = `900 76px ${system.fontFamily}`;
   ctx.fillStyle = system.heroTextColor;
-  ctx.fillText(`${current}${suffix}`, 0, -10);
+  drawDigitRoll(ctx, fromValue, toValue, suffix, t, duration, system.heroUsesGlow, 0, -10);
   ctx.restore();
 
   ctx.font = `500 26px ${system.fontFamily}`;
@@ -451,3 +545,82 @@ function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
 }
 
 module.exports = { drawTemplate };
+
+/**
+ * Slot-machine / odometer style digit roll - each digit position locks
+ * in independently, left to right, with a rapid cycling spin before
+ * settling and a small punch-scale bounce on landing. This is the
+ * actual visual mechanic the original craft notes called for ("like a
+ * slot machine settling") - previously only the EASING matched that
+ * description, never the digit behavior itself. Digit width is fixed
+ * from the FINAL string from frame one, so digits don't reflow as
+ * they lock in - a real mechanical counter's slots don't resize while
+ * spinning.
+ */
+function drawDigitRoll(ctx, fromValue, toValue, suffix, t, duration, useGlow, baseX, baseY) {
+  const finalStr = String(Math.round(toValue));
+  const isNegative = finalStr.startsWith('-');
+  const digitsStr = isNegative ? finalStr.slice(1) : finalStr;
+  const numDigits = digitsStr.length;
+
+  const countWindowEnd = duration * 0.55;
+  const fullFinalText = `${finalStr}${suffix || ''}`;
+  const totalWidth = ctx.measureText(fullFinalText).width;
+  let cursorX = baseX - totalWidth / 2;
+  const baseAlpha = ctx.globalAlpha;
+
+  if (isNegative) {
+    const w = ctx.measureText('-').width;
+    ctx.fillText('-', cursorX + w / 2, baseY);
+    cursorX += w;
+  }
+
+  for (let i = 0; i < numDigits; i++) {
+    const finalDigit = digitsStr[i];
+    const digitLockT = lerp(0, countWindowEnd, (i + 1) / numDigits);
+    const digitStartT = Math.max(0, lerp(0, countWindowEnd, i / numDigits) - duration * 0.05);
+    const localT = clamp01((t - digitStartT) / Math.max(0.01, digitLockT - digitStartT));
+
+    const w = ctx.measureText(finalDigit).width;
+    const dx = cursorX + w / 2;
+
+    let displayChar = finalDigit;
+    let vOffset = 0;
+    let digitOpacity = 1;
+    let digitGlow = 0;
+    let digitScale = 1;
+
+    if (t < digitStartT) {
+      digitOpacity = 0;
+    } else if (localT < 1) {
+      const cycleIndex = Math.floor((t - digitStartT) * 14 + i * 3) % 10;
+      displayChar = String(cycleIndex);
+      vOffset = Math.sin((t - digitStartT) * 30) * 2;
+      digitOpacity = 0.85;
+    } else {
+      const settleT = clamp01((t - digitLockT) / (duration * 0.15));
+      digitScale = lerp(1.25, 1, easeOutBack(settleT));
+      digitGlow = useGlow ? lerp(30, 12, settleT) : 0;
+    }
+
+    if (digitOpacity > 0) {
+      ctx.save();
+      ctx.globalAlpha = baseAlpha * digitOpacity;
+      ctx.shadowBlur = digitGlow;
+      ctx.translate(dx, baseY + vOffset);
+      ctx.scale(digitScale, digitScale);
+      ctx.fillText(displayChar, 0, 0);
+      ctx.restore();
+    }
+    cursorX += w;
+  }
+
+  if (suffix) {
+    const suffixOpacity = easeOutCubic(clamp01((t - countWindowEnd) / (duration * 0.1)));
+    ctx.save();
+    ctx.globalAlpha = baseAlpha * suffixOpacity;
+    ctx.shadowBlur = 0;
+    ctx.fillText(suffix, cursorX + ctx.measureText(suffix).width / 2, baseY);
+    ctx.restore();
+  }
+}
