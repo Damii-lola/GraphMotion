@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Shortform AI — Test Console</title>
+<title>GraphMotion</title>
 <style>
   :root {
     --bg: #0a0a0b;
@@ -39,6 +39,8 @@
   header span {
     font-size: 12px;
     color: var(--muted);
+    display: none; /* keep-alive pinger still runs and updates this element's
+                       text underneath - just not shown to the user */
   }
   .main-row {
     flex: 1;
@@ -302,8 +304,14 @@
     cursor: pointer;
     font-size: 14px;
     margin-right: 4px;
+    display: none; /* only shown when the sidebar is collapsed - see rule below */
   }
   #headerToggle:hover { color: var(--text); border-color: var(--accent); }
+  /* #sidebar and #mainArea are siblings, #sidebar first - this shows
+     the header's toggle button ONLY when the sidebar itself carries
+     .collapsed, so there's never a redundant pair of toggle buttons
+     visible at once (one in the sidebar, one in the header). */
+  #sidebar.collapsed ~ #mainArea #headerToggle { display: inline-block; }
 </style>
 </head>
 <body>
@@ -323,7 +331,7 @@
 <header>
   <div style="display:flex; align-items:center;">
     <button id="headerToggle" title="Toggle history">☰</button>
-    <h1>Shortform AI</h1>
+    <h1>GraphMotion</h1>
   </div>
   <span id="apiTarget"></span>
 </header>
@@ -359,6 +367,19 @@
 <script>
   // Point this at your live Render backend.
   const API_BASE = "https://graphmotion.onrender.com";
+  // GitHub Pages serves this as a PROJECT site at
+  // damii-lola.github.io/GraphMotion/ - confirmed directly by the
+  // person who actually owns the deployment, not assumed. "/GraphMotion"
+  // is a permanent prefix on every URL this site ever has - every path
+  // built or read anywhere on this page has to account for it.
+  const BASE_PATH = "/GraphMotion";
+
+  function buildJobUrl(jobId) {
+    return `${BASE_PATH}/${jobId}`;
+  }
+  function buildRootUrl() {
+    return BASE_PATH ? `${BASE_PATH}/` : "/";
+  }
 
   const promptInput = document.getElementById("promptInput");
   const generateBtn = document.getElementById("generateBtn");
@@ -507,8 +528,27 @@
       const res = await fetch(`${API_BASE}/api/jobs/${jobId}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Failed to load job (${res.status})`);
-      loadJobIntoView(data.job);
-      if (pushUrl) history.pushState({ jobId }, "", `/${jobId}`);
+
+      if (pushUrl) history.pushState({ jobId }, "", buildJobUrl(jobId));
+      currentJobId = jobId;
+
+      const job = data.job;
+      const isTerminal = job.status === "done" || job.status === "failed";
+      if (isTerminal) {
+        loadJobIntoView(job);
+      } else {
+        // This job hasn't finished yet (queued/writing_scenes/
+        // rendering) - resume the live progress UI instead of
+        // treating a still-in-progress job as a finished one. Was
+        // unconditionally calling loadJobIntoView here, which
+        // produced a real, confirmed bug: visiting or refreshing a
+        // job's URL while it was still generating showed "finished
+        // with status writing_scenes but no video_url was returned"
+        // instead of actually resuming the progress bar.
+        updateProgressUI(job);
+        promptInput.value = job.prompt || "";
+        pollJob(jobId).catch((err) => setError(err.message || String(err)));
+      }
     } catch (err) {
       setError(err.message || String(err));
     }
@@ -537,7 +577,7 @@
       // finishes - so a page refresh mid-render still resumes showing
       // progress for the right job instead of losing it.
       currentJobId = data.job.id;
-      history.pushState({ jobId: currentJobId }, "", `/${currentJobId}`);
+      history.pushState({ jobId: currentJobId }, "", buildJobUrl(currentJobId));
       loadHistory(); // the new job now exists - reflect it in the sidebar immediately
 
       await pollJob(data.job.id);
@@ -684,7 +724,7 @@
       // a dead job displayed - fall back to the fresh-prompt state.
       if (currentJobId === jobId) {
         showFreshPromptState();
-        history.pushState({}, "", "/");
+        history.pushState({}, "", buildRootUrl());
       }
       loadHistory();
     } catch (err) {
@@ -712,7 +752,7 @@
 
   document.getElementById("newPromptBtn").addEventListener("click", () => {
     showFreshPromptState();
-    history.pushState({}, "", "/");
+    history.pushState({}, "", buildRootUrl());
   });
 
   // --- Back/forward browser navigation -------------------------------
@@ -729,7 +769,11 @@
   // load and popstate events, so there's one place that decides what
   // a given URL means instead of two copies that could disagree.
   function routeFromCurrentUrl(pushUrl) {
-    const jobId = location.pathname.replace(/^\/+/, "").trim();
+    let path = location.pathname;
+    if (BASE_PATH && path.startsWith(BASE_PATH)) {
+      path = path.slice(BASE_PATH.length);
+    }
+    const jobId = path.replace(/^\/+|\/+$/g, "").trim();
     if (jobId) {
       navigateToJob(jobId, pushUrl);
     } else {
