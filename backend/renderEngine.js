@@ -180,7 +180,11 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         const TEMPLATES_WITH_OWN_ICON = new Set(['iconCallout', 'badgeUnlock']);
         if (!TEMPLATES_WITH_OWN_ICON.has(beat.template)) {
           const heroShape = beat.params.heroVisual || 'mark';
-          drawHeroVisual(ctx, heroShape, accentColor, localTime, beat.duration, WIDTH, HEIGHT, system);
+          drawHeroVisual(ctx, heroShape, accentColor, localTime, beat.duration, WIDTH, HEIGHT, system, {
+            carBodyStyle: beat.params.carBodyStyle,
+            carBadgeText: beat.params.carBadgeText,
+            carBadgeShape: beat.params.carBadgeShape,
+          }, beat.params.customShapeRecipe);
         }
         drawBeatContent(ctx, beat.template, beat.params, localTime, WIDTH, HEIGHT, visualSystem);
         ctx.restore();
