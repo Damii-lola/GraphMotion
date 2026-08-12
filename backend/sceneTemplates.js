@@ -510,6 +510,7 @@ CRITICAL RULES:
   - "make the background light" / "make it feel calmer" -> update ONLY backgroundMood (or visualSystem if the tone genuinely calls for a different one), leave content untouched.
   - "change the text to say X" -> update ONLY that beat's text/label/quote field, leave its template, tag, shape, and every other beat untouched.
 - If the instruction is genuinely ambiguous about scope, prefer the SMALLEST change that satisfies it - never regenerate more than the instruction actually asks for.
+- If the instruction is VAGUE DISSATISFACTION with no concrete change identifiable in it at all ("that doesn't look right", "that's not what I asked for", "fix it", "no", "try again") - this is NOT a request for a full redesign, even though it might feel like one. You have no specific target to change, so making a large change here would almost certainly be the WRONG large change. In this case, output the JSON completely UNCHANGED from what's shown above, byte-for-byte identical in every field - do not alter anything. A vague complaint deserves a follow-up question in the real world, and since you can't ask one here, doing nothing is far less wrong than guessing at a redesign the user never actually described.
 - Still follow the full template schema below for whatever fields you do touch - values must stay valid for whichever template each beat uses.
 - Output STRICTLY the same JSON shape as the input above (title, visualSystem, videoColor, backgroundMood if present, scenes array) - the complete revised object, not a diff or a partial patch.
 
