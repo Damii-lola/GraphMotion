@@ -1,5 +1,5 @@
 const fetch = require('node-fetch');
-const { buildMistralSystemPrompt, validateSceneJSON } = require('./sceneTemplates');
+const { buildMistralSystemPrompt, buildMistralEditSystemPrompt, validateSceneJSON } = require('./sceneTemplates');
 
 const KEYS = (process.env.MISTRAL_API_KEYS || '')
   .split(',')
@@ -24,8 +24,16 @@ function extractJson(text) {
   return JSON.parse(cleaned.slice(start, end + 1));
 }
 
-async function generateSceneJSON(userPrompt, { retriesLeft = 1 } = {}) {
-  const systemPrompt = buildMistralSystemPrompt();
+/**
+ * Shared by both the fresh-generation and edit paths - same API call
+ * shape, same truncation detection, same validate+retry logic. Only
+ * the system prompt and the retry-continuation callback differ
+ * between the two, so those are the only things parameterized here
+ * rather than duplicating this whole function twice.
+ */
+async function callMistralForSceneJSON(systemPrompt, userMessage, targetDurationSeconds, retriesLeft, onRetry) {
+  const estimatedScenes = Math.min(42, Math.max(4, Math.round(targetDurationSeconds / 3)));
+  const maxTokens = Math.min(16000, 1200 + estimatedScenes * 220);
 
   const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
     method: 'POST',
@@ -36,10 +44,11 @@ async function generateSceneJSON(userPrompt, { retriesLeft = 1 } = {}) {
     body: JSON.stringify({
       model: MODEL,
       temperature: 0.7,
+      max_tokens: maxTokens,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
+        { role: 'user', content: userMessage },
       ],
     }),
   });
@@ -53,20 +62,51 @@ async function generateSceneJSON(userPrompt, { retriesLeft = 1 } = {}) {
   const rawText = data.choices?.[0]?.message?.content;
   if (!rawText) throw new Error('Mistral returned no content');
 
-  let parsed;
+  if (data.choices?.[0]?.finish_reason === 'length') {
+    throw new Error(
+      `Mistral response was truncated (hit max_tokens=${maxTokens}) before completing the JSON - the requested video length may need a smaller scene count, or max_tokens needs raising further.`
+    );
+  }
+
   try {
-    parsed = extractJson(rawText);
+    const parsed = extractJson(rawText);
     return validateSceneJSON(parsed);
   } catch (err) {
     if (retriesLeft > 0) {
       console.warn(`[mistralClient] validation failed (${err.message}), retrying...`);
-      return generateSceneJSON(
-        `${userPrompt}\n\n(Your previous response was invalid: ${err.message}. Return ONLY corrected JSON matching the schema exactly.)`,
-        { retriesLeft: retriesLeft - 1 }
-      );
+      return onRetry(err, retriesLeft - 1);
     }
     throw err;
   }
 }
 
-module.exports = { generateSceneJSON };
+async function generateSceneJSON(userPrompt, targetDurationSeconds = 12, { retriesLeft = 1 } = {}) {
+  const systemPrompt = buildMistralSystemPrompt(targetDurationSeconds);
+  return callMistralForSceneJSON(systemPrompt, userPrompt, targetDurationSeconds, retriesLeft, (err, nextRetriesLeft) =>
+    generateSceneJSON(
+      `${userPrompt}\n\n(Your previous response was invalid: ${err.message}. Return ONLY corrected JSON matching the schema exactly.)`,
+      targetDurationSeconds,
+      { retriesLeft: nextRetriesLeft }
+    )
+  );
+}
+
+/**
+ * The edit path - previousSceneJSON is embedded directly into the
+ * system prompt (see buildMistralEditSystemPrompt), so the user
+ * message here is just the plain edit instruction itself ("make the
+ * car blue"), not the whole video re-described from scratch.
+ */
+async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds = 12, { retriesLeft = 1 } = {}) {
+  const systemPrompt = buildMistralEditSystemPrompt(previousSceneJSON, targetDurationSeconds);
+  return callMistralForSceneJSON(systemPrompt, editInstruction, targetDurationSeconds, retriesLeft, (err, nextRetriesLeft) =>
+    generateEditedSceneJSON(
+      previousSceneJSON,
+      `${editInstruction}\n\n(Your previous response was invalid: ${err.message}. Return ONLY corrected JSON matching the schema exactly.)`,
+      targetDurationSeconds,
+      { retriesLeft: nextRetriesLeft }
+    )
+  );
+}
+
+module.exports = { generateSceneJSON, generateEditedSceneJSON };
