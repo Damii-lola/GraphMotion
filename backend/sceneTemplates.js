@@ -336,17 +336,19 @@ ${templateDocs}
 Rules:
 - Always pick the closest matching template for any request, including abstract ones - never invent a new template.
 - Roughly ${minScenes} to ${maxScenes} beats total for a ${duration}s video - pace beats by content, don't pad with filler just to hit a number, and don't rush past ${maxScenes} either.
-- Every beat's params MUST include "tag", "accentShape", and "heroVisual" (documented under every template above) - pick values specific to that beat's content, not the same ones repeated every time. A video about budgeting failures might use tags like "WARNING", "FACT", "DATA" across its beats, not "INSIGHT" three times in a row, and heroVisual should vary too (a concrete icon like "watch" or "house" when the content names that literal thing, an abstract mark like "ribbon" or "halo" otherwise).
+- Every beat's params MUST include "tag", "accentShape", and "heroVisual" (documented under every template above) - pick values specific to that beat's content, not the same ones repeated every time. A video about budgeting failures might use tags like "WARNING", "FACT", "DATA" across its beats, not "INSIGHT" three times in a row. For heroVisual specifically: if the prompt names a real, concrete thing (a car, a watch, a house, a specific product), you MUST use the matching concrete icon for at least the beats about that thing - do NOT default to an abstract mark just because it feels safer. A video about a Mercedes S-Class should show the "car" icon, not "ribbon" or "halo". Only use abstract marks (ribbon, halo, mark, burst) when the content genuinely has no literal object to depict.
 - Pick ONE "visualSystem" for the WHOLE video (not per beat) from: "hudTerminal" (dark, glowing, data/HUD chrome - fits finance, tech, data, insider-info, urgency), "softEditorial" (light, calm, serif, no glow/chrome - fits reflective, lifestyle, psychology, personal-essay tones), "boldGraphic" (flat saturated color blocks, high contrast, no glow - fits punchy hooks, bold claims, hot takes). Choose based on the PROMPT's tone, not a default.
+- Pick ONE "videoColor" (a hex string) for the WHOLE video, based on THIS SPECIFIC prompt's subject and mood - never default to orange out of habit. This single choice drives the background tint, every accent, every glow in the whole video, so it matters. Examples of mapping content to color (pick what actually fits, don't copy these verbatim every time): luxury/premium/automotive -> a deep gold (#C9A24B) or platinum-silver (#B8BCC2) or near-black with a warm edge; danger/warning/failure -> red (#EF4444) or orange (#FF5C1A); trust/finance/professional -> blue (#3B82F6) or navy; growth/health/wellness -> green (#22C55E) or teal; creative/fun/youthful -> purple (#A855F7) or pink (#EC4899); calm/minimal/reflective -> muted sage or warm neutral. A video about a Mercedes should NOT end up the same color as a video about budgeting apps failing - if your last few outputs used orange, deliberately pick something else this time unless the content truly calls for red/orange specifically.
 - Output strictly this JSON shape:
 
 {
   "title": "short internal title",
   "visualSystem": "hudTerminal",
+  "videoColor": "#EF4444",
   "scenes": [
     { "template": "kineticTextReveal", "params": { "text": "...", "style": "bold-glow", "duration": 3, "tag": "WARNING", "accentShape": "triangle", "heroVisual": "halo" } },
     { "template": "statCounter", "params": { "label": "...", "fromValue": 0, "toValue": 73, "suffix": "%", "duration": 2.5, "tag": "DATA", "accentShape": "crosshair", "heroVisual": "burst" } },
-    { "template": "listReveal", "params": { "items": ["...", "...", "..."], "duration": 4, "tag": "GUIDE", "accentShape": "dots", "heroVisual": "mark" } },
+    { "template": "iconCallout", "params": { "icon": "watch", "text": "...", "duration": 2.5, "tag": "NOTE", "accentShape": "dots", "heroVisual": "watch" } },
     { "template": "quoteCallout", "params": { "quote": "...", "attribution": "...", "duration": 3.5, "tag": "QUOTE", "accentShape": "plus", "heroVisual": "ribbon" } }
   ]
 }
@@ -428,9 +430,15 @@ function validateSceneJSON(json) {
   const VALID_SYSTEMS = Object.keys(VISUAL_SYSTEMS);
   const visualSystem = VALID_SYSTEMS.includes(json.visualSystem) ? json.visualSystem : 'hudTerminal';
 
+  const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+  const videoColor = (typeof json.videoColor === 'string' && HEX_COLOR_RE.test(json.videoColor))
+    ? json.videoColor.toUpperCase()
+    : '#FF5C1A';
+
   return {
     title: (json.title || 'Untitled').slice(0, 80),
     visualSystem,
+    videoColor,
     scenes: cleanScenes,
   };
 }
