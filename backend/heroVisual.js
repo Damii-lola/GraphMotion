@@ -86,7 +86,7 @@ function drawBurst(ctx, size) {
  * text follows. Every beat gets one of these, per the direct
  * reference-video feedback that our output was "just text."
  */
-function drawHeroVisual(ctx, shapeName, accentColor, t, duration, width, height, system, carOptions = {}, customShapeRecipe = null) {
+function drawHeroVisual(ctx, shapeName, accentColor, t, duration, width, height, system, carOptions = {}, customShapeRecipe = null, positionY = 0.22, sizeOverride = 130) {
   // Custom recipe takes priority when present and valid - this is
   // what actually scales past the fixed icon list to any object at
   // all, safely, since the recipe is pre-validated data, never code.
@@ -96,11 +96,11 @@ function drawHeroVisual(ctx, shapeName, accentColor, t, duration, width, height,
   const entranceT = clamp01(t / (duration * 0.35));
   const opacity = easeOutCubic(clamp01(t / (duration * 0.25)));
   const scale = lerp(0.4, 1, easeOutBack(entranceT));
-  const size = 130;
+  const size = sizeOverride;
 
   ctx.save();
   ctx.globalAlpha = opacity;
-  ctx.translate(width / 2, height * 0.22);
+  ctx.translate(width / 2, height * positionY);
   ctx.scale(scale, scale);
 
   if (system.heroUsesGlow) {
