@@ -45,8 +45,13 @@ const FALLBACK_TAGS = {
  * by this path, not just deprioritized.
  */
 function buildWorldTimeline(sceneJSON) {
-  const firstColorScene = sceneJSON.scenes.find((s) => s.params && s.params.color);
-  const accentColor = (firstColorScene && firstColorScene.params.color) || '#FF5C1A';
+  // Was hunting through individual scene params for a stray color
+  // value, which only ~2 of 20+ templates even had a field for -
+  // meaning almost every real video fell through to the same
+  // hardcoded orange regardless of content. videoColor is now a real
+  // top-level field Mistral is explicitly instructed to choose based
+  // on THIS prompt's subject/mood, not a per-scene afterthought.
+  const accentColor = sceneJSON.videoColor || '#FF5C1A';
 
   const beats = [];
   let cursor = 0;
