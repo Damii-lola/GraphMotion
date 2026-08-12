@@ -149,6 +149,7 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
   // finished rendering - there's nothing to edit yet if it's still in
   // progress or if it failed.
   let parentSceneJSON = null;
+  let parentThreadIdForRequest = null;
   if (parentJobId) {
     let parentJob;
     try {
@@ -167,6 +168,11 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
       return res.status(409).json({ error: 'That video hasn\'t finished rendering yet - wait for it to complete before editing it' });
     }
     parentSceneJSON = parentJob.scene_json;
+    // Falls back to the parent's own id if its thread_id is somehow
+    // unset (shouldn't happen once the migration backfill has run,
+    // but this keeps a single odd row from breaking the whole chain
+    // going forward instead of silently producing a null thread_id).
+    parentThreadIdForRequest = parentJob.thread_id || parentJob.id;
   }
 
   let job;
@@ -178,7 +184,12 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
       });
     }
 
-    job = await createJob({ userId: identifier, prompt: prompt.trim(), parentJobId: parentJobId || null });
+    job = await createJob({
+      userId: identifier,
+      prompt: prompt.trim(),
+      parentJobId: parentJobId || null,
+      parentThreadId: parentThreadIdForRequest,
+    });
   } catch (err) {
     console.error('[POST /api/generate] job creation failed:', err);
     return res.status(500).json({ error: 'Failed to create job' });
