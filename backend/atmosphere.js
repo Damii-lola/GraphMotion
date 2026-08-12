@@ -1,5 +1,5 @@
 const { clamp01, lerp } = require('./easing');
-const { deriveDarkBackgroundTint } = require('./colorUtils');
+const { deriveDarkBackgroundTint, deriveBoldGradientTint, deriveLightBackgroundTint } = require('./colorUtils');
 
 /**
  * Every function here now takes `system` (a config object from
@@ -44,15 +44,19 @@ function getParticleSeeds(worldWidth) {
   return particleSeeds;
 }
 
-function drawAtmosphere(ctx, globalT, width, height, accentColor, system) {
-  drawGradientBase(ctx, width, height, system, accentColor);
-  if (system.showGlowBlob) drawGlowBlob(ctx, globalT, width, height, accentColor);
+function drawAtmosphere(ctx, globalT, width, height, accentColor, system, backgroundMood) {
+  drawGradientBase(ctx, width, height, system, accentColor, backgroundMood);
+  // Glow blob and grain both read as "moody dark texture" - fine on a
+  // dark resolved background, but a blurred glow reads as a smudge
+  // and grain reads as dirt on a light one. Now driven by the actual
+  // resolved mood, not a fixed per-system flag, since any system can
+  // resolve to either mood now.
+  const resolvedMood = backgroundMood || system.defaultBackgroundMood || 'dark';
+  const isLight = resolvedMood === 'light';
+  if (system.showGlowBlob && !isLight) drawGlowBlob(ctx, globalT, width, height, accentColor);
   if (system.flatBlockAccent) drawFlatBlocks(ctx, globalT, width, height, accentColor);
   drawVignette(ctx, width, height, system);
-  // Grain reads as "video texture" on the dark HUD look but would
-  // just look like dirt on a light editorial background or muddy a
-  // flat poster-graphic block - only draw it for hudTerminal.
-  if (system.name === 'hudTerminal') drawGrain(ctx, globalT, width, height);
+  if (!isLight && system.name !== 'boldGraphic') drawGrain(ctx, globalT, width, height);
 }
 
 /**
@@ -124,16 +128,20 @@ function drawGlowBlob(ctx, globalT, width, height, accentColor) {
   ctx.restore();
 }
 
-function drawGradientBase(ctx, width, height, system, accentColor) {
-  // Real background color variety, not the same near-black every
-  // time regardless of the video's own accent color - direct
-  // response to "why is it only a black screen." Only systems that
-  // opt in get this (hudTerminal); softEditorial's light look and
-  // boldGraphic's flat-block identity stay exactly as designed.
+function drawGradientBase(ctx, width, height, system, accentColor, backgroundMood) {
+  // Real background color AND lightness variety now - hue always
+  // comes from the video's own accent color, and mood (dark vs
+  // light) is a genuine per-video choice instead of every system
+  // being mathematically locked to one lightness class forever.
   let inner = system.bgColorInner;
   let outer = system.bgColorOuter;
-  if (system.dynamicBackground && accentColor) {
-    const tint = deriveDarkBackgroundTint(accentColor);
+  if (system.supportsBackgroundMood && accentColor) {
+    const resolvedMood = backgroundMood || system.defaultBackgroundMood || 'dark';
+    const tint = resolvedMood === 'light'
+      ? deriveLightBackgroundTint(accentColor)
+      : resolvedMood === 'bold'
+        ? deriveBoldGradientTint(accentColor)
+        : deriveDarkBackgroundTint(accentColor);
     inner = tint.inner;
     outer = tint.outer;
   }
@@ -154,14 +162,56 @@ function drawGradientBase(ctx, width, height, system, accentColor) {
  * dimmer version of the HUD look.
  */
 function drawFlatBlocks(ctx, globalT, width, height, accentColor) {
+  // Complete rebuild - this was two flat, hard-edged color blocks
+  // with an abrupt cut against a pure-black center, confirmed
+  // directly by rendering it in isolation and looking. Real gradients
+  // now, on both the side accents AND the center panel (previously
+  // only hudTerminal ever got a background tint at all), plus a soft
+  // feathered transition instead of a hard vertical seam.
   ctx.save();
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = accentColor;
   const slide = Math.sin(globalT * 0.2) * 20;
-  ctx.fillRect(0, 0, width * 0.22 + slide, height);
+
+  const leftW = width * 0.22 + slide;
+  const leftGrad = ctx.createLinearGradient(0, 0, leftW, 0);
+  leftGrad.addColorStop(0, accentColor);
+  leftGrad.addColorStop(1, shadeColor(accentColor, -0.35));
+  ctx.fillStyle = leftGrad;
+  ctx.fillRect(0, 0, leftW, height);
+
+  const rightW = width * 0.12;
+  const rightGrad = ctx.createLinearGradient(width - rightW, 0, width, 0);
+  rightGrad.addColorStop(0, shadeColor(accentColor, -0.35));
+  rightGrad.addColorStop(1, accentColor);
   ctx.globalAlpha = 0.85;
-  ctx.fillRect(width - (width * 0.12), 0, width * 0.12, height);
+  ctx.fillStyle = rightGrad;
+  ctx.fillRect(width - rightW, 0, rightW, height);
+  ctx.globalAlpha = 1;
+
+  // Feathered seam instead of a hard cut, on both boundaries.
+  const featherW = 40;
+  [leftW, width - rightW].forEach((seamX) => {
+    const feather = ctx.createLinearGradient(seamX - featherW / 2, 0, seamX + featherW / 2, 0);
+    feather.addColorStop(0, 'rgba(0,0,0,0)');
+    feather.addColorStop(0.5, 'rgba(0,0,0,0.25)');
+    feather.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = feather;
+    ctx.fillRect(seamX - featherW / 2, 0, featherW, height);
+  });
   ctx.restore();
+}
+
+/**
+ * Lightens (positive amount) or darkens (negative) a hex color by a
+ * fraction - simple, safe, no external dependency, used to build a
+ * two-stop gradient from a single accent color.
+ */
+function shadeColor(hex, amount) {
+  const clean = hex.replace('#', '');
+  const num = parseInt(clean, 16);
+  let r = (num >> 16) & 255, g = (num >> 8) & 255, b = num & 255;
+  const adjust = (c) => Math.max(0, Math.min(255, Math.round(c + (amount > 0 ? (255 - c) * amount : c * amount))));
+  r = adjust(r); g = adjust(g); b = adjust(b);
+  return `rgb(${r},${g},${b})`;
 }
 
 function drawVignette(ctx, width, height, system) {
