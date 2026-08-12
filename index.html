@@ -180,12 +180,127 @@
     font-size: 12px;
     margin-top: 8px;
   }
+
+  /* --- Sidebar (Claude-style history panel) --- */
+  body { flex-direction: row; padding: 0; }
+  #appShell { display: flex; width: 100%; height: 100%; }
+  #sidebar {
+    width: 260px;
+    flex-shrink: 0;
+    background: #131314;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    transition: margin-left 0.2s ease;
+  }
+  #sidebar.collapsed { margin-left: -260px; }
+  #sidebarHeader {
+    padding: 14px;
+    display: flex;
+    gap: 8px;
+  }
+  #newPromptBtn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+  }
+  #newPromptBtn:hover { background: var(--panel); border-color: var(--accent); }
+  #sidebarToggle {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  #sidebarToggle:hover { color: var(--text); border-color: var(--accent); }
+  #historyList {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 8px 8px;
+  }
+  .history-empty {
+    color: var(--muted);
+    font-size: 12px;
+    padding: 12px;
+    text-align: center;
+  }
+  .history-item {
+    padding: 10px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-bottom: 2px;
+    font-size: 13px;
+    line-height: 1.4;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--text);
+  }
+  .history-item:hover { background: var(--panel); }
+  .history-item.active { background: var(--panel); border: 1px solid var(--accent); }
+  .history-item .h-time {
+    display: block;
+    font-size: 10.5px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .history-item .h-status-failed { color: #ff9d9d; }
+  #mainArea {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    gap: 16px;
+    height: 100vh;
+    box-sizing: border-box;
+  }
+  #headerToggle {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    font-size: 14px;
+    margin-right: 4px;
+  }
+  #headerToggle:hover { color: var(--text); border-color: var(--accent); }
 </style>
 </head>
 <body>
 
+<div id="appShell">
+  <div id="sidebar">
+    <div id="sidebarHeader">
+      <button id="sidebarToggle" title="Collapse sidebar">☰</button>
+      <button id="newPromptBtn">+ New prompt</button>
+    </div>
+    <div id="historyList">
+      <div class="history-empty">No prompts yet</div>
+    </div>
+  </div>
+
+  <div id="mainArea">
 <header>
-  <h1>Shortform AI — Test Console</h1>
+  <div style="display:flex; align-items:center;">
+    <button id="headerToggle" title="Toggle history">☰</button>
+    <h1>Shortform AI</h1>
+  </div>
   <span id="apiTarget"></span>
 </header>
 
@@ -214,6 +329,8 @@
   />
   <button id="generateBtn">Generate</button>
 </div>
+  </div>
+</div>
 
 <script>
   // Point this at your live Render backend.
@@ -224,7 +341,14 @@
   const videoWrap = document.getElementById("videoWrap");
   const codeOutput = document.getElementById("codeOutput");
   const statusLine = document.getElementById("statusLine");
+  const sidebar = document.getElementById("sidebar");
+  const historyList = document.getElementById("historyList");
   document.getElementById("apiTarget").textContent = API_BASE;
+
+  // Tracks which job (if any) the page is currently showing, so the
+  // sidebar can highlight it and so a running poll can tell whether
+  // it's still the job the user actually wants to see.
+  let currentJobId = null;
 
   // Simple persisted anonymous id so the backend's free-tier daily
   // limit (per userId) works across page reloads during testing.
@@ -302,15 +426,20 @@
     generateBtn.textContent = "Generate";
   }
 
-  function setResult(job) {
+  // Shared display function - used both right after a fresh
+  // generation finishes AND when loading a past job from the sidebar
+  // or a direct URL visit, so there's exactly one place that renders
+  // a job's result rather than two copies that could drift apart.
+  function loadJobIntoView(job) {
     if (job.video_url) {
       videoWrap.innerHTML = `<video src="${job.video_url}" controls autoplay loop></video>`;
+    } else if (job.status === "failed") {
+      videoWrap.innerHTML = `<div class="placeholder">This generation failed${job.error ? ": " + escapeHtml(job.error) : "."}</div>`;
     } else {
-      videoWrap.innerHTML = `<div class="placeholder">Job finished with status "${job.status}" but no video_url was returned.</div>`;
+      videoWrap.innerHTML = `<div class="placeholder">Job finished with status "${escapeHtml(job.status)}" but no video_url was returned.</div>`;
     }
 
     if (job.scene_json) {
-      // Only show a partial snippet, per the "not fully, just a small part" request.
       const full = JSON.stringify(job.scene_json, null, 2);
       const snippet = full.length > 600 ? full.slice(0, 600) + "\n\n... (truncated)" : full;
       codeOutput.textContent = snippet;
@@ -321,6 +450,44 @@
     statusLine.textContent = `status: ${job.status} · job id: ${job.id}`;
     generateBtn.disabled = false;
     generateBtn.textContent = "Generate";
+    promptInput.value = job.prompt || "";
+
+    currentJobId = job.id;
+    highlightActiveHistoryItem();
+  }
+
+  // Resets the page to the empty "start a new prompt" state - the
+  // sidebar's "+ New" button target, and what a direct visit to the
+  // bare site root should show.
+  function showFreshPromptState() {
+    currentJobId = null;
+    promptInput.value = "";
+    videoWrap.innerHTML = `<div class="placeholder" id="videoPlaceholder">Enter a prompt below to generate a video</div>`;
+    codeOutput.textContent = "// Waiting for a prompt...";
+    statusLine.textContent = "";
+    generateBtn.disabled = false;
+    generateBtn.textContent = "Generate";
+    highlightActiveHistoryItem();
+    promptInput.focus();
+  }
+
+  // Fetches one job by id and displays it - used for sidebar clicks,
+  // direct URL loads, and restoring state on back/forward navigation.
+  // pushUrl controls whether this call itself should push a new
+  // history entry (true for a user-initiated click; false when we're
+  // just reacting to a URL that's already correct, e.g. on page load
+  // or a popstate event).
+  async function navigateToJob(jobId, pushUrl) {
+    setLoading("Loading...");
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${jobId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Failed to load job (${res.status})`);
+      loadJobIntoView(data.job);
+      if (pushUrl) history.pushState({ jobId }, "", `/${jobId}`);
+    } catch (err) {
+      setError(err.message || String(err));
+    }
   }
 
   async function generate() {
@@ -330,10 +497,6 @@
     setLoading("Starting...");
 
     try {
-      // Step 1: kick the job off. The server responds immediately
-      // (status 202) with a queued job - it does NOT wait for the
-      // render to finish, since that can take well over a minute and
-      // Render's own proxy will kill a request that sits open that long.
       const res = await fetch(`${API_BASE}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -346,8 +509,13 @@
         throw new Error(data.error || `Request failed with status ${res.status}`);
       }
 
-      // Step 2: poll GET /api/jobs/:id until status is done or failed,
-      // updating the progress bar from each response along the way.
+      // Adopt this job's dedicated URL right away, not just once it
+      // finishes - so a page refresh mid-render still resumes showing
+      // progress for the right job instead of losing it.
+      currentJobId = data.job.id;
+      history.pushState({ jobId: currentJobId }, "", `/${currentJobId}`);
+      loadHistory(); // the new job now exists - reflect it in the sidebar immediately
+
       await pollJob(data.job.id);
     } catch (err) {
       setError(err.message || String(err));
@@ -363,6 +531,12 @@
 
     return new Promise((resolve, reject) => {
       const tick = async () => {
+        // The user may have navigated to a different job (or back to
+        // a fresh prompt) while this poll was in flight - stop
+        // updating the UI for a job that's no longer the one on
+        // screen, rather than clobbering whatever they navigated to.
+        if (currentJobId !== jobId) return resolve();
+
         try {
           const res = await fetch(`${API_BASE}/api/jobs/${jobId}`);
 
@@ -374,13 +548,16 @@
           consecutiveFailures = 0; // reset on any successful response
 
           const job = data.job;
+          if (currentJobId !== jobId) return resolve();
           updateProgressUI(job);
 
           if (job.status === "done") {
-            setResult(job);
+            loadJobIntoView(job);
+            loadHistory(); // status changed - refresh the sidebar entry
             return resolve();
           }
           if (job.status === "failed") {
+            loadHistory(); // reflect the failure in the sidebar too
             return reject(new Error(job.error || "Generation failed"));
           }
           if (Date.now() - startedAt > MAX_WAIT_MS) {
@@ -414,10 +591,120 @@
     return div.innerHTML;
   }
 
+  // --- History sidebar --------------------------------------------------
+
+  function timeAgo(isoString) {
+    const diffMs = Date.now() - new Date(isoString).getTime();
+    const mins = Math.round(diffMs / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.round(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.round(hours / 24);
+    return `${days}d ago`;
+  }
+
+  async function loadHistory() {
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs?userId=${encodeURIComponent(getUserId())}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load history");
+      renderHistory(data.jobs || []);
+    } catch (err) {
+      // A failed history load shouldn't block using the app - just
+      // leave whatever was already in the sidebar (or the empty state).
+      console.error("[loadHistory]", err);
+    }
+  }
+
+  function renderHistory(jobs) {
+    if (jobs.length === 0) {
+      historyList.innerHTML = `<div class="history-empty">No prompts yet</div>`;
+      return;
+    }
+    historyList.innerHTML = jobs.map((job) => {
+      const label = job.status === "failed" ? ' <span class="h-status-failed">(failed)</span>' : "";
+      return `
+        <div class="history-item" data-job-id="${escapeHtml(job.id)}">
+          ${escapeHtml((job.prompt || "Untitled").slice(0, 60))}${label}
+          <span class="h-time">${timeAgo(job.created_at)}</span>
+        </div>`;
+    }).join("");
+
+    historyList.querySelectorAll(".history-item").forEach((el) => {
+      el.addEventListener("click", () => navigateToJob(el.dataset.jobId, true));
+    });
+    highlightActiveHistoryItem();
+  }
+
+  function highlightActiveHistoryItem() {
+    historyList.querySelectorAll(".history-item").forEach((el) => {
+      el.classList.toggle("active", el.dataset.jobId === currentJobId);
+    });
+  }
+
+  // --- Sidebar toggle -----------------------------------------------
+
+  function toggleSidebar() {
+    sidebar.classList.toggle("collapsed");
+    localStorage.setItem("shortform_sidebar_collapsed", sidebar.classList.contains("collapsed") ? "1" : "0");
+  }
+  document.getElementById("sidebarToggle").addEventListener("click", toggleSidebar);
+  document.getElementById("headerToggle").addEventListener("click", toggleSidebar);
+  if (localStorage.getItem("shortform_sidebar_collapsed") === "1") {
+    sidebar.classList.add("collapsed");
+  }
+
+  document.getElementById("newPromptBtn").addEventListener("click", () => {
+    showFreshPromptState();
+    history.pushState({}, "", "/");
+  });
+
+  // --- Back/forward browser navigation -------------------------------
+  // Handles the user clicking their browser's back/forward buttons
+  // after navigating between jobs via the sidebar - without this, the
+  // URL would change but the page content would stay frozen on
+  // whatever was last displayed.
+  window.addEventListener("popstate", () => {
+    routeFromCurrentUrl(false);
+  });
+
+  // Reads whatever job id (if any) is in the current URL path and
+  // shows the matching view - shared between the very first page
+  // load and popstate events, so there's one place that decides what
+  // a given URL means instead of two copies that could disagree.
+  function routeFromCurrentUrl(pushUrl) {
+    const jobId = location.pathname.replace(/^\/+/, "").trim();
+    if (jobId) {
+      navigateToJob(jobId, pushUrl);
+    } else {
+      showFreshPromptState();
+    }
+  }
+
   generateBtn.addEventListener("click", generate);
   promptInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") generate();
   });
+
+  // Undo the 404.html redirect trick, if this load came from one -
+  // must run before routeFromCurrentUrl so it sees the real restored
+  // path, not the temporary "?p=..." redirect URL.
+  (function restoreCleanUrlFromRedirect() {
+    const params = new URLSearchParams(location.search);
+    const encodedPath = params.get("p");
+    if (encodedPath === null) return;
+    params.delete("p");
+    const remainingSearch = params.toString();
+    const cleanUrl = "/" + encodedPath + (remainingSearch ? "?" + remainingSearch : "") + location.hash;
+    history.replaceState({}, "", cleanUrl);
+  })();
+
+  // Initial load: show whatever the URL actually points to (a
+  // specific job, or the fresh-prompt state if it's just the root),
+  // and populate the sidebar regardless.
+  routeFromCurrentUrl(false);
+  loadHistory();
 
   // --- Keep-alive pinger ---------------------------------------------
   // Render's free tier spins the service down after ~15 min of no
