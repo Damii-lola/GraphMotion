@@ -12,10 +12,10 @@ const supabase = createClient(
 
 const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'rendered-videos';
 
-async function createJob({ userId, prompt }) {
+async function createJob({ userId, prompt, parentJobId }) {
   const { data, error } = await supabase
     .from('render_jobs')
-    .insert({ user_id: userId || null, prompt, status: 'queued' })
+    .insert({ user_id: userId || null, prompt, status: 'queued', parent_job_id: parentJobId || null })
     .select()
     .single();
 
