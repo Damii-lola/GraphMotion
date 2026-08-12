@@ -219,6 +219,28 @@
     font-size: 12px;
     margin-top: 8px;
   }
+  .edit-mode-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #1a2420;
+    border: 1px solid #2f4a3d;
+    color: #8fd9b6;
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 12.5px;
+    margin-bottom: -4px;
+  }
+  #cancelEditBtn {
+    background: transparent;
+    border: none;
+    color: #8fd9b6;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 6px;
+    border-radius: 6px;
+  }
+  #cancelEditBtn:hover { background: #2f4a3d; }
 
   /* --- Sidebar (Claude-style history panel) --- */
   body { flex-direction: row; padding: 0; }
@@ -389,6 +411,10 @@
   </div>
 </div>
 
+<div class="edit-mode-banner" id="editModeBanner" style="display:none;">
+  <span id="editModeText">✏️ Editing this video - describe your change</span>
+  <button id="cancelEditBtn" title="Start a fresh video instead">✕</button>
+</div>
 <div class="prompt-bar">
   <div class="prompt-input-wrap">
     <textarea
@@ -434,6 +460,13 @@
   // sidebar can highlight it and so a running poll can tell whether
   // it's still the job the user actually wants to see.
   let currentJobId = null;
+  // Tracks the STATUS of whatever job currentJobId refers to - needed
+  // to know whether the next submitted prompt should EDIT it (only
+  // valid once a video has actually finished rendering) or start a
+  // fresh one. Kept as a separate variable rather than re-deriving it
+  // from the DOM each time, since it needs to be checked synchronously
+  // right when the user hits Generate.
+  let currentJobStatus = null;
 
   // Simple persisted anonymous id so the backend's free-tier daily
   // limit (per userId) works across page reloads during testing.
@@ -539,7 +572,9 @@
     autoResizePromptInput();
 
     currentJobId = job.id;
+    currentJobStatus = job.status;
     highlightActiveHistoryItem();
+    updateEditModeUI();
   }
 
   // Resets the page to the empty "start a new prompt" state - the
@@ -547,6 +582,7 @@
   // bare site root should show.
   function showFreshPromptState() {
     currentJobId = null;
+    currentJobStatus = null;
     promptInput.value = "";
     autoResizePromptInput();
     videoWrap.innerHTML = `<div class="placeholder" id="videoPlaceholder">Enter a prompt below to generate a video</div>`;
@@ -555,6 +591,7 @@
     generateBtn.disabled = false;
     generateBtn.textContent = "Generate";
     highlightActiveHistoryItem();
+    updateEditModeUI();
     promptInput.focus();
   }
 
@@ -573,6 +610,8 @@
 
       if (pushUrl) history.pushState({ jobId }, "", buildJobUrl(jobId));
       currentJobId = jobId;
+      currentJobStatus = data.job.status;
+      updateEditModeUI();
 
       const job = data.job;
       const isTerminal = job.status === "done" || job.status === "failed";
@@ -601,13 +640,17 @@
     const prompt = promptInput.value.trim();
     if (!prompt) return;
 
-    setLoading("Starting...");
+    const editingParentId = isInEditMode() ? currentJobId : null;
+    setLoading(editingParentId ? "Applying your edit..." : "Starting...");
 
     try {
+      const body = { prompt, userId: getUserId() };
+      if (editingParentId) body.parentJobId = editingParentId;
+
       const res = await fetch(`${API_BASE}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, userId: getUserId() }),
+        body: JSON.stringify(body),
       });
 
       const data = await res.json();
@@ -620,6 +663,8 @@
       // finishes - so a page refresh mid-render still resumes showing
       // progress for the right job instead of losing it.
       currentJobId = data.job.id;
+      currentJobStatus = data.job.status;
+      updateEditModeUI(); // hide the banner while the edit itself is rendering
       history.pushState({ jobId: currentJobId }, "", buildJobUrl(currentJobId));
       loadHistory(); // the new job now exists - reflect it in the sidebar immediately
 
@@ -780,6 +825,36 @@
       el.classList.toggle("active", el.dataset.jobId === currentJobId);
     });
   }
+
+  // --- Edit mode ---------------------------------------------------
+  // Every prompt after the first one edits the currently-displayed
+  // video instead of starting a new one from scratch - only possible
+  // once that video has actually finished rendering (currentJobStatus
+  // === "done"). Call this any time currentJobId/currentJobStatus
+  // changes so the banner and placeholder text never drift out of
+  // sync with what will actually happen on the next Generate click.
+  const editModeBanner = document.getElementById("editModeBanner");
+  const editModeText = document.getElementById("editModeText");
+
+  function isInEditMode() {
+    return !!currentJobId && currentJobStatus === "done";
+  }
+
+  function updateEditModeUI() {
+    const editing = isInEditMode();
+    editModeBanner.style.display = editing ? "flex" : "none";
+    if (editing) {
+      editModeText.textContent = "✏️ Editing this video - describe your change";
+      promptInput.placeholder = "e.g. change the car to blue";
+    } else {
+      promptInput.placeholder = "e.g. why budgeting apps fail";
+    }
+  }
+
+  document.getElementById("cancelEditBtn").addEventListener("click", () => {
+    showFreshPromptState();
+    history.pushState({}, "", buildRootUrl());
+  });
 
   // --- Sidebar toggle -----------------------------------------------
 
