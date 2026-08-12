@@ -360,20 +360,41 @@ ${templateDocs}
 Rules:
 - Always pick the closest matching template for any request, including abstract ones - never invent a new template.
 - Roughly ${minScenes} to ${maxScenes} beats total for a ${duration}s video - pace beats by content, don't pad with filler just to hit a number, and don't rush past ${maxScenes} either.
+- Match the video's scope to what the prompt actually gives you - do NOT force every prompt into the same hook-statistic-detail-quote shape regardless of content. A short or single-word prompt (just naming an object, a brand, a single concept) deserves a short, direct video - even ONE beat is completely fine if that's all the content supports. Never invent a specific statistic, percentage, or quote that the prompt didn't imply just to fill out a template - a made-up "73% of X" about a topic the user gave you almost no information on is fabricated content, not insight, and it's exactly the kind of generic filler this whole system exists to avoid. If you don't have a real basis for a number or a quote, don't include a stat or quote beat at all - use a template that doesn't require inventing one.
 - Every beat's params MUST include "tag", "accentShape", and "heroVisual" (documented under every template above) - pick values specific to that beat's content, not the same ones repeated every time. A video about budgeting failures might use tags like "WARNING", "FACT", "DATA" across its beats, not "INSIGHT" three times in a row. For heroVisual specifically: if the prompt names a real, concrete thing (a car, a watch, a house, a specific product), you MUST use the matching concrete icon for at least the beats about that thing - do NOT default to an abstract mark just because it feels safer. A video about a Mercedes S-Class should show the "car" icon, not "ribbon" or "halo". Only use abstract marks (ribbon, halo, mark, burst) when the content genuinely has no literal object to depict.
 - Pick ONE "visualSystem" for the WHOLE video (not per beat) from: "hudTerminal" (dark, glowing, data/HUD chrome - fits finance, tech, data, insider-info, urgency), "softEditorial" (light, calm, serif, no glow/chrome - fits reflective, lifestyle, psychology, personal-essay tones), "boldGraphic" (flat saturated color blocks, high contrast, no glow - fits punchy hooks, bold claims, hot takes). Choose based on the PROMPT's tone, not a default.
 - Pick ONE "videoColor" (a hex string) for the WHOLE video, based on THIS SPECIFIC prompt's subject and mood - never default to orange out of habit. This single choice drives the background tint, every accent, every glow in the whole video, so it matters. Examples of mapping content to color (pick what actually fits, don't copy these verbatim every time): luxury/premium/automotive -> a deep gold (#C9A24B) or platinum-silver (#B8BCC2) or near-black with a warm edge; danger/warning/failure -> red (#EF4444) or orange (#FF5C1A); trust/finance/professional -> blue (#3B82F6) or navy; growth/health/wellness -> green (#22C55E) or teal; creative/fun/youthful -> purple (#A855F7) or pink (#EC4899); calm/minimal/reflective -> muted sage or warm neutral. A video about a Mercedes should NOT end up the same color as a video about budgeting apps failing - if your last few outputs used orange, deliberately pick something else this time unless the content truly calls for red/orange specifically.
-- Output strictly this JSON shape:
+- Output strictly this JSON shape - note these three examples are STRUCTURALLY DIFFERENT from each other (different beat counts, different template choices, different narrative shapes) because that variety is exactly the point: never let your own output settle into one repeated arc regardless of topic.
 
+Example 1 (a claim worth backing with a real stat):
 {
   "title": "short internal title",
   "visualSystem": "hudTerminal",
   "videoColor": "#EF4444",
   "scenes": [
     { "template": "kineticTextReveal", "params": { "text": "...", "style": "bold-glow", "duration": 3, "tag": "WARNING", "accentShape": "triangle", "heroVisual": "halo" } },
-    { "template": "statCounter", "params": { "label": "...", "fromValue": 0, "toValue": 73, "suffix": "%", "duration": 2.5, "tag": "DATA", "accentShape": "crosshair", "heroVisual": "burst" } },
-    { "template": "iconCallout", "params": { "icon": "watch", "text": "...", "duration": 2.5, "tag": "NOTE", "accentShape": "dots", "heroVisual": "watch" } },
-    { "template": "quoteCallout", "params": { "quote": "...", "attribution": "...", "duration": 3.5, "tag": "QUOTE", "accentShape": "plus", "heroVisual": "ribbon" } }
+    { "template": "statCounter", "params": { "label": "...", "fromValue": 0, "toValue": 73, "suffix": "%", "duration": 2.5, "tag": "DATA", "accentShape": "crosshair", "heroVisual": "burst" } }
+  ]
+}
+
+Example 2 (a single concrete thing, nothing to prove or quantify - kept simple, one beat):
+{
+  "title": "short internal title",
+  "visualSystem": "boldGraphic",
+  "videoColor": "#C9A24B",
+  "scenes": [
+    { "template": "iconCallout", "params": { "icon": "car", "text": "...", "carBodyStyle": "sedan", "carBadgeText": "M", "duration": 3, "tag": "ICONIC", "accentShape": "dots", "heroVisual": "car" } }
+  ]
+}
+
+Example 3 (a process or list, no stats or quotes involved at all):
+{
+  "title": "short internal title",
+  "visualSystem": "softEditorial",
+  "videoColor": "#22C55E",
+  "scenes": [
+    { "template": "arrowFlow", "params": { "steps": ["...", "...", "..."], "duration": 4, "tag": "GUIDE", "accentShape": "arrow", "heroVisual": "mark" } },
+    { "template": "checklistTick", "params": { "items": ["...", "..."], "duration": 3.5, "tag": "STEPS", "accentShape": "check", "heroVisual": "spark" } }
   ]
 }
 
