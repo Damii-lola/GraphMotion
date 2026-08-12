@@ -1,5 +1,6 @@
 const { easeOutBack, easeOutCubic, easeOutExpo, lerp, clamp01 } = require('./easing');
 const { drawIconPath } = require('./templateRenderers');
+const { validateShapeRecipe, drawShapeRecipe } = require('./shapeRecipe');
 
 /**
  * Direct response to real reference footage: every beat with text
@@ -85,8 +86,13 @@ function drawBurst(ctx, size) {
  * text follows. Every beat gets one of these, per the direct
  * reference-video feedback that our output was "just text."
  */
-function drawHeroVisual(ctx, shapeName, accentColor, t, duration, width, height, system) {
-  const name = ALL_HERO_SHAPES.includes(shapeName) ? shapeName : 'mark';
+function drawHeroVisual(ctx, shapeName, accentColor, t, duration, width, height, system, carOptions = {}, customShapeRecipe = null) {
+  // Custom recipe takes priority when present and valid - this is
+  // what actually scales past the fixed icon list to any object at
+  // all, safely, since the recipe is pre-validated data, never code.
+  const validatedRecipe = customShapeRecipe ? validateShapeRecipe(customShapeRecipe) : [];
+  const useCustom = validatedRecipe.length > 0;
+  const name = useCustom ? 'custom' : (ALL_HERO_SHAPES.includes(shapeName) ? shapeName : 'mark');
   const entranceT = clamp01(t / (duration * 0.35));
   const opacity = easeOutCubic(clamp01(t / (duration * 0.25)));
   const scale = lerp(0.4, 1, easeOutBack(entranceT));
@@ -107,10 +113,49 @@ function drawHeroVisual(ctx, shapeName, accentColor, t, duration, width, height,
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  if (ICON_HERO_NAMES.includes(name)) {
-    const shape = drawIconPath(ctx, name, size);
+  if (useCustom) {
+    drawShapeRecipe(ctx, validatedRecipe, size, accentColor);
+  } else if (ICON_HERO_NAMES.includes(name)) {
+    const shape = drawIconPath(ctx, name, size, carOptions);
     if (shape && shape.strokeOnly) ctx.stroke();
     else { ctx.stroke(); ctx.fill(); }
+    if (shape && shape.hasCarWheels) {
+      [-size * 0.22, size * 0.22].forEach((wx) => {
+        ctx.fillStyle = system.bgColorInner;
+        ctx.beginPath();
+        ctx.arc(wx, size * 0.22, size * 0.1, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = accentColor;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      });
+    }
+    // Same real badge treatment as the small icon version - the large
+    // hero visual shouldn't be a lesser, detail-stripped copy of the
+    // same template.
+    if (shape && shape.hasCarBadge) {
+      const badgeY = -size * 0.01, badgeR = size * 0.12;
+      ctx.fillStyle = system.bgColorInner;
+      if (shape.carBadgeShape === 'shield') {
+        ctx.beginPath();
+        ctx.moveTo(0, badgeY - badgeR);
+        ctx.lineTo(badgeR * 0.85, badgeY - badgeR * 0.3);
+        ctx.lineTo(badgeR * 0.6, badgeY + badgeR);
+        ctx.lineTo(-badgeR * 0.6, badgeY + badgeR);
+        ctx.lineTo(-badgeR * 0.85, badgeY - badgeR * 0.3);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.arc(0, badgeY, badgeR, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = accentColor;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `800 ${Math.round(badgeR * 1.1)}px ${system.fontFamily}`;
+      ctx.fillText(String(shape.carBadgeText).slice(0, 2).toUpperCase(), 0, badgeY + 1);
+    }
   } else if (name === 'ribbon') {
     drawRibbon(ctx, size);
     ctx.fill();
