@@ -178,15 +178,30 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         // rendered output. Only templates that are purely text/number
         // based (no icon of their own) get the added hero visual.
         const TEMPLATES_WITH_OWN_ICON = new Set(['iconCallout', 'badgeUnlock']);
-        if (!TEMPLATES_WITH_OWN_ICON.has(beat.template)) {
+        if (beat.template === 'visualMoment') {
+          // Genuinely text-free - direct response to "I just want a
+          // visual, I don't want text." Every other template pairs a
+          // hero visual WITH text; this is the one that doesn't, so
+          // it gets the shape at real scale (2.4x normal) and dead
+          // center, not squeezed into the small "leaves room for text
+          // below" position every other beat uses.
           const heroShape = beat.params.heroVisual || 'mark';
           drawHeroVisual(ctx, heroShape, accentColor, localTime, beat.duration, WIDTH, HEIGHT, system, {
             carBodyStyle: beat.params.carBodyStyle,
             carBadgeText: beat.params.carBadgeText,
             carBadgeShape: beat.params.carBadgeShape,
-          }, beat.params.customShapeRecipe);
+          }, beat.params.customShapeRecipe, 0.42, 340);
+        } else {
+          if (!TEMPLATES_WITH_OWN_ICON.has(beat.template)) {
+            const heroShape = beat.params.heroVisual || 'mark';
+            drawHeroVisual(ctx, heroShape, accentColor, localTime, beat.duration, WIDTH, HEIGHT, system, {
+              carBodyStyle: beat.params.carBodyStyle,
+              carBadgeText: beat.params.carBadgeText,
+              carBadgeShape: beat.params.carBadgeShape,
+            }, beat.params.customShapeRecipe);
+          }
+          drawBeatContent(ctx, beat.template, beat.params, localTime, WIDTH, HEIGHT, visualSystem);
         }
-        drawBeatContent(ctx, beat.template, beat.params, localTime, WIDTH, HEIGHT, visualSystem);
         ctx.restore();
       }
 
