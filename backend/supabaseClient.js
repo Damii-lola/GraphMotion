@@ -12,10 +12,30 @@ const supabase = createClient(
 
 const STORAGE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'rendered-videos';
 
-async function createJob({ userId, prompt, parentJobId }) {
+const crypto = require('crypto');
+
+async function createJob({ userId, prompt, parentJobId, parentThreadId }) {
+  // Generated client-side (not left to the database's own default)
+  // specifically so a FRESH prompt (no parent) can set thread_id to
+  // its own id in the same insert - every job in an edit chain shares
+  // one thread_id (the root's id), so grouping them for the sidebar
+  // is a single equality check, never a chain walk. An edit inherits
+  // its parent's thread_id directly (passed in by the caller, which
+  // already has the parent job loaded for its own authorization
+  // check - no extra query needed here).
+  const id = crypto.randomUUID();
+  const threadId = parentThreadId || id;
+
   const { data, error } = await supabase
     .from('render_jobs')
-    .insert({ user_id: userId || null, prompt, status: 'queued', parent_job_id: parentJobId || null })
+    .insert({
+      id,
+      user_id: userId || null,
+      prompt,
+      status: 'queued',
+      parent_job_id: parentJobId || null,
+      thread_id: threadId,
+    })
     .select()
     .single();
 
@@ -56,7 +76,7 @@ async function getJob(jobId) {
 async function listJobsForUser(userId, limit = 50) {
   const { data, error } = await supabase
     .from('render_jobs')
-    .select('id, prompt, status, created_at, video_url')
+    .select('id, prompt, status, created_at, video_url, parent_job_id, thread_id')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(Math.max(1, Math.min(100, limit)));
