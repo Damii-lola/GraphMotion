@@ -37,8 +37,8 @@ const MAX_CONCURRENT_RENDERS = 1;
 let activeRenders = 0;
 const renderQueue = [];
 
-function scheduleRender(jobId, prompt, targetDurationSeconds) {
-  renderQueue.push({ jobId, prompt, targetDurationSeconds });
+function scheduleRender(jobId, prompt, targetDurationSeconds, parentSceneJSON) {
+  renderQueue.push({ jobId, prompt, targetDurationSeconds, parentSceneJSON });
   drainQueue();
 }
 
@@ -48,7 +48,7 @@ function drainQueue() {
   if (!next) return;
 
   activeRenders++;
-  startRenderWorker(next.jobId, next.prompt, next.targetDurationSeconds, () => {
+  startRenderWorker(next.jobId, next.prompt, next.targetDurationSeconds, next.parentSceneJSON, () => {
     activeRenders--;
     drainQueue();
   });
@@ -96,7 +96,7 @@ app.get('/health', (req, res) => {
 });
 
 app.post('/api/generate', generateLimiter, async (req, res) => {
-  const { prompt, userId, targetDurationSeconds } = req.body || {};
+  const { prompt, userId, targetDurationSeconds, parentJobId } = req.body || {};
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
     return res.status(400).json({ error: 'prompt is required (min 3 chars)' });
@@ -113,6 +113,34 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
 
   const identifier = userId || req.ip;
 
+  // If this request is an edit of a previous video (not a fresh
+  // generation), verify BEFORE spending a daily use or spawning a
+  // worker: the parent job must actually exist, belong to THIS same
+  // user (an edit request naming someone else's job id shouldn't be
+  // able to piggyback on their video), and must have actually
+  // finished rendering - there's nothing to edit yet if it's still in
+  // progress or if it failed.
+  let parentSceneJSON = null;
+  if (parentJobId) {
+    let parentJob;
+    try {
+      parentJob = await getJob(parentJobId);
+    } catch (err) {
+      console.error('[POST /api/generate] parent job lookup failed:', err);
+      return res.status(500).json({ error: 'Failed to look up the video being edited' });
+    }
+    if (!parentJob) {
+      return res.status(404).json({ error: 'The video you are trying to edit no longer exists' });
+    }
+    if (parentJob.user_id !== identifier) {
+      return res.status(403).json({ error: 'You can only edit your own videos' });
+    }
+    if (parentJob.status !== 'done' || !parentJob.scene_json) {
+      return res.status(409).json({ error: 'That video hasn\'t finished rendering yet - wait for it to complete before editing it' });
+    }
+    parentSceneJSON = parentJob.scene_json;
+  }
+
   let job;
   try {
     const usedToday = await countJobsToday(identifier);
@@ -122,7 +150,7 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
       });
     }
 
-    job = await createJob({ userId: identifier, prompt: prompt.trim() });
+    job = await createJob({ userId: identifier, prompt: prompt.trim(), parentJobId: parentJobId || null });
   } catch (err) {
     console.error('[POST /api/generate] job creation failed:', err);
     return res.status(500).json({ error: 'Failed to create job' });
@@ -130,10 +158,10 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
 
   res.status(202).json({ job });
 
-  scheduleRender(job.id, prompt.trim(), duration);
+  scheduleRender(job.id, prompt.trim(), duration, parentSceneJSON);
 });
 
-function startRenderWorker(jobId, prompt, targetDurationSeconds, onSettled) {
+function startRenderWorker(jobId, prompt, targetDurationSeconds, parentSceneJSON, onSettled) {
   const child = fork(path.join(__dirname, 'renderWorker.js'), { stdio: 'inherit' });
 
   let settled = false;
@@ -212,7 +240,7 @@ function startRenderWorker(jobId, prompt, targetDurationSeconds, onSettled) {
     }
   });
 
-  child.send({ jobId, prompt, targetDurationSeconds });
+  child.send({ jobId, prompt, targetDurationSeconds, parentSceneJSON });
 }
 
 app.get('/api/jobs', async (req, res) => {
