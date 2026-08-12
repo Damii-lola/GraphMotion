@@ -113,4 +113,57 @@ function deriveDarkBackgroundTint(primaryHex) {
   }
 }
 
-module.exports = { deriveSecondaryColor, deriveDarkBackgroundTint };
+/**
+ * A bolder, more saturated full-bleed gradient for boldGraphic -
+ * deliberately distinct from deriveDarkBackgroundTint's moody,
+ * desaturated dark tone (that fits hudTerminal's glow aesthetic, not
+ * this system's punchy flat-color identity). Real color, not just a
+ * dark tint - the accent itself, sweeping into a deeper shade of
+ * itself, edge to edge.
+ */
+function deriveBoldGradientTint(primaryHex) {
+  if (typeof primaryHex !== 'string' || !/^#?[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(primaryHex)) {
+    return { inner: '#3A2E12', outer: '#100C05' };
+  }
+  try {
+    const { r, g, b } = hexToRgb(primaryHex);
+    const { h, s } = rgbToHsl(r, g, b);
+    const innerRgb = hslToRgb(h, Math.min(0.75, s + 0.15), 0.22);
+    const outerRgb = hslToRgb(h, Math.min(0.7, s + 0.1), 0.06);
+    return {
+      inner: rgbToHex(innerRgb.r, innerRgb.g, innerRgb.b),
+      outer: rgbToHex(outerRgb.r, outerRgb.g, outerRgb.b),
+    };
+  } catch (err) {
+    return { inner: '#3A2E12', outer: '#100C05' };
+  }
+}
+
+/**
+ * A bright, airy tint - the light counterpart to the two dark
+ * derivations above. Was missing entirely: every background in this
+ * whole system was mathematically locked to low lightness, meaning
+ * no video could ever get a bright/light mood regardless of content,
+ * and softEditorial's cream tone never varied by hue at all. High
+ * lightness, moderate saturation so the hue still reads clearly
+ * without turning washed-out or neon.
+ */
+function deriveLightBackgroundTint(primaryHex) {
+  if (typeof primaryHex !== 'string' || !/^#?[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(primaryHex)) {
+    return { inner: '#F5F2ED', outer: '#E8E3D9' };
+  }
+  try {
+    const { r, g, b } = hexToRgb(primaryHex);
+    const { h } = rgbToHsl(r, g, b);
+    const innerRgb = hslToRgb(h, 0.35, 0.95);
+    const outerRgb = hslToRgb(h, 0.3, 0.88);
+    return {
+      inner: rgbToHex(innerRgb.r, innerRgb.g, innerRgb.b),
+      outer: rgbToHex(outerRgb.r, outerRgb.g, outerRgb.b),
+    };
+  } catch (err) {
+    return { inner: '#F5F2ED', outer: '#E8E3D9' };
+  }
+}
+
+module.exports = { deriveSecondaryColor, deriveDarkBackgroundTint, deriveBoldGradientTint, deriveLightBackgroundTint };
