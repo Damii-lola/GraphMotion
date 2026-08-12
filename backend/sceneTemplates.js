@@ -328,17 +328,14 @@ const TEMPLATES = {
   },
 };
 
-function buildMistralSystemPrompt(targetDurationSeconds = 12) {
-  const duration = Math.max(8, Math.min(120, targetDurationSeconds));
-  // Roughly: each scene averages ~3s of content + a 0.55s transition
-  // between scenes (~3.55s per scene-unit). Min/max scene count is a
-  // guide, not a hard instruction to hit exactly - Mistral should
-  // still pace scenes by content, not pad to a number.
-  const approxScenes = Math.round(duration / 3.55);
-  const minScenes = Math.max(2, Math.round(approxScenes * 0.75));
-  const maxScenes = Math.min(40, Math.max(minScenes + 1, Math.round(approxScenes * 1.25)));
-
-  const templateDocs = Object.entries(TEMPLATES)
+/**
+ * Extracted so both the fresh-generation prompt AND the edit prompt
+ * can share this without duplicating a large, template-count-scaling
+ * block that would otherwise drift out of sync between the two the
+ * moment a template's schema changes.
+ */
+function buildTemplateDocs() {
+  return Object.entries(TEMPLATES)
     .map(([name, t]) => {
       const paramDocs = Object.entries(t.params)
         .map(([pname, p]) => {
@@ -356,6 +353,19 @@ function buildMistralSystemPrompt(targetDurationSeconds = 12) {
       return `  ${name}: ${t.description}\n${paramDocs}`;
     })
     .join('\n\n');
+}
+
+function buildMistralSystemPrompt(targetDurationSeconds = 12) {
+  const duration = Math.max(8, Math.min(120, targetDurationSeconds));
+  // Roughly: each scene averages ~3s of content + a 0.55s transition
+  // between scenes (~3.55s per scene-unit). Min/max scene count is a
+  // guide, not a hard instruction to hit exactly - Mistral should
+  // still pace scenes by content, not pad to a number.
+  const approxScenes = Math.round(duration / 3.55);
+  const minScenes = Math.max(2, Math.round(approxScenes * 0.75));
+  const maxScenes = Math.min(40, Math.max(minScenes + 1, Math.round(approxScenes * 1.25)));
+
+  const templateDocs = buildTemplateDocs();
 
   return `You are a short-form video director. Given a user's prompt, output ONLY valid JSON (no markdown, no prose, no code fences) describing a sequence of BEATS for a ${duration} second vertical video (720x1280).
 
@@ -462,6 +472,46 @@ function enforceConsecutiveVisualVariation(cleanScenes) {
       runStart = i;
     }
   }
+}
+
+/**
+ * The edit path - fundamentally different framing from
+ * buildMistralSystemPrompt above. That one is "design something new
+ * from a description." This one is "here is an EXISTING, already-
+ * validated video - apply exactly this one change and leave
+ * everything else untouched." Getting the "preserve everything else"
+ * instruction genuinely emphatic matters a lot here: without it, an
+ * edit request risks regenerating an entirely different video that
+ * happens to also satisfy the new instruction, which is not what
+ * "change the car to blue" means to a user who already has a video
+ * they like except for that one detail.
+ */
+function buildMistralEditSystemPrompt(previousSceneJSON, targetDurationSeconds = 12) {
+  const templateDocs = buildTemplateDocs();
+  const previousJson = JSON.stringify(previousSceneJSON, null, 2);
+
+  return `You are editing an EXISTING short-form video, not creating a new one. Below is the CURRENT scene JSON for this video. The user will describe ONE change they want. Your job is to output a REVISED version of this exact JSON that applies ONLY that change - not a new video that happens to also satisfy the instruction.
+
+CURRENT SCENE JSON:
+${previousJson}
+
+CRITICAL RULES:
+- Preserve EVERYTHING else exactly as it currently is: same beat count and order, same templates, same tag text, same accentShape, same heroVisual, same durations, same videoColor, same visualSystem, same backgroundMood - UNLESS the user's instruction specifically implies changing that particular thing.
+- Common edit patterns and what they actually mean:
+  - "change the color to X" / "make it blue" -> update ONLY "videoColor" (and any params.color fields that mirror it) to the new color. Do not touch templates, text, beat count, or anything else.
+  - "make the car a suv" / "change the car style" -> update ONLY carBodyStyle (and carBadgeText/carBadgeShape if the instruction implies changing those specifically). Leave every other beat and every other field untouched.
+  - "add a scene about X" -> APPEND one new beat for X, keep every existing beat completely unchanged.
+  - "remove the Nth scene" / "remove the part about X" -> remove that one beat, keep every other beat completely unchanged, don't renumber or otherwise alter what remains.
+  - "make the background light" / "make it feel calmer" -> update ONLY backgroundMood (or visualSystem if the tone genuinely calls for a different one), leave content untouched.
+  - "change the text to say X" -> update ONLY that beat's text/label/quote field, leave its template, tag, shape, and every other beat untouched.
+- If the instruction is genuinely ambiguous about scope, prefer the SMALLEST change that satisfies it - never regenerate more than the instruction actually asks for.
+- Still follow the full template schema below for whatever fields you do touch - values must stay valid for whichever template each beat uses.
+- Output STRICTLY the same JSON shape as the input above (title, visualSystem, videoColor, backgroundMood if present, scenes array) - the complete revised object, not a diff or a partial patch.
+
+The available templates and their valid params, for reference on whatever fields you touch:
+
+${templateDocs}
+`;
 }
 
 function validateSceneJSON(json) {
@@ -572,5 +622,6 @@ function validateSceneJSON(json) {
 module.exports = {
   TEMPLATES,
   buildMistralSystemPrompt,
+  buildMistralEditSystemPrompt,
   validateSceneJSON,
 };
