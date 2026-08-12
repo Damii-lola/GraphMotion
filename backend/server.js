@@ -7,6 +7,7 @@ const { fork } = require('child_process');
 const rateLimit = require('express-rate-limit');
 
 const {
+  supabase,
   createJob,
   updateJob,
   getJob,
@@ -67,21 +68,43 @@ const generateLimiter = rateLimit({
 // at runtime (not a hardcoded claim) - if longVideoOrchestrator.js on
 // the live server doesn't actually contain the fix, this reports
 // false, full stop, no more guessing about whether a deploy worked.
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   let chunkHandoffFixPresent = false;
   let liveChunkConfig = null;
   try {
     const orchestratorSource = fs.readFileSync(path.join(__dirname, 'longVideoOrchestrator.js'), 'utf8');
     chunkHandoffFixPresent = orchestratorSource.includes('hasExited') && orchestratorSource.includes('maybeFinish');
-    // Report the ACTUAL live numbers, not just "the old fix is
-    // present" - a binary check here would have stayed true even if
-    // the chunk-size reduction specifically never deployed, since
-    // that change didn't touch the hasExited/maybeFinish code at all.
-    // This removes that exact ambiguity.
     const { CHUNK_THRESHOLD_SECONDS, CHUNK_SIZE_SECONDS } = require('./longVideoOrchestrator');
     liveChunkConfig = { CHUNK_THRESHOLD_SECONDS, CHUNK_SIZE_SECONDS };
   } catch (err) {
     chunkHandoffFixPresent = null;
+  }
+
+  // Answers "is the edit-a-video feature actually deployed" directly
+  // and unambiguously, rather than everyone guessing from symptoms.
+  // Checks the CODE (is the function even present) and the DATABASE
+  // (does the column it depends on actually exist) separately, since
+  // those are two genuinely independent things that both have to be
+  // true - a code deploy without running the schema migration would
+  // otherwise look identical to "nothing was deployed" from the
+  // outside, and this tells you exactly which one is missing.
+  let editFeatureCodePresent = false;
+  try {
+    const mistralSource = fs.readFileSync(path.join(__dirname, 'mistralClient.js'), 'utf8');
+    const supabaseSource = fs.readFileSync(path.join(__dirname, 'supabaseClient.js'), 'utf8');
+    editFeatureCodePresent =
+      mistralSource.includes('generateEditedSceneJSON') &&
+      supabaseSource.includes('parent_job_id');
+  } catch (err) {
+    editFeatureCodePresent = null;
+  }
+
+  let parentJobIdColumnExists = null;
+  try {
+    const { error } = await supabase.from('render_jobs').select('parent_job_id').limit(1);
+    parentJobIdColumnExists = !error;
+  } catch (err) {
+    parentJobIdColumnExists = false;
   }
 
   res.json({
@@ -91,6 +114,11 @@ app.get('/health', (req, res) => {
       chunkHandoffFix: chunkHandoffFixPresent,
       progressThrottleFix: true,
       liveChunkConfig,
+      editFeature: {
+        codeDeployed: editFeatureCodePresent,
+        databaseMigrated: parentJobIdColumnExists,
+        fullyWorking: editFeatureCodePresent === true && parentJobIdColumnExists === true,
+      },
     },
   });
 });
