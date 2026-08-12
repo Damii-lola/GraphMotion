@@ -46,6 +46,25 @@ async function getJob(jobId) {
   return data;
 }
 
+/**
+ * Powers the history sidebar - a lightweight list of a user's past
+ * jobs (not the full scene_json for each, which could be large -
+ * that's only fetched via getJob when a specific one is opened).
+ * Newest first, capped so one prolific user can't pull an unbounded
+ * result set.
+ */
+async function listJobsForUser(userId, limit = 50) {
+  const { data, error } = await supabase
+    .from('render_jobs')
+    .select('id, prompt, status, created_at, video_url')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(Math.max(1, Math.min(100, limit)));
+
+  if (error) throw new Error(`listJobsForUser failed: ${error.message}`);
+  return data || [];
+}
+
 async function countJobsToday(identifier) {
   const startOfDay = new Date();
   startOfDay.setUTCHours(0, 0, 0, 0);
@@ -85,6 +104,7 @@ module.exports = {
   createJob,
   updateJob,
   getJob,
+  listJobsForUser,
   countJobsToday,
   uploadRenderedVideo,
 };
