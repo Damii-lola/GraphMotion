@@ -370,7 +370,13 @@ Rules:
 - Roughly ${minScenes} to ${maxScenes} beats total for a ${duration}s video - pace beats by content, don't pad with filler just to hit a number, and don't rush past ${maxScenes} either.
 - Match the video's scope to what the prompt actually gives you - do NOT force every prompt into the same hook-statistic-detail-quote shape regardless of content. A short or single-word prompt (just naming an object, a brand, a single concept) deserves a short, direct video - even ONE beat is completely fine if that's all the content supports. Never invent a specific statistic, percentage, or quote that the prompt didn't imply just to fill out a template - a made-up "73% of X" about a topic the user gave you almost no information on is fabricated content, not insight, and it's exactly the kind of generic filler this whole system exists to avoid. If you don't have a real basis for a number or a quote, don't include a stat or quote beat at all - use a template that doesn't require inventing one.
 - NEVER reproduce a real company's actual ad slogan, tagline, or marketing copy (e.g. "The Ultimate Driving Machine", "Just Do It") even if it comes to mind as an obvious association for a brand named in the prompt - that's someone else's copyrighted material, not something to insert unprompted. Write original text every time.
-- When a LONG duration is requested for a prompt that's genuinely content-sparse (just an object or brand name, nothing else), do NOT fill the extra time by inventing facts, specs, or claims about it - that produces exactly the fabricated "so fast that it can..." kind of filler this whole system exists to avoid. Instead, fill the duration with VISUAL VARIATION on the same subject: multiple "visualMoment" beats cycling through different angles, color treatments, or compositions of the same thing, like a mood/hype reel rather than a documentary script. Repetition-with-variation is honest; invented facts are not. The user asked for a video about a car, not a written essay about a car - respect what they actually gave you to work with, don't manufacture content to hit a runtime.
+- When a LONG duration is requested for a prompt that's genuinely content-sparse (just an object or brand name, nothing else), do NOT fill the extra time by inventing facts, specs, or claims about it - that produces exactly the fabricated "so fast that it can..." kind of filler this whole system exists to avoid. Instead, fill the duration with VISUAL VARIATION on the same subject: multiple "visualMoment" beats, like a mood/hype reel rather than a documentary script. Repetition-with-variation is honest; invented facts are not.
+- CRITICAL, NON-NEGOTIABLE RULE when you use multiple "visualMoment" (or any repeated-subject) beats back to back: consecutive beats of the same subject MUST differ in at least THREE of the following - never just the tag text alone, that alone is not variation and produces the exact same image on a loop with different captions, which is worse than no variation at all:
+  - carBodyStyle (if a car): rotate sedan / suv / sports, never repeat the same one twice in a row
+  - heroVisual itself: alternate between the literal icon AND an abstract mark that evokes a different facet of the subject (e.g. the car itself, then "burst" for speed/energy, then "halo" for prestige, then back to the car in a different body style) - do not show the identical shape in every single beat
+  - accentShape: pick a different one each beat
+  - carBadgeShape (if applicable): alternate circle/shield
+  Before finalizing a multi-beat visual reel, check your own output: if two consecutive beats would render as literally the same shape in the same position with only the tag word different, that is a failure - go back and vary something real. This has produced genuinely broken-looking output before (the exact same car icon repeated across 4+ beats with only the tag changing) - do not repeat that mistake.
 - If the prompt is just naming a single object with no other context ("a car", "a watch"), use the "visualMoment" template - a real visual with no text forced onto it, not a fabricated caption or tagline standing in for content that was never asked for.
 - Every beat's params MUST include "tag", "accentShape", and "heroVisual" (documented under every template above) - pick values specific to that beat's content, not the same ones repeated every time. A video about budgeting failures might use tags like "WARNING", "FACT", "DATA" across its beats, not "INSIGHT" three times in a row. For heroVisual specifically: if the prompt names a real, concrete thing (a car, a watch, a house, a specific product), you MUST use the matching concrete icon for at least the beats about that thing - do NOT default to an abstract mark just because it feels safer. A video about a Mercedes S-Class should show the "car" icon, not "ribbon" or "halo". Only use abstract marks (ribbon, halo, mark, burst) when the content genuinely has no literal object to depict.
 - Pick ONE "visualSystem" for the WHOLE video (not per beat) from: "hudTerminal" (dark, glowing, data/HUD chrome - fits finance, tech, data, insider-info, urgency), "softEditorial" (light, calm, serif, no glow/chrome - fits reflective, lifestyle, psychology, personal-essay tones), "boldGraphic" (flat saturated color blocks, high contrast, no glow - fits punchy hooks, bold claims, hot takes). Choose based on the PROMPT's tone, not a default.
@@ -411,6 +417,51 @@ Example 3 (a process or list, no stats or quotes involved at all):
 }
 
 Respond with ONLY the JSON object.`;
+}
+
+/**
+ * The actual code-level backstop for consecutive-beat sameness. Walks
+ * scenes in order; whenever two consecutive beats would render as
+ * literally the same visual (same heroVisual, same carBodyStyle, same
+ * accentShape), deterministically rotates the LATER one's params so
+ * they can never be identical, regardless of what Mistral actually
+ * output. Mutates cleanScenes in place.
+ */
+function enforceConsecutiveVisualVariation(cleanScenes) {
+  const CAR_BODY_ROTATION = ['sedan', 'suv', 'sports'];
+  const ACCENT_SHAPE_ROTATION = ['bracket', 'crosshair', 'dots', 'arrow', 'plus', 'triangle'];
+  const HERO_MARK_ROTATION = ['halo', 'burst', 'mark', 'ribbon'];
+
+  // Find RUNS of consecutive beats sharing the same subject (same
+  // heroVisual), not just reactively fix pairwise sameness against
+  // the immediate predecessor. The pairwise-only version of this fix
+  // still let beat[i] land back on exactly beat[i-2]'s values (no
+  // ADJACENT duplicate, but still an obvious repeat one beat later) -
+  // confirmed directly by testing it. Rotating every beat in a run by
+  // its position WITHIN the run, starting from 0, guarantees a full
+  // clean cycle with no repeats until the rotation list itself wraps.
+  let runStart = 0;
+  for (let i = 1; i <= cleanScenes.length; i++) {
+    const endOfRun = i === cleanScenes.length || cleanScenes[i].params.heroVisual !== cleanScenes[runStart].params.heroVisual;
+    if (endOfRun) {
+      const runLength = i - runStart;
+      if (runLength >= 2) {
+        for (let j = 0; j < runLength; j++) {
+          const params = cleanScenes[runStart + j].params;
+          if (params.carBodyStyle !== undefined) {
+            params.carBodyStyle = CAR_BODY_ROTATION[j % CAR_BODY_ROTATION.length];
+          } else if (j > 0) {
+            // Only the icon/mark itself alternates from the SECOND
+            // beat in a run onward - the first beat keeps whatever
+            // subject Mistral actually chose for it.
+            params.heroVisual = HERO_MARK_ROTATION[(j - 1) % HERO_MARK_ROTATION.length];
+          }
+          params.accentShape = ACCENT_SHAPE_ROTATION[j % ACCENT_SHAPE_ROTATION.length];
+        }
+      }
+      runStart = i;
+    }
+  }
 }
 
 function validateSceneJSON(json) {
@@ -489,6 +540,14 @@ function validateSceneJSON(json) {
       params: cleanParams,
     };
   });
+
+  // Code-level guarantee, not just a prompt request - a prose
+  // instruction already failed once in exactly this spot (confirmed
+  // directly: the same car icon repeated across 4+ beats with only
+  // the tag word changing). This forces real variation whenever
+  // consecutive beats would otherwise render identically, regardless
+  // of whether Mistral actually complied with the instruction above.
+  enforceConsecutiveVisualVariation(cleanScenes);
 
   const VALID_SYSTEMS = Object.keys(VISUAL_SYSTEMS);
   const visualSystem = VALID_SYSTEMS.includes(json.visualSystem) ? json.visualSystem : 'hudTerminal';
