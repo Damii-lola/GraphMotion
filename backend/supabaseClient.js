@@ -65,6 +65,46 @@ async function listJobsForUser(userId, limit = 50) {
   return data || [];
 }
 
+/**
+ * Powers the sidebar's delete button. Verifies the job actually
+ * belongs to the requesting user before deleting anything - this app
+ * has no real auth, just per-user identifiers, so without this check
+ * anyone who learned another user's job id could delete their history.
+ * Best-effort cleanup of the rendered video file too, so deleted jobs
+ * don't leave orphaned files sitting in storage forever - but a
+ * storage-delete failure (e.g. the file was already gone) doesn't
+ * block deleting the row itself, since the row is the part that
+ * actually matters to the user.
+ */
+async function deleteJob(jobId, userId) {
+  const { data: existing, error: fetchError } = await supabase
+    .from('render_jobs')
+    .select('id, user_id')
+    .eq('id', jobId)
+    .single();
+
+  if (fetchError) throw new Error(`deleteJob lookup failed: ${fetchError.message}`);
+  if (!existing) return { deleted: false, reason: 'not_found' };
+  if (existing.user_id !== userId) return { deleted: false, reason: 'forbidden' };
+
+  const { error: storageError } = await supabase.storage.from(STORAGE_BUCKET).remove([`${jobId}.mp4`]);
+  if (storageError) {
+    // Doesn't block deleting the row itself - a failed cleanup (e.g.
+    // the file was already gone) shouldn't stop the user from
+    // clearing this out of their history, since the row is the part
+    // that actually matters to them.
+    console.warn(`[deleteJob] storage cleanup failed for ${jobId}, deleting row anyway:`, storageError.message);
+  }
+
+  const { error: deleteError } = await supabase
+    .from('render_jobs')
+    .delete()
+    .eq('id', jobId);
+
+  if (deleteError) throw new Error(`deleteJob failed: ${deleteError.message}`);
+  return { deleted: true };
+}
+
 async function countJobsToday(identifier) {
   const startOfDay = new Date();
   startOfDay.setUTCHours(0, 0, 0, 0);
@@ -105,6 +145,7 @@ module.exports = {
   updateJob,
   getJob,
   listJobsForUser,
+  deleteJob,
   countJobsToday,
   uploadRenderedVideo,
 };
