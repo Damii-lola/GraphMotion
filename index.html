@@ -319,6 +319,7 @@
     color: var(--muted);
     margin-top: 2px;
   }
+  .h-edit-count { color: var(--accent); }
   .history-item .h-status-failed { color: #ff9d9d; }
   .h-delete-btn {
     position: absolute;
@@ -756,6 +757,44 @@
     return `${days}d ago`;
   }
 
+  // --- Thread grouping ------------------------------------------------
+  // Every edit is still its own row in the database (so any past
+  // version stays reachable), but the sidebar should show ONE entry
+  // per conversation, not one per edit - otherwise "red car" -> "blue
+  // car" -> "red background" shows up as three disconnected chats
+  // instead of one thread you're iterating on, which is exactly the
+  // "just work solely on that chat" complaint this exists to fix.
+  function groupJobsIntoThreads(jobs) {
+    const byId = {};
+    jobs.forEach((j) => { byId[j.id] = j; });
+
+    function findRootId(job) {
+      let current = job;
+      const seen = new Set(); // guards against a corrupt/cyclic chain
+      while (current.parent_job_id && byId[current.parent_job_id] && !seen.has(current.id)) {
+        seen.add(current.id);
+        current = byId[current.parent_job_id];
+      }
+      return current.id;
+    }
+
+    const threadsByRoot = {};
+    jobs.forEach((job) => {
+      const rootId = findRootId(job);
+      if (!threadsByRoot[rootId]) threadsByRoot[rootId] = [];
+      threadsByRoot[rootId].push(job);
+    });
+
+    return Object.values(threadsByRoot).map((threadJobs) => {
+      const sorted = [...threadJobs].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+      return {
+        rootPrompt: sorted[0].prompt,
+        latestJob: sorted[sorted.length - 1],
+        jobIds: sorted.map((j) => j.id),
+      };
+    }).sort((a, b) => new Date(b.latestJob.created_at) - new Date(a.latestJob.created_at));
+  }
+
   async function loadHistory() {
     try {
       const res = await fetch(`${API_BASE}/api/jobs?userId=${encodeURIComponent(getUserId())}`);
@@ -774,13 +813,16 @@
       historyList.innerHTML = `<div class="history-empty">No prompts yet</div>`;
       return;
     }
-    historyList.innerHTML = jobs.map((job) => {
-      const label = job.status === "failed" ? ' <span class="h-status-failed">(failed)</span>' : "";
+    const threads = groupJobsIntoThreads(jobs);
+    historyList.innerHTML = threads.map((thread) => {
+      const latest = thread.latestJob;
+      const label = latest.status === "failed" ? ' <span class="h-status-failed">(failed)</span>' : "";
+      const editCount = thread.jobIds.length > 1 ? ` <span class="h-edit-count">· ${thread.jobIds.length} versions</span>` : "";
       return `
-        <div class="history-item" data-job-id="${escapeHtml(job.id)}">
-          ${escapeHtml((job.prompt || "Untitled").slice(0, 60))}${label}
-          <span class="h-time">${timeAgo(job.created_at)}</span>
-          <button class="h-delete-btn" data-job-id="${escapeHtml(job.id)}" title="Delete">🗑</button>
+        <div class="history-item" data-job-id="${escapeHtml(latest.id)}" data-thread-ids="${thread.jobIds.map(escapeHtml).join(",")}">
+          ${escapeHtml((thread.rootPrompt || "Untitled").slice(0, 60))}${label}
+          <span class="h-time">${timeAgo(latest.created_at)}${editCount}</span>
+          <button class="h-delete-btn" data-thread-ids="${thread.jobIds.map(escapeHtml).join(",")}" title="Delete this whole chat">🗑</button>
         </div>`;
     }).join("");
 
@@ -791,26 +833,36 @@
       btn.addEventListener("click", (e) => {
         // Stop this click from also bubbling up to the parent
         // .history-item's own click handler, which would navigate to
-        // the very job the user is trying to delete.
+        // the very thread the user is trying to delete.
         e.stopPropagation();
-        deleteHistoryItem(btn.dataset.jobId);
+        deleteThread(btn.dataset.threadIds.split(","));
       });
     });
     highlightActiveHistoryItem();
   }
 
-  async function deleteHistoryItem(jobId) {
-    if (!confirm("Delete this prompt? This can't be undone.")) return;
+  async function deleteThread(jobIds) {
+    const label = jobIds.length > 1 ? `this whole chat (${jobIds.length} versions)` : "this prompt";
+    if (!confirm(`Delete ${label}? This can't be undone.`)) return;
     try {
-      const res = await fetch(`${API_BASE}/api/jobs/${jobId}?userId=${encodeURIComponent(getUserId())}`, {
-        method: "DELETE",
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to delete");
+      // groupJobsIntoThreads builds jobIds OLDEST-first (it needs that
+      // order to find the root for the thread label) - deleting in
+      // that order would try to delete a parent while a child still
+      // references it via the self-referencing parent_job_id foreign
+      // key and fail partway through. Reverse it here so deletion
+      // actually goes newest-first, children before their parents.
+      const deletionOrder = [...jobIds].reverse();
+      for (const id of deletionOrder) {
+        const res = await fetch(`${API_BASE}/api/jobs/${id}?userId=${encodeURIComponent(getUserId())}`, {
+          method: "DELETE",
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to delete");
+      }
 
-      // If the deleted job is the one currently on screen, don't leave
-      // a dead job displayed - fall back to the fresh-prompt state.
-      if (currentJobId === jobId) {
+      // If the currently-displayed job was part of the deleted thread,
+      // don't leave a dead job on screen.
+      if (jobIds.includes(currentJobId)) {
         showFreshPromptState();
         history.pushState({}, "", buildRootUrl());
       }
@@ -822,7 +874,13 @@
 
   function highlightActiveHistoryItem() {
     historyList.querySelectorAll(".history-item").forEach((el) => {
-      el.classList.toggle("active", el.dataset.jobId === currentJobId);
+      // Match against every job in the thread, not just the latest -
+      // if the user is looking at an older version within a thread
+      // (reachable by a direct URL to that specific version), the
+      // thread should still highlight as active, not silently show
+      // nothing selected.
+      const threadIds = (el.dataset.threadIds || "").split(",");
+      el.classList.toggle("active", threadIds.includes(currentJobId));
     });
   }
 
