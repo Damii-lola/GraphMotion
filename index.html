@@ -146,30 +146,67 @@
     border-radius: 14px;
     padding: 12px;
     display: flex;
+    align-items: flex-end;
     gap: 10px;
   }
-  .prompt-bar input {
+  .prompt-input-wrap {
+    position: relative;
     flex: 1;
+  }
+  .prompt-bar textarea {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
     background: #101012;
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 12px 14px;
+    padding: 12px 40px 12px 14px;
     color: var(--text);
     font-size: 14px;
+    font-family: inherit;
+    line-height: 1.4;
     outline: none;
+    resize: none;
+    overflow-y: hidden;
+    max-height: 120px; /* ~5 lines - auto-grow cap before it scrolls internally */
+    transition: max-height 0.15s ease;
   }
-  .prompt-bar input:focus { border-color: var(--accent); }
-  .prompt-bar button {
+  .prompt-bar textarea.expanded {
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  .prompt-bar textarea:focus { border-color: var(--accent); }
+  #expandPromptBtn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+  }
+  #expandPromptBtn:hover { background: var(--border); color: var(--text); }
+  .prompt-bar button.generate-btn {
     background: var(--accent);
     color: #fff;
     border: none;
     border-radius: 10px;
     padding: 0 22px;
+    height: 44px;
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
+    flex-shrink: 0;
   }
-  .prompt-bar button:disabled {
+  .prompt-bar button.generate-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
@@ -353,13 +390,16 @@
 </div>
 
 <div class="prompt-bar">
-  <input
-    id="promptInput"
-    type="text"
-    placeholder="e.g. why budgeting apps fail"
-    autocomplete="off"
-  />
-  <button id="generateBtn">Generate</button>
+  <div class="prompt-input-wrap">
+    <textarea
+      id="promptInput"
+      rows="1"
+      placeholder="e.g. why budgeting apps fail"
+      autocomplete="off"
+    ></textarea>
+    <button id="expandPromptBtn" title="Expand">⤢</button>
+  </div>
+  <button id="generateBtn" class="generate-btn">Generate</button>
 </div>
   </div>
 </div>
@@ -496,6 +536,7 @@
     generateBtn.disabled = false;
     generateBtn.textContent = "Generate";
     promptInput.value = job.prompt || "";
+    autoResizePromptInput();
 
     currentJobId = job.id;
     highlightActiveHistoryItem();
@@ -507,6 +548,7 @@
   function showFreshPromptState() {
     currentJobId = null;
     promptInput.value = "";
+    autoResizePromptInput();
     videoWrap.innerHTML = `<div class="placeholder" id="videoPlaceholder">Enter a prompt below to generate a video</div>`;
     codeOutput.textContent = "// Waiting for a prompt...";
     statusLine.textContent = "";
@@ -547,6 +589,7 @@
         // instead of actually resuming the progress bar.
         updateProgressUI(job);
         promptInput.value = job.prompt || "";
+        autoResizePromptInput();
         pollJob(jobId).catch((err) => setError(err.message || String(err)));
       }
     } catch (err) {
@@ -783,7 +826,36 @@
 
   generateBtn.addEventListener("click", generate);
   promptInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") generate();
+    // Enter submits, Shift+Enter inserts a real newline - the
+    // standard convention for a multi-line prompt box (matches most
+    // chat UIs), rather than Enter always submitting regardless of
+    // whether the user wanted a line break.
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      generate();
+    }
+  });
+
+  // --- Auto-growing textarea + manual expand toggle --------------------
+
+  const expandBtn = document.getElementById("expandPromptBtn");
+  const AUTO_MAX_HEIGHT = 120;
+  const EXPANDED_MAX_HEIGHT = 320;
+
+  function autoResizePromptInput() {
+    promptInput.style.height = "auto";
+    const cap = promptInput.classList.contains("expanded") ? EXPANDED_MAX_HEIGHT : AUTO_MAX_HEIGHT;
+    promptInput.style.height = Math.min(promptInput.scrollHeight, cap) + "px";
+  }
+
+  promptInput.addEventListener("input", autoResizePromptInput);
+
+  expandBtn.addEventListener("click", () => {
+    const nowExpanded = promptInput.classList.toggle("expanded");
+    expandBtn.textContent = nowExpanded ? "⤡" : "⤢";
+    expandBtn.title = nowExpanded ? "Collapse" : "Expand";
+    autoResizePromptInput();
+    promptInput.focus();
   });
 
   // Undo the 404.html redirect trick, if this load came from one -
