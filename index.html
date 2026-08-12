@@ -238,7 +238,8 @@
     text-align: center;
   }
   .history-item {
-    padding: 10px 10px;
+    position: relative;
+    padding: 10px 30px 10px 10px;
     border-radius: 8px;
     cursor: pointer;
     margin-bottom: 2px;
@@ -258,6 +259,29 @@
     margin-top: 2px;
   }
   .history-item .h-status-failed { color: #ff9d9d; }
+  .h-delete-btn {
+    position: absolute;
+    top: 8px;
+    right: 6px;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    opacity: 0;
+    transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+  }
+  .history-item:hover .h-delete-btn { opacity: 1; }
+  .h-delete-btn:hover {
+    background: #3a1a1a;
+    color: #ff6b6b;
+  }
   #mainArea {
     flex: 1;
     min-width: 0;
@@ -628,13 +652,44 @@
         <div class="history-item" data-job-id="${escapeHtml(job.id)}">
           ${escapeHtml((job.prompt || "Untitled").slice(0, 60))}${label}
           <span class="h-time">${timeAgo(job.created_at)}</span>
+          <button class="h-delete-btn" data-job-id="${escapeHtml(job.id)}" title="Delete">🗑</button>
         </div>`;
     }).join("");
 
     historyList.querySelectorAll(".history-item").forEach((el) => {
       el.addEventListener("click", () => navigateToJob(el.dataset.jobId, true));
     });
+    historyList.querySelectorAll(".h-delete-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        // Stop this click from also bubbling up to the parent
+        // .history-item's own click handler, which would navigate to
+        // the very job the user is trying to delete.
+        e.stopPropagation();
+        deleteHistoryItem(btn.dataset.jobId);
+      });
+    });
     highlightActiveHistoryItem();
+  }
+
+  async function deleteHistoryItem(jobId) {
+    if (!confirm("Delete this prompt? This can't be undone.")) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${jobId}?userId=${encodeURIComponent(getUserId())}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to delete");
+
+      // If the deleted job is the one currently on screen, don't leave
+      // a dead job displayed - fall back to the fresh-prompt state.
+      if (currentJobId === jobId) {
+        showFreshPromptState();
+        history.pushState({}, "", "/");
+      }
+      loadHistory();
+    } catch (err) {
+      alert("Couldn't delete this prompt: " + (err.message || String(err)));
+    }
   }
 
   function highlightActiveHistoryItem() {
