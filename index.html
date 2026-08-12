@@ -765,27 +765,22 @@
   // instead of one thread you're iterating on, which is exactly the
   // "just work solely on that chat" complaint this exists to fix.
   function groupJobsIntoThreads(jobs) {
-    const byId = {};
-    jobs.forEach((j) => { byId[j.id] = j; });
-
-    function findRootId(job) {
-      let current = job;
-      const seen = new Set(); // guards against a corrupt/cyclic chain
-      while (current.parent_job_id && byId[current.parent_job_id] && !seen.has(current.id)) {
-        seen.add(current.id);
-        current = byId[current.parent_job_id];
-      }
-      return current.id;
-    }
-
-    const threadsByRoot = {};
+    // Groups directly by thread_id - no chain-walking. The old
+    // version here walked parent_job_id links to find each job's
+    // root, which was fragile: it silently broke if the job list was
+    // ever paginated/truncated, or if any single link in a chain was
+    // missing from the fetched set. Every job's thread_id is now set
+    // once, directly, when it's created (inherited from its parent in
+    // one step - see supabaseClient.js's createJob) so grouping here
+    // is just "which jobs share a thread_id", nothing to traverse.
+    const threadsById = {};
     jobs.forEach((job) => {
-      const rootId = findRootId(job);
-      if (!threadsByRoot[rootId]) threadsByRoot[rootId] = [];
-      threadsByRoot[rootId].push(job);
+      const threadId = job.thread_id || job.id; // fallback for any pre-migration row
+      if (!threadsById[threadId]) threadsById[threadId] = [];
+      threadsById[threadId].push(job);
     });
 
-    return Object.values(threadsByRoot).map((threadJobs) => {
+    return Object.values(threadsById).map((threadJobs) => {
       const sorted = [...threadJobs].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
       return {
         rootPrompt: sorted[0].prompt,
