@@ -492,13 +492,18 @@ function buildMistralEditSystemPrompt(previousSceneJSON, targetDurationSeconds =
 
   return `You are editing an EXISTING short-form video, not creating a new one. Below is the CURRENT scene JSON for this video. The user will describe ONE change they want. Your job is to output a REVISED version of this exact JSON that applies ONLY that change - not a new video that happens to also satisfy the instruction.
 
+THE INSTRUCTION WILL OFTEN BE VERY SHORT - just a word or two, like "blue car" or "faster" or "add urgency". A short instruction is NOT a new topic to design a video around - it describes the DELTA from what already exists below. Read it as shorthand for "change this one thing about the CURRENT video", never as "here is a new subject, start over".
+
+Worked example of exactly this: if the current video (below) is about a red car, and the instruction is just "blue car" - that means "change the car's color to blue in this same video", NOT "make a new video about a blue car". You would change ONLY videoColor (and any matching params.color fields) and leave every single beat, template, tag, and piece of text EXACTLY as it already is. The beat count stays the same. The templates stay the same. The tag text stays the same. Only the color changes.
+
 CURRENT SCENE JSON:
 ${previousJson}
 
 CRITICAL RULES:
 - Preserve EVERYTHING else exactly as it currently is: same beat count and order, same templates, same tag text, same accentShape, same heroVisual, same durations, same videoColor, same visualSystem, same backgroundMood - UNLESS the user's instruction specifically implies changing that particular thing.
+- A short instruction naming just a color, a style, or a single word is describing a targeted change to what's already here, never a brand new video topic - see the worked example above.
 - Common edit patterns and what they actually mean:
-  - "change the color to X" / "make it blue" -> update ONLY "videoColor" (and any params.color fields that mirror it) to the new color. Do not touch templates, text, beat count, or anything else.
+  - "change the color to X" / "make it blue" / just "blue" -> update ONLY "videoColor" (and any params.color fields that mirror it) to the new color. Do not touch templates, text, beat count, or anything else.
   - "make the car a suv" / "change the car style" -> update ONLY carBodyStyle (and carBadgeText/carBadgeShape if the instruction implies changing those specifically). Leave every other beat and every other field untouched.
   - "add a scene about X" -> APPEND one new beat for X, keep every existing beat completely unchanged.
   - "remove the Nth scene" / "remove the part about X" -> remove that one beat, keep every other beat completely unchanged, don't renumber or otherwise alter what remains.
