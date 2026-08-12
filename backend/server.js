@@ -11,6 +11,7 @@ const {
   updateJob,
   getJob,
   listJobsForUser,
+  deleteJob,
   countJobsToday,
   uploadRenderedVideo,
 } = require('./supabaseClient');
@@ -236,6 +237,25 @@ app.get('/api/jobs/:id', async (req, res) => {
   } catch (err) {
     console.error('[GET /api/jobs/:id] failed:', err);
     return res.status(500).json({ error: 'Failed to fetch job' });
+  }
+});
+
+app.delete('/api/jobs/:id', async (req, res) => {
+  const userId = req.query.userId;
+  if (!userId || typeof userId !== 'string') {
+    return res.status(400).json({ error: 'userId query param is required' });
+  }
+  try {
+    const result = await deleteJob(req.params.id, userId);
+    if (!result.deleted) {
+      const status = result.reason === 'forbidden' ? 403 : 404;
+      const message = result.reason === 'forbidden' ? 'This job does not belong to you' : 'Job not found';
+      return res.status(status).json({ error: message });
+    }
+    return res.json({ deleted: true });
+  } catch (err) {
+    console.error('[DELETE /api/jobs/:id] failed:', err);
+    return res.status(500).json({ error: 'Failed to delete job' });
   }
 });
 
