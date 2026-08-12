@@ -1,5 +1,6 @@
 const { easeOutCubic, easeOutBack, easeOutExpo, easeInOutCubic, lerp, clamp01 } = require('./easing');
 const { getVisualSystem } = require('./visualSystems');
+const { drawFramingCard } = require('./sharedRenderHelpers');
 const { splitCompare, listReveal, quoteCallout, progressBar, countdownTimer, gridReveal, checklistTick, bigNumberStat, pieChartReveal, duoStatCompare, badgeUnlock, tickerScroll, statGrid, arrowFlow, calloutBubble, barChartCompare, avatarStack } = require('./templateRenderersExtended');
 
 /**
@@ -129,6 +130,20 @@ function drawBeatContent(ctx, template, params, localTime, width, height, visual
   }
 }
 
+/**
+ * Shared card-framing helper, extracted from kineticTextReveal so the
+ * other text-heavy templates get the same real per-beat variety
+ * instead of duplicating this logic four times. Takes an explicit
+ * center + size rather than measuring text itself, since each
+ * template's own layout (digit-roll, multi-line quotes, etc.) already
+ * knows its own bounds better than a generic helper could guess.
+ */
+/**
+ * Shared card-framing helper lives in sharedRenderHelpers.js now -
+ * had to move it out of this file specifically to avoid a circular
+ * require with templateRenderersExtended.js (confirmed directly: it
+ * broke silently, not theoretically).
+ */
 function drawContactShadow(ctx, x, y, radiusX, radiusY, alpha) {
   ctx.save();
   ctx.globalAlpha = alpha;
@@ -224,27 +239,7 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
     const maxX = Math.max(...chars.map((c) => c.x)) + 24;
     const minY = startY - lineHeight / 2 - 16;
     const maxY = startY + (lines.length - 1) * lineHeight + lineHeight / 2 + 16;
-    const cardT = easeOutCubic(clamp01(t / (duration * 0.3)));
-    const cardWidth = lerp(0, maxX - minX, cardT);
-    ctx.save();
-    ctx.globalAlpha = cardT * 0.14;
-    ctx.fillStyle = accentColor;
-    const cx = (minX + maxX) / 2;
-    ctx.beginPath();
-    const r = 14;
-    const cw = cardWidth, ch2 = maxY - minY;
-    ctx.moveTo(cx - cw / 2 + r, minY);
-    ctx.arcTo(cx + cw / 2, minY, cx + cw / 2, minY + r, r);
-    ctx.arcTo(cx + cw / 2, maxY, cx + cw / 2 - r, maxY, r);
-    ctx.arcTo(cx - cw / 2, maxY, cx - cw / 2, maxY - r, r);
-    ctx.arcTo(cx - cw / 2, minY, cx - cw / 2 + r, minY, r);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = accentColor;
-    ctx.globalAlpha = cardT * 0.5;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.restore();
+    drawFramingCard(ctx, (minX + maxX) / 2, (minY + maxY) / 2, maxX - minX, maxY - minY, t, duration, accentColor);
   }
 
   // Gradient fill: computed once (not per-character) for performance,
@@ -356,8 +351,9 @@ function rippleDrop(ctx, params, t, width, height, system) {
 }
 
 function statCounter(ctx, params, t, width, height, system) {
-  const { label, fromValue, toValue, suffix, duration } = params;
+  const { label, fromValue, toValue, suffix, duration, textFrame } = params;
   const accentColor = params.color || '#FF5C1A';
+  const frame = ['card', 'gradient'].includes(textFrame) ? textFrame : 'none';
 
   const entranceT = clamp01(t / (duration * 0.3));
   const opacity = easeOutCubic(entranceT);
@@ -369,11 +365,26 @@ function statCounter(ctx, params, t, width, height, system) {
   ctx.globalAlpha = opacity;
   ctx.translate(width / 2, height * 0.42 + yOffset);
 
+  if (frame === 'card') {
+    ctx.font = `900 76px ${system.fontFamily}`;
+    const approxWidth = ctx.measureText(`${toValue}${suffix || ''}`).width;
+    drawFramingCard(ctx, 0, -4, approxWidth + 56, 130, t, duration, accentColor);
+  }
+
   ctx.save();
   ctx.textAlign = 'center';
   if (system.heroUsesGlow) ctx.shadowColor = accentColor;
   ctx.font = `900 76px ${system.fontFamily}`;
-  ctx.fillStyle = system.heroTextColor;
+  if (frame === 'gradient') {
+    ctx.font = `900 76px ${system.fontFamily}`;
+    const halfWidth = ctx.measureText(`${toValue}${suffix || ''}`).width / 2;
+    const grad = ctx.createLinearGradient(-halfWidth, 0, halfWidth, 0);
+    grad.addColorStop(0, system.heroTextColor);
+    grad.addColorStop(1, accentColor);
+    ctx.fillStyle = grad;
+  } else {
+    ctx.fillStyle = system.heroTextColor;
+  }
   drawDigitRoll(ctx, fromValue, toValue, suffix, t, duration, system.heroUsesGlow, 0, -10);
   ctx.restore();
 
@@ -392,7 +403,7 @@ function roundRectPathIcon(ctx, x, y, w, h, r) {
   ctx.arcTo(x, y, x + w, y, r);
 }
 
-function drawIconPath(ctx, icon, size) {
+function drawIconPath(ctx, icon, size, options = {}) {
   const s = size;
   ctx.beginPath();
   switch (icon) {
@@ -474,14 +485,40 @@ function drawIconPath(ctx, icon, size) {
       return { strokeOnly: true };
     }
     case 'car': {
-      ctx.moveTo(-s * 0.42, s * 0.1);
-      ctx.lineTo(-s * 0.3, -s * 0.12);
-      ctx.lineTo(s * 0.3, -s * 0.12);
-      ctx.lineTo(s * 0.42, s * 0.1);
-      ctx.lineTo(s * 0.42, s * 0.22);
-      ctx.lineTo(-s * 0.42, s * 0.22);
+      // A real template, not one fixed shape - body silhouette varies
+      // by style, and an optional badge (actual initials, not a
+      // decorative flourish) lets the same base template read as a
+      // DIFFERENT specific vehicle depending on what the prompt
+      // actually names, instead of every car request producing an
+      // identical generic silhouette.
+      const bodyStyle = ['sedan', 'suv', 'sports'].includes(options.carBodyStyle) ? options.carBodyStyle : 'sedan';
+      if (bodyStyle === 'suv') {
+        // Taller cabin, boxier stance.
+        ctx.moveTo(-s * 0.44, s * 0.05);
+        ctx.lineTo(-s * 0.34, -s * 0.22);
+        ctx.lineTo(s * 0.34, -s * 0.22);
+        ctx.lineTo(s * 0.44, s * 0.05);
+        ctx.lineTo(s * 0.44, s * 0.24);
+        ctx.lineTo(-s * 0.44, s * 0.24);
+      } else if (bodyStyle === 'sports') {
+        // Low, raked, sleeker cabin.
+        ctx.moveTo(-s * 0.46, s * 0.14);
+        ctx.lineTo(-s * 0.22, -s * 0.06);
+        ctx.lineTo(s * 0.22, -s * 0.06);
+        ctx.lineTo(s * 0.46, s * 0.14);
+        ctx.lineTo(s * 0.46, s * 0.2);
+        ctx.lineTo(-s * 0.46, s * 0.2);
+      } else {
+        // sedan - the original balanced silhouette.
+        ctx.moveTo(-s * 0.42, s * 0.1);
+        ctx.lineTo(-s * 0.3, -s * 0.12);
+        ctx.lineTo(s * 0.3, -s * 0.12);
+        ctx.lineTo(s * 0.42, s * 0.1);
+        ctx.lineTo(s * 0.42, s * 0.22);
+        ctx.lineTo(-s * 0.42, s * 0.22);
+      }
       ctx.closePath();
-      return { strokeOnly: false, hasCarWheels: true };
+      return { strokeOnly: false, hasCarWheels: true, hasCarBadge: !!options.carBadgeText, carBadgeShape: options.carBadgeShape, carBadgeText: options.carBadgeText };
     }
     case 'gift': {
       const w = s * 0.6, h = s * 0.45;
@@ -578,7 +615,16 @@ function drawIconPath(ctx, icon, size) {
 }
 
 function iconCallout(ctx, params, t, width, height, system) {
-  const { icon, text, duration } = params;
+  const { icon, text } = params;
+  // Defensive default, not just at the dash-offset call site - a
+  // missing/undefined duration here cascades into NaN through every
+  // clamp01(t/duration) below, and NaN reaching this Skia binding's
+  // line-dash implementation crashes the whole render natively rather
+  // than failing softly. This should never actually be undefined in
+  // real usage (validateSceneJSON always fills it in first), but the
+  // render function itself shouldn't depend on that being true to
+  // stay alive.
+  const duration = Number.isFinite(params.duration) && params.duration > 0 ? params.duration : 2.2;
   const accentColor = params.color || '#FF5C1A';
 
   const drawT = clamp01(t / (duration * 0.4));
@@ -620,12 +666,20 @@ function iconCallout(ctx, params, t, width, height, system) {
       ctx.fillRect(bar.x, size * 0.4 - h, size * 0.18, h);
     });
   } else {
-    const shape = drawIconPath(ctx, icon, size);
+    const shape = drawIconPath(ctx, icon, size, { carBodyStyle: params.carBodyStyle, carBadgeText: params.carBadgeText, carBadgeShape: params.carBadgeShape });
     if (shape.strokeOnly !== undefined) {
       const approxLength = size * 4;
+      // Real hardening, not just a debug print: a missing/NaN duration
+      // anywhere upstream used to cascade into a NaN dash-offset,
+      // which crashes this Skia binding outright (a native "Make line
+      // dash path effect failed" error) instead of failing gracefully.
+      // Confirmed directly by forcing this exact condition. Falling
+      // back to a safe default here means malformed input degrades to
+      // a static icon instead of taking down the whole render.
+      const safeDrawT = Number.isFinite(drawT) ? drawT : 1;
       ctx.setLineDash([approxLength]);
-      ctx.lineDashOffset = approxLength * (1 - easeOutCubic(drawT));
-      if (!shape.strokeOnly) ctx.globalAlpha = opacity * drawT;
+      ctx.lineDashOffset = approxLength * (1 - easeOutCubic(safeDrawT));
+      if (!shape.strokeOnly) ctx.globalAlpha = opacity * safeDrawT;
       ctx.stroke();
       if (!shape.strokeOnly) ctx.fill();
       ctx.setLineDash([]);
@@ -662,6 +716,34 @@ function iconCallout(ctx, params, t, width, height, system) {
           ctx.lineWidth = 2;
           ctx.stroke();
         });
+      }
+      if (shape.hasCarBadge && drawT > 0.6) {
+        // A real emblem with actual initials, not decoration - this is
+        // the whole point: the SAME car template reads as a different
+        // specific vehicle depending on what text gets stamped here.
+        const badgeAlpha = clamp01((drawT - 0.6) / 0.4);
+        ctx.globalAlpha = badgeAlpha;
+        const badgeY = -size * 0.01, badgeR = size * 0.12;
+        ctx.fillStyle = system.bgColorInner;
+        if (shape.carBadgeShape === 'shield') {
+          ctx.beginPath();
+          ctx.moveTo(0, badgeY - badgeR);
+          ctx.lineTo(badgeR * 0.85, badgeY - badgeR * 0.3);
+          ctx.lineTo(badgeR * 0.6, badgeY + badgeR);
+          ctx.lineTo(-badgeR * 0.6, badgeY + badgeR);
+          ctx.lineTo(-badgeR * 0.85, badgeY - badgeR * 0.3);
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          ctx.beginPath();
+          ctx.arc(0, badgeY, badgeR, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = accentColor;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = `800 ${Math.round(badgeR * 1.1)}px ${system.fontFamily}`;
+        ctx.fillText(String(shape.carBadgeText).slice(0, 2).toUpperCase(), 0, badgeY + 1);
       }
     }
   }
