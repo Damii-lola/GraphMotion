@@ -14,6 +14,7 @@
  */
 
 const { VISUAL_SYSTEMS } = require('./visualSystems');
+const { validateShapeRecipe } = require('./shapeRecipe');
 
 /**
  * These two apply to EVERY template regardless of which hero content
@@ -41,6 +42,29 @@ const SHARED_PARAMS = {
     values: ['ribbon', 'halo', 'mark', 'burst', 'alert', 'check', 'spark', 'clock', 'money', 'chart', 'lock', 'heart', 'watch', 'phone', 'house', 'car', 'gift', 'trophy', 'rocket', 'camera', 'briefcase', 'coffee'],
     default: 'mark',
     description: 'A LARGE bold shape/icon shown above this scene\'s text - the dominant visual, not decoration. Pick a concrete icon (watch, rocket, house, etc.) when the content names that literal thing; pick an abstract mark (ribbon, halo, mark, burst) otherwise. Every scene needs one - this is what makes the video eye-catching, not just text on a background.',
+  },
+  carBodyStyle: {
+    type: 'enum',
+    values: ['sedan', 'suv', 'sports'],
+    default: 'sedan',
+    description: 'ONLY relevant when heroVisual or an icon param is "car" - the vehicle\'s body silhouette. Match the ACTUAL vehicle named in the prompt: a Maybach/S-Class/luxury sedan should be "sedan", a Range Rover/SUV/truck should be "suv", a Ferrari/sports car/supercar should be "sports". Ignore this field entirely for non-car content.',
+  },
+  carBadgeText: {
+    type: 'string',
+    maxLength: 2,
+    default: '',
+    description: 'ONLY relevant when heroVisual or an icon param is "car" - 1-2 letter initials for a badge/emblem stamped on the car (e.g. "M" for Mercedes, "B" for BMW, "T" for Tesla). Pick this from the ACTUAL brand/model named in the prompt so the same car template reads as that specific vehicle. Leave empty ("") for generic/unbranded car content.',
+  },
+  carBadgeShape: {
+    type: 'enum',
+    values: ['circle', 'shield'],
+    default: 'circle',
+    description: 'ONLY relevant when carBadgeText is set - the badge\'s outline shape.',
+  },
+  customShapeRecipe: {
+    type: 'shapeRecipe',
+    default: [],
+    description: 'For heroVisual (or icon) content that has NO good match in the fixed lists above (a guitar, a pizza, a plant, an animal, literally anything) - build it yourself from safe geometric primitives instead of forcing it into a mismatched fixed shape. An array of up to 14 primitives, each one: {"type": "circle"|"rect"|"triangle"|"polygon"|"arc"|"line", "x": -1 to 1, "y": -1 to 1, plus type-specific fields}. circle/arc need "r" (0.03-1.2). rect needs "w","h" (and optional "rx" for rounded corners). triangle/polygon need "points": array of [x,y] pairs (3-8 points). arc needs "startAngle"/"endAngle" in degrees. line needs "x2","y2". All coordinates are relative to center (0,0), roughly -1 to 1 covering the icon\'s bounds. COMPOSITION TECHNIQUE (this is what separates a good result from a blob): use TWO overlapping circles of different sizes for anything with an organic waisted curve (a guitar body, a bottle, a vase) rather than one plain circle - a single circle reads as a ball, not the object. A worked example, a guitar: [{"type":"circle","x":0,"y":0.45,"r":0.4},{"type":"circle","x":0,"y":0.05,"r":0.28},{"type":"rect","x":0,"y":-0.5,"w":0.14,"h":0.85,"rx":0.04},{"type":"circle","x":0,"y":0.3,"r":0.12,"fill":false}] - two circles for the waisted body, a rect for the neck, a hollow circle for the sound hole. Only use this when heroVisual\'s fixed list genuinely has nothing close - prefer the fixed icons/marks when one actually fits, they render faster and more reliably.',
   },
 };
 
@@ -416,6 +440,12 @@ function validateSceneJSON(json) {
         if (val.length === 0 && pdef.required) {
           throw new Error(`scene[${i}] (${scene.template}) param "${pname}" needs at least one stat object`);
         }
+      }
+      if (pdef.type === 'shapeRecipe') {
+        // Delegates to the same validator shapeRecipe.js itself uses -
+        // one real security boundary, not two copies that could drift
+        // out of sync with each other.
+        val = validateShapeRecipe(val);
       }
 
       cleanParams[pname] = val;
