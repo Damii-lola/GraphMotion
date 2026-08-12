@@ -50,10 +50,15 @@ async function countJobsToday(identifier) {
   const startOfDay = new Date();
   startOfDay.setUTCHours(0, 0, 0, 0);
 
+  // A job that later failed to render shouldn't cost the user one of
+  // their daily uses - they didn't get a video out of it. Only jobs
+  // that are still in progress or actually succeeded count against
+  // the limit.
   const { count, error } = await supabase
     .from('render_jobs')
     .select('*', { count: 'exact', head: true })
     .eq('user_id', identifier)
+    .neq('status', 'failed')
     .gte('created_at', startOfDay.toISOString());
 
   if (error) throw new Error(`countJobsToday failed: ${error.message}`);
