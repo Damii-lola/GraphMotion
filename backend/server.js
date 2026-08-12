@@ -10,6 +10,7 @@ const {
   createJob,
   updateJob,
   getJob,
+  listJobsForUser,
   countJobsToday,
   uploadRenderedVideo,
 } = require('./supabaseClient');
@@ -212,6 +213,20 @@ function startRenderWorker(jobId, prompt, targetDurationSeconds, onSettled) {
 
   child.send({ jobId, prompt, targetDurationSeconds });
 }
+
+app.get('/api/jobs', async (req, res) => {
+  const userId = req.query.userId;
+  if (!userId || typeof userId !== 'string') {
+    return res.status(400).json({ error: 'userId query param is required' });
+  }
+  try {
+    const jobs = await listJobsForUser(userId);
+    return res.json({ jobs });
+  } catch (err) {
+    console.error('[GET /api/jobs] failed:', err);
+    return res.status(500).json({ error: 'Failed to fetch job history' });
+  }
+});
 
 app.get('/api/jobs/:id', async (req, res) => {
   try {
