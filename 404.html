@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<title>Shortform AI</title>
+<script>
+  // GitHub Pages is static hosting with no server-side routing - a
+  // direct visit or refresh on a clean URL like /abc123 (rather than
+  // navigating there via a click inside the app) has no actual file
+  // to serve, so GitHub Pages falls back to serving THIS file. This
+  // repackages the real path into a query string and redirects to
+  // index.html, which then unpacks it and restores the clean URL via
+  // history.replaceState - the standard, well-established technique
+  // for single-page-app routing on GitHub Pages (based on the
+  // rafgraph/spa-github-pages approach).
+  const path = location.pathname.slice(1); // drop the leading slash
+  const search = location.search ? location.search.slice(1) + "&" : "";
+  location.replace(
+    location.origin + "/?" + search + "p=" + encodeURIComponent(path) + location.hash
+  );
+</script>
+</head>
+<body>
+  Redirecting...
+</body>
+</html>
