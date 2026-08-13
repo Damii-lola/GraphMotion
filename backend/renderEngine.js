@@ -204,6 +204,15 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
     }
   }
 
+  // Diagnostic only, cheap - stdio:'inherit' on both fork() calls means
+  // this lands directly in Render's log stream. "Chunk N timed out" has
+  // survived three rounds of fixes with no way to reproduce the real
+  // host's constraints locally, so the next failure needs to show
+  // exactly which stage (image load / which frame / ffmpeg encode) it
+  // actually got stuck in instead of another blind guess.
+  const renderStartedAt = Date.now();
+  console.log(`[renderEngine] range ${timeStart}-${timeEnd}s: ${totalFrames} frames, ${heroImages.size} images loaded, +${((Date.now() - renderStartedAt) / 1000).toFixed(1)}s`);
+
   try {
     for (let frame = startFrame; frame < endFrame; frame++) {
       const globalTime = frame / FPS;
@@ -302,9 +311,13 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       if (onProgress && frameIndex % 5 === 0) {
         onProgress(Math.round((frameIndex / totalFrames) * 90));
       }
+      if (frameIndex % 30 === 0) {
+        console.log(`[renderEngine] frame ${frameIndex}/${totalFrames}, +${((Date.now() - renderStartedAt) / 1000).toFixed(1)}s`);
+      }
     }
 
     if (onProgress) onProgress(90);
+    console.log(`[renderEngine] frames done, +${((Date.now() - renderStartedAt) / 1000).toFixed(1)}s - starting ffmpeg encode`);
 
     await new Promise((resolve, reject) => {
       const ffmpeg = spawn(ffmpegPath, [
@@ -322,6 +335,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       let ffmpegErr = '';
       ffmpeg.stderr.on('data', (d) => { ffmpegErr += d.toString(); });
       ffmpeg.on('close', (code) => {
+        console.log(`[renderEngine] ffmpeg encode ${code === 0 ? 'done' : 'FAILED'}, +${((Date.now() - renderStartedAt) / 1000).toFixed(1)}s`);
         if (code === 0) resolve();
         else reject(new Error(`ffmpeg exited with code ${code}: ${ffmpegErr.slice(-500)}`));
       });

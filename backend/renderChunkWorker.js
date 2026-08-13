@@ -26,13 +26,22 @@ function sendAndFlush(message) {
 
 process.on('message', async ({ jobId, sceneJSON, timeStart, timeEnd, outputPath, chunkIndex }) => {
   currentJobId = jobId;
+  const startedAt = Date.now();
+  // Diagnostic only - "Chunk N timed out" on production has survived
+  // three rounds of fixes with no way to reproduce the real host's
+  // constraints locally. stdio:'inherit' means these land directly in
+  // Render's log stream, so the NEXT failure (if any) shows exactly
+  // which stage it got stuck in instead of another blind guess.
+  console.log(`[chunkWorker ${chunkIndex}] starting: range=${timeStart}-${timeEnd}s, pid=${process.pid}`);
 
   try {
     await renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, (pct) => {
       if (process.send) process.send({ type: 'chunk_progress', jobId, chunkIndex, progress: pct });
     });
+    console.log(`[chunkWorker ${chunkIndex}] done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
     await sendAndFlush({ type: 'chunk_complete', jobId, chunkIndex, outputPath });
   } catch (err) {
+    console.error(`[chunkWorker ${chunkIndex}] failed after ${((Date.now() - startedAt) / 1000).toFixed(1)}s: ${err.message}`);
     await sendAndFlush({ type: 'chunk_failed', jobId, chunkIndex, error: String((err && err.message) || err) });
   } finally {
     process.exit(0);

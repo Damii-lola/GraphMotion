@@ -96,16 +96,23 @@ async function renderLongFormVideo(jobId, sceneJSON, onProgress) {
 
 // V8's default old-space ceiling scales with total system memory, which
 // on a capped container is a lie the process believes until it's too
-// late - it'll happily grow well past what the host can actually give
-// it. Capping it explicitly makes a real overrun a fast, clear
-// "JavaScript heap out of memory" crash (visible in logs, immediately
-// diagnosable) instead of the host silently swapping/thrashing, which
-// is what a slow, mysterious 5-minute chunk timeout actually looks
-// like from the outside. This bounds the JS heap only - it does not
-// cap native Skia canvas memory or the separately-spawned ffmpeg
-// process, which is why the CHUNK_SIZE_SECONDS reduction above still
-// matters even with this in place.
-const CHUNK_WORKER_MAX_OLD_SPACE_MB = 220;
+// late. A cap here is meant as a distant safety net against a genuine
+// runaway leak, not an operational ceiling - set too tight (220 was
+// tried and made things WORSE: production started timing out on
+// chunk 0, the very first and smallest slice of work, which a
+// cross-chunk memory-accumulation theory can't explain since every
+// chunk is a fresh process with nothing carried over). The likely
+// mechanism: V8 doesn't crash the instant old-space fills, it fights
+// for headroom with increasingly aggressive/frequent GC passes first -
+// under real per-frame allocation churn (canvas paths, gradients,
+// composite ops), a too-tight cap can make a process spend most of its
+// time GC-thrashing instead of crashing OR progressing, which is
+// indistinguishable from a hang to the outer fork-level timeout. This
+// bounds the JS heap only - it never addressed native Skia memory
+// anyway (the actual dominant cost per the original dev's comments) -
+// so raised well above where it could plausibly constrain a healthy
+// render, keeping only the "catch a truly runaway leak" purpose.
+const CHUNK_WORKER_MAX_OLD_SPACE_MB = 400;
 
 function renderSingleChunk(jobId, sceneJSON, timeStart, timeEnd, outputPath, chunkIndex, onProgress) {
   return new Promise((resolve, reject) => {
@@ -137,10 +144,16 @@ function renderSingleChunk(jobId, sceneJSON, timeStart, timeEnd, outputPath, chu
         child.kill();
         reject(new Error(`Chunk ${chunkIndex} timed out`));
       }
-    }, 2 * 60 * 1000); // 2 min per-chunk safety timeout - chunks are now ~8s of
-    // video each (down from 15s), so a healthy chunk finishes in well
-    // under a minute; 5 min was mostly just delaying the inevitable
-    // failure report on a genuinely stuck/thrashing chunk.
+    }, 3 * 60 * 1000); // 3 min per-chunk safety timeout. Measured locally: an
+    // 8s/192-frame chunk takes ~13-27s wall-clock on a full-power dev
+    // machine (~7fps render throughput) - if Render's shared/throttled
+    // CPU is meaningfully slower than that (plausible on a budget
+    // tier), a genuinely healthy render could take several times
+    // longer without anything being actually stuck. 2 min cut that too
+    // close and may have been failing legitimate-but-slow renders, not
+    // just real hangs. The new per-frame/per-stage logging in
+    // renderEngine.js/renderChunkWorker.js will show the real number on
+    // the next run either way.
 
     function maybeFinish() {
       if (settled || !hasExited) return;
