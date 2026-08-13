@@ -9,6 +9,46 @@ function narrationDirFor(jobId) {
   return path.join(os.tmpdir(), 'shortform-renders', `${jobId}-narration`);
 }
 
+// MVP product decision: no long videos, period. targetDurationSeconds
+// already asks Mistral for <=30s (server.js/sceneTemplates.js), but
+// that's a request, not a guarantee - narration duration below is
+// measured from the REAL generated audio, which can run longer than
+// whatever line length the model intended. This is the actual
+// enforcement: whatever comes out the other end of narration gets
+// hard-trimmed to fit, not just asked nicely.
+const MAX_TOTAL_DURATION_SECONDS = 30;
+
+/**
+ * Drops trailing beats (and their audio) once the running total would
+ * exceed the cap - always keeps at least the first beat, even in the
+ * pathological case where one beat alone is longer than the cap, so a
+ * video is never reduced to nothing.
+ */
+function capToMaxDuration(sceneJSON, audioFiles) {
+  let total = 0;
+  let cutIndex = sceneJSON.scenes.length;
+  for (let i = 0; i < sceneJSON.scenes.length; i++) {
+    const beatDuration = sceneJSON.scenes[i].params.duration || 0;
+    if (i > 0 && total + beatDuration > MAX_TOTAL_DURATION_SECONDS) {
+      cutIndex = i;
+      break;
+    }
+    total += beatDuration;
+  }
+  if (cutIndex >= sceneJSON.scenes.length) return { sceneJSON, audioFiles };
+
+  console.warn(`[narrationPrefetch] generated video ran long - trimming to ${cutIndex} of ${sceneJSON.scenes.length} beats (~${total.toFixed(1)}s) to stay under the ${MAX_TOTAL_DURATION_SECONDS}s MVP cap`);
+
+  const trimmedAudioFiles = new Map();
+  for (const [index, entry] of audioFiles) {
+    if (index < cutIndex) trimmedAudioFiles.set(index, entry);
+  }
+  return {
+    sceneJSON: { ...sceneJSON, scenes: sceneJSON.scenes.slice(0, cutIndex) },
+    audioFiles: trimmedAudioFiles,
+  };
+}
+
 /**
  * ffmpeg-static ships ffmpeg only, not ffprobe - but `ffmpeg -i <file>`
  * with no output still prints the input's stream info (including
@@ -53,7 +93,7 @@ async function prefetchNarration(sceneJSON, jobId) {
 
   const audioFiles = new Map();
   if (beatsWithNarration.length === 0) {
-    return { sceneJSON: { ...sceneJSON, scenes: renderScenes }, audioFiles };
+    return capToMaxDuration({ ...sceneJSON, scenes: renderScenes }, audioFiles);
   }
 
   const dir = narrationDirFor(jobId);
@@ -75,7 +115,7 @@ async function prefetchNarration(sceneJSON, jobId) {
     }
   }
 
-  return { sceneJSON: { ...sceneJSON, scenes: renderScenes }, audioFiles };
+  return capToMaxDuration({ ...sceneJSON, scenes: renderScenes }, audioFiles);
 }
 
 function cleanupNarration(jobId) {

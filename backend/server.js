@@ -137,7 +137,11 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
   // before this feature existed.
   let duration = Number(targetDurationSeconds);
   if (!Number.isFinite(duration)) duration = 12;
-  duration = Math.max(8, Math.min(120, Math.round(duration)));
+  // MVP decision: no long-video support at all - 30s is the hard
+  // product ceiling, not just a soft target. See narrationPrefetch.js's
+  // post-narration trim for the real enforcement (narration-driven
+  // durations can overshoot whatever's requested here).
+  duration = Math.max(8, Math.min(30, Math.round(duration)));
 
   const identifier = userId || req.ip;
 

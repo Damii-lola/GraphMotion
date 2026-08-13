@@ -369,7 +369,10 @@ function buildTemplateDocs() {
 }
 
 function buildMistralSystemPrompt(targetDurationSeconds = 12) {
-  const duration = Math.max(8, Math.min(120, targetDurationSeconds));
+  // MVP hard ceiling - see narrationPrefetch.js for the actual
+  // post-narration enforcement, since Mistral being told 30s doesn't
+  // guarantee the narration-driven durations land there.
+  const duration = Math.max(8, Math.min(30, targetDurationSeconds));
   // A sentence is now several short-phrase beats, not one (see the
   // "one beat = one short phrase" rule below), so the realistic average
   // beat length dropped well below the old 2.9s estimate - kineticTextReveal/
