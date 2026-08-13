@@ -22,10 +22,14 @@
 
 const VISUAL_SYSTEMS = {
   /**
-   * The look every video has had until now: dark, glowing, HUD/
-   * terminal chrome (grid, scan-lines, REC timestamp, waveform,
-   * data-chip UI cards). Fits finance, tech, data, "insider info"
-   * tones.
+   * Dark and glowing, but NOT a surveillance/hacker-dashboard anymore -
+   * the grid overlay, scanline sweep, "REC 00:00" timestamp+waveform,
+   * and floating data-chip UI cards were a generic "tech HUD" cliche
+   * that appears in NONE of the reference videos this system was
+   * actually compared against, and kept making every video read as
+   * "the same AI-generated dashboard thing" regardless of what else
+   * improved. Fits finance, tech, data, "insider info" tones through
+   * color/glow/mood alone now, not literal terminal chrome.
    */
   hudTerminal: {
     name: 'hudTerminal',
@@ -38,12 +42,15 @@ const VISUAL_SYSTEMS = {
     fontFamily: 'sans-serif',
     fontWeight: 'bold',
     heroUsesGlow: true,
-    showGrid: true,
-    showScanlines: true,
-    showTimestamp: true,
-    showDataChips: true,
+    showGrid: false,
+    showScanlines: false,
+    showTimestamp: false,
+    showDataChips: false,
     showParticles: true,
     showGlowBlob: true,
+    showDriftLines: true,
+    driftLineCount: 3,
+    driftLineOpacity: 0.13,
     vignetteStrength: 0.55,
   },
 
@@ -71,6 +78,9 @@ const VISUAL_SYSTEMS = {
     showDataChips: false,
     showParticles: true,
     showGlowBlob: false,
+    showDriftLines: true,
+    driftLineCount: 3,
+    driftLineOpacity: 0.1,
     vignetteStrength: 0.2,
   },
 
@@ -98,6 +108,15 @@ const VISUAL_SYSTEMS = {
     showDataChips: false,
     showParticles: false,
     showGlowBlob: false,
+    // Flat/hard-edged is the whole identity here, so floaty soft
+    // particles are still deliberately off - but that previously left
+    // this system with ZERO continuous motion anywhere except camera
+    // drift, reading as the most static of the three despite being the
+    // "punchy/energetic" one. Bolder, more visible drift lines (not
+    // particles) fit the hard-edged register while fixing that.
+    showDriftLines: true,
+    driftLineCount: 4,
+    driftLineOpacity: 0.16,
     vignetteStrength: 0,
     flatBlockAccent: false,
   },

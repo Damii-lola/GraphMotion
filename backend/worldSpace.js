@@ -76,11 +76,13 @@ function getCameraTransform(globalTime, beats, anchors) {
 
   if (beatIndex === 0 || localT >= arrivalWindow) {
     // At rest (or the very first beat, which has nowhere to arrive
-    // from) - hold position with a slow, tiny organic drift so it
-    // never reads as a frozen frame.
-    const drift = Math.sin(globalTime * 0.3) * 6;
+    // from) - hold position with a slow organic drift so it never
+    // reads as a frozen frame. Amplitude/speed roughly doubled from
+    // the original values - at 6px/4px it was true but imperceptible,
+    // which is functionally the same as "static" to an actual viewer.
+    const drift = Math.sin(globalTime * 0.55) * 24;
     camX = restX + drift;
-    camY = restY + Math.cos(globalTime * 0.22) * 4;
+    camY = restY + Math.cos(globalTime * 0.4) * 16;
   } else {
     // Arriving: ease from the previous beat's rest position to this
     // one's over the arrival window.
@@ -104,8 +106,11 @@ function getCameraTransform(globalTime, beats, anchors) {
     // That disconnect between "the pan is done" and "the camera is
     // still doing something" is exactly what reads as lag. Now both
     // finish at the same instant - one unified move, not two
-    // staggered ones.
-    camZoom = 1;
+    // staggered ones. A faint continuous breathing zoom (+-1.5%) is
+    // layered on top even at rest, the same "never fully still"
+    // principle as the position drift above - too subtle to disorient,
+    // enough to keep the whole frame from reading as a paused video.
+    camZoom = 1 + Math.sin(globalTime * 0.6) * 0.028;
   } else {
     const t = clamp01(localT / arrivalWindow);
     const bow = Math.sin(t * Math.PI); // 0 -> 1 -> 0 across the move

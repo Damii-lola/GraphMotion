@@ -1,6 +1,8 @@
 const { easeOutBack, easeOutCubic, easeOutExpo, lerp, clamp01 } = require('./easing');
 const { drawIconPath } = require('./templateRenderers');
 const { validateShapeRecipe, drawShapeRecipe } = require('./shapeRecipe');
+const { buildShadeGradient } = require('./colorUtils');
+const { LAYOUT } = require('./sharedRenderHelpers');
 
 /**
  * Direct response to real reference footage: every beat with text
@@ -86,7 +88,7 @@ function drawBurst(ctx, size) {
  * text follows. Every beat gets one of these, per the direct
  * reference-video feedback that our output was "just text."
  */
-function drawHeroVisual(ctx, shapeName, accentColor, t, duration, width, height, system, carOptions = {}, customShapeRecipe = null, positionY = 0.22, sizeOverride = 130) {
+function drawHeroVisual(ctx, shapeName, accentColor, t, duration, width, height, system, carOptions = {}, customShapeRecipe = null, positionY = LAYOUT.heroPositionY, sizeOverride = LAYOUT.heroSize) {
   // Custom recipe takes priority when present and valid - this is
   // what actually scales past the fixed icon list to any object at
   // all, safely, since the recipe is pre-validated data, never code.
@@ -98,17 +100,58 @@ function drawHeroVisual(ctx, shapeName, accentColor, t, duration, width, height,
   const scale = lerp(0.4, 1, easeOutBack(entranceT));
   const size = sizeOverride;
 
+  // Continuous idle motion for the icon's ENTIRE time on screen, not
+  // just its entrance - the direct fix for "everything pops in then
+  // just sits there." A slow breathing scale pulse + a gentle rotational
+  // sway, both running the whole beat, faded in as entranceT completes
+  // so they never fight the landing overshoot.
+  const idleAmount = entranceT;
+  const idleBreath = 1 + Math.sin(t * 2.4) * 0.08 * idleAmount;
+  const idleSway = Math.sin(t * 0.9) * 0.11 * idleAmount;
+
   ctx.save();
   ctx.globalAlpha = opacity;
   ctx.translate(width / 2, height * positionY);
-  ctx.scale(scale, scale);
+  ctx.rotate(idleSway);
+  ctx.scale(scale * idleBreath, scale * idleBreath);
 
   if (system.heroUsesGlow) {
     ctx.shadowColor = accentColor;
-    ctx.shadowBlur = lerp(0, 40, clamp01((t - duration * 0.1) / (duration * 0.3)));
+    // Ramps up on landing like before, then keeps a slow rhythmic pulse
+    // instead of settling to one fixed blur value forever.
+    const glowRamp = clamp01((t - duration * 0.1) / (duration * 0.3));
+    const glowPulse = 1 + Math.sin(t * 2.2) * 0.32 * glowRamp;
+    ctx.shadowBlur = lerp(0, 40, glowRamp) * glowPulse;
   }
-  ctx.strokeStyle = accentColor;
-  ctx.fillStyle = accentColor;
+  // A brief radiating burst at the moment the icon lands - the same
+  // "celebratory pop" badgeUnlock already used for its own reveal,
+  // generalized here so every hero visual gets a real landing moment
+  // instead of just smoothly fading into stillness.
+  const burstT = clamp01((t - duration * 0.06) / (duration * 0.32));
+  if (burstT > 0 && burstT < 1) {
+    ctx.save();
+    ctx.globalAlpha = opacity * (1 - burstT) * 0.55;
+    ctx.strokeStyle = accentColor;
+    ctx.lineWidth = 3;
+    const burstStart = size * 0.42;
+    const burstLength = lerp(size * 0.1, size * 0.4, easeOutExpo(burstT));
+    for (let i = 0; i < 8; i++) {
+      const angle = (Math.PI / 4) * i;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(angle) * burstStart, Math.sin(angle) * burstStart);
+      ctx.lineTo(Math.cos(angle) * (burstStart + burstLength), Math.sin(angle) * (burstStart + burstLength));
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // Same highlight-to-shadow gradient the shapeRecipe system uses, over
+  // a generous bounding box that covers every hand-coded icon/mark's
+  // actual footprint (all drawn within roughly +-0.5*size) - the fixed
+  // icons get real depth for free, no changes to their path data.
+  const heroShade = buildShadeGradient(ctx, accentColor, -size * 0.55, -size * 0.55, size * 0.55, size * 0.55);
+  ctx.strokeStyle = heroShade;
+  ctx.fillStyle = heroShade;
   ctx.lineWidth = 8;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';

@@ -1,4 +1,5 @@
 const { clamp01 } = require('./easing');
+const { buildShadeGradient, shadeColor } = require('./colorUtils');
 
 /**
  * THE ANSWER to "there are trillions of objects, we can't hand-code
@@ -51,6 +52,13 @@ function validateShapeRecipe(rawRecipe) {
       y: clampNum(raw.y, -1.3, 1.3, 0),
       rotation: clampNum(raw.rotation, 0, 360, 0),
       fill: raw.fill !== false,
+      // 'front'/'back' let one shape in a recipe sit visually nearer/
+      // further than its neighbors (brighter/darker shading), e.g. a
+      // lit body vs. a receded sound-hole - 'mid' (the default) is
+      // neutral. A bounded 3-way enum, not a free number, since
+      // Mistral is the sole author and needs to use it consistently.
+      depth: ['front', 'mid', 'back'].includes(raw.depth) ? raw.depth : 'mid',
+      opacity: clampNum(raw.opacity, 0.3, 1, 1),
     };
 
     if (shape.type === 'circle' || shape.type === 'arc') {
@@ -85,6 +93,37 @@ function validateShapeRecipe(rawRecipe) {
   return clean;
 }
 
+const DEPTH_OFFSETS = { front: 0.12, mid: 0, back: -0.15 };
+
+/**
+ * Each shape's own local (pre-translate) pixel bounding box, used as
+ * the light-to-shadow gradient sweep for that shape - every shape
+ * shades independently around its own footprint rather than one
+ * gradient stretched across the whole recipe (which would just look
+ * like a single wash, not per-shape depth).
+ */
+function shapeBoundsPx(shape, size) {
+  switch (shape.type) {
+    case 'circle':
+    case 'arc': {
+      const r = shape.r * size;
+      return { x0: -r, y0: -r, x1: r, y1: r };
+    }
+    case 'rect': {
+      const hw = (shape.w * size) / 2, hh = (shape.h * size) / 2;
+      return { x0: -hw, y0: -hh, x1: hw, y1: hh };
+    }
+    case 'triangle':
+    case 'polygon': {
+      const xs = shape.points.map(([px]) => px * size);
+      const ys = shape.points.map(([, py]) => py * size);
+      return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+    }
+    default:
+      return { x0: -size * 0.1, y0: -size * 0.1, x1: size * 0.1, y1: size * 0.1 };
+  }
+}
+
 /**
  * Renders a validated recipe - every primitive drawn with our own
  * fixed, safe canvas calls. `size` maps the recipe's normalized -1..1
@@ -99,8 +138,21 @@ function drawShapeRecipe(ctx, recipe, size, accentColor) {
     ctx.save();
     ctx.translate(shape.x * size, shape.y * size);
     ctx.rotate((shape.rotation * Math.PI) / 180);
-    ctx.fillStyle = accentColor;
-    ctx.strokeStyle = accentColor;
+    ctx.globalAlpha *= shape.opacity != null ? shape.opacity : 1;
+
+    const depthOffset = DEPTH_OFFSETS[shape.depth] || 0;
+    // A thin line reads better as a flat shaded stroke than a gradient
+    // sweeping along its own length - kept a flat tone, still shaded
+    // by depth relative to the rest of the recipe.
+    let shaded;
+    if (shape.type === 'line') {
+      shaded = shadeColor(accentColor, depthOffset);
+    } else {
+      const b = shapeBoundsPx(shape, size);
+      shaded = buildShadeGradient(ctx, accentColor, b.x0, b.y0, b.x1, b.y1, depthOffset);
+    }
+    ctx.fillStyle = shaded;
+    ctx.strokeStyle = shaded;
     ctx.lineWidth = size * 0.05;
 
     switch (shape.type) {

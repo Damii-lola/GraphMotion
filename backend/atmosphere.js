@@ -44,6 +44,35 @@ function getParticleSeeds(worldWidth) {
   return particleSeeds;
 }
 
+/**
+ * softEditorial/boldGraphic opt OUT of the grid/scanline/data-chip HUD
+ * chrome entirely (wrong register for either) - but that left them
+ * with almost nothing continuously moving (boldGraphic in particular
+ * has showParticles:false too), reading as genuinely static/bland next
+ * to reference footage where something is always in motion. This is
+ * the calmer-register equivalent: a few slow, softly curving lines
+ * drifting across the frame - elegant at low opacity for softEditorial,
+ * a bit bolder for boldGraphic's punchier identity - not a HUD grid,
+ * but never fully still either.
+ */
+function drawDriftLines(ctx, globalT, width, height, accentColor, count, opacity) {
+  ctx.save();
+  ctx.strokeStyle = accentColor;
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i < count; i++) {
+    const speed = 6 + i * 2.5;
+    const cycle = height + 300;
+    const yBase = (((globalT * speed + i * 180) % cycle) + cycle) % cycle - 150;
+    const waveAmp = 36 + i * 14;
+    ctx.globalAlpha = opacity * (0.5 + 0.35 * Math.sin(i * 2.3));
+    ctx.beginPath();
+    ctx.moveTo(-60, yBase);
+    ctx.quadraticCurveTo(width * 0.5, yBase + Math.sin(globalT * 0.25 + i * 1.3) * waveAmp, width + 60, yBase - 40);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawAtmosphere(ctx, globalT, width, height, accentColor, system, backgroundMood) {
   drawGradientBase(ctx, width, height, system, accentColor, backgroundMood);
   // Glow blob and grain both read as "moody dark texture" - fine on a
@@ -55,6 +84,7 @@ function drawAtmosphere(ctx, globalT, width, height, accentColor, system, backgr
   const isLight = resolvedMood === 'light';
   if (system.showGlowBlob && !isLight) drawGlowBlob(ctx, globalT, width, height, accentColor);
   if (system.flatBlockAccent) drawFlatBlocks(ctx, globalT, width, height, accentColor);
+  if (system.showDriftLines) drawDriftLines(ctx, globalT, width, height, accentColor, system.driftLineCount || 3, system.driftLineOpacity || 0.12);
   drawVignette(ctx, width, height, system);
   if (!isLight && system.name !== 'boldGraphic') drawGrain(ctx, globalT, width, height);
 }

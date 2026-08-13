@@ -1,4 +1,6 @@
 const { easeOutCubic, easeOutBack, easeOutExpo, easeInOutCubic, lerp, clamp01 } = require('./easing');
+const { LAYOUT, TYPE_SCALE, layoutKineticChars, drawKineticChars } = require('./sharedRenderHelpers');
+const { buildShadeGradient } = require('./colorUtils');
 
 /**
  * Four new templates, each chosen to unlock a genuinely different
@@ -59,42 +61,58 @@ function splitCompare(ctx, params, t, width, height, system) {
   const leftOpacity = easeOutCubic(clamp01(t / (duration * 0.3)));
   const rightOpacity = easeOutCubic(clamp01((t - 0.08) / (duration * 0.3)));
 
+  // Body copy gets the shared per-character kinetic reveal instead of a
+  // flat fade - laid out in LOCAL coordinates (centerX/Y relative to
+  // the column's own translate below), so it slides in with the column
+  // and reveals character-by-character at the same time.
+  const bodyWeight = `${system.fontWeight}`;
+
   ctx.save();
   ctx.globalAlpha = leftOpacity;
-  ctx.translate(width / 2 + leftX, height * 0.42);
+  ctx.translate(width / 2 + leftX, height * LAYOUT.contentCenterY);
   ctx.textAlign = 'center';
-  ctx.font = `700 22px ${system.fontFamily}`;
+  ctx.font = `700 ${TYPE_SCALE.label}px ${system.fontFamily}`;
   ctx.fillStyle = accentColor;
-  ctx.fillText(leftLabel, 0, -50);
-  ctx.font = `${system.fontWeight} 28px ${system.fontFamily}`;
-  ctx.fillStyle = system.heroTextColor;
-  wrapText(ctx, leftText, 0, 10, width * 0.36, 34);
+  ctx.fillText(leftLabel, 0, -66);
+  const leftLayout = layoutKineticChars(ctx, leftText, {
+    fontFamily: system.fontFamily, fontWeight: bodyWeight, fontSize: TYPE_SCALE.body,
+    lineHeight: 40, maxWidth: width * 0.36, centerX: 0, centerY: 14,
+  });
+  drawKineticChars(ctx, leftLayout.chars, t - duration * 0.15, duration, {
+    fontFamily: system.fontFamily, fontWeight: bodyWeight, fontSize: TYPE_SCALE.body,
+    fillStyle: system.heroTextColor, staggerWindow: duration * 0.3,
+  });
   ctx.restore();
 
   ctx.save();
   ctx.globalAlpha = rightOpacity;
-  ctx.translate(width / 2 + rightX, height * 0.42);
+  ctx.translate(width / 2 + rightX, height * LAYOUT.contentCenterY);
   ctx.textAlign = 'center';
-  ctx.font = `700 22px ${system.fontFamily}`;
+  ctx.font = `700 ${TYPE_SCALE.label}px ${system.fontFamily}`;
   ctx.fillStyle = accentColor;
-  ctx.fillText(rightLabel, 0, -50);
-  ctx.font = `${system.fontWeight} 28px ${system.fontFamily}`;
-  ctx.fillStyle = system.heroTextColor;
-  wrapText(ctx, rightText, 0, 10, width * 0.36, 34);
+  ctx.fillText(rightLabel, 0, -66);
+  const rightLayout = layoutKineticChars(ctx, rightText, {
+    fontFamily: system.fontFamily, fontWeight: bodyWeight, fontSize: TYPE_SCALE.body,
+    lineHeight: 40, maxWidth: width * 0.36, centerX: 0, centerY: 14,
+  });
+  drawKineticChars(ctx, rightLayout.chars, t - duration * 0.23, duration, {
+    fontFamily: system.fontFamily, fontWeight: bodyWeight, fontSize: TYPE_SCALE.body,
+    fillStyle: system.heroTextColor, staggerWindow: duration * 0.3,
+  });
   ctx.restore();
 
   // Divider grows in AFTER both columns land - the "lock-in" beat
   // that visually confirms the comparison is now set, not still moving.
   const dividerT = clamp01((t - duration * 0.45) / (duration * 0.25));
   if (dividerT > 0) {
-    const dividerHeight = lerp(0, height * 0.4, easeOutExpo(dividerT));
+    const dividerHeight = lerp(0, height * 0.5, easeOutExpo(dividerT));
     ctx.save();
     ctx.globalAlpha = dividerT;
     ctx.strokeStyle = accentColor;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(width / 2, height * 0.42 - dividerHeight / 2);
-    ctx.lineTo(width / 2, height * 0.42 + dividerHeight / 2);
+    ctx.moveTo(width / 2, height * LAYOUT.contentCenterY - dividerHeight / 2);
+    ctx.lineTo(width / 2, height * LAYOUT.contentCenterY + dividerHeight / 2);
     ctx.stroke();
     ctx.restore();
   }
@@ -110,9 +128,9 @@ function listReveal(ctx, params, t, width, height, system) {
   const accentColor = params.color || '#FF5C1A';
   const list = Array.isArray(items) ? items.slice(0, 4) : [];
 
-  const itemHeight = 74;
+  const itemHeight = 108;
   const totalHeight = list.length * itemHeight;
-  const startY = height * 0.42 - totalHeight / 2 + itemHeight / 2;
+  const startY = height * LAYOUT.contentCenterY - totalHeight / 2 + itemHeight / 2;
   const perItemDelay = duration * 0.18;
 
   list.forEach((item, i) => {
@@ -129,25 +147,25 @@ function listReveal(ctx, params, t, width, height, system) {
     ctx.globalAlpha = opacity;
     ctx.translate(width / 2 + slideX, y);
 
-    drawContactShadow(ctx, -width * 0.32, 4, 20, 6, opacity * 0.3);
+    drawContactShadow(ctx, -width * 0.32, 6, 26, 8, opacity * 0.3);
     ctx.save();
     ctx.scale(badgeScale, badgeScale);
-    ctx.fillStyle = accentColor;
+    ctx.fillStyle = buildShadeGradient(ctx, accentColor, -width * 0.32 - 24, -24, -width * 0.32 + 24, 24);
     ctx.beginPath();
-    ctx.arc(-width * 0.32, 0, 18, 0, Math.PI * 2);
+    ctx.arc(-width * 0.32, 0, 24, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = system.bgColorInner;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = `700 18px ${system.fontFamily}`;
+    ctx.font = `700 ${TYPE_SCALE.label}px ${system.fontFamily}`;
     ctx.fillText(String(i + 1), -width * 0.32, 1);
     ctx.restore();
 
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.font = `600 26px ${system.fontFamily}`;
+    ctx.font = `600 ${TYPE_SCALE.subhead}px ${system.fontFamily}`;
     ctx.fillStyle = system.heroTextColor;
-    ctx.fillText(item, -width * 0.32 + 34, 1);
+    ctx.fillText(item, -width * 0.32 + 44, 1);
     ctx.restore();
   });
 }
@@ -163,11 +181,7 @@ function quoteCallout(ctx, params, t, width, height, system) {
   const accentColor = params.color || '#FF5C1A';
 
   const barT = clamp01(t / (duration * 0.2));
-  const barHeight = lerp(0, 90, easeOutExpo(barT));
-
-  const textT = clamp01((t - duration * 0.15) / (duration * 0.35));
-  const textOpacity = easeOutCubic(textT);
-  const textScale = lerp(0.96, 1, easeOutCubic(textT));
+  const barHeight = lerp(0, 120, easeOutExpo(barT));
 
   const attrT = clamp01((t - duration * 0.55) / (duration * 0.25));
   const attrOpacity = easeOutCubic(attrT);
@@ -177,28 +191,32 @@ function quoteCallout(ctx, params, t, width, height, system) {
   ctx.strokeStyle = accentColor;
   ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.moveTo(width * 0.15, height * 0.34 - barHeight / 2);
-  ctx.lineTo(width * 0.15, height * 0.34 + barHeight / 2);
+  ctx.moveTo(width * 0.15, height * (LAYOUT.contentCenterY - 0.06) - barHeight / 2);
+  ctx.lineTo(width * 0.15, height * (LAYOUT.contentCenterY - 0.06) + barHeight / 2);
   ctx.stroke();
   ctx.restore();
 
-  ctx.save();
-  ctx.globalAlpha = textOpacity;
-  ctx.translate(width / 2 + 20, height * 0.4);
-  ctx.scale(textScale, textScale);
-  ctx.textAlign = 'center';
-  ctx.font = `italic ${system.fontWeight === '900' ? '700' : system.fontWeight} 32px ${system.fontFamily}`;
-  ctx.fillStyle = system.heroTextColor;
-  wrapText(ctx, `"${quote}"`, 0, 0, width * 0.7, 42);
-  ctx.restore();
+  // Per-character kinetic reveal (the same mechanism kineticTextReveal
+  // pioneered) instead of the old whole-block fade - the quote arrives
+  // as a real typed-in moment, not a single flat pop.
+  const quoteWeight = `italic ${system.fontWeight === '900' ? '700' : system.fontWeight}`;
+  const layout = layoutKineticChars(ctx, `"${quote}"`, {
+    fontFamily: system.fontFamily, fontWeight: quoteWeight, fontSize: TYPE_SCALE.title,
+    lineHeight: 56, maxWidth: width * 0.72, centerX: width / 2 + 20, centerY: height * LAYOUT.contentCenterY,
+  });
+  drawKineticChars(ctx, layout.chars, t - duration * 0.1, duration, {
+    fontFamily: system.fontFamily, fontWeight: quoteWeight, fontSize: TYPE_SCALE.title,
+    fillStyle: system.heroTextColor, glowColor: system.heroUsesGlow ? accentColor : null,
+    staggerWindow: duration * 0.35,
+  });
 
   if (attribution) {
     ctx.save();
     ctx.globalAlpha = attrOpacity;
     ctx.textAlign = 'center';
-    ctx.font = `600 20px ${system.fontFamily}`;
+    ctx.font = `600 ${TYPE_SCALE.label}px ${system.fontFamily}`;
     ctx.fillStyle = accentColor;
-    ctx.fillText(`— ${attribution}`, width / 2 + 20, height * 0.58);
+    ctx.fillText(`— ${attribution}`, width / 2 + 20, height * LAYOUT.captionY);
     ctx.restore();
   }
 }
@@ -219,23 +237,23 @@ function progressBar(ctx, params, t, width, height, system) {
   const fillT = clamp01((t - duration * 0.15) / (duration * 0.55));
   const fillPct = lerp(0, toPercent, easeOutExpo(fillT));
 
-  const barW = width * 0.7;
-  const barH = 16;
+  const barW = width * 0.74;
+  const barH = 22;
   const barX = width / 2 - barW / 2;
-  const barY = height * 0.42;
+  const barY = height * LAYOUT.contentCenterY;
 
   ctx.save();
   ctx.globalAlpha = opacity;
 
-  ctx.font = `600 22px ${system.fontFamily}`;
+  ctx.font = `600 ${TYPE_SCALE.body}px ${system.fontFamily}`;
   ctx.textAlign = 'left';
   ctx.fillStyle = system.mutedTextColor;
-  ctx.fillText(label, barX, barY - 24);
+  ctx.fillText(label, barX, barY - 34);
 
-  ctx.font = `700 22px ${system.fontFamily}`;
+  ctx.font = `700 ${TYPE_SCALE.subhead}px ${system.fontFamily}`;
   ctx.textAlign = 'right';
   ctx.fillStyle = system.heroTextColor;
-  ctx.fillText(`${Math.round(fillPct)}%`, barX + barW, barY - 24);
+  ctx.fillText(`${Math.round(fillPct)}%`, barX + barW, barY - 34);
 
   ctx.fillStyle = system.mutedTextColor;
   ctx.globalAlpha = opacity * 0.25;
@@ -244,7 +262,7 @@ function progressBar(ctx, params, t, width, height, system) {
 
   ctx.globalAlpha = opacity;
   const fillWidth = Math.max(barH, (fillPct / 100) * barW);
-  ctx.fillStyle = accentColor;
+  ctx.fillStyle = buildShadeGradient(ctx, accentColor, barX, barY, barX, barY + barH);
   roundRectPath(ctx, barX, barY, fillWidth, barH, barH / 2);
   ctx.fill();
 
@@ -287,10 +305,10 @@ function barChartCompare(ctx, params, t, width, height, system) {
   if (list.length === 0) return;
 
   const maxValue = Math.max(...list.map((b) => Number(b.value) || 0), 1);
-  const chartH = 220;
-  const chartBottom = height * 0.48;
-  const barW = 56;
-  const gap = 30;
+  const chartH = 340;
+  const chartBottom = height * (LAYOUT.contentCenterY + 0.1);
+  const barW = 68;
+  const gap = 36;
   const totalW = list.length * barW + (list.length - 1) * gap;
   const startX = width / 2 - totalW / 2 + barW / 2;
 
@@ -304,23 +322,23 @@ function barChartCompare(ctx, params, t, width, height, system) {
     const value = Number(bar.value) || 0;
     const barHeight = lerp(0, (value / maxValue) * chartH, easeOutBack(growT));
     const cx = startX + i * (barW + gap);
+    const barTop = chartBottom - Math.max(0, barHeight);
 
     ctx.save();
-    ctx.globalAlpha = opacity;
-    ctx.fillStyle = accentColor;
     ctx.globalAlpha = opacity * 0.9;
-    roundRectPathBar(ctx, cx - barW / 2, chartBottom - Math.max(0, barHeight), barW, Math.max(2, barHeight), 8);
+    ctx.fillStyle = buildShadeGradient(ctx, accentColor, cx - barW / 2, barTop, cx - barW / 2, chartBottom);
+    roundRectPathBar(ctx, cx - barW / 2, barTop, barW, Math.max(2, barHeight), 10);
     ctx.fill();
 
     ctx.globalAlpha = opacity;
     ctx.fillStyle = system.heroTextColor;
     ctx.textAlign = 'center';
-    ctx.font = `700 20px ${system.fontFamily}`;
-    ctx.fillText(String(value), cx, chartBottom - Math.max(0, barHeight) - 16);
+    ctx.font = `700 ${TYPE_SCALE.body}px ${system.fontFamily}`;
+    ctx.fillText(String(value), cx, barTop - 20);
 
-    ctx.font = `500 15px ${system.fontFamily}`;
+    ctx.font = `500 ${TYPE_SCALE.micro}px ${system.fontFamily}`;
     ctx.fillStyle = system.mutedTextColor;
-    ctx.fillText(String(bar.label || ''), cx, chartBottom + 24);
+    ctx.fillText(String(bar.label || ''), cx, chartBottom + 32);
     ctx.restore();
   });
 
@@ -359,11 +377,11 @@ function avatarStack(ctx, params, t, width, height, system) {
   const list = (Array.isArray(initials) ? initials : []).slice(0, 5);
   if (list.length === 0) return;
 
-  const radius = 32;
-  const overlap = 20;
+  const radius = 44;
+  const overlap = 26;
   const totalW = radius * 2 + (list.length - 1) * (radius * 2 - overlap);
   const startX = width / 2 - totalW / 2 + radius;
-  const cy = height * 0.4;
+  const cy = height * LAYOUT.contentCenterY;
 
   // Draw right-to-left so earlier avatars overlap ON TOP of later
   // ones, matching how these stacks read left-to-right in real UIs.
@@ -386,7 +404,7 @@ function avatarStack(ctx, params, t, width, height, system) {
     ctx.arc(0, 0, radius + 3, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = i % 3 === 2 ? accentColor : system.mutedTextColor;
+    ctx.fillStyle = i % 3 === 2 ? buildShadeGradient(ctx, accentColor, -radius, -radius, radius, radius) : system.mutedTextColor;
     ctx.beginPath();
     ctx.arc(0, 0, radius, 0, Math.PI * 2);
     ctx.fill();
@@ -394,7 +412,7 @@ function avatarStack(ctx, params, t, width, height, system) {
     ctx.fillStyle = system.bgColorInner;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = `700 20px ${system.fontFamily}`;
+    ctx.font = `700 ${TYPE_SCALE.label}px ${system.fontFamily}`;
     ctx.fillText(String(list[i]).slice(0, 2).toUpperCase(), 0, 1);
     ctx.restore();
   }
@@ -404,9 +422,9 @@ function avatarStack(ctx, params, t, width, height, system) {
     ctx.save();
     ctx.globalAlpha = easeOutCubic(capT);
     ctx.textAlign = 'center';
-    ctx.font = `500 22px ${system.fontFamily}`;
+    ctx.font = `500 ${TYPE_SCALE.subhead}px ${system.fontFamily}`;
     ctx.fillStyle = system.heroTextColor;
-    ctx.fillText(caption, width / 2, cy + radius + 50);
+    ctx.fillText(caption, width / 2, cy + radius + 66);
     ctx.restore();
   }
 }
@@ -423,8 +441,8 @@ function statGrid(ctx, params, t, width, height, system) {
   const accentColor = params.color || '#FF5C1A';
   const list = (Array.isArray(stats) ? stats : []).slice(0, 4);
 
-  const cellW = width * 0.4;
-  const cellH = 140;
+  const cellW = width * 0.42;
+  const cellH = 210;
   const perItemDelay = duration * 0.1;
 
   list.forEach((stat, i) => {
@@ -444,20 +462,20 @@ function statGrid(ctx, params, t, width, height, system) {
     const rawCurrent = lerp(0, targetValue, easeOutExpo(countT));
     const current = isDecimal ? rawCurrent.toFixed(1) : Math.round(rawCurrent);
 
-    const cx = width / 2 + dx * (cellW / 2 + 10);
-    const cy = height * 0.4 + dy * (cellH / 2 + 10);
+    const cx = width / 2 + dx * (cellW / 2 + 14);
+    const cy = height * LAYOUT.contentCenterY + dy * (cellH / 2 + 14);
 
     ctx.save();
     ctx.globalAlpha = opacity;
     ctx.translate(cx, cy);
     ctx.scale(scale, scale);
     ctx.textAlign = 'center';
-    ctx.font = `800 44px ${system.fontFamily}`;
+    ctx.font = `800 ${TYPE_SCALE.subhead + 26}px ${system.fontFamily}`;
     ctx.fillStyle = accentColor;
-    ctx.fillText(`${current}${stat.suffix || ''}`, 0, -8);
-    ctx.font = `500 16px ${system.fontFamily}`;
+    ctx.fillText(`${current}${stat.suffix || ''}`, 0, -12);
+    ctx.font = `500 ${TYPE_SCALE.label}px ${system.fontFamily}`;
     ctx.fillStyle = system.mutedTextColor;
-    ctx.fillText(String(stat.label || ''), 0, 22);
+    ctx.fillText(String(stat.label || ''), 0, 30);
     ctx.restore();
   });
 }
@@ -487,28 +505,28 @@ function arrowFlow(ctx, params, t, width, height, system) {
     const opacity = easeOutCubic(entranceT);
     const scale = easeOutBack(entranceT);
     const cx = startX + i * (cellW + 50);
-    const cy = height * 0.4;
+    const cy = height * LAYOUT.contentCenterY;
 
     ctx.save();
     ctx.globalAlpha = opacity;
     ctx.translate(cx, cy);
     ctx.scale(scale, scale);
     ctx.strokeStyle = accentColor;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.arc(0, -30, 22, 0, Math.PI * 2);
+    ctx.arc(0, -42, 30, 0, Math.PI * 2);
     ctx.stroke();
     ctx.fillStyle = accentColor;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = `700 20px ${system.fontFamily}`;
-    ctx.fillText(String(i + 1), 0, -30);
+    ctx.font = `700 ${TYPE_SCALE.subhead}px ${system.fontFamily}`;
+    ctx.fillText(String(i + 1), 0, -42);
 
     ctx.fillStyle = system.heroTextColor;
-    ctx.font = `500 16px ${system.fontFamily}`;
+    ctx.font = `500 ${TYPE_SCALE.body}px ${system.fontFamily}`;
     const words = String(step).split(' ');
-    ctx.fillText(words.slice(0, 2).join(' '), 0, 10);
-    if (words.length > 2) ctx.fillText(words.slice(2).join(' '), 0, 30);
+    ctx.fillText(words.slice(0, 2).join(' '), 0, 14);
+    if (words.length > 2) ctx.fillText(words.slice(2).join(' '), 0, 42);
     ctx.restore();
 
     if (i < list.length - 1) {
@@ -526,7 +544,7 @@ function arrowFlow(ctx, params, t, width, height, system) {
         // appeared in the rendered frame despite the math otherwise
         // computing a valid arrowT.
         const ax = cx + cellW / 2 + 8;
-        const ay = cy - 30;
+        const ay = cy - 42;
         const arrowLen = lerp(0, 30, easeOutCubic(arrowT));
         ctx.beginPath();
         ctx.moveTo(ax, ay);
@@ -555,20 +573,20 @@ function calloutBubble(ctx, params, t, width, height, system) {
   const opacity = easeOutCubic(entranceT);
   const scale = lerp(0.85, 1, easeOutBack(entranceT));
 
-  const bubbleW = width * 0.72;
-  const bubbleY = height * 0.38;
+  const bubbleW = width * 0.76;
+  const bubbleY = height * LAYOUT.contentCenterY;
 
   ctx.save();
   ctx.globalAlpha = opacity;
   ctx.translate(width / 2, bubbleY);
   ctx.scale(scale, scale);
 
-  ctx.font = `500 24px ${system.fontFamily}`;
+  ctx.font = `500 ${TYPE_SCALE.subhead}px ${system.fontFamily}`;
   ctx.textAlign = 'center';
   const words = text.split(' ');
   const lines = [];
   let current = '';
-  const maxW = bubbleW - 60;
+  const maxW = bubbleW - 70;
   for (const word of words) {
     const test = current ? `${current} ${word}` : word;
     if (ctx.measureText(test).width > maxW && current) {
@@ -577,7 +595,7 @@ function calloutBubble(ctx, params, t, width, height, system) {
     } else current = test;
   }
   if (current) lines.push(current);
-  const bubbleH = lines.length * 32 + 60;
+  const bubbleH = lines.length * 46 + 70;
 
   ctx.strokeStyle = accentColor;
   ctx.lineWidth = 2;
@@ -592,21 +610,29 @@ function calloutBubble(ctx, params, t, width, height, system) {
   ctx.lineTo(10, bubbleH / 2);
   ctx.stroke();
 
-  ctx.globalAlpha = opacity;
-  ctx.fillStyle = system.heroTextColor;
-  ctx.textBaseline = 'middle';
-  const startY = -((lines.length - 1) * 32) / 2;
-  lines.forEach((line, i) => ctx.fillText(line, 0, startY + i * 32));
   ctx.restore();
+
+  // Per-character kinetic reveal for the bubble text, drawn in the
+  // untranslated/unscaled coordinate space (the bubble box above still
+  // uses the pop-in scale transform for its own entrance; the text
+  // reveal runs on its own independent per-char timing instead).
+  const bubbleTextLayout = layoutKineticChars(ctx, text, {
+    fontFamily: system.fontFamily, fontWeight: '500', fontSize: TYPE_SCALE.subhead,
+    lineHeight: 46, maxWidth: maxW, centerX: width / 2, centerY: bubbleY,
+  });
+  drawKineticChars(ctx, bubbleTextLayout.chars, t - duration * 0.15, duration, {
+    fontFamily: system.fontFamily, fontWeight: '500', fontSize: TYPE_SCALE.subhead,
+    fillStyle: system.heroTextColor, staggerWindow: duration * 0.3,
+  });
 
   if (speaker) {
     const speakerT = clamp01((t - duration * 0.4) / (duration * 0.25));
     ctx.save();
     ctx.globalAlpha = easeOutCubic(speakerT);
     ctx.textAlign = 'center';
-    ctx.font = `600 18px ${system.fontFamily}`;
+    ctx.font = `600 ${TYPE_SCALE.label}px ${system.fontFamily}`;
     ctx.fillStyle = accentColor;
-    ctx.fillText(`— ${speaker}`, width / 2, bubbleY + bubbleH / 2 + 45);
+    ctx.fillText(`— ${speaker}`, width / 2, bubbleY + bubbleH / 2 + 56);
     ctx.restore();
   }
 }
@@ -639,9 +665,9 @@ function pieChartReveal(ctx, params, t, width, height, system) {
   const currentPct = lerp(0, toPercent, easeOutExpo(sweepT));
 
   const cx = width / 2;
-  const cy = height * 0.4;
-  const radius = 100;
-  const lineWidth = 22;
+  const cy = height * LAYOUT.contentCenterY;
+  const radius = 145;
+  const lineWidth = 28;
 
   ctx.save();
   ctx.globalAlpha = opacity;
@@ -670,7 +696,7 @@ function pieChartReveal(ctx, params, t, width, height, system) {
   // Center percentage readout.
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = `800 40px ${system.fontFamily}`;
+  ctx.font = `800 ${TYPE_SCALE.subhead + 20}px ${system.fontFamily}`;
   ctx.fillStyle = system.heroTextColor;
   ctx.fillText(`${Math.round(currentPct)}%`, cx, cy);
   ctx.restore();
@@ -678,9 +704,9 @@ function pieChartReveal(ctx, params, t, width, height, system) {
   ctx.save();
   ctx.globalAlpha = opacity;
   ctx.textAlign = 'center';
-  ctx.font = `500 24px ${system.fontFamily}`;
+  ctx.font = `500 ${TYPE_SCALE.body}px ${system.fontFamily}`;
   ctx.fillStyle = system.mutedTextColor;
-  ctx.fillText(label, cx, cy + radius + 50);
+  ctx.fillText(label, cx, cy + radius + 64);
   ctx.restore();
 }
 
@@ -706,14 +732,14 @@ function duoStatCompare(ctx, params, t, width, height, system) {
   ].forEach((side) => {
     ctx.save();
     ctx.globalAlpha = opacity;
-    ctx.translate(width / 2 + side.x, height * 0.42);
+    ctx.translate(width / 2 + side.x, height * LAYOUT.contentCenterY);
     ctx.textAlign = 'center';
-    ctx.font = `900 52px ${system.fontFamily}`;
+    ctx.font = `900 ${TYPE_SCALE.hero - 4}px ${system.fontFamily}`;
     ctx.fillStyle = accentColor;
-    ctx.fillText(String(side.value), 0, -10);
-    ctx.font = `500 18px ${system.fontFamily}`;
+    ctx.fillText(String(side.value), 0, -14);
+    ctx.font = `500 ${TYPE_SCALE.label}px ${system.fontFamily}`;
     ctx.fillStyle = system.mutedTextColor;
-    ctx.fillText(side.label, 0, 30);
+    ctx.fillText(side.label, 0, 42);
     ctx.restore();
   });
 
@@ -724,8 +750,8 @@ function duoStatCompare(ctx, params, t, width, height, system) {
     ctx.strokeStyle = system.mutedTextColor;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(width / 2, height * 0.42 - 40);
-    ctx.lineTo(width / 2, height * 0.42 + 40);
+    ctx.moveTo(width / 2, height * LAYOUT.contentCenterY - 56);
+    ctx.lineTo(width / 2, height * LAYOUT.contentCenterY + 56);
     ctx.stroke();
     ctx.restore();
   }
@@ -747,36 +773,36 @@ function badgeUnlock(ctx, params, t, width, height, system) {
   const burstT = clamp01((t - duration * 0.1) / (duration * 0.4));
   if (burstT > 0 && burstT < 1) {
     const burstOpacity = (1 - burstT) * 0.6;
-    const burstLength = lerp(20, 70, easeOutExpo(burstT));
+    const burstLength = lerp(28, 95, easeOutExpo(burstT));
     ctx.save();
-    ctx.translate(width / 2, height * 0.4);
+    ctx.translate(width / 2, height * LAYOUT.contentCenterY);
     ctx.strokeStyle = accentColor;
     ctx.lineWidth = 3;
     ctx.globalAlpha = burstOpacity;
     for (let i = 0; i < 8; i++) {
       const angle = (Math.PI / 4) * i;
       ctx.beginPath();
-      ctx.moveTo(Math.cos(angle) * 60, Math.sin(angle) * 60);
-      ctx.lineTo(Math.cos(angle) * (60 + burstLength), Math.sin(angle) * (60 + burstLength));
+      ctx.moveTo(Math.cos(angle) * 82, Math.sin(angle) * 82);
+      ctx.lineTo(Math.cos(angle) * (82 + burstLength), Math.sin(angle) * (82 + burstLength));
       ctx.stroke();
     }
     ctx.restore();
   }
 
-  drawContactShadow(ctx, width / 2, height * 0.4 + 80, 60, 14, opacity * 0.4);
+  drawContactShadow(ctx, width / 2, height * LAYOUT.contentCenterY + 110, 82, 18, opacity * 0.4);
 
   ctx.save();
   ctx.globalAlpha = opacity;
-  ctx.translate(width / 2, height * 0.4);
+  ctx.translate(width / 2, height * LAYOUT.contentCenterY);
   ctx.scale(scale, scale);
   ctx.shadowColor = accentColor;
   ctx.shadowBlur = 30;
-  ctx.fillStyle = accentColor;
+  ctx.fillStyle = buildShadeGradient(ctx, accentColor, -82, -82, 82, 82);
   ctx.beginPath();
-  ctx.moveTo(0, -60);
+  ctx.moveTo(0, -82);
   for (let i = 1; i <= 10; i++) {
     const angle = (Math.PI / 5) * i - Math.PI / 2;
-    const r = i % 2 === 0 ? 60 : 45;
+    const r = i % 2 === 0 ? 82 : 62;
     ctx.lineTo(Math.cos(angle) * r, Math.sin(angle) * r);
   }
   ctx.closePath();
@@ -784,7 +810,7 @@ function badgeUnlock(ctx, params, t, width, height, system) {
 
   ctx.fillStyle = system.bgColorInner;
   ctx.strokeStyle = system.bgColorInner;
-  ctx.lineWidth = 5;
+  ctx.lineWidth = 7;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   // Drawn as a vector path, not a font glyph - a checkmark character
@@ -793,9 +819,9 @@ function badgeUnlock(ctx, params, t, width, height, system) {
   // renders as a missing-glyph box when it doesn't. Confirmed by
   // actually looking at the output, same class of bug as before.
   ctx.beginPath();
-  ctx.moveTo(-9, 0);
-  ctx.lineTo(-3, 7);
-  ctx.lineTo(10, -8);
+  ctx.moveTo(-12, 0);
+  ctx.lineTo(-4, 10);
+  ctx.lineTo(14, -11);
   ctx.stroke();
   ctx.restore();
 
@@ -804,9 +830,9 @@ function badgeUnlock(ctx, params, t, width, height, system) {
     ctx.save();
     ctx.globalAlpha = easeOutCubic(labelT);
     ctx.textAlign = 'center';
-    ctx.font = `700 26px ${system.fontFamily}`;
+    ctx.font = `700 ${TYPE_SCALE.subhead}px ${system.fontFamily}`;
     ctx.fillStyle = system.heroTextColor;
-    ctx.fillText(label, width / 2, height * 0.4 + 100);
+    ctx.fillText(label, width / 2, height * LAYOUT.contentCenterY + 138);
     ctx.restore();
   }
 }
@@ -826,7 +852,7 @@ function tickerScroll(ctx, params, t, width, height, system) {
 
   ctx.save();
   ctx.globalAlpha = opacity;
-  ctx.font = `700 34px ${system.fontFamily}`;
+  ctx.font = `700 ${TYPE_SCALE.subhead + 6}px ${system.fontFamily}`;
   ctx.textBaseline = 'middle';
 
   // Plain ASCII separator, not a symbol glyph - the star character
@@ -846,7 +872,7 @@ function tickerScroll(ctx, params, t, width, height, system) {
   while (cursorX < width + segmentWidth && safetyCounter < 200) {
     for (let i = 0; i < parts.length; i++) {
       ctx.fillStyle = i % 2 === 0 ? system.heroTextColor : accentColor;
-      ctx.fillText(parts[i], cursorX, height * 0.42);
+      ctx.fillText(parts[i], cursorX, height * LAYOUT.contentCenterY);
       cursorX += ctx.measureText(parts[i]).width;
     }
     safetyCounter++;
@@ -874,26 +900,26 @@ function countdownTimer(ctx, params, t, width, height, system) {
   const pulseSpeed = lerp(2, 8, urgency);
   const pulse = 1 + Math.sin(t * pulseSpeed) * lerp(0.01, 0.05, urgency);
 
-  drawContactShadow(ctx, width / 2, height * 0.42 + 60, 90, 18, opacity * 0.4);
+  drawContactShadow(ctx, width / 2, height * LAYOUT.contentCenterY + 85, 120, 22, opacity * 0.4);
 
   ctx.save();
   ctx.globalAlpha = opacity;
-  ctx.translate(width / 2, height * 0.42);
+  ctx.translate(width / 2, height * LAYOUT.contentCenterY);
   ctx.scale(pulse, pulse);
   ctx.textAlign = 'center';
   ctx.shadowColor = urgency > 0.6 ? '#FF3B3B' : accentColor;
   ctx.shadowBlur = lerp(10, 40, urgency);
-  ctx.font = `900 84px ${system.fontFamily}`;
+  ctx.font = `900 ${TYPE_SCALE.hero}px ${system.fontFamily}`;
   ctx.fillStyle = urgency > 0.6 ? lerp(0, 1, urgency) > 0.8 ? '#FF3B3B' : system.heroTextColor : system.heroTextColor;
-  ctx.fillText(String(current), 0, -10);
+  ctx.fillText(String(current), 0, -14);
   ctx.restore();
 
   ctx.save();
   ctx.globalAlpha = opacity;
   ctx.textAlign = 'center';
-  ctx.font = `500 24px ${system.fontFamily}`;
+  ctx.font = `500 ${TYPE_SCALE.body}px ${system.fontFamily}`;
   ctx.fillStyle = system.mutedTextColor;
-  ctx.fillText(label, width / 2, height * 0.42 + 40);
+  ctx.fillText(label, width / 2, height * LAYOUT.contentCenterY + 56);
   ctx.restore();
 }
 
@@ -911,10 +937,10 @@ function gridReveal(ctx, params, t, width, height, system) {
   const accentColor = params.color || '#FF5C1A';
   const list = (Array.isArray(items) ? items : []).slice(0, 4);
 
-  const cellW = width * 0.36;
-  const cellH = 130;
-  const gapX = width * 0.06;
-  const gapY = 20;
+  const cellW = width * 0.4;
+  const cellH = 190;
+  const gapX = width * 0.05;
+  const gapY = 26;
   const perItemDelay = duration * 0.12;
 
   list.forEach((item, i) => {
@@ -926,7 +952,7 @@ function gridReveal(ctx, params, t, width, height, system) {
     const opacity = easeOutCubic(itemT);
     const scale = easeOutBack(itemT);
     const cx = width / 2 + dx * (cellW / 2 + gapX / 2);
-    const cy = height * 0.42 + dy * (cellH / 2 + gapY / 2);
+    const cy = height * LAYOUT.contentCenterY + dy * (cellH / 2 + gapY / 2);
 
     ctx.save();
     ctx.globalAlpha = opacity;
@@ -936,23 +962,23 @@ function gridReveal(ctx, params, t, width, height, system) {
     ctx.strokeStyle = accentColor;
     ctx.globalAlpha = opacity * 0.5;
     ctx.lineWidth = 1.5;
-    roundRectPath2(ctx, -cellW / 2, -cellH / 2, cellW, cellH, 12);
+    roundRectPath2(ctx, -cellW / 2, -cellH / 2, cellW, cellH, 16);
     ctx.stroke();
 
     ctx.globalAlpha = opacity;
-    ctx.fillStyle = accentColor;
+    ctx.fillStyle = buildShadeGradient(ctx, accentColor, -12, -40, 12, -16);
     ctx.beginPath();
-    ctx.arc(0, -20, 8, 0, Math.PI * 2);
+    ctx.arc(0, -28, 11, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.fillStyle = system.heroTextColor;
     ctx.textAlign = 'center';
-    ctx.font = `600 18px ${system.fontFamily}`;
+    ctx.font = `600 ${TYPE_SCALE.body - 4}px ${system.fontFamily}`;
     const words = String(item).split(' ');
     const line1 = words.slice(0, Math.ceil(words.length / 2)).join(' ');
     const line2 = words.slice(Math.ceil(words.length / 2)).join(' ');
-    ctx.fillText(line1, 0, 15);
-    if (line2) ctx.fillText(line2, 0, 38);
+    ctx.fillText(line1, 0, 20);
+    if (line2) ctx.fillText(line2, 0, 50);
     ctx.restore();
   });
 }
@@ -978,9 +1004,9 @@ function checklistTick(ctx, params, t, width, height, system) {
   const accentColor = params.color || '#FF5C1A';
   const list = (Array.isArray(items) ? items : []).slice(0, 4);
 
-  const itemHeight = 74;
+  const itemHeight = 108;
   const totalHeight = list.length * itemHeight;
-  const startY = height * 0.42 - totalHeight / 2 + itemHeight / 2;
+  const startY = height * LAYOUT.contentCenterY - totalHeight / 2 + itemHeight / 2;
   const perItemDelay = duration * 0.2;
 
   list.forEach((item, i) => {
@@ -1001,28 +1027,28 @@ function checklistTick(ctx, params, t, width, height, system) {
     // Checkbox outline, fills with accent + draws a check mark once ticked.
     const boxX = -width * 0.32;
     ctx.strokeStyle = accentColor;
-    ctx.lineWidth = 2;
-    roundRectPath2(ctx, boxX - 14, -14, 28, 28, 6);
+    ctx.lineWidth = 2.5;
+    roundRectPath2(ctx, boxX - 19, -19, 38, 38, 8);
     ctx.stroke();
 
     if (tickT > 0) {
       ctx.save();
       ctx.globalAlpha = opacity * tickT;
-      ctx.fillStyle = accentColor;
-      roundRectPath2(ctx, boxX - 14, -14, 28, 28, 6);
+      ctx.fillStyle = buildShadeGradient(ctx, accentColor, boxX - 19, -19, boxX + 19, 19);
+      roundRectPath2(ctx, boxX - 19, -19, 38, 38, 8);
       ctx.fill();
       ctx.strokeStyle = system.bgColorInner;
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 4;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       const checkT = clamp01(tickT * 1.5);
       ctx.beginPath();
-      ctx.moveTo(boxX - 7, 0);
+      ctx.moveTo(boxX - 9, 0);
       if (checkT > 0.5) {
-        ctx.lineTo(boxX - 2, 6);
-        ctx.lineTo(boxX + lerp(-2, 8, clamp01((checkT - 0.5) * 2)), lerp(6, -6, clamp01((checkT - 0.5) * 2)));
+        ctx.lineTo(boxX - 3, 8);
+        ctx.lineTo(boxX + lerp(-3, 11, clamp01((checkT - 0.5) * 2)), lerp(8, -8, clamp01((checkT - 0.5) * 2)));
       } else {
-        ctx.lineTo(boxX - 2 + lerp(-5, 0, checkT * 2), 6 * clamp01(checkT * 2));
+        ctx.lineTo(boxX - 3 + lerp(-7, 0, checkT * 2), 8 * clamp01(checkT * 2));
       }
       ctx.stroke();
       ctx.restore();
@@ -1030,9 +1056,9 @@ function checklistTick(ctx, params, t, width, height, system) {
 
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.font = `500 24px ${system.fontFamily}`;
+    ctx.font = `500 ${TYPE_SCALE.body}px ${system.fontFamily}`;
     ctx.fillStyle = tickT > 0.9 ? system.mutedTextColor : system.heroTextColor;
-    ctx.fillText(item, boxX + 26, 1);
+    ctx.fillText(item, boxX + 36, 1);
 
     if (tickT > 0.3) {
       const textWidth = ctx.measureText(item).width;
@@ -1041,8 +1067,8 @@ function checklistTick(ctx, params, t, width, height, system) {
       ctx.lineWidth = 2;
       ctx.globalAlpha = opacity * strikeT;
       ctx.beginPath();
-      ctx.moveTo(boxX + 26, 0);
-      ctx.lineTo(boxX + 26 + textWidth * strikeT, 0);
+      ctx.moveTo(boxX + 36, 0);
+      ctx.lineTo(boxX + 36 + textWidth * strikeT, 0);
       ctx.stroke();
     }
     ctx.restore();
@@ -1067,16 +1093,16 @@ function bigNumberStat(ctx, params, t, width, height, system) {
   const bloomT = clamp01((t - duration * 0.35) / (duration * 0.3));
   const bloom = lerp(20, 55, easeOutExpo(bloomT));
 
-  drawContactShadow(ctx, width / 2, height * 0.48, 140, 26, opacity * 0.5);
+  drawContactShadow(ctx, width / 2, height * LAYOUT.contentCenterY + 60, 180, 30, opacity * 0.5);
 
   ctx.save();
   ctx.globalAlpha = opacity;
-  ctx.translate(width / 2, height * 0.42);
+  ctx.translate(width / 2, height * LAYOUT.contentCenterY);
   ctx.scale(scale, scale);
   ctx.textAlign = 'center';
   ctx.shadowColor = accentColor;
   ctx.shadowBlur = bloom;
-  ctx.font = `900 128px ${system.fontFamily}`;
+  ctx.font = `900 ${TYPE_SCALE.display}px ${system.fontFamily}`;
   ctx.fillStyle = system.heroTextColor;
   // A punchy template needs a punchy digit beat, not a slow roll - a
   // brief flicker (2-3 rapid digit changes) right as the number lands,
@@ -1103,9 +1129,9 @@ function bigNumberStat(ctx, params, t, width, height, system) {
     ctx.save();
     ctx.globalAlpha = easeOutCubic(capT);
     ctx.textAlign = 'center';
-    ctx.font = `500 26px ${system.fontFamily}`;
+    ctx.font = `500 ${TYPE_SCALE.body}px ${system.fontFamily}`;
     ctx.fillStyle = system.mutedTextColor;
-    ctx.fillText(caption, width / 2, height * 0.42 + 90);
+    ctx.fillText(caption, width / 2, height * LAYOUT.contentCenterY + 118);
     ctx.restore();
   }
 }
