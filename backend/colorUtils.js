@@ -166,4 +166,48 @@ function deriveLightBackgroundTint(primaryHex) {
   }
 }
 
-module.exports = { deriveSecondaryColor, deriveDarkBackgroundTint, deriveBoldGradientTint, deriveLightBackgroundTint };
+/**
+ * Shifts a hex color's lightness by a delta (-1..1), keeping hue/
+ * saturation fixed - the building block for shading a flat accent
+ * color into a highlight or shadow tone of itself.
+ */
+function shadeColor(primaryHex, lightnessDelta) {
+  if (typeof primaryHex !== 'string' || !/^#?[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(primaryHex)) {
+    return primaryHex || '#FF5C1A';
+  }
+  try {
+    const { r, g, b } = hexToRgb(primaryHex);
+    const { h, s, l } = rgbToHsl(r, g, b);
+    const newL = Math.max(0.04, Math.min(0.96, l + lightnessDelta));
+    const { r: nr, g: ng, b: nb } = hslToRgb(h, s, newL);
+    return rgbToHex(nr, ng, nb);
+  } catch (err) {
+    return primaryHex;
+  }
+}
+
+/**
+ * The actual "free image-gen replacement": every icon/shape in this
+ * codebase used to fill flat with one accentColor - reads as clip-art
+ * with zero depth. This builds a highlight-to-shadow linear gradient
+ * across a shape's own bounding box instead, always along the same
+ * fixed top-left-to-bottom-right diagonal (a consistent light-source
+ * convention), so a multi-shape recipe reads as one coherently-lit
+ * object rather than flat silhouettes glued together. `depthOffset`
+ * (-0.2..0.2ish) shifts both stops together, so a shape can sit
+ * "further back" (darker overall) or "up front" (brighter overall)
+ * relative to its neighbors in the same recipe.
+ */
+function buildShadeGradient(ctx, accentColor, x0, y0, x1, y1, depthOffset = 0) {
+  const light = shadeColor(accentColor, 0.22 + depthOffset);
+  const dark = shadeColor(accentColor, -0.18 + depthOffset);
+  const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+  grad.addColorStop(0, light);
+  grad.addColorStop(1, dark);
+  return grad;
+}
+
+module.exports = {
+  deriveSecondaryColor, deriveDarkBackgroundTint, deriveBoldGradientTint, deriveLightBackgroundTint,
+  shadeColor, buildShadeGradient,
+};

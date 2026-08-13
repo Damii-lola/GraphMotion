@@ -1,4 +1,4 @@
-const { createCanvas } = require('@napi-rs/canvas');
+const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const ffmpegPath = require('ffmpeg-static');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -8,6 +8,8 @@ const fs = require('fs');
 const { drawBeatContent } = require('./templateRenderers');
 const { drawHeroVisual } = require('./heroVisual');
 const { drawAtmosphere, drawWorldParticles } = require('./atmosphere');
+const { drawComposition } = require('./sceneComposition');
+const { drawHeroImage } = require('./imageComposite');
 const { getVisualSystem } = require('./visualSystems');
 const { deriveSecondaryColor } = require('./colorUtils');
 const {
@@ -57,7 +59,10 @@ function buildWorldTimeline(sceneJSON) {
   let cursor = 0;
   sceneJSON.scenes.forEach((scene, i) => {
     const params = { ...scene.params, color: accentColor };
-    const duration = params.duration || 3;
+    // Guards zero/NaN (the old `|| 3`) AND negative values, which would
+    // break the [start,end) tiling invariant getVisibleBeatIndices
+    // depends on and leave a gap of frames with no beat drawn at all.
+    const duration = Math.max(0.4, Number(params.duration) || 3);
     beats.push({
       template: scene.template,
       params,
@@ -141,6 +146,24 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   const canvas = createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext('2d');
 
+  // Beats with a resolved `imagePath` (set by imagePrefetch.js, already
+  // a local file - no network access from inside the render loop) get
+  // their image decoded ONCE here, not per-frame. A chunk that doesn't
+  // touch a given beat simply never asks for it; a chunk that does
+  // loads the same local file cheaply (disk read + decode, no network)
+  // independently of any other chunk, since each chunk is its own
+  // forked process with no shared memory.
+  const heroImages = new Map();
+  for (let i = 0; i < beats.length; i++) {
+    const imagePath = beats[i].params.imagePath;
+    if (!imagePath) continue;
+    try {
+      heroImages.set(i, await loadImage(imagePath));
+    } catch (err) {
+      console.warn(`[renderEngine] failed to load image for beat ${i}, falling back to procedural: ${err.message}`);
+    }
+  }
+
   try {
     for (let frame = startFrame; frame < endFrame; frame++) {
       const globalTime = frame / FPS;
@@ -172,12 +195,26 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         // templateRenderers.js's drawBeatContent for the full
         // reasoning.
         ctx.translate(anchor.x + anchor.contentOffsetX - WIDTH / 2, anchor.y + anchor.contentOffsetY - HEIGHT / 2);
+
+        // Grid/scanlines/data-chips/secondary-accent-shapes density layer -
+        // drawn in this beat's own local WIDTH x HEIGHT frame (same trick as
+        // drawHeroVisual/drawBeatContent below), so it lines up correctly
+        // once the camera settles on this beat. tagLabel/sceneIndex/
+        // sceneCount are omitted (null/undefined) because drawScreenTag
+        // below already owns the corner-tag job with proper camera-opacity
+        // crossfade - passing them here too would draw two overlapping tags.
+        drawComposition(
+          ctx, null, beat.params.accentShape || 'bracket', localTime, beat.duration,
+          globalTime, WIDTH, HEIGHT, accentColor, undefined, undefined, system, secondaryColor
+        );
+
         // iconCallout already draws its own icon as primary content -
         // adding a separate hero visual on top duplicated the same
         // shape twice in one frame, confirmed by actually looking at
         // rendered output. Only templates that are purely text/number
         // based (no icon of their own) get the added hero visual.
         const TEMPLATES_WITH_OWN_ICON = new Set(['iconCallout', 'badgeUnlock']);
+        const heroImage = heroImages.get(idx);
         if (beat.template === 'visualMoment') {
           // Genuinely text-free - direct response to "I just want a
           // visual, I don't want text." Every other template pairs a
@@ -185,14 +222,20 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
           // it gets the shape at real scale (2.4x normal) and dead
           // center, not squeezed into the small "leaves room for text
           // below" position every other beat uses.
-          const heroShape = beat.params.heroVisual || 'mark';
-          drawHeroVisual(ctx, heroShape, accentColor, localTime, beat.duration, WIDTH, HEIGHT, system, {
-            carBodyStyle: beat.params.carBodyStyle,
-            carBadgeText: beat.params.carBadgeText,
-            carBadgeShape: beat.params.carBadgeShape,
-          }, beat.params.customShapeRecipe, 0.42, 340);
+          if (heroImage) {
+            drawHeroImage(ctx, heroImage, WIDTH, HEIGHT, accentColor, localTime, beat.duration, system, idx);
+          } else {
+            const heroShape = beat.params.heroVisual || 'mark';
+            drawHeroVisual(ctx, heroShape, accentColor, localTime, beat.duration, WIDTH, HEIGHT, system, {
+              carBodyStyle: beat.params.carBodyStyle,
+              carBadgeText: beat.params.carBadgeText,
+              carBadgeShape: beat.params.carBadgeShape,
+            }, beat.params.customShapeRecipe, 0.4, 460);
+          }
         } else {
-          if (!TEMPLATES_WITH_OWN_ICON.has(beat.template)) {
+          if (heroImage && !TEMPLATES_WITH_OWN_ICON.has(beat.template)) {
+            drawHeroImage(ctx, heroImage, WIDTH, HEIGHT, accentColor, localTime, beat.duration, system, idx);
+          } else if (!TEMPLATES_WITH_OWN_ICON.has(beat.template)) {
             const heroShape = beat.params.heroVisual || 'mark';
             drawHeroVisual(ctx, heroShape, accentColor, localTime, beat.duration, WIDTH, HEIGHT, system, {
               carBodyStyle: beat.params.carBodyStyle,

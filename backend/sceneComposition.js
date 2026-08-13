@@ -309,13 +309,18 @@ function drawAccentShape(ctx, shape) {
 // smaller scale/lower opacity, so the frame always has multiple
 // distinct accent shapes at once, not a single repeated one.
 const ACCENT_SHAPES_ALL = ['bracket', 'crosshair', 'dots', 'arrow', 'plus', 'triangle'];
+// Opacity/rotation speed roughly doubled from the original values -
+// at the old 0.3-1.0 opacityMul range (scaled again by a 0.35 base
+// alpha below), the smaller slots landed under ~0.1 final opacity,
+// functionally invisible. These are meant to be part of "something is
+// always moving," not a subliminal detail nobody actually perceives.
 const ACCENT_SLOTS = [
-  { x: 0.82, y: 0.78, scaleMul: 1, opacityMul: 1, rotSpeed: 0.15 },
-  { x: 0.16, y: 0.85, scaleMul: 0.6, opacityMul: 0.5, rotSpeed: -0.1 },
-  { x: 0.88, y: 0.14, scaleMul: 0.5, opacityMul: 0.4, rotSpeed: 0.22 },
-  { x: 0.55, y: 0.92, scaleMul: 0.45, opacityMul: 0.35, rotSpeed: -0.18 },
-  { x: 0.08, y: 0.35, scaleMul: 0.4, opacityMul: 0.3, rotSpeed: 0.12 },
-  { x: 0.65, y: 0.08, scaleMul: 0.4, opacityMul: 0.3, rotSpeed: -0.2 },
+  { x: 0.82, y: 0.78, scaleMul: 1.1, opacityMul: 1, rotSpeed: 0.45 },
+  { x: 0.16, y: 0.85, scaleMul: 0.7, opacityMul: 0.75, rotSpeed: -0.34 },
+  { x: 0.88, y: 0.14, scaleMul: 0.6, opacityMul: 0.65, rotSpeed: 0.55 },
+  { x: 0.55, y: 0.92, scaleMul: 0.55, opacityMul: 0.6, rotSpeed: -0.5 },
+  { x: 0.08, y: 0.35, scaleMul: 0.5, opacityMul: 0.55, rotSpeed: 0.4 },
+  { x: 0.65, y: 0.08, scaleMul: 0.5, opacityMul: 0.55, rotSpeed: -0.52 },
 ];
 
 function pickSecondaryShape(primaryShape, slotIndex) {
@@ -329,13 +334,17 @@ function drawSecondaryAccents(ctx, primaryShape, sceneLocalT, width, height, acc
     if (entranceT <= 0) return;
 
     const shape = i === 0 ? primaryShape : pickSecondaryShape(primaryShape, i - 1);
-    const opacity = easeOutCubic(entranceT) * 0.35 * slot.opacityMul;
+    const opacity = easeOutCubic(entranceT) * 0.55 * slot.opacityMul;
     const rotation = sceneLocalT * slot.rotSpeed;
     const scale = lerp(0.7, 1, easeOutCubic(entranceT)) * slot.scaleMul;
+    // A real orbit, not just spin-in-place - each slot drifts along a
+    // small loop, phase-offset per slot so they don't move in unison.
+    const bobX = Math.sin(sceneLocalT * 0.7 + i * 1.7) * 14;
+    const bobY = Math.cos(sceneLocalT * 0.55 + i * 1.7) * 14;
 
     ctx.save();
     ctx.globalAlpha = opacity;
-    ctx.translate(slot.x * width, slot.y * height);
+    ctx.translate(slot.x * width + bobX, slot.y * height + bobY);
     ctx.rotate(rotation);
     ctx.scale(scale, scale);
     ctx.strokeStyle = accentColor;

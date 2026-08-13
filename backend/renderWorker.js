@@ -4,8 +4,13 @@
 // anything unexpected crashes mid-render, only this one job dies -
 // the main server and every other in-flight request keep running.
 
+const os = require('os');
+const path = require('path');
 const { generateSceneJSON, generateEditedSceneJSON } = require('./mistralClient');
 const { renderLongFormVideo } = require('./longVideoOrchestrator');
+const { prefetchBeatImages, cleanupBeatImages } = require('./imagePrefetch');
+const { prefetchNarration, cleanupNarration } = require('./narrationPrefetch');
+const { muxNarrationOntoVideo } = require('./audioMux');
 
 let currentJobId = null;
 
@@ -37,17 +42,32 @@ process.on('message', async ({ jobId, prompt, targetDurationSeconds, parentScene
       ? await generateEditedSceneJSON(parentSceneJSON, prompt, targetDurationSeconds || 12)
       : await generateSceneJSON(prompt, targetDurationSeconds || 12);
 
+    // sceneJSON (unmodified) goes back to the parent HERE - that's what
+    // gets persisted to Supabase and reused as edit context later, so
+    // it must never contain local temp file paths. Image prefetch below
+    // produces a SEPARATE render-only copy for renderLongFormVideo.
     await sendAndFlush({ type: 'scenes_ready', jobId, sceneJSON });
     await sendAndFlush({ type: 'status', jobId, status: 'rendering', progress: 0 });
 
-    const localFilePath = await renderLongFormVideo(jobId, sceneJSON, (pct) => {
+    // Narration FIRST - it overrides each spoken beat's `duration` to
+    // match how long the audio actually takes to say, which the world
+    // timeline (and therefore image prefetch, which is keyed by beat
+    // index rather than timing) needs to already reflect.
+    const { sceneJSON: narratedSceneJSON, audioFiles } = await prefetchNarration(sceneJSON, jobId);
+    const renderSceneJSON = await prefetchBeatImages(narratedSceneJSON, jobId);
+
+    const renderedPath = await renderLongFormVideo(jobId, renderSceneJSON, (pct) => {
       if (process.send) process.send({ type: 'progress', jobId, progress: pct });
     });
+
+    const localFilePath = await muxNarrationOntoVideo(renderedPath, renderSceneJSON, audioFiles, jobId, path.join(os.tmpdir(), 'shortform-renders'));
 
     await sendAndFlush({ type: 'render_complete', jobId, localFilePath });
   } catch (err) {
     await sendAndFlush({ type: 'failed', jobId, error: String((err && err.message) || err) });
   } finally {
+    cleanupBeatImages(jobId);
+    cleanupNarration(jobId);
     process.exit(0);
   }
 });

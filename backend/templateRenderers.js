@@ -1,6 +1,7 @@
 const { easeOutCubic, easeOutBack, easeOutExpo, easeInOutCubic, lerp, clamp01 } = require('./easing');
 const { getVisualSystem } = require('./visualSystems');
-const { drawFramingCard } = require('./sharedRenderHelpers');
+const { drawFramingCard, LAYOUT, TYPE_SCALE, layoutKineticChars, drawKineticChars } = require('./sharedRenderHelpers');
+const { buildShadeGradient } = require('./colorUtils');
 const { splitCompare, listReveal, quoteCallout, progressBar, countdownTimer, gridReveal, checklistTick, bigNumberStat, pieChartReveal, duoStatCompare, badgeUnlock, tickerScroll, statGrid, arrowFlow, calloutBubble, barChartCompare, avatarStack } = require('./templateRenderersExtended');
 
 /**
@@ -158,14 +159,31 @@ function drawContactShadow(ctx, x, y, radiusX, radiusY, alpha) {
 }
 
 function kineticTextReveal(ctx, params, t, width, height, system) {
-  const { text, duration, style, textFrame } = params;
+  // Named lineGroupParam (not "lines") to avoid colliding with the
+  // word-wrap "lines" array built further down in this same function's
+  // single-statement path - confirmed the hard way (a real
+  // SyntaxError: Identifier 'lines' has already been declared).
+  const { text, lines: lineGroupParam, duration, style, textFrame } = params;
   const accentColor = params.color || '#FF5C1A';
+
+  // Multi-line mode: 2-4 short RELATED phrases stacked and revealed as
+  // a group in ONE beat, at full kinetic-text size/energy - this is
+  // what "grouped content" is supposed to look like. Direct response
+  // to real feedback: routing grouped content through the small-UI-
+  // widget templates (checkbox lists, bullet lists, grid cards) reads
+  // as a dated dashboard component, not bold video typography. This
+  // keeps the exact same big/bold/glowing per-character kinetic
+  // reveal as a single statement, just several of them in sequence.
+  if (Array.isArray(lineGroupParam) && lineGroupParam.length > 0) {
+    return kineticMultiLineReveal(ctx, lineGroupParam.slice(0, 4), accentColor, t, duration, width, height, system, textFrame);
+  }
+
   const isMixedWeight = style === 'mixed-weight';
   // Real per-beat framing variety, not the same flat-glow treatment
   // every time - direct response to reference feedback ("sometimes
   // the box containing text changes, sometimes the color changes
   // with a gradient"). 'none' keeps the exact original look.
-  const frame = ['card', 'gradient'].includes(textFrame) ? textFrame : 'none';
+  const frame = ['card', 'gradient', 'highlight'].includes(textFrame) ? textFrame : 'none';
 
   // mixed-weight: the single longest word gets rendered larger/heavier
   // than the rest, creating real typographic hierarchy within the
@@ -180,9 +198,9 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
     words.forEach((w, i) => { if (w.length > longest) { longest = w.length; emphasisWordIndex = i; } });
   }
 
-  const baseFontSize = 50;
-  const emphasisFontSize = 66;
-  const lineHeight = 58;
+  const baseFontSize = TYPE_SCALE.title;
+  const emphasisFontSize = TYPE_SCALE.emphasis;
+  const lineHeight = baseFontSize * 1.16;
   const maxWidth = width * 0.82;
 
   // Word-wrap using the base font size for measurement - emphasis
@@ -207,7 +225,7 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
   if (current.length) lines.push(current);
 
   const totalHeight = lines.length * lineHeight;
-  const startY = height * 0.42 - totalHeight / 2 + lineHeight / 2;
+  const startY = height * LAYOUT.contentCenterY - totalHeight / 2 + lineHeight / 2;
 
   const chars = [];
   lines.forEach((lineWords, li) => {
@@ -222,7 +240,7 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
       ctx.font = `${system.fontWeight} ${fontSize}px ${system.fontFamily}`;
       for (const ch of word + ' ') {
         const w = ctx.measureText(ch).width;
-        chars.push({ ch, x: cx + w / 2, y: cy, index: chars.length, fontSize, isEmphasis: wordIndex === emphasisWordIndex });
+        chars.push({ ch, x: cx + w / 2, y: cy, index: chars.length, fontSize, isEmphasis: wordIndex === emphasisWordIndex, lineIndex: li });
         cx += w;
       }
     });
@@ -240,6 +258,32 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
     const minY = startY - lineHeight / 2 - 16;
     const maxY = startY + (lines.length - 1) * lineHeight + lineHeight / 2 + 16;
     drawFramingCard(ctx, (minX + maxX) / 2, (minY + maxY) / 2, maxX - minX, maxY - minY, t, duration, accentColor);
+  }
+
+  // Highlight: a marker-style bar sweeping in behind each LINE
+  // (independently timed per line, not per character - a highlighter
+  // marks a phrase at a time, not letter by letter), with a slight
+  // fixed rotation and overshoot past the line's own edges so it reads
+  // as a real hand-drawn mark rather than a precise UI rectangle.
+  if (frame === 'highlight' && chars.length > 0) {
+    for (let li = 0; li < lines.length; li++) {
+      const lineChars = chars.filter((c) => c.lineIndex === li);
+      if (lineChars.length === 0) continue;
+      const minX = Math.min(...lineChars.map((c) => c.x)) - 10;
+      const maxX = Math.max(...lineChars.map((c) => c.x)) + 10;
+      const cy = lineChars[0].y;
+      const lineStart = lineChars[0].index * perCharDelay;
+      const sweepT = clamp01((t - lineStart - duration * 0.05) / (duration * 0.22));
+      if (sweepT <= 0) continue;
+      const sweepWidth = lerp(0, maxX - minX, easeOutCubic(sweepT));
+      ctx.save();
+      ctx.globalAlpha = 0.32;
+      ctx.fillStyle = accentColor;
+      ctx.translate(minX, cy);
+      ctx.rotate(-0.02 + (li % 2 === 0 ? 0.012 : -0.012));
+      ctx.fillRect(0, -baseFontSize * 0.42, sweepWidth, baseFontSize * 0.86);
+      ctx.restore();
+    }
   }
 
   // Gradient fill: computed once (not per-character) for performance,
@@ -265,7 +309,12 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
 
     const opacity = easeOutCubic(charT);
     const scale = lerp(1.4, 1, easeOutBack(charT));
-    const jitter = Math.sin(c.index * 12.9898) * 1.5;
+    // Was a fixed per-character offset (a function of index only, never
+    // of time) - looked staggered on arrival but every character froze
+    // in place the instant it landed. Now continuously bobs for as long
+    // as it's on screen, still phase-offset per character so they don't
+    // all move in lockstep.
+    const jitter = Math.sin(t * 1.8 + c.index * 12.9898) * 2.6;
 
     ctx.font = `${system.fontWeight} ${c.fontSize}px ${system.fontFamily}`;
     ctx.save();
@@ -276,7 +325,11 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
       ctx.shadowColor = accentColor;
       // Emphasis word glows a bit brighter, reinforcing the size
       // hierarchy instead of every character getting identical glow.
-      ctx.shadowBlur = lerp(0, c.isEmphasis ? 24 : 16, clamp01((t - charStart - duration * 0.15) / (duration * 0.2)));
+      // Ramps up on landing, then keeps a slow rhythmic pulse rather
+      // than holding one static blur value for the rest of the beat.
+      const glowRamp = clamp01((t - charStart - duration * 0.15) / (duration * 0.2));
+      const glowPulse = 1 + Math.sin(t * 2.2 + c.index * 0.5) * 0.35 * glowRamp;
+      ctx.shadowBlur = lerp(0, c.isEmphasis ? 24 : 16, glowRamp) * glowPulse;
     }
     ctx.fillStyle = gradientFill || system.heroTextColor;
     ctx.fillText(c.ch, 0, 0);
@@ -284,13 +337,92 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
   }
 }
 
+/**
+ * Several short related lines, stacked and revealed as a GROUP in one
+ * beat - each line gets its own full-size kinetic per-character reveal
+ * (same mechanism as single-statement kineticTextReveal, via the
+ * shared layoutKineticChars/drawKineticChars helpers), staggered so
+ * line 2 starts landing shortly after line 1, not simultaneously and
+ * not one continuous sentence. A thin accent-colored marker sits to the
+ * left of each line - not a checkbox, not a numbered badge, not a
+ * bullet dot - just enough structure to read as "these belong
+ * together" without looking like list-app UI.
+ */
+function kineticMultiLineReveal(ctx, lineList, accentColor, t, duration, width, height, system, textFrame) {
+  const frame = ['card', 'highlight'].includes(textFrame) ? textFrame : 'none';
+  const fontSize = lineList.length >= 4 ? TYPE_SCALE.subhead + 6 : TYPE_SCALE.title;
+  const lineHeight = fontSize * 1.3;
+  const totalHeight = lineList.length * lineHeight;
+  const startY = height * LAYOUT.contentCenterY - totalHeight / 2 + lineHeight / 2;
+  const perLineDelay = Math.min(duration * 0.28, 0.55);
+
+  if (frame === 'card') {
+    const cardT = clamp01(t / (duration * 0.2));
+    if (cardT > 0) {
+      drawFramingCard(ctx, width / 2, height * LAYOUT.contentCenterY, width * 0.88, totalHeight + 48, t, duration, accentColor);
+    }
+  }
+
+  lineList.forEach((line, li) => {
+    const lineStart = li * perLineDelay;
+    const lineLocalT = t - lineStart;
+    if (lineLocalT <= 0) return;
+    const lineDuration = duration - lineStart;
+    const cy = startY + li * lineHeight;
+
+    const layout = layoutKineticChars(ctx, line, {
+      fontFamily: system.fontFamily, fontWeight: system.fontWeight, fontSize,
+      lineHeight, maxWidth: width * 0.78, centerX: width / 2 + 18, centerY: cy,
+    });
+
+    // Accent marker - a short vertical bar that grows in just before
+    // its line's text starts, echoing quoteCallout's accent-bar
+    // language rather than introducing a new UI element.
+    const markerT = clamp01((lineLocalT - 0.02) / 0.25);
+    if (markerT > 0 && layout.chars.length > 0) {
+      const minX = Math.min(...layout.chars.map((c) => c.x)) - 26;
+      ctx.save();
+      ctx.globalAlpha = markerT;
+      ctx.strokeStyle = accentColor;
+      ctx.lineWidth = 3;
+      const barH = lerp(0, fontSize * 0.7, easeOutCubic(markerT));
+      ctx.beginPath();
+      ctx.moveTo(minX, cy - barH / 2);
+      ctx.lineTo(minX, cy + barH / 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    let gradientFill = null;
+    if (frame === 'highlight' && layout.chars.length > 0) {
+      const minX = Math.min(...layout.chars.map((c) => c.x)) - 10;
+      const maxX = Math.max(...layout.chars.map((c) => c.x)) + 10;
+      const sweepT = clamp01((lineLocalT - 0.05) / 0.28);
+      if (sweepT > 0) {
+        ctx.save();
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = accentColor;
+        ctx.fillRect(minX, cy - fontSize * 0.42, lerp(0, maxX - minX, easeOutCubic(sweepT)), fontSize * 0.86);
+        ctx.restore();
+      }
+    }
+
+    drawKineticChars(ctx, layout.chars, lineLocalT, lineDuration, {
+      fontFamily: system.fontFamily, fontWeight: system.fontWeight, fontSize,
+      fillStyle: gradientFill || system.heroTextColor,
+      glowColor: system.heroUsesGlow ? accentColor : null,
+      staggerWindow: Math.min(lineDuration * 0.35, 0.4),
+    });
+  });
+}
+
 function rippleDrop(ctx, params, t, width, height, system) {
   const { caption, duration } = params;
   const color = params.color || '#FF5C1A';
 
   const centerX = width / 2;
-  const landY = height * 0.38;
-  const startY = height * 0.18;
+  const landY = height * (LAYOUT.contentCenterY - 0.1);
+  const startY = height * 0.2;
 
   const dropT = clamp01(t / (duration * 0.55));
   const y = lerp(startY, landY, easeOutCubic(dropT));
@@ -342,10 +474,10 @@ function rippleDrop(ctx, params, t, width, height, system) {
     const captionT = clamp01((t - duration * 0.5) / (duration * 0.3));
     ctx.save();
     ctx.globalAlpha = easeOutCubic(captionT);
-    ctx.font = `${system.fontWeight} 34px ${system.fontFamily}`;
+    ctx.font = `${system.fontWeight} ${TYPE_SCALE.subhead}px ${system.fontFamily}`;
     ctx.textAlign = 'center';
     ctx.fillStyle = system.heroTextColor;
-    ctx.fillText(caption, centerX, height * 0.62);
+    ctx.fillText(caption, centerX, height * LAYOUT.captionY);
     ctx.restore();
   }
 }
@@ -359,24 +491,23 @@ function statCounter(ctx, params, t, width, height, system) {
   const opacity = easeOutCubic(entranceT);
   const yOffset = lerp(20, 0, easeOutBack(clamp01(t / (duration * 0.35))));
 
-  drawContactShadow(ctx, width / 2, height * 0.42 + 60, 90, 18, opacity * 0.4);
+  drawContactShadow(ctx, width / 2, height * LAYOUT.contentCenterY + 85, 120, 22, opacity * 0.4);
 
   ctx.save();
   ctx.globalAlpha = opacity;
-  ctx.translate(width / 2, height * 0.42 + yOffset);
+  ctx.translate(width / 2, height * LAYOUT.contentCenterY + yOffset);
 
   if (frame === 'card') {
-    ctx.font = `900 76px ${system.fontFamily}`;
+    ctx.font = `900 ${TYPE_SCALE.hero}px ${system.fontFamily}`;
     const approxWidth = ctx.measureText(`${toValue}${suffix || ''}`).width;
-    drawFramingCard(ctx, 0, -4, approxWidth + 56, 130, t, duration, accentColor);
+    drawFramingCard(ctx, 0, -6, approxWidth + 72, 178, t, duration, accentColor);
   }
 
   ctx.save();
   ctx.textAlign = 'center';
   if (system.heroUsesGlow) ctx.shadowColor = accentColor;
-  ctx.font = `900 76px ${system.fontFamily}`;
+  ctx.font = `900 ${TYPE_SCALE.hero}px ${system.fontFamily}`;
   if (frame === 'gradient') {
-    ctx.font = `900 76px ${system.fontFamily}`;
     const halfWidth = ctx.measureText(`${toValue}${suffix || ''}`).width / 2;
     const grad = ctx.createLinearGradient(-halfWidth, 0, halfWidth, 0);
     grad.addColorStop(0, system.heroTextColor);
@@ -385,13 +516,13 @@ function statCounter(ctx, params, t, width, height, system) {
   } else {
     ctx.fillStyle = system.heroTextColor;
   }
-  drawDigitRoll(ctx, fromValue, toValue, suffix, t, duration, system.heroUsesGlow, 0, -10);
+  drawDigitRoll(ctx, fromValue, toValue, suffix, t, duration, system.heroUsesGlow, 0, -14);
   ctx.restore();
 
-  ctx.font = `500 26px ${system.fontFamily}`;
+  ctx.font = `500 ${TYPE_SCALE.body}px ${system.fontFamily}`;
   ctx.fillStyle = system.mutedTextColor;
   ctx.textAlign = 'center';
-  ctx.fillText(label, 0, 40);
+  ctx.fillText(label, 0, 56);
   ctx.restore();
 }
 
@@ -631,23 +762,29 @@ function iconCallout(ctx, params, t, width, height, system) {
   const opacity = easeOutCubic(clamp01(t / (duration * 0.25)));
   const popScale = easeOutBack(clamp01(t / (duration * 0.4)));
 
-  drawContactShadow(ctx, width / 2, height * 0.42 - 20, 44, 12, opacity * 0.35);
+  // iconCallout draws its own icon in place of a separate hero visual
+  // (see TEMPLATES_WITH_OWN_ICON in renderEngine.js) - it's the ONLY
+  // visual in this beat, so it gets real hero-scale size, not the small
+  // ~70px treatment a decorative icon would get.
+  const iconCenterY = height * LAYOUT.heroPositionY + 20;
+  drawContactShadow(ctx, width / 2, iconCenterY + 100, 60, 16, opacity * 0.35);
 
   ctx.save();
   ctx.globalAlpha = opacity;
-  ctx.translate(width / 2, height * 0.42 - 60);
+  ctx.translate(width / 2, iconCenterY);
   ctx.scale(popScale, popScale);
   if (system.heroUsesGlow) {
     ctx.shadowColor = accentColor;
     ctx.shadowBlur = 18;
   }
-  ctx.strokeStyle = accentColor;
-  ctx.fillStyle = accentColor;
+  const size = 150;
+  const iconShade = buildShadeGradient(ctx, accentColor, -size * 0.55, -size * 0.55, size * 0.55, size * 0.55);
+  ctx.strokeStyle = iconShade;
+  ctx.fillStyle = iconShade;
   ctx.lineWidth = 7;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  const size = 70;
   if (icon === 'money') {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -752,9 +889,9 @@ function iconCallout(ctx, params, t, width, height, system) {
   ctx.save();
   ctx.globalAlpha = opacity;
   ctx.textAlign = 'center';
-  ctx.font = `600 32px ${system.fontFamily}`;
+  ctx.font = `600 ${TYPE_SCALE.subhead}px ${system.fontFamily}`;
   ctx.fillStyle = system.heroTextColor;
-  wrapText(ctx, text, width / 2, height * 0.42 + 20, width * 0.75, 40);
+  wrapText(ctx, text, width / 2, height * LAYOUT.contentCenterY + 40, width * 0.78, 50);
   ctx.restore();
 }
 
@@ -775,7 +912,7 @@ function shapeReveal(ctx, params, t, width, height, system) {
     scale *= lerp(1, 1.4, easeOutCubic(holdT));
   }
 
-  drawContactShadow(ctx, width / 2, height * 0.42 + 110, 70 * scale, 16, opacity * 0.4);
+  drawContactShadow(ctx, width / 2, height * LAYOUT.contentCenterY + 150, 95 * scale, 20, opacity * 0.4);
 
   ctx.save();
   ctx.globalAlpha = opacity;
@@ -784,15 +921,15 @@ function shapeReveal(ctx, params, t, width, height, system) {
     ctx.shadowColor = color;
     ctx.shadowBlur = 35;
   }
-  ctx.fillStyle = color;
-  ctx.translate(width / 2, height * 0.42);
+  ctx.translate(width / 2, height * LAYOUT.contentCenterY);
   ctx.scale(scale * squashX, scale * squashY);
+  ctx.fillStyle = buildShadeGradient(ctx, color, -135, -135, 135, 135);
 
   if (shape === 'square') {
-    ctx.fillRect(-90, -90, 180, 180);
+    ctx.fillRect(-125, -125, 250, 250);
   } else {
     ctx.beginPath();
-    ctx.arc(0, 0, 100, 0, Math.PI * 2);
+    ctx.arc(0, 0, 135, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
