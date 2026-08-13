@@ -677,7 +677,17 @@
 
   function pollJob(jobId) {
     const POLL_INTERVAL_MS = 2000;
-    const MAX_WAIT_MS = 6 * 60 * 1000; // give up after 6 minutes
+    // Backend's own worst-case budget is now bigger than this used to
+    // assume: narration is sequential per beat (each up to ~30s with
+    // retry), then up to ~4 chunks (30s video / 8s chunks) each with
+    // its own 3min safety timeout in longVideoOrchestrator.js - a
+    // render that's genuinely working, just slow on a throttled host,
+    // can legitimately take longer than 6 minutes end to end without
+    // anything being stuck. Giving up client-side while the backend is
+    // still inside its own budget just misreports a slow-but-working
+    // render as failed (the job itself isn't lost - refreshing the
+    // page resumes polling it - but the user sees a false error first).
+    const MAX_WAIT_MS = 15 * 60 * 1000; // give up after 15 minutes
     const MAX_CONSECUTIVE_FAILURES = 5; // tolerate ~10s of blips (e.g. a server restart) before giving up
     const startedAt = Date.now();
     let consecutiveFailures = 0;
