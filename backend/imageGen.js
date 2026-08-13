@@ -37,7 +37,15 @@ function fetchOnce(prompt, { width, height }) {
  * consistency. Throws on total failure; imagePrefetch.js is the layer
  * that turns that into a silent per-beat fallback, not this one.
  */
-async function generateImage(prompt, { width = 720, height = 1280 } = {}) {
+// The composited photo card (imageComposite.js) only ever displays at
+// ~605x563px (0.84*WIDTH x 0.44*HEIGHT of a 720x1280 frame) - requesting
+// the full 720x1280 frame size decoded roughly 3x more pixel data than
+// ever gets drawn. On a memory-constrained host (confirmed: the
+// production deploy is capped at 512MB) that's real, avoidable decoded-
+// buffer weight held for a whole chunk's render, not a rounding error.
+// 640x800 comfortably covers the display box without upscaling while
+// cutting decode memory by roughly half.
+async function generateImage(prompt, { width = 640, height = 800 } = {}) {
   try {
     return await fetchOnce(prompt, { width, height });
   } catch (err) {

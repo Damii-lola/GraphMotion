@@ -172,10 +172,26 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
     ]);
   }
 
+  // Real memory bug, not just wasted decode time: this used to loop
+  // over EVERY beat in the whole video regardless of this call's own
+  // [timeStart, timeEnd) - meaning every chunk of a long, image-heavy
+  // video independently decoded and held ALL of that video's images in
+  // memory at once, not just the ones its own ~15s slice could ever
+  // draw. On a 512MB container that's exactly the kind of thing that
+  // turns into swapping/thrashing (which LOOKS like a hang from the
+  // outside, hence "Chunk N timed out" even after the loadImage
+  // timeout fix) or an outright OOM kill. A small buffer around the
+  // range covers the arrival-window crossfade, where the outgoing
+  // beat can still be drawn slightly past its own nominal `end`.
+  const CHUNK_RANGE_BUFFER_SECONDS = 2;
   const heroImages = new Map();
   for (let i = 0; i < beats.length; i++) {
-    const imagePath = beats[i].params.imagePath;
+    const beat = beats[i];
+    const imagePath = beat.params.imagePath;
     if (!imagePath) continue;
+    const overlapsThisChunk = beat.start < timeEnd + CHUNK_RANGE_BUFFER_SECONDS
+      && beat.end > timeStart - CHUNK_RANGE_BUFFER_SECONDS;
+    if (!overlapsThisChunk) continue;
     try {
       heroImages.set(i, await loadImageWithTimeout(imagePath));
     } catch (err) {
