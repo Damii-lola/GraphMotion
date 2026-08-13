@@ -153,12 +153,31 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   // loads the same local file cheaply (disk read + decode, no network)
   // independently of any other chunk, since each chunk is its own
   // forked process with no shared memory.
+  //
+  // Timeout-guarded, not a bare await - confirmed directly (a real
+  // "Chunk N timed out" failure, hard to diagnose after the fact since
+  // it just looks like a stall) that a malformed/corrupted image file
+  // - entirely possible from a free, unauthenticated generator like
+  // Pollinations - can make this native decoder hang indefinitely
+  // instead of rejecting, with nothing here to catch it. That hang sat
+  // directly inside the per-chunk render path, silently consuming the
+  // whole 5-minute chunk safety timeout in longVideoOrchestrator.js.
+  // Same "external I/O must never be trusted to fail cleanly on its
+  // own" lesson as ttsGen.js's timeout, applied here too.
+  const IMAGE_LOAD_TIMEOUT_MS = 8000;
+  function loadImageWithTimeout(imagePath) {
+    return Promise.race([
+      loadImage(imagePath),
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`loadImage timed out after ${IMAGE_LOAD_TIMEOUT_MS}ms`)), IMAGE_LOAD_TIMEOUT_MS)),
+    ]);
+  }
+
   const heroImages = new Map();
   for (let i = 0; i < beats.length; i++) {
     const imagePath = beats[i].params.imagePath;
     if (!imagePath) continue;
     try {
-      heroImages.set(i, await loadImage(imagePath));
+      heroImages.set(i, await loadImageWithTimeout(imagePath));
     } catch (err) {
       console.warn(`[renderEngine] failed to load image for beat ${i}, falling back to procedural: ${err.message}`);
     }
