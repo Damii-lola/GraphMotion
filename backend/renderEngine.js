@@ -22,7 +22,12 @@ const {
 
 const WIDTH = 720;
 const HEIGHT = 1280;
-const FPS = 30;
+// Dropped from 30 - short-form vertical video reads as perfectly
+// smooth at 24fps, and it's a direct ~20% cut to both total frames
+// drawn (less cumulative Skia native allocation per chunk process
+// before it exits) and wall-clock render time, which is exactly what
+// was needed against the production per-chunk timeout.
+const FPS = 24;
 
 const FALLBACK_TAGS = {
   kineticTextReveal: 'INSIGHT', rippleDrop: 'ALERT', statCounter: 'DATA',
@@ -307,7 +312,10 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         '-framerate', String(FPS),
         '-i', path.join(framesDir, 'f%06d.png'),
         '-c:v', 'libx264',
-        '-preset', 'veryfast',
+        // ultrafast over veryfast - encode speed matters far more than
+        // the small bitrate-efficiency loss for short-form vertical
+        // video, and this runs once per chunk on the memory-capped host.
+        '-preset', 'ultrafast',
         '-pix_fmt', 'yuv420p',
         outputPath,
       ]);

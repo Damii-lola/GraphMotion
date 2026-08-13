@@ -200,8 +200,22 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
   scheduleRender(job.id, prompt.trim(), duration, parentSceneJSON);
 });
 
+// Explicit V8 heap ceiling for the render worker - this process either
+// orchestrates chunked rendering (light) or, for videos short enough to
+// skip chunking entirely (<= CHUNK_THRESHOLD_SECONDS in
+// longVideoOrchestrator.js), does the actual Skia frame rendering
+// itself in-process. Capping it means a real overrun surfaces as an
+// immediate, log-visible "JavaScript heap out of memory" crash instead
+// of silently pushing the whole <500MB container toward OOM/swap,
+// which is what a production "Chunk N timed out" with no other signal
+// actually looks like from outside.
+const RENDER_WORKER_MAX_OLD_SPACE_MB = 260;
+
 function startRenderWorker(jobId, prompt, targetDurationSeconds, parentSceneJSON, onSettled) {
-  const child = fork(path.join(__dirname, 'renderWorker.js'), { stdio: 'inherit' });
+  const child = fork(path.join(__dirname, 'renderWorker.js'), {
+    stdio: 'inherit',
+    execArgv: [`--max-old-space-size=${RENDER_WORKER_MAX_OLD_SPACE_MB}`],
+  });
 
   let settled = false;
   // Progress messages arrive roughly 6x/second per chunk with zero

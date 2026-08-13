@@ -20,8 +20,17 @@ const { buildTimeline, renderJobToFile } = require('./renderEngine');
 // safety-margin extremes (5s/6s) - restored to more reasonable values
 // that reduce per-chunk process-spawn overhead, now that the
 // underlying cause is actually fixed rather than worked around.
-const CHUNK_THRESHOLD_SECONDS = 20;
-const CHUNK_SIZE_SECONDS = 15;
+//
+// Pulled back down from 20s/15s after the loadImage-timeout and
+// chunk-scoped-image fixes still weren't enough on the real 512MB
+// production host - each chunk's own peak (frame buffers + Skia
+// native growth + decoded hero images) scales with how much work one
+// forked process does before it exits and gets reclaimed. Smaller
+// chunks mean more frequent full reclamation and a lower per-process
+// ceiling, at the cost of more fork/spawn overhead - worth it when
+// the alternative is an OOM-flavored timeout.
+const CHUNK_THRESHOLD_SECONDS = 10;
+const CHUNK_SIZE_SECONDS = 8;
 
 /**
  * Renders sceneJSON to outputPath, transparently chunking if the
@@ -85,9 +94,25 @@ async function renderLongFormVideo(jobId, sceneJSON, onProgress) {
   return finalOutputPath;
 }
 
+// V8's default old-space ceiling scales with total system memory, which
+// on a capped container is a lie the process believes until it's too
+// late - it'll happily grow well past what the host can actually give
+// it. Capping it explicitly makes a real overrun a fast, clear
+// "JavaScript heap out of memory" crash (visible in logs, immediately
+// diagnosable) instead of the host silently swapping/thrashing, which
+// is what a slow, mysterious 5-minute chunk timeout actually looks
+// like from the outside. This bounds the JS heap only - it does not
+// cap native Skia canvas memory or the separately-spawned ffmpeg
+// process, which is why the CHUNK_SIZE_SECONDS reduction above still
+// matters even with this in place.
+const CHUNK_WORKER_MAX_OLD_SPACE_MB = 220;
+
 function renderSingleChunk(jobId, sceneJSON, timeStart, timeEnd, outputPath, chunkIndex, onProgress) {
   return new Promise((resolve, reject) => {
-    const child = fork(path.join(__dirname, 'renderChunkWorker.js'), { stdio: 'inherit' });
+    const child = fork(path.join(__dirname, 'renderChunkWorker.js'), {
+      stdio: 'inherit',
+      execArgv: [`--max-old-space-size=${CHUNK_WORKER_MAX_OLD_SPACE_MB}`],
+    });
 
     // Real bug fixed here: this used to resolve/reject the moment the
     // IPC message arrived, then the orchestrator's loop immediately
@@ -112,7 +137,10 @@ function renderSingleChunk(jobId, sceneJSON, timeStart, timeEnd, outputPath, chu
         child.kill();
         reject(new Error(`Chunk ${chunkIndex} timed out`));
       }
-    }, 5 * 60 * 1000); // 5 min per-chunk safety timeout
+    }, 2 * 60 * 1000); // 2 min per-chunk safety timeout - chunks are now ~8s of
+    // video each (down from 15s), so a healthy chunk finishes in well
+    // under a minute; 5 min was mostly just delaying the inevitable
+    // failure report on a genuinely stuck/thrashing chunk.
 
     function maybeFinish() {
       if (settled || !hasExited) return;
