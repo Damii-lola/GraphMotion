@@ -31,27 +31,48 @@ function extractJson(text) {
  * between the two, so those are the only things parameterized here
  * rather than duplicating this whole function twice.
  */
+// Every OTHER external call in this codebase has an explicit timeout
+// (imageGen.js's 20s AbortController, ttsGen.js's 15s + connection
+// close) - this one didn't. node-fetch has no default timeout of its
+// own, so a stalled connection to Mistral's API left this awaitable
+// forever, with nothing anywhere upstream (server.js has no overall
+// job timeout either) to ever catch it - a job could sit in
+// "writing_scenes" indefinitely with no error, no retry, nothing.
+const MISTRAL_TIMEOUT_MS = 45000;
+
 async function callMistralForSceneJSON(systemPrompt, userMessage, targetDurationSeconds, retriesLeft, onRetry) {
   const estimatedScenes = Math.min(42, Math.max(4, Math.round(targetDurationSeconds / 3)));
   const maxTokens = Math.min(16000, 1200 + estimatedScenes * 220);
 
-  const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${pickKey()}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      temperature: 0.7,
-      max_tokens: maxTokens,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage },
-      ],
-    }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MISTRAL_TIMEOUT_MS);
+
+  let response;
+  try {
+    response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${pickKey()}`,
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        temperature: 0.7,
+        max_tokens: maxTokens,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage },
+        ],
+      }),
+    });
+  } catch (err) {
+    if (err.name === 'AbortError') throw new Error(`Mistral request timed out after ${MISTRAL_TIMEOUT_MS}ms`);
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     const errText = await response.text();

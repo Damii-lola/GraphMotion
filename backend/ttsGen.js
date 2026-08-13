@@ -30,18 +30,41 @@ const TIMEOUT_MS = 15000;
 function speakOnce(text, voice) {
   return new Promise((resolve, reject) => {
     let settled = false;
+    const tts = new MsEdgeTTS();
+
+    // REAL LEAK, confirmed by reading msedge-tts's own source: on
+    // timeout this used to just reject and walk away - it never called
+    // tts.close(), so the underlying WebSocket was left fully open.
+    // Worse, the 'data' listener below stays attached and keeps firing
+    // for as long as that abandoned connection keeps receiving audio
+    // from Microsoft's server, pushing into a `chunks` array that
+    // nothing else references but the listener itself - unbounded
+    // growth, held alive by a dangling event handler, for a connection
+    // whose own library doc comment admits can "hang forever with no
+    // error and no 'end' event" on some connections. Every retry (see
+    // generateSpeech) could leak another one on top of it. This runs
+    // sequentially per narration beat inside renderWorker.js's own
+    // process, BEFORE any chunk is forked - so by the time the first
+    // chunk starts rendering, the parent process could already be
+    // sitting on several leaked open sockets eating into the same
+    // <500MB host budget the chunk worker needs, which fits "Chunk 0
+    // timed out" (the smallest possible slice of actual render work)
+    // far better than anything in the render/chunk code itself.
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
+      try { tts.close(); } catch (_) { /* best-effort */ }
       reject(new Error(`msedge-tts timed out after ${TIMEOUT_MS}ms`));
     }, TIMEOUT_MS);
 
-    const tts = new MsEdgeTTS();
     tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3)
       .then(() => tts.toStream(text))
       .then(({ audioStream }) => {
         const chunks = [];
-        audioStream.on('data', (chunk) => chunks.push(chunk));
+        audioStream.on('data', (chunk) => {
+          if (settled) return; // connection already abandoned via timeout/error - stop accumulating
+          chunks.push(chunk);
+        });
         audioStream.on('end', () => {
           if (settled) return;
           settled = true;
@@ -61,6 +84,7 @@ function speakOnce(text, voice) {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
+        try { tts.close(); } catch (_) { /* best-effort */ }
         reject(err);
       });
   });
