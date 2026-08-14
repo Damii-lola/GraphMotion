@@ -352,9 +352,29 @@ function kineticMultiLineReveal(ctx, lineList, accentColor, t, duration, width, 
   const frame = ['card', 'highlight'].includes(textFrame) ? textFrame : 'none';
   const fontSize = lineList.length >= 4 ? TYPE_SCALE.subhead + 6 : TYPE_SCALE.title;
   const lineHeight = fontSize * 1.3;
-  const totalHeight = lineList.length * lineHeight;
-  const startY = height * LAYOUT.contentCenterY - totalHeight / 2 + lineHeight / 2;
+  const maxWidth = width * 0.78;
+  const centerX = width / 2 + 18;
   const perLineDelay = Math.min(duration * 0.28, 0.55);
+
+  // REAL BUG, confirmed via direct repro: layoutKineticChars does its
+  // OWN internal word-wrap, so any group-line phrase too long to fit
+  // maxWidth at this font size (schema allows up to 40 chars per line,
+  // easily enough to wrap) silently became TWO internal lines - but
+  // this used to reserve exactly one fixed `lineHeight` slot per
+  // group-line regardless, so a wrapped line's second row spilled
+  // straight into the NEXT group-line's slot. Both then animate their
+  // own per-character stagger reveal on top of each other at the same
+  // position - illegible interleaved characters, not just a visual
+  // overlap. Fix: measure each group-line's REAL height first (cheap -
+  // layoutKineticChars only does ctx.measureText here, no drawing),
+  // then stack by actual measured height instead of assuming one line
+  // each.
+  const measured = lineList.map((line) => layoutKineticChars(ctx, line, {
+    fontFamily: system.fontFamily, fontWeight: system.fontWeight, fontSize,
+    lineHeight, maxWidth, centerX, centerY: 0,
+  }));
+  const totalHeight = measured.reduce((sum, m) => sum + m.totalHeight, 0);
+  let cursorY = height * LAYOUT.contentCenterY - totalHeight / 2;
 
   if (frame === 'card') {
     const cardT = clamp01(t / (duration * 0.2));
@@ -366,13 +386,14 @@ function kineticMultiLineReveal(ctx, lineList, accentColor, t, duration, width, 
   lineList.forEach((line, li) => {
     const lineStart = li * perLineDelay;
     const lineLocalT = t - lineStart;
-    if (lineLocalT <= 0) return;
     const lineDuration = duration - lineStart;
-    const cy = startY + li * lineHeight;
+    const cy = cursorY + measured[li].totalHeight / 2;
+    cursorY += measured[li].totalHeight;
+    if (lineLocalT <= 0) return;
 
     const layout = layoutKineticChars(ctx, line, {
       fontFamily: system.fontFamily, fontWeight: system.fontWeight, fontSize,
-      lineHeight, maxWidth: width * 0.78, centerX: width / 2 + 18, centerY: cy,
+      lineHeight, maxWidth, centerX, centerY: cy,
     });
 
     // Accent marker - a short vertical bar that grows in just before
