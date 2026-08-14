@@ -147,7 +147,12 @@ function drawGlowBlob(ctx, globalT, width, height, accentColor) {
   // cycle or any scene's own duration.
   const breathe = 0.5 + Math.sin(globalT * (Math.PI * 2 / 11)) * 0.5;
   ctx.save();
-  ctx.filter = 'blur(80px)';
+  // Large blur radii are consistently among the most expensive single
+  // operations a 2D rasterizer does (cost scales with kernel size, not
+  // just the shape's area) - this runs every frame for any dark-mood
+  // system with showGlowBlob on. Dropped from 80px: still reads as a
+  // soft glow at this size, just cheaper to compute per frame.
+  ctx.filter = 'blur(50px)';
   ctx.globalAlpha = lerp(0.08, 0.16, breathe);
   ctx.globalCompositeOperation = 'screen';
   ctx.fillStyle = accentColor;

@@ -22,6 +22,23 @@ const {
 
 const WIDTH = 720;
 const HEIGHT = 1280;
+// Physical output resolution is smaller than the WIDTH/HEIGHT logical
+// drawing space above - every draw function in this codebase (and every
+// fixed-pixel layout constant in sharedRenderHelpers.js: TYPE_SCALE,
+// LAYOUT.heroSize, etc, all tuned assuming a 720-wide canvas) keeps
+// operating completely unchanged in that 720x1280 logical space. The
+// canvas itself is created at the smaller OUTPUT_WIDTH/OUTPUT_HEIGHT
+// and RENDER_SCALE below maps every existing drawing call into it via
+// a single ctx.scale() - real per-frame cost (fills, gradients, blur
+// filters, composite ops) scales with how many PHYSICAL pixels get
+// touched, and PNG/ffmpeg encode time scales with pixel count too, so
+// this is a direct, proportional cut to actual render cost without
+// touching a single layout number or risking the "text/icons look
+// wrong at a different resolution" regression a raw WIDTH/HEIGHT
+// change would have risked.
+const OUTPUT_WIDTH = 540;
+const OUTPUT_HEIGHT = 960;
+const RENDER_SCALE = OUTPUT_WIDTH / WIDTH; // 0.75 -> ~44% fewer physical pixels per frame
 // Dropped from 30 - short-form vertical video reads as perfectly
 // smooth at 24fps, and it's a direct ~20% cut to both total frames
 // drawn (less cumulative Skia native allocation per chunk process
@@ -148,8 +165,13 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   const framesDir = path.join(outDir, `.frames-${path.basename(outputPath, '.mp4')}`);
   fs.mkdirSync(framesDir, { recursive: true });
 
-  const canvas = createCanvas(WIDTH, HEIGHT);
+  const canvas = createCanvas(OUTPUT_WIDTH, OUTPUT_HEIGHT);
   const ctx = canvas.getContext('2d');
+  // Every draw call below still targets the 720x1280 logical space -
+  // this single scale (never undone; every ctx.save()/restore() pair
+  // in the frame loop nests inside it, never below it) is what maps
+  // that down to the smaller physical canvas for the whole render.
+  ctx.scale(RENDER_SCALE, RENDER_SCALE);
 
   // Beats with a resolved `imagePath` (set by imagePrefetch.js, already
   // a local file - no network access from inside the render loop) get
