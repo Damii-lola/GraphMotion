@@ -129,15 +129,20 @@ function layoutKineticChars(ctx, text, { fontFamily, fontWeight, fontSize, lineH
  * different reimplementations.
  */
 function drawKineticChars(ctx, chars, t, duration, { fontFamily, fontWeight, fontSize, fillStyle, glowColor = null, staggerWindow }) {
-  const window = staggerWindow != null ? staggerWindow : duration * 0.4;
+  // Capped absolute, not purely proportional to duration - a long beat
+  // (e.g. one whose duration is stretched by narration) shouldn't make
+  // its own text take proportionally longer to finish landing. A hook
+  // has to punch in fast regardless of how long the beat holds after.
+  const window = staggerWindow != null ? staggerWindow : Math.min(duration * 0.22, 0.4);
   const perCharDelay = chars.length > 1 ? window / chars.length : 0;
+  const charLandWindow = Math.min(duration * 0.28, 0.32);
   ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
   for (const c of chars) {
     const charStart = c.index * perCharDelay;
-    const charT = clamp01((t - charStart) / (duration * 0.28));
+    const charT = clamp01((t - charStart) / charLandWindow);
     if (charT <= 0) continue;
 
     const opacity = easeOutCubic(charT);
@@ -145,11 +150,17 @@ function drawKineticChars(ctx, chars, t, duration, { fontFamily, fontWeight, fon
     // Continuous, not a one-time-per-character fixed offset - see the
     // matching note in templateRenderers.js's own copy of this loop.
     const jitter = Math.sin(t * 1.8 + c.index * 12.9898) * 2.6;
+    // Whole-phrase synchronized breathing pulse once landed - see the
+    // matching note in templateRenderers.js's own copy of this loop for
+    // why (a landed phrase held dead still for the rest of a long beat
+    // otherwise).
+    const settleTime = Math.max(0, t - charStart - charLandWindow - 0.15);
+    const breathe = 1 + Math.sin(settleTime * (Math.PI * 2 / 2.2)) * 0.035;
 
     ctx.save();
     ctx.globalAlpha = opacity;
     ctx.translate(c.x, c.y + jitter);
-    ctx.scale(scale, scale);
+    ctx.scale(scale * breathe, scale * breathe);
     if (glowColor) {
       ctx.shadowColor = glowColor;
       const glowRamp = clamp01((t - charStart - duration * 0.15) / (duration * 0.2));

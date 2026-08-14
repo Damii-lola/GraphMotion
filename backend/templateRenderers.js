@@ -246,7 +246,12 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
     });
   });
 
-  const staggerWindow = duration * 0.4;
+  // Was a pure duration*0.4 fraction, uncapped - on a typical 3-4s beat
+  // that let the full phrase take ~2s to finish landing, which reads as
+  // a graceful build, not a hook. A hook has to punch in almost
+  // instantly. Capped absolute instead of purely proportional so even
+  // a long beat's opening text lands fast, not just short ones.
+  const staggerWindow = Math.min(duration * 0.22, 0.4);
   const perCharDelay = chars.length > 1 ? staggerWindow / chars.length : 0;
 
   // Card background: drawn ONCE behind all characters, using the real
@@ -302,9 +307,10 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
+  const charLandWindow = Math.min(duration * 0.28, 0.32);
   for (const c of chars) {
     const charStart = c.index * perCharDelay;
-    const charT = clamp01((t - charStart) / (duration * 0.28));
+    const charT = clamp01((t - charStart) / charLandWindow);
     if (charT <= 0) continue;
 
     const opacity = easeOutCubic(charT);
@@ -315,12 +321,23 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
     // as it's on screen, still phase-offset per character so they don't
     // all move in lockstep.
     const jitter = Math.sin(t * 1.8 + c.index * 12.9898) * 2.6;
+    // A landed phrase used to just sit dead still for the rest of a
+    // long beat (confirmed directly: a beat outlives its own reveal by
+    // several seconds on a narrated or generously-timed beat, and
+    // nothing new happened on screen for any of it - "static frame"
+    // was a completely fair read). Whole-phrase synchronized breathing
+    // scale pulse, not per-character, so it reads as one deliberate
+    // rhythmic beat rather than a jitter - starts only after the
+    // landing overshoot has fully settled so it never fights that
+    // animation.
+    const settleTime = Math.max(0, t - charStart - charLandWindow - 0.15);
+    const breathe = 1 + Math.sin(settleTime * (Math.PI * 2 / 2.2)) * 0.035;
 
     ctx.font = `${system.fontWeight} ${c.fontSize}px ${system.fontFamily}`;
     ctx.save();
     ctx.globalAlpha = opacity;
     ctx.translate(c.x, c.y + jitter);
-    ctx.scale(scale, scale);
+    ctx.scale(scale * breathe, scale * breathe);
     if (system.heroUsesGlow) {
       ctx.shadowColor = accentColor;
       // Emphasis word glows a bit brighter, reinforcing the size
