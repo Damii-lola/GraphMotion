@@ -1,5 +1,18 @@
 const fetch = require('node-fetch');
-const { buildMistralSystemPrompt, buildMistralEditSystemPrompt, validateSceneJSON } = require('./sceneTemplates');
+
+/**
+ * MECHANICAL SKELETON ONLY. buildMistralSystemPrompt/
+ * buildMistralEditSystemPrompt/validateSceneJSON all lived in
+ * sceneTemplates.js, deleted in a deliberate teardown of the entire
+ * video-generation/design layer - see the plan this was executed from.
+ * What's left here is exactly the "Mistral" piece that teardown was
+ * scoped to keep: key rotation, the actual HTTP call with its timeout,
+ * truncation detection, and JSON extraction from the response. There
+ * is no real system prompt and no schema validation anymore - a
+ * follow-up rebuild supplies both. generateSceneJSON/
+ * generateEditedSceneJSON keep their exported names/signatures so
+ * renderWorker.js needed no edits.
+ */
 
 const KEYS = (process.env.MISTRAL_API_KEYS || '')
   .split(',')
@@ -24,34 +37,15 @@ function extractJson(text) {
   return JSON.parse(cleaned.slice(start, end + 1));
 }
 
-/**
- * Shared by both the fresh-generation and edit paths - same API call
- * shape, same truncation detection, same validate+retry logic. Only
- * the system prompt and the retry-continuation callback differ
- * between the two, so those are the only things parameterized here
- * rather than duplicating this whole function twice.
- */
-// Every OTHER external call in this codebase has an explicit timeout
-// (imageGen.js's 20s AbortController, ttsGen.js's 15s + connection
-// close) - this one didn't. node-fetch has no default timeout of its
-// own, so a stalled connection to Mistral's API left this awaitable
-// forever, with nothing anywhere upstream (server.js has no overall
-// job timeout either) to ever catch it - a job could sit in
-// "writing_scenes" indefinitely with no error, no retry, nothing.
-// Raised from 45s after two real, consecutive timeouts against the
-// live API mid-session - the system prompt has grown to ~55,000 tokens
-// from a whole session of cumulative rule/schema additions, and a
-// third identical call succeeded cleanly at 26.4s, confirming genuine
-// latency variance close to the old ceiling rather than a hung
-// connection. This buys margin; it does not fix the actual cause
-// (prompt bloat), which is real follow-up work - a 55k-token prompt is
-// slower AND more expensive per generation than it needs to be, and
-// only grows further with each new rule added the same way.
 const MISTRAL_TIMEOUT_MS = 75000;
 
-async function callMistralForSceneJSON(systemPrompt, userMessage, targetDurationSeconds, retriesLeft, onRetry) {
-  const estimatedScenes = Math.min(42, Math.max(4, Math.round(targetDurationSeconds / 3)));
-  const maxTokens = Math.min(16000, 1200 + estimatedScenes * 220);
+/**
+ * Shared by both the fresh-generation and edit paths - same API call
+ * shape, same truncation detection. Only the system/user prompt
+ * differ between the two callers below.
+ */
+async function callMistralForJSON(systemPrompt, userMessage, retriesLeft, onRetry) {
+  const maxTokens = 8000;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), MISTRAL_TIMEOUT_MS);
@@ -93,49 +87,34 @@ async function callMistralForSceneJSON(systemPrompt, userMessage, targetDuration
   if (!rawText) throw new Error('Mistral returned no content');
 
   if (data.choices?.[0]?.finish_reason === 'length') {
-    throw new Error(
-      `Mistral response was truncated (hit max_tokens=${maxTokens}) before completing the JSON - the requested video length may need a smaller scene count, or max_tokens needs raising further.`
-    );
+    throw new Error(`Mistral response was truncated (hit max_tokens=${maxTokens}) before completing the JSON`);
   }
 
   try {
-    const parsed = extractJson(rawText);
-    return validateSceneJSON(parsed);
+    return extractJson(rawText);
   } catch (err) {
     if (retriesLeft > 0) {
-      console.warn(`[mistralClient] validation failed (${err.message}), retrying...`);
+      console.warn(`[mistralClient] JSON parse failed (${err.message}), retrying...`);
       return onRetry(err, retriesLeft - 1);
     }
     throw err;
   }
 }
 
+// Placeholder - no real schema/template vocabulary exists anymore.
+// A follow-up rebuild replaces this with a real system prompt.
+const PLACEHOLDER_SYSTEM_PROMPT = 'Output ONLY valid JSON, no markdown, no prose, no code fences.';
+
 async function generateSceneJSON(userPrompt, targetDurationSeconds = 12, { retriesLeft = 1 } = {}) {
-  const systemPrompt = buildMistralSystemPrompt(targetDurationSeconds);
-  return callMistralForSceneJSON(systemPrompt, userPrompt, targetDurationSeconds, retriesLeft, (err, nextRetriesLeft) =>
-    generateSceneJSON(
-      `${userPrompt}\n\n(Your previous response was invalid: ${err.message}. Return ONLY corrected JSON matching the schema exactly.)`,
-      targetDurationSeconds,
-      { retriesLeft: nextRetriesLeft }
-    )
+  return callMistralForJSON(PLACEHOLDER_SYSTEM_PROMPT, userPrompt, retriesLeft, (err, nextRetriesLeft) =>
+    generateSceneJSON(userPrompt, targetDurationSeconds, { retriesLeft: nextRetriesLeft })
   );
 }
 
-/**
- * The edit path - previousSceneJSON is embedded directly into the
- * system prompt (see buildMistralEditSystemPrompt), so the user
- * message here is just the plain edit instruction itself ("make the
- * car blue"), not the whole video re-described from scratch.
- */
 async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds = 12, { retriesLeft = 1 } = {}) {
-  const systemPrompt = buildMistralEditSystemPrompt(previousSceneJSON, targetDurationSeconds);
-  return callMistralForSceneJSON(systemPrompt, editInstruction, targetDurationSeconds, retriesLeft, (err, nextRetriesLeft) =>
-    generateEditedSceneJSON(
-      previousSceneJSON,
-      `${editInstruction}\n\n(Your previous response was invalid: ${err.message}. Return ONLY corrected JSON matching the schema exactly.)`,
-      targetDurationSeconds,
-      { retriesLeft: nextRetriesLeft }
-    )
+  const userMessage = `Current JSON:\n${JSON.stringify(previousSceneJSON)}\n\nInstruction: ${editInstruction}`;
+  return callMistralForJSON(PLACEHOLDER_SYSTEM_PROMPT, userMessage, retriesLeft, (err, nextRetriesLeft) =>
+    generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds, { retriesLeft: nextRetriesLeft })
   );
 }
 
