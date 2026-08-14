@@ -155,4 +155,13 @@ function applyStroke(layerCanvas, { color = '#FFFFFF', width = 6, align = 'cente
   return out;
 }
 
-module.exports = { silhouette, blurCanvas, applyDropShadow, applyOuterGlow, applyInnerGlow, applyInnerShadow, applyStroke };
+module.exports = {
+  silhouette, blurCanvas, applyDropShadow, applyOuterGlow, applyInnerGlow, applyInnerShadow, applyStroke,
+  // Exposed for pathOperations.js/shapeLayer.js (batch 6/7): a
+  // rasterized Path Operation result needs the SAME dilate/erode ring
+  // construction Stroke already uses, but WITHOUT also compositing the
+  // original silhouette underneath (a stroke-only raster path has no
+  // "original layer content" of its own to preserve) - reusing these
+  // two directly avoids a second copy of the same ring math.
+  dilateErodeAlpha, subtractAlpha,
+};
