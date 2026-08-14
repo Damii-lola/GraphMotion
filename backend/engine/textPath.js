@@ -1,5 +1,5 @@
-const { spatialBezierPoint } = require('./keyframes');
-const { clamp01, lerp, lerpAngle } = require('./mathUtils');
+const { clamp01, lerp } = require('./mathUtils');
+const { buildPathSampler, pointAtDistance, bezierTangent } = require('./path');
 
 /**
  * Text on a Path: characters laid out along an arbitrary curve instead
@@ -8,110 +8,18 @@ const { clamp01, lerp, lerpAngle } = require('./mathUtils');
  * Path, Perpendicular To Path, Force Alignment) is implemented exactly
  * as AE defines it, not just a loose approximation of the idea.
  *
- * The path itself is deliberately the SAME primitive batch 1 built for
- * spatial motion paths - a sequence of anchor points, each optionally
- * carrying its own out/in tangent handles as OFFSETS from its own
- * position - reusing keyframes.js's spatialBezierPoint directly rather
- * than reimplementing cubic bezier math a second time. The only
- * genuinely new piece here is walking ARC LENGTH along that curve (for
- * placing characters at even, true pixel-width spacing) instead of
- * walking the time axis keyframes.js walks.
+ * The arc-length sampling machinery this file originated in batch 5
+ * now lives in path.js (batch 6 promoted it out, the same way
+ * selectors.js was promoted out of textAnimator.js) so Trim Paths and
+ * shape rendering can share the identical, already-verified sampler
+ * and exact De Casteljau sub-curve extraction rather than a second
+ * copy of the same bezier math.
  *
  * Anchors: [{ point: [x,y], outTangent?: [dx,dy], inTangent?: [dx,dy] }, ...]
  * Omitting tangents on every anchor degrades the path to a straight-
  * line polyline through the anchors (the tangent-less case in
  * spatialBezierPoint already collapses to exactly this).
  */
-
-function anchorToKeyframeShape(anchor) {
-  return { value: anchor.point, spatialOutTangent: anchor.outTangent, spatialInTangent: anchor.inTangent };
-}
-
-/**
- * Analytic derivative of the identical cubic bezier spatialBezierPoint
- * evaluates (same control-point construction, same weights differentiated
- * w.r.t. u) - an EXACT tangent direction at any u, rather than a finite-
- * difference estimate from neighboring samples.
- */
-function bezierTangent(a, b, u) {
-  const dims = a.value.length;
-  const p0 = a.value;
-  const p1 = a.spatialOutTangent ? a.value.map((v, i) => v + a.spatialOutTangent[i]) : a.value;
-  const p2 = b.spatialInTangent ? b.value.map((v, i) => v + b.spatialInTangent[i]) : b.value;
-  const p3 = b.value;
-  const mt = 1 - u;
-  const out = new Array(dims);
-  for (let d = 0; d < dims; d++) {
-    out[d] = 3 * mt * mt * (p1[d] - p0[d]) + 6 * mt * u * (p2[d] - p1[d]) + 3 * u * u * (p3[d] - p2[d]);
-  }
-  return out;
-}
-
-/**
- * Samples every bezier segment of the path at fine resolution and
- * builds a cumulative arc-length lookup table - the standard technique
- * for arc-length parameterization of a bezier curve (there is no
- * closed-form arc-length formula for a general cubic bezier).
- * `samplesPerSegment` trades accuracy for build cost; the error from
- * approximating true curve length as summed straight-line distance
- * between adjacent samples is bounded by the curve's curvature over an
- * interval of only 1/samplesPerSegment of a segment's u-range -
- * negligible at 60 samples for on-screen text sizes.
- */
-function buildPathSampler(anchors, samplesPerSegment = 60) {
-  if (!Array.isArray(anchors) || anchors.length < 2) {
-    throw new Error('buildPathSampler requires at least 2 anchors');
-  }
-  const samples = []; // { distance, x, y, angle }
-  let cumulative = 0;
-
-  for (let seg = 0; seg < anchors.length - 1; seg++) {
-    const a = anchorToKeyframeShape(anchors[seg]);
-    const b = anchorToKeyframeShape(anchors[seg + 1]);
-    const startI = seg === 0 ? 0 : 1; // u=0 of segment N === u=1 of segment N-1, don't duplicate that sample
-    for (let i = startI; i <= samplesPerSegment; i++) {
-      const u = i / samplesPerSegment;
-      const [x, y] = spatialBezierPoint(a, b, u);
-      const [dx, dy] = bezierTangent(a, b, u);
-      const angle = Math.atan2(dy, dx);
-      if (samples.length > 0) {
-        const prev = samples[samples.length - 1];
-        cumulative += Math.hypot(x - prev.x, y - prev.y);
-      }
-      samples.push({ distance: cumulative, x, y, angle });
-    }
-  }
-  return { samples, totalLength: cumulative };
-}
-
-/**
- * Binary search + linear interpolation between the two bracketing
- * samples: the point/tangent-angle at a given arc-length distance along
- * the path. Clamps to the path's own ends outside [0, totalLength].
- * Angle interpolation uses lerpAngle (shortest-path) rather than a
- * plain lerp, since angle wraps at +-PI - a plain lerp would occasionally
- * spin the long way around at a sample straddling that wrap.
- */
-function pointAtDistance(sampler, distance) {
-  const { samples } = sampler;
-  if (distance <= samples[0].distance) return samples[0];
-  const last = samples[samples.length - 1];
-  if (distance >= last.distance) return last;
-
-  let lo = 0, hi = samples.length - 1;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (samples[mid].distance <= distance) lo = mid; else hi = mid;
-  }
-  const a = samples[lo], b = samples[hi];
-  const span = b.distance - a.distance;
-  const localT = span > 0 ? (distance - a.distance) / span : 0;
-  return {
-    x: lerp(a.x, b.x, localT),
-    y: lerp(a.y, b.y, localT),
-    angle: lerpAngle(a.angle, b.angle, localT),
-  };
-}
 
 /**
  * Lays out characters along the path by ARC LENGTH (not by index or
@@ -142,7 +50,7 @@ function layoutTextOnPath(ctx, text, anchors, opts = {}) {
     samplesPerSegment = 60,
   } = opts;
   ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
-  const sampler = buildPathSampler(anchors, samplesPerSegment);
+  const sampler = buildPathSampler(anchors, { samplesPerSegment, closed: false });
   const usableLength = Math.max(sampler.totalLength - firstMargin - lastMargin, 0);
 
   const entries = [];
