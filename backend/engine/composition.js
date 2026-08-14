@@ -2,6 +2,7 @@ const { createCanvas } = require('@napi-rs/canvas');
 const { Node } = require('./node');
 const { toCanvasArgs } = require('./matrix2d');
 const { identityRemap } = require('./timeRemap');
+const { renderLayerStack } = require('./layerStack');
 
 /**
  * A self-contained, reusable timeline of Nodes - what "precomposing" a
@@ -25,8 +26,38 @@ class Composition {
     return this.root.addChild(node);
   }
 
+  /**
+   * Delegates to layerStack.js - a Composition's children are a real
+   * ordered layer stack (blend modes, track mattes, adjustment layers
+   * all meaningful here), not just a parenting group. This is the
+   * ISOLATED render path: layerStack.js allocates its working buffers
+   * at exactly this.width x this.height, which is only correct when
+   * this composition is being rendered into ITS OWN local space (a
+   * fresh offscreen buffer, as PrecompNode's isolate:true path does) -
+   * see renderCollapsed() below for why that assumption breaks for the
+   * non-isolated case, and why that's not just a limitation here but a
+   * genuine, faithful echo of a real AE nuance.
+   */
   render(ctx, t) {
-    this.root.render(ctx, t);
+    renderLayerStack(ctx, this.width, this.height, this.root.children, t);
+  }
+
+  /**
+   * The pre-batch-3 simple recursive render, kept as the explicit
+   * "collapsed" path: draws each child directly via its own render()
+   * with no accumulator buffer, no size assumption, no blend-mode/
+   * matte/adjustment-layer support. This is a real, deliberate
+   * capability split, not an oversight - it's the same one AE itself
+   * has: "Collapse Transformations" lets a precomp's content pass
+   * through without being pre-rendered to a flat buffer, but that pass-
+   * through explicitly forfeits the compositing guarantees a genuinely
+   * isolated buffer provides (which is exactly what a layer stack's
+   * blend modes and track mattes depend on to be well-defined at all -
+   * they need a real "everything below, already composited" buffer to
+   * blend against, and a collapsed precomp never produces one).
+   */
+  renderCollapsed(ctx, t) {
+    for (const child of this.root.children) child.render(ctx, t);
   }
 }
 
@@ -91,9 +122,22 @@ class PrecompNode extends Node {
       // getWorldMatrix/getWorldOpacity via ordinary recursion - pure
       // math, no dependence on canvas's mutable transform-stack state
       // or the order draw calls happen to occur in.
+      //
+      // Uses renderCollapsed(), NOT render() - render() now goes
+      // through layerStack.js, whose per-layer buffers are sized to
+      // the composition's OWN small width/height, which is wrong here
+      // (children compose through the injected parent, so their real
+      // world position can land anywhere in the OUTER scene, not just
+      // within this composition's own local bounds - confirmed
+      // directly: using render() here clipped/lost all content outside
+      // that small buffer). Real consequence, not just an
+      // implementation detail: a collapsed precomp's children do not
+      // get blend-mode/track-matte/adjustment-layer treatment - only
+      // an isolated one does, which is a faithful match for the real
+      // AE limitation, not an artificial one introduced here.
       const originalParent = this.composition.root.parent;
       this.composition.root.parent = this;
-      this.composition.render(ctx, innerT);
+      this.composition.renderCollapsed(ctx, innerT);
       this.composition.root.parent = originalParent;
     }
   }

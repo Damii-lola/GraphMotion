@@ -25,7 +25,21 @@ function resolve(propOrValue, t) {
  * just because ONE of them is animated.
  */
 class Node {
-  constructor({ position = [0, 0], rotation = 0, scale = [1, 1], anchor = [0, 0], opacity = 1, draw = null, name = null } = {}) {
+  constructor({
+    position = [0, 0], rotation = 0, scale = [1, 1], anchor = [0, 0], opacity = 1, draw = null, name = null,
+    // The three properties layerStack.js reads when this node sits
+    // directly in a Composition's layer list - meaningless (simply
+    // ignored) anywhere else in the hierarchy, since blend modes/
+    // track mattes/adjustment layers are Composition-level concepts
+    // in AE too, not a generic Node one. Stored here rather than on a
+    // separate wrapper type so any node (a plain shape, a
+    // PrecompNode, ...) can be used directly as a composition layer
+    // without needing to be re-wrapped in something else first.
+    blendMode = 'normal',
+    trackMatte = null, // { source: Node, type: 'alpha'|'alphaInverted'|'luma'|'lumaInverted' }
+    isAdjustmentLayer = false,
+    effects = [], // (ImageData, t) => ImageData|void - only consulted when isAdjustmentLayer is true
+  } = {}) {
     this.position = position;
     this.rotation = rotation;
     this.scale = scale;
@@ -35,6 +49,10 @@ class Node {
     this.name = name;
     this.parent = null;
     this.children = [];
+    this.blendMode = blendMode;
+    this.trackMatte = trackMatte;
+    this.isAdjustmentLayer = isAdjustmentLayer;
+    this.effects = effects;
   }
 
   addChild(child) {
