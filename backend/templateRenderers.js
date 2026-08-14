@@ -1,6 +1,6 @@
 const { easeOutCubic, easeOutBack, easeOutExpo, easeInOutCubic, lerp, clamp01 } = require('./easing');
 const { getVisualSystem } = require('./visualSystems');
-const { drawFramingCard, LAYOUT, TYPE_SCALE, layoutKineticChars, drawKineticChars } = require('./sharedRenderHelpers');
+const { drawFramingCard, LAYOUT, TYPE_SCALE, layoutKineticChars, drawKineticChars, layoutTextRuns, drawTextRuns } = require('./sharedRenderHelpers');
 const { buildShadeGradient } = require('./colorUtils');
 const { splitCompare, listReveal, quoteCallout, progressBar, countdownTimer, gridReveal, checklistTick, bigNumberStat, pieChartReveal, duoStatCompare, badgeUnlock, tickerScroll, statGrid, arrowFlow, calloutBubble, barChartCompare, avatarStack } = require('./templateRenderersExtended');
 
@@ -163,8 +163,17 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
   // word-wrap "lines" array built further down in this same function's
   // single-statement path - confirmed the hard way (a real
   // SyntaxError: Identifier 'lines' has already been declared).
-  const { text, lines: lineGroupParam, duration, style, textFrame } = params;
+  const { text, lines: lineGroupParam, textRuns, duration, style, textFrame } = params;
   const accentColor = params.color || '#FF5C1A';
+
+  // RUNS mode - the preferred, highest-priority mode: real per-word
+  // size/color/highlight hierarchy within one statement, the single
+  // most repeated pattern across reference videos (one word explodes
+  // in size while the rest stays small), instead of a whole phrase
+  // locked to one uniform weight.
+  if (Array.isArray(textRuns) && textRuns.length > 0) {
+    return kineticTextRunsReveal(ctx, textRuns, accentColor, t, duration, width, height, system, textFrame);
+  }
 
   // Multi-line mode: 2-4 short RELATED phrases stacked and revealed as
   // a group in ONE beat, at full kinetic-text size/energy - this is
@@ -352,6 +361,35 @@ function kineticTextReveal(ctx, params, t, width, height, system) {
     ctx.fillText(c.ch, 0, 0);
     ctx.restore();
   }
+}
+
+/**
+ * RUNS mode: a single statement built from independently-sized/colored
+ * text pieces (layoutTextRuns/drawTextRuns in sharedRenderHelpers.js
+ * do the actual work) - real typographic hierarchy within one
+ * sentence, the engine-level primitive this whole mode exists for.
+ */
+function kineticTextRunsReveal(ctx, runs, accentColor, t, duration, width, height, system, textFrame) {
+  const maxWidth = width * 0.82;
+  const centerX = width / 2;
+  const centerY = height * LAYOUT.contentCenterY;
+
+  const layout = layoutTextRuns(ctx, runs, {
+    fontFamily: system.fontFamily, fontWeight: system.fontWeight, maxWidth, centerX, centerY,
+  });
+
+  if (textFrame === 'card') {
+    const cardT = clamp01(t / (duration * 0.2));
+    if (cardT > 0) {
+      drawFramingCard(ctx, centerX, centerY, maxWidth + 40, layout.totalHeight + 48, t, duration, accentColor);
+    }
+  }
+
+  drawTextRuns(ctx, layout, t, duration, {
+    fontFamily: system.fontFamily, fontWeight: system.fontWeight,
+    accentColor, primaryColor: system.heroTextColor, mutedColor: system.mutedTextColor,
+    glowColor: system.heroUsesGlow ? accentColor : null,
+  });
 }
 
 /**

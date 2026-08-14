@@ -173,4 +173,154 @@ function drawKineticChars(ctx, chars, t, duration, { fontFamily, fontWeight, fon
   }
 }
 
-module.exports = { drawFramingCard, LAYOUT, TYPE_SCALE, layoutKineticChars, drawKineticChars };
+// Maps a run's declared "size" tier to an actual font size, reusing
+// the existing TYPE_SCALE tokens rather than inventing new magic
+// numbers - "huge" stops at hero (108), not display (168), since
+// display was always meant for a standalone giant number, not one
+// word inline among others in a sentence.
+const RUN_SIZE_MAP = { small: TYPE_SCALE.body, normal: TYPE_SCALE.title, large: TYPE_SCALE.emphasis, huge: TYPE_SCALE.hero };
+
+/**
+ * The engine-level primitive behind kineticTextReveal's "textRuns"
+ * mode: lays out a SEQUENCE of independently-sized/colored text
+ * pieces as one wrapped, centered block - real typographic hierarchy
+ * within one sentence (one word huge, the rest small), the single most
+ * repeated pattern across the reference videos this was built to
+ * match, instead of a whole phrase locked to one uniform size. Colors
+ * are carried as TOKENS ('primary'|'accent'|'muted'), resolved to
+ * actual colors later in drawTextRuns, since layout has no opinion on
+ * what those colors actually are.
+ */
+function layoutTextRuns(ctx, runs, { fontFamily, fontWeight, maxWidth, centerX, centerY, lineHeightMultiplier = 1.15 }) {
+  const words = [];
+  runs.forEach((run) => {
+    const fontSize = RUN_SIZE_MAP[run.size] || TYPE_SCALE.title;
+    String(run.text).trim().split(/\s+/).filter(Boolean).forEach((w) => {
+      words.push({ word: w, fontSize, colorToken: run.color || 'primary', highlight: !!run.highlight });
+    });
+  });
+
+  // Word-wrap where each word can have a DIFFERENT font size - a plain
+  // string word-wrap (layoutKineticChars) assumes one size for the
+  // whole pass, which doesn't hold once a "huge" word can sit next to
+  // "small" ones.
+  const lines = [];
+  let current = [];
+  let currentWidth = 0;
+  words.forEach((w) => {
+    ctx.font = `${fontWeight} ${w.fontSize}px ${fontFamily}`;
+    const wordWidth = ctx.measureText(`${w.word} `).width;
+    if (currentWidth + wordWidth > maxWidth && current.length > 0) {
+      lines.push(current);
+      current = [];
+      currentWidth = 0;
+    }
+    current.push(w);
+    currentWidth += wordWidth;
+  });
+  if (current.length) lines.push(current);
+
+  // Each line's height follows the LARGEST word actually on it, so a
+  // line holding a "huge" word gets proportionally more vertical room
+  // than a line of all-"small" words, instead of every line reserving
+  // the same fixed slot regardless of what's actually on it.
+  const lineHeights = lines.map((line) => Math.max(...line.map((w) => w.fontSize)) * lineHeightMultiplier);
+  const totalHeight = lineHeights.reduce((a, b) => a + b, 0);
+  let cursorY = centerY - totalHeight / 2;
+
+  const chars = [];
+  const wordSpans = [];
+  lines.forEach((line, li) => {
+    const cy = cursorY + lineHeights[li] / 2;
+    cursorY += lineHeights[li];
+    const lineWidth = line.reduce((sum, w) => {
+      ctx.font = `${fontWeight} ${w.fontSize}px ${fontFamily}`;
+      return sum + ctx.measureText(`${w.word} `).width;
+    }, 0);
+    let cx = centerX - lineWidth / 2;
+    line.forEach((w) => {
+      ctx.font = `${fontWeight} ${w.fontSize}px ${fontFamily}`;
+      const wordStartX = cx;
+      const wordStartCharIndex = chars.length;
+      for (const ch of w.word) {
+        const cw = ctx.measureText(ch).width;
+        chars.push({ ch, x: cx + cw / 2, y: cy, index: chars.length, fontSize: w.fontSize, colorToken: w.colorToken, highlight: w.highlight });
+        cx += cw;
+      }
+      wordSpans.push({ minX: wordStartX - 8, maxX: cx + 8, y: cy, fontSize: w.fontSize, highlight: w.highlight, startCharIndex: wordStartCharIndex });
+      cx += ctx.measureText(' ').width;
+    });
+  });
+
+  return { chars, wordSpans, totalHeight };
+}
+
+/**
+ * Draws a layoutTextRuns() result - same per-character stagger/
+ * overshoot-scale/jitter/breathe treatment as drawKineticChars, but
+ * per-character fontSize and color instead of one uniform value, plus
+ * a highlight-box pass for any word marked highlight:true (a solid
+ * accent block behind the word, like ref 7's marker-style emphasis,
+ * fading in just before that word's characters land).
+ */
+function drawTextRuns(ctx, layout, t, duration, { fontFamily, fontWeight, accentColor, primaryColor, mutedColor, glowColor = null, staggerWindow }) {
+  const { chars, wordSpans } = layout;
+  const window = staggerWindow != null ? staggerWindow : Math.min(duration * 0.22, 0.4);
+  const perCharDelay = chars.length > 1 ? window / chars.length : 0;
+  const charLandWindow = Math.min(duration * 0.28, 0.32);
+  const colorFor = (token) => (token === 'accent' ? accentColor : token === 'muted' ? mutedColor : primaryColor);
+  // A highlighted word sits on a solid accentColor block, so its own
+  // text needs to flip to whichever of black/white actually reads
+  // against THAT specific color - accentColor varies wildly video to
+  // video (pale gold to deep navy), so a fixed text color would go
+  // illegible on roughly half of them. Cheap relative-luminance check,
+  // not a full color-management pass.
+  const hex = accentColor.replace('#', '');
+  const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
+  const accentLuminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  const highlightTextColor = accentLuminance > 0.55 ? '#1A1A1A' : '#FFFFFF';
+
+  // Highlight boxes first, behind the text.
+  for (const span of wordSpans) {
+    if (!span.highlight) continue;
+    const charStart = span.startCharIndex * perCharDelay;
+    const boxT = clamp01((t - charStart - 0.03) / 0.22);
+    if (boxT <= 0) continue;
+    ctx.save();
+    ctx.globalAlpha = 0.9 * easeOutCubic(boxT);
+    ctx.fillStyle = accentColor;
+    const w = lerp(0, span.maxX - span.minX, easeOutCubic(boxT));
+    ctx.fillRect(span.minX, span.y - span.fontSize * 0.44, w, span.fontSize * 0.88);
+    ctx.restore();
+  }
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const c of chars) {
+    const charStart = c.index * perCharDelay;
+    const charT = clamp01((t - charStart) / charLandWindow);
+    if (charT <= 0) continue;
+
+    const opacity = easeOutCubic(charT);
+    const scale = lerp(1.4, 1, easeOutBack(charT));
+    const jitter = Math.sin(t * 1.8 + c.index * 12.9898) * 2.6;
+    const settleTime = Math.max(0, t - charStart - charLandWindow - 0.15);
+    const breathe = 1 + Math.sin(settleTime * (Math.PI * 2 / 2.2)) * 0.035;
+
+    ctx.font = `${fontWeight} ${c.fontSize}px ${fontFamily}`;
+    ctx.save();
+    ctx.globalAlpha = opacity;
+    ctx.translate(c.x, c.y + jitter);
+    ctx.scale(scale * breathe, scale * breathe);
+    if (glowColor) {
+      ctx.shadowColor = glowColor;
+      const glowRamp = clamp01((t - charStart - duration * 0.15) / (duration * 0.2));
+      ctx.shadowBlur = lerp(0, 16, glowRamp) * (1 + Math.sin(t * 2.2 + c.index * 0.5) * 0.35 * glowRamp);
+    }
+    ctx.fillStyle = c.highlight ? highlightTextColor : colorFor(c.colorToken);
+    ctx.fillText(c.ch, 0, 0);
+    ctx.restore();
+  }
+}
+
+module.exports = { drawFramingCard, LAYOUT, TYPE_SCALE, layoutKineticChars, drawKineticChars, layoutTextRuns, drawTextRuns };
