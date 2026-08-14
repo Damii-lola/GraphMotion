@@ -549,6 +549,29 @@ ${templateDocs}
 `;
 }
 
+/**
+ * A hard `.slice(0, maxLength)` cut mid-word/mid-sentence is fine for
+ * cosmetic on-screen labels but genuinely broken for narration - it
+ * gets spoken aloud by TTS verbatim, so a mid-word cut produces
+ * audibly garbled/truncated speech (confirmed directly against a real
+ * Mistral response: a narration line hard-cut to "...and doesn't fit
+ * into " with nothing after it). Prefers the last sentence-ending
+ * punctuation within range; falls back to the last word boundary if no
+ * sentence end is reasonably close (so a short field doesn't get
+ * chopped down to almost nothing); only falls back to a raw character
+ * cut if the string has no spaces at all within the limit.
+ */
+function clampStringSmart(val, maxLength) {
+  const str = String(val);
+  if (str.length <= maxLength) return str;
+  const truncated = str.slice(0, maxLength);
+  const lastSentenceEnd = Math.max(truncated.lastIndexOf('. '), truncated.lastIndexOf('! '), truncated.lastIndexOf('? '));
+  if (lastSentenceEnd > maxLength * 0.4) return truncated.slice(0, lastSentenceEnd + 1);
+  const lastSpace = truncated.lastIndexOf(' ');
+  if (lastSpace > 0) return truncated.slice(0, lastSpace);
+  return truncated;
+}
+
 function validateSceneJSON(json) {
   if (!json || !Array.isArray(json.scenes) || json.scenes.length === 0) {
     throw new Error('scene JSON missing non-empty "scenes" array');
@@ -584,7 +607,7 @@ function validateSceneJSON(json) {
         if (pdef.max !== undefined) val = Math.min(pdef.max, val);
       }
       if (pdef.type === 'string' && pdef.maxLength) {
-        val = String(val).slice(0, pdef.maxLength);
+        val = clampStringSmart(val, pdef.maxLength);
       }
       if (pdef.type === 'stringArray') {
         if (!Array.isArray(val)) val = pdef.default || [];
