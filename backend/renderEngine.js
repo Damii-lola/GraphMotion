@@ -8,7 +8,7 @@ const fs = require('fs');
 const { drawBeatContent } = require('./templateRenderers');
 const { drawHeroVisual } = require('./heroVisual');
 const { drawAtmosphere, drawWorldParticles } = require('./atmosphere');
-const { drawComposition } = require('./sceneComposition');
+const { drawComposition, drawAccentShape } = require('./sceneComposition');
 const { drawHeroImage } = require('./imageComposite');
 const { getVisualSystem } = require('./visualSystems');
 const { deriveSecondaryColor } = require('./colorUtils');
@@ -106,8 +106,59 @@ function buildWorldTimeline(sceneJSON) {
     accentColor,
     secondaryColor: deriveSecondaryColor(accentColor),
     visualSystem: sceneJSON.visualSystem,
+    signatureMotif: sceneJSON.signatureMotif || 'crosshair',
     worldWidth,
   };
+}
+
+/**
+ * neonPulse identity device #1: a giant, near-invisible echo of this
+ * beat's own tag word, drawn in WORLD space (so it pans with the
+ * camera and sits behind this beat's real content, not fixed to the
+ * screen like drawScreenTag below) - real layered depth, not a flat
+ * card. Reuses the beat's existing "tag" field rather than inventing
+ * new content-generation for it. Drawn BEFORE everything else in a
+ * beat's own local frame so it's genuinely the backmost layer.
+ */
+function drawGhostText(ctx, tag, localTime, duration, width, height, system) {
+  if (!tag) return;
+  const drift = Math.sin(localTime * 0.35) * 14;
+  const rotation = -0.06 + Math.sin(localTime * 0.2) * 0.015;
+  ctx.save();
+  ctx.globalAlpha = system.ghostTextOpacity || 0.06;
+  ctx.translate(width / 2 + drift, height * 0.42);
+  ctx.rotate(rotation);
+  ctx.font = `900 ${Math.round(width * 0.34)}px ${system.fontFamily}`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = system.heroTextColor;
+  ctx.fillText(tag.toUpperCase(), 0, 0);
+  ctx.restore();
+}
+
+/**
+ * neonPulse identity device #2: a small mark that holds the SAME
+ * screen position for the ENTIRE video (unlike accentShape, which
+ * deliberately varies beat to beat) - continuous brand identity the
+ * way a real creator channel's watermark works. Screen-locked (called
+ * outside the camera transform, like drawScreenTag), top-right corner
+ * so it never collides with drawScreenTag's top-left beat label.
+ */
+function drawSignatureMotif(ctx, shape, globalTime, width, height, accentColor, system) {
+  const pulse = 1 + Math.sin(globalTime * 1.1) * 0.08;
+  ctx.save();
+  ctx.translate(width - 55, 90);
+  ctx.scale(pulse * 0.55, pulse * 0.55);
+  ctx.globalAlpha = 0.8;
+  ctx.strokeStyle = accentColor;
+  ctx.fillStyle = accentColor;
+  ctx.lineWidth = 3;
+  if (system.heroUsesGlow) {
+    ctx.shadowColor = accentColor;
+    ctx.shadowBlur = 14;
+  }
+  drawAccentShape(ctx, shape);
+  ctx.restore();
 }
 
 /**
@@ -153,7 +204,7 @@ function drawScreenTag(ctx, visibleBeatIndices, beats, globalTime, width, height
 }
 
 async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, onProgress) {
-  const { beats, anchors, accentColor, secondaryColor, visualSystem, worldWidth } = buildWorldTimeline(sceneJSON);
+  const { beats, anchors, accentColor, secondaryColor, visualSystem, signatureMotif, worldWidth } = buildWorldTimeline(sceneJSON);
   const system = getVisualSystem(visualSystem);
   const startFrame = Math.floor(timeStart * FPS);
   const endFrame = Math.ceil(timeEnd * FPS);
@@ -267,6 +318,10 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         // reasoning.
         ctx.translate(anchor.x + anchor.contentOffsetX - WIDTH / 2, anchor.y + anchor.contentOffsetY - HEIGHT / 2);
 
+        if (system.showGhostText) {
+          drawGhostText(ctx, beat.tag, localTime, beat.duration, WIDTH, HEIGHT, system);
+        }
+
         // Grid/scanlines/data-chips/secondary-accent-shapes density layer -
         // drawn in this beat's own local WIDTH x HEIGHT frame (same trick as
         // drawHeroVisual/drawBeatContent below), so it lines up correctly
@@ -322,6 +377,9 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       ctx.restore(); // end camera transform
 
       drawScreenTag(ctx, visibleBeatIndices, beats, globalTime, WIDTH, HEIGHT, accentColor, system);
+      if (system.showSignatureMotif) {
+        drawSignatureMotif(ctx, signatureMotif, globalTime, WIDTH, HEIGHT, accentColor, system);
+      }
 
       const png = canvas.encodeSync('png');
       const frameIndex = frame - startFrame;

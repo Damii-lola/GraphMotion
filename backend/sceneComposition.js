@@ -386,4 +386,4 @@ function drawComposition(ctx, tagLabel, accentShape, sceneLocalT, sceneDuration,
   }
 }
 
-module.exports = { drawComposition };
+module.exports = { drawComposition, drawAccentShape };

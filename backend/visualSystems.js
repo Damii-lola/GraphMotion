@@ -120,6 +120,48 @@ const VISUAL_SYSTEMS = {
     vignetteStrength: 0,
     flatBlockAccent: false,
   },
+
+  /**
+   * FIRST NEW SYSTEM built specifically off real 2026 short-form
+   * reference footage (not a recolor of the three above) - closest
+   * match was a video built almost entirely from motion graphics
+   * (no live footage needed, so genuinely reproducible here): near-
+   * black background, one saturated neon accent with real glow, and
+   * two identity devices neither of the older systems had at all:
+   * a giant, near-invisible "ghost" echo of each beat's own tag
+   * looming behind its content (real depth/layering, not a flat
+   * card), and a small signature mark that holds the SAME screen
+   * position for the entire video (not per-beat like accentShape),
+   * giving continuous brand identity the way a real creator's channel
+   * watermark does. Heaviest font weight of any system on purpose -
+   * the reference this was built from stakes its whole hook on text
+   * that's unmissably, aggressively bold.
+   */
+  neonPulse: {
+    name: 'neonPulse',
+    bgColorInner: '#0E0E11',
+    bgColorOuter: '#020203',
+    supportsBackgroundMood: true,
+    defaultBackgroundMood: 'dark',
+    heroTextColor: '#FFFFFF',
+    mutedTextColor: '#84848C',
+    fontFamily: 'sans-serif',
+    fontWeight: '800',
+    heroUsesGlow: true,
+    showGrid: false,
+    showScanlines: false,
+    showTimestamp: false,
+    showDataChips: false,
+    showParticles: true,
+    showGlowBlob: true,
+    showDriftLines: true,
+    driftLineCount: 3,
+    driftLineOpacity: 0.15,
+    vignetteStrength: 0.62,
+    showGhostText: true,
+    ghostTextOpacity: 0.06,
+    showSignatureMotif: true,
+  },
 };
 
 const DEFAULT_SYSTEM = 'hudTerminal';

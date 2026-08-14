@@ -38,7 +38,16 @@ function extractJson(text) {
 // forever, with nothing anywhere upstream (server.js has no overall
 // job timeout either) to ever catch it - a job could sit in
 // "writing_scenes" indefinitely with no error, no retry, nothing.
-const MISTRAL_TIMEOUT_MS = 45000;
+// Raised from 45s after two real, consecutive timeouts against the
+// live API mid-session - the system prompt has grown to ~55,000 tokens
+// from a whole session of cumulative rule/schema additions, and a
+// third identical call succeeded cleanly at 26.4s, confirming genuine
+// latency variance close to the old ceiling rather than a hung
+// connection. This buys margin; it does not fix the actual cause
+// (prompt bloat), which is real follow-up work - a 55k-token prompt is
+// slower AND more expensive per generation than it needs to be, and
+// only grows further with each new rule added the same way.
+const MISTRAL_TIMEOUT_MS = 75000;
 
 async function callMistralForSceneJSON(systemPrompt, userMessage, targetDurationSeconds, retriesLeft, onRetry) {
   const estimatedScenes = Math.min(42, Math.max(4, Math.round(targetDurationSeconds / 3)));
