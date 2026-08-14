@@ -105,6 +105,27 @@ function transformPoint4(m, p) {
 }
 
 /**
+ * Transforms a DIRECTION (not a point) - the translation column (m3,
+ * m7, m11) is deliberately excluded, since a direction has no
+ * position, only orientation/magnitude (batch 8's lights.js needs this
+ * for transforming a flat layer's local surface normal into world
+ * space by its rotation, without the layer's own position corrupting
+ * the result). Exact for rotation-only or uniform-scale transforms; a
+ * non-uniform scale technically needs the inverse-transpose to keep a
+ * normal perpendicular to its surface, which this does not compute - a
+ * real, honest, stated simplification (lights.js documents the same
+ * boundary where it's actually used), not a silent inaccuracy.
+ */
+function transformDirection4(m, d) {
+  const [x, y, z] = d;
+  return [
+    m[0] * x + m[1] * y + m[2] * z,
+    m[4] * x + m[5] * y + m[6] * z,
+    m[8] * x + m[9] * y + m[10] * z,
+  ];
+}
+
+/**
  * Builds a layer's full local transform in AE's own order, the exact
  * 3D generalization of matrix2d.js's fromTRS: subtract the anchor
  * (recenter local space on it), scale, rotate (X then Y then Z - a
@@ -165,5 +186,5 @@ function lookAt4(eye, target, up) {
 }
 
 module.exports = {
-  identity4, translate4, scale4, rotateX4, rotateY4, rotateZ4, multiply4, transformPoint4, fromTRS3D, lookAt4,
+  identity4, translate4, scale4, rotateX4, rotateY4, rotateZ4, multiply4, transformPoint4, transformDirection4, fromTRS3D, lookAt4,
 };

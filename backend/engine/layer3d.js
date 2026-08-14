@@ -1,6 +1,9 @@
 const { createCanvas } = require('@napi-rs/canvas');
-const { fromTRS3D, multiply4, transformPoint4 } = require('./matrix4');
+const {
+  fromTRS3D, multiply4, transformPoint4, transformDirection4,
+} = require('./matrix4');
 const { resolve } = require('./node');
+const { computeLighting } = require('./lights');
 
 /**
  * Real 3D layers in a shared space: each Layer3D is fundamentally a
@@ -41,6 +44,11 @@ class Layer3D {
   constructor({
     position = [0, 0, 0], rotationX = 0, rotationY = 0, rotationZ = 0, scale = [1, 1, 1], anchor = [0, 0, 0],
     opacity = 1, width = 200, height = 200, content = null, draw = null, name = null,
+    // null (default) = UNLIT, preserving every prior batch's rendering
+    // exactly - only a layer that explicitly opts in with a material
+    // gets scene-light shading (batch 8's lights.js), never a silent
+    // behavior change for existing Layer3D usage.
+    material = null,
   } = {}) {
     this.position = position;
     this.rotationX = rotationX;
@@ -54,9 +62,24 @@ class Layer3D {
     this.content = content; // a static pre-rendered canvas, OR...
     this.draw = draw; // ...(ctx, t) => void, rendered fresh into an internal buffer each call
     this.name = name;
+    this.material = material; // { ambient, diffuse, specularStrength, shininess } or null
     this.parent = null;
     this.children = [];
     this._buffer = null;
+  }
+
+  /** The plane's single world-space surface normal (see the class-level doc comment for why one value is correct for a flat plane) - local normal [0,0,-1] (facing -Z, toward this engine's default camera position) transformed by the world matrix's rotation/scale, per matrix4.js's transformDirection4. */
+  getWorldNormal(t) {
+    const world = this.getWorldMatrix(t);
+    const n = transformDirection4(world, [0, 0, -1]);
+    const len = Math.hypot(n[0], n[1], n[2]) || 1;
+    return [n[0] / len, n[1] / len, n[2] / len];
+  }
+
+  /** World-space position of the plane's own center - the representative point lights.js's uniform-per-layer lighting is evaluated at. */
+  getWorldCenter(t) {
+    const world = this.getWorldMatrix(t);
+    return transformPoint4(world, [this.width / 2, this.height / 2, 0]).slice(0, 3);
   }
 
   addChild(child) {
@@ -267,14 +290,59 @@ function warpImageToQuad(ctx, sourceCanvas, quad4, subdivisions = 8) {
 }
 
 /**
+ * Applies a lighting-computed [r,g,b] tint (batch 8's lights.js -
+ * roughly 0-1+, can exceed 1 under strong/multiple lights) to
+ * `contentCanvas` via 'multiply' blend, re-clipped to the content's
+ * own alpha shape afterward via 'destination-in' - the exact same
+ * "always composite a real rendered canvas via drawImage, never a raw
+ * fill, under a non-default composite operation" rule layerStack.js
+ * established in batch 3 and every batch since has followed, applied
+ * here even though the tint fill is fully opaque (no own-alpha to
+ * double-apply) - kept consistent with the rest of the codebase rather
+ * than treated as a one-off exception.
+ */
+function applyLightingTint(contentCanvas, tint) {
+  const w = contentCanvas.width, h = contentCanvas.height;
+  const [r, g, b] = tint.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255));
+  const tintHex = `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+
+  const tintCanvas = createCanvas(w, h);
+  const tctx = tintCanvas.getContext('2d');
+  tctx.fillStyle = tintHex;
+  tctx.fillRect(0, 0, w, h);
+
+  const out = createCanvas(w, h);
+  const octx = out.getContext('2d');
+  octx.drawImage(contentCanvas, 0, 0);
+  octx.save();
+  octx.globalCompositeOperation = 'multiply';
+  octx.drawImage(tintCanvas, 0, 0);
+  octx.restore();
+  octx.save();
+  octx.globalCompositeOperation = 'destination-in';
+  octx.drawImage(contentCanvas, 0, 0);
+  octx.restore();
+  return out;
+}
+
+/**
  * Renders a whole 3D scene: projects every layer's 4 corners through
  * `camera` at time t, skips any layer entirely behind the camera,
  * sorts the rest back-to-front by average corner depth (painter's
  * algorithm - see the class-level doc comment for its real, documented
  * scope), and warps each layer's own rendered content onto its
  * projected quad in that order.
+ *
+ * `lights` (batch 8, default []) - only consulted for layers with a
+ * `.material` set (see the Layer3D constructor doc comment): those
+ * layers' content is tinted via lights.js's computeLighting BEFORE
+ * warping, using the layer's own world-space normal/center (see
+ * getWorldNormal/getWorldCenter) and the CAMERA's own position as the
+ * viewer for specular. Layers without a material render exactly as
+ * every prior batch (zero behavior change, lights array is simply
+ * unused for them).
  */
-function renderScene3D(ctx, compWidth, compHeight, layers, camera, t, { subdivisions = 8 } = {}) {
+function renderScene3D(ctx, compWidth, compHeight, layers, camera, t, { subdivisions = 8, lights = [] } = {}) {
   const entries = [];
   for (const layer of layers) {
     const world = layer.getWorldMatrix(t);
@@ -288,10 +356,19 @@ function renderScene3D(ctx, compWidth, compHeight, layers, camera, t, { subdivis
   entries.sort((a, b) => b.avgDepth - a.avgDepth); // farthest first -> drawn first -> back to front
 
   for (const entry of entries) {
-    const content = entry.layer.getContentCanvas(t);
+    let content = entry.layer.getContentCanvas(t);
     if (!content) continue;
     const opacity = entry.layer.getWorldOpacity(t);
     if (opacity <= 0.001) continue;
+
+    if (entry.layer.material && lights.length > 0) {
+      const normal = entry.layer.getWorldNormal(t);
+      const center = entry.layer.getWorldCenter(t);
+      const cameraPos = resolve(camera.position, t);
+      const tint = computeLighting(normal, center, lights, entry.layer.material, cameraPos, t);
+      content = applyLightingTint(content, tint);
+    }
+
     const quad = entry.projected.map((p) => [p.x, p.y]);
     ctx.save();
     ctx.globalAlpha = opacity;
@@ -301,5 +378,5 @@ function renderScene3D(ctx, compWidth, compHeight, layers, camera, t, { subdivis
 }
 
 module.exports = {
-  Layer3D, renderScene3D, warpImageToQuad, warpTriangle, solveAffineFromTriangle, bilinearQuadPoint, invert3x3,
+  Layer3D, renderScene3D, warpImageToQuad, warpTriangle, solveAffineFromTriangle, bilinearQuadPoint, invert3x3, applyLightingTint,
 };
