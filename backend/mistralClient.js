@@ -233,8 +233,17 @@ BEATVISUAL
   "background": LayerDef | null,  // optional full-frame layer drawn first
                                     // (typically a "generate" gradient/noise,
                                     // or a solid-fill shape sized to the frame)
-  "layers": [ LayerDef, ... ],  // REQUIRED. Stacking order: LATER entries
-                                  // draw ON TOP of earlier ones.
+  "layers": [ LayerDef, ... ],  // REQUIRED, must be NON-EMPTY - every beat
+                                  // needs real foreground content (text,
+                                  // shapes, an image...). "background" alone
+                                  // with an empty "layers" array renders as
+                                  // a dead, empty frame with nothing
+                                  // happening for that beat's WHOLE duration
+                                  // - confirmed directly as a multi-second
+                                  // static void in real generated output.
+                                  // Never leave a beat with nothing in it.
+                                  // Stacking order: LATER entries draw ON
+                                  // TOP of earlier ones.
   "camera": CameraDef,          // only used if is3D
   "lights": [ LightDef, ... ],  // only used if is3D
   "transitionIn": TransitionDef | null  // how this beat enters from whatever
@@ -371,6 +380,38 @@ full delta applied = hidden/offset; selected = delta removed = landed).
 So { "position":[0,40], "opacity":-1 } with a range selector sweeping
 0->100 makes each character rise 40px and fade in as the sweep reaches it.
 
+CRITICAL - keep "position" deltas SMALL, or text renders as garbled,
+overlapping nonsense: each character sweeps into place INDIVIDUALLY, in
+sequence, not all at once - while one character is still mid-transition
+(offset by some fraction of your delta) the NEXT characters over may
+have already landed. If your delta is large relative to a single
+character's own width (roughly fontSize * 0.6), the still-moving
+character's current position visually collides with already-landed
+neighboring characters, and for a few frames the word reads as scrambled
+garbage (e.g. "BUDGETING" briefly rendering as overlapping fragments
+mid-reveal). This is not a hypothetical edge case - it is the single
+most common way generated text looks broken. Concrete rule: keep
+"position" deltas to roughly 15-40px for body/headline text at typical
+sizes (40-80px fontSize) - large enough to read as motion, far too
+small to overlap a neighboring character. Never use triple-digit
+position deltas on a per-character text animator.
+
+Selector choice for legibility-critical text (headlines, labels, short
+badges the viewer needs to actually READ): use "range" with a ONE-TIME
+sweep (start fixed, end animating 0->100, or vice versa) so the text
+reaches a fully-landed, stable, readable state and STAYS there. NEVER
+use "wiggly" as the ONLY animator on text meant to be read, especially
+combined with a "position" property - wiggly is a continuous, NEVER-
+SETTLING oscillation (every character is perpetually offset by some
+amount, forever), so any text using it will look permanently glitched/
+scrambled for its entire time on screen, not just during an entrance -
+this is exactly the "text renders as unreadable garbage the whole time
+it's visible" failure mode. Reserve "wiggly" (with modest amounts,
+never combined with large position deltas) for decorative/ambient
+motion on text that isn't the primary thing being read, or use it only
+on "opacity"/"scale" with a small range, never on "position" for short
+critical labels.
+
 =====================================================================
 EFFECTS - EffectDef: { "type": <name>, "params": {...} }, real per-type params:
 =====================================================================
@@ -487,6 +528,21 @@ DESIGN QUALITY - this is the whole point, not an afterthought
 - A trackMatte, an adjustment layer with a subtle color grade, or a
   light layer-stroke/glow are the kind of real detail that reads as
   "professionally designed" - use them where they fit, not everywhere.
+- FILL THE FRAME. A tiny graphic confined to one corner while most of
+  the ${COMP_WIDTH}x${COMP_HEIGHT} frame sits empty reads as unfinished,
+  not minimalist - scale primary elements (shapes, images, text) to
+  genuinely occupy meaningful screen area. An image beat especially
+  should let the photo be a dominant, prominent element, not a small
+  thumbnail pushed into a corner.
+- NEVER let a beat go visually static/empty for more than a fraction of
+  a second. Something (a reveal, a move, an effect, a transition)
+  should always be happening on screen - a beat that's just a single
+  motionless element sitting in front of a background for its whole
+  duration, or a background-only beat with sparse/no foreground
+  content, reads as dead air and is the single fastest way to lose a
+  short-form viewer. Match each beat's duration to how much is actually
+  happening in it - don't stretch a simple idea across several empty
+  seconds.
 `.trim();
 
 function buildGenerationSystemPrompt(targetDurationSeconds) {

@@ -232,6 +232,43 @@ function validateAnimatable(value, path, errors, vectorLen) {
   errors.push(`${path}: object form must have either a "keyframes" array or an "expression" string`);
 }
 
+// Real bug found via a live-rendered, user-reported output (not
+// theoretical): a per-character text reveal sweeps characters into
+// place ONE AT A TIME, not all at once - a "properties.position" delta
+// large relative to a single character's own width makes a still-
+// transitioning character's CURRENT (partially-offset) position
+// visually collide with already-landed neighboring characters, which
+// reads as scrambled/overlapping garbage text for as long as the
+// reveal is in progress (confirmed directly: "BUDGETING APPS" briefly
+// rendered as overlapping fragments mid-reveal with a delta this rule
+// would catch). Caught here, not just via prompt guidance, because
+// prompt instructions are advisory - a hard validation error is what
+// actually guarantees mistralClient.js's retry-with-errors-fed-back
+// loop corrects it before the JSON ever reaches the renderer.
+const MAX_TEXT_ANIMATOR_POSITION_DELTA = 150;
+
+function validateAnimator(a, path, errors) {
+  if (!a.selector) { errors.push(`${path}.selector: is required`); return; }
+  validateSelector(a.selector, `${path}.selector`, errors);
+  const props = a.properties;
+  if (isPlainObject(props) && Array.isArray(props.position)) {
+    const [dx = 0, dy = 0] = props.position;
+    if (Math.abs(dx) > MAX_TEXT_ANIMATOR_POSITION_DELTA || Math.abs(dy) > MAX_TEXT_ANIMATOR_POSITION_DELTA) {
+      errors.push(`${path}.properties.position: [${dx},${dy}] is too large (keep each axis under ${MAX_TEXT_ANIMATOR_POSITION_DELTA}px, and typically 15-40px) - a per-character reveal sweeps characters into place individually, so a large delta makes still-transitioning characters visually overlap already-landed neighbors, rendering as garbled/scrambled text during the reveal.`);
+    }
+    // A "wiggly" selector never settles - every character is
+    // perpetually offset by some amount, forever - so pairing it with
+    // a position delta makes text look permanently scrambled for its
+    // WHOLE time on screen, not just during an entrance (confirmed
+    // directly: a badge's text stayed garbled across the entire beat,
+    // never resolving to a readable state, unlike a one-time "range"
+    // sweep which lands and stays).
+    if (a.selector.type === 'wiggly') {
+      errors.push(`${path}: a "wiggly" selector combined with a "position" property never settles - text using this will look permanently scrambled for its entire time on screen. Use "wiggly" only with "opacity"/"scale" (small ranges), or use a one-time "range" selector for any position-based text reveal.`);
+    }
+  }
+}
+
 function validateSelector(sel, path, errors) {
   if (!isPlainObject(sel)) { errors.push(`${path}: must be an object`); return; }
   if (!SELECTOR_TYPES.includes(sel.type)) {
@@ -288,10 +325,7 @@ function validateLayer(layer, path, errors, knownIds) {
   } else if (layer.type === 'text') {
     if (typeof layer.text !== 'string' || layer.text.length === 0) errors.push(`${path}.text: is required and must be a non-empty string`);
     if (Array.isArray(layer.animators)) {
-      layer.animators.forEach((a, i) => {
-        if (!a.selector) errors.push(`${path}.animators[${i}].selector: is required`);
-        else validateSelector(a.selector, `${path}.animators[${i}].selector`, errors);
-      });
+      layer.animators.forEach((a, i) => validateAnimator(a, `${path}.animators[${i}]`, errors));
     }
   } else if (layer.type === 'generate') {
     if (!layer.generate || !GENERATE_KINDS.includes(layer.generate.kind)) {
@@ -323,6 +357,16 @@ function validateBeatVisual(visual, path, errors, knownIds) {
   if (!isPlainObject(visual)) { errors.push(`${path}: is required and must be an object`); return; }
   if (visual.background) validateLayer(visual.background, `${path}.background`, errors, knownIds);
   if (!Array.isArray(visual.layers)) { errors.push(`${path}.layers: is required and must be an array`); return; }
+  // Real bug found via a live-rendered, user-reported output: a beat
+  // with zero layers (just a background, or nothing at all) renders as
+  // several seconds of a static/empty frame with no foreground content
+  // whatsoever - confirmed directly as a multi-second dead zone in an
+  // actual generated video. A beat needs at least one real foreground
+  // layer; "just a background for a few seconds" is never an
+  // intentional design choice worth having, it's a generation gap.
+  if (visual.layers.length === 0) {
+    errors.push(`${path}.layers: must contain at least one layer - a beat with zero foreground layers renders as an empty/dead frame with nothing happening for its entire duration.`);
+  }
   visual.layers.forEach((layer, i) => validateLayer(layer, `${path}.layers[${i}]`, errors, knownIds));
 
   if (visual.is3D) {
