@@ -16,7 +16,12 @@ const { Property } = require('./keyframes');
 
 function toGray(imageData) {
   const { data, width, height } = imageData;
-  const gray = new Float64Array(width * height);
+  // Float32, not Float64 (halves this full-frame-sized buffer's memory
+  // for the same reason blurEffects.js's convolve1D does - luminance
+  // values only ever feed into NCC's own mean/correlation arithmetic
+  // and get compared relatively, never bit-exactly, so float32's ~7
+  // decimal digits of precision cost nothing real here).
+  const gray = new Float32Array(width * height);
   for (let i = 0, p = 0; i < data.length; i += 4, p++) {
     gray[p] = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
   }
