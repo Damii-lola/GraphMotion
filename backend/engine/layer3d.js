@@ -237,31 +237,40 @@ function expandTriangleForClip(tri, amount) {
 }
 
 /**
- * Caches each source canvas's full pixel data (one getImageData call)
- * keyed by the canvas object itself via a WeakMap - so an entry is
- * only ever alive as long as something else still references that
- * canvas, and is reclaimed automatically the moment nothing does,
- * with zero explicit cleanup needed. Real fix, arrived at after an
- * INITIAL fix attempt (crop the source via drawImage's own 9-argument
- * sub-rectangle form) measurably did NOT help - direct testing
- * isolated why: @napi-rs/canvas's drawImage() pays a real cost
- * proportional to the SOURCE canvas's own full size on every call,
- * REGARDLESS of the destination size or how small a sub-rectangle is
- * requested (confirmed directly: a 52x52 crop-via-drawImage FROM a
- * 1080x1920 source still cost ~8MB per call, identical to drawing the
- * whole thing). getImageData does NOT have that repeat-per-call cost -
- * it's a real, one-time, size-proportional read - so fetching it once
- * and reusing it for every triangle's crop (via plain typed-array byte
- * copying, not a second drawImage) is what actually fixes this.
+ * Fetches a source canvas's full pixel data once and reuses it for
+ * every triangle crop within ONE logical warp operation (one
+ * warpImageToQuad call, one warpPuppetMesh call) via `cache` - a plain
+ * object the caller owns and scopes to exactly that operation. Real
+ * fix for a real cost, confirmed by direct testing: @napi-rs/canvas's
+ * drawImage() pays a cost proportional to the SOURCE canvas's own full
+ * size on every call regardless of destination size, so re-fetching
+ * per-triangle would be expensive; getImageData does NOT have that
+ * repeat-per-call cost, making a single fetch-and-reuse the right fix.
+ *
+ * MUST be scoped per-call, not persisted across frames - a real,
+ * previously-shipped correctness bug found via direct pixel testing,
+ * not assumed: this used to be a MODULE-LEVEL WeakMap keyed by canvas
+ * object identity. That looks safe (an entry only lives as long as its
+ * canvas does) but isn't: Layer3D._buffer (the canvas warpImageToQuad
+ * is most commonly called against) is the SAME object reused every
+ * frame, redrawn in place each time - so the old cache served the
+ * FIRST frame's pixel data forever after for any unlit, internally-
+ * animated 3D layer (no material -> no applyLightingTint -> no fresh
+ * object each frame to naturally invalidate it). Confirmed directly:
+ * an unlit 3D shape's fill opacity animating 1.0 -> 0.1 rendered
+ * IDENTICALLY at t=0 and t=2 with the old module-level cache - the
+ * content was silently frozen from its very first render for its
+ * entire remaining duration. Scoping `cache` to one caller-owned object
+ * per operation keeps the exact same performance win (still one real
+ * fetch per operation, not per triangle) while making staleness
+ * structurally impossible - a fresh object every call can never see a
+ * stale previous frame's data.
  */
-const sourceDataCache = new WeakMap();
-function getSourceImageData(sourceCanvas) {
-  let cached = sourceDataCache.get(sourceCanvas);
-  if (!cached) {
-    cached = sourceCanvas.getContext('2d').getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
-    sourceDataCache.set(sourceCanvas, cached);
-  }
-  return cached;
+function getSourceImageData(sourceCanvas, cache = null) {
+  if (cache && cache.sourceCanvasRef === sourceCanvas) return cache.sourceData;
+  const data = sourceCanvas.getContext('2d').getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+  if (cache) { cache.sourceCanvasRef = sourceCanvas; cache.sourceData = data; }
+  return data;
 }
 
 /**
@@ -288,7 +297,32 @@ function getSourceImageData(sourceCanvas) {
  * against the crop's own origin so the mapping is exact, not
  * approximated) at a real, measured, ~40x lower memory cost.
  */
-function warpTriangle(ctx, sourceCanvas, srcTri, dstTri, clipExpand = 0.75) {
+/**
+ * `cache` (optional, default null = old per-call behavior unchanged for
+ * existing callers that don't pass one): a plain object a caller
+ * creates FRESH per logical warp operation (one warpImageToQuad call,
+ * one warpPuppetMesh call) and reuses across every warpTriangle call
+ * within that operation - both for the source pixel data (see
+ * getSourceImageData's own doc comment for why this MUST be scoped per
+ * operation, never persisted across frames) and for a reusable crop
+ * canvas (`cache.cropCanvas`), grown but never shrunk across calls.
+ * Real, measured fix, not a guess: even with per-frame global.gc()
+ * already in place (see renderEngine.js), a real 3D-layer render still
+ * peaked at ~576MB RSS vs ~131MB for the identical scene with the 3D
+ * beat removed - isolated directly to this function's own
+ * createCanvas(cropW, cropH) call firing up to 128 times PER FRAME (one
+ * 3D layer's warpImageToQuad call), each allocating a genuine native
+ * Skia surface. Reusing one crop canvas cuts that to at most a handful
+ * of allocations for an ENTIRE render, not 128 per frame - fixing the
+ * allocation at its source rather than asking GC to clean up ever-more
+ * garbage after the fact. Draws via the explicit source-rect drawImage
+ * form below specifically because a reused crop canvas can be LARGER
+ * than this triangle's own cropW x cropH - only that top-left sub-
+ * region (the part putImageData just wrote) is ever valid; the rest
+ * may hold stale pixels from an earlier, bigger triangle and must
+ * never be sampled.
+ */
+function warpTriangle(ctx, sourceCanvas, srcTri, dstTri, clipExpand = 0.75, cache = null) {
   const minX = Math.max(0, Math.floor(Math.min(srcTri[0][0], srcTri[1][0], srcTri[2][0])) - 1);
   const minY = Math.max(0, Math.floor(Math.min(srcTri[0][1], srcTri[1][1], srcTri[2][1])) - 1);
   const maxX = Math.min(sourceCanvas.width, Math.ceil(Math.max(srcTri[0][0], srcTri[1][0], srcTri[2][0])) + 1);
@@ -300,9 +334,20 @@ function warpTriangle(ctx, sourceCanvas, srcTri, dstTri, clipExpand = 0.75) {
   const m = solveAffineFromTriangle(localSrcTri, dstTri);
   if (!m) return;
 
-  const fullData = getSourceImageData(sourceCanvas);
+  const fullData = getSourceImageData(sourceCanvas, cache);
   const srcW = sourceCanvas.width;
-  const cropped = createCanvas(cropW, cropH);
+
+  let cropped;
+  if (cache) {
+    const curW = cache.cropCanvas ? cache.cropCanvas.width : 0;
+    const curH = cache.cropCanvas ? cache.cropCanvas.height : 0;
+    if (curW < cropW || curH < cropH) {
+      cache.cropCanvas = createCanvas(Math.max(curW, cropW), Math.max(curH, cropH));
+    }
+    cropped = cache.cropCanvas;
+  } else {
+    cropped = createCanvas(cropW, cropH);
+  }
   const cropCtx = cropped.getContext('2d');
   const cropImgData = cropCtx.createImageData(cropW, cropH);
   for (let row = 0; row < cropH; row++) {
@@ -320,7 +365,7 @@ function warpTriangle(ctx, sourceCanvas, srcTri, dstTri, clipExpand = 0.75) {
   ctx.closePath();
   ctx.clip();
   ctx.transform(m.a, m.b, m.c, m.d, m.e, m.f);
-  ctx.drawImage(cropped, 0, 0);
+  ctx.drawImage(cropped, 0, 0, cropW, cropH, 0, 0, cropW, cropH);
   ctx.restore();
 }
 
@@ -347,6 +392,19 @@ function bilinearQuadPoint(quad, u, v) {
 function warpImageToQuad(ctx, sourceCanvas, quad4, subdivisions = 8) {
   const srcW = sourceCanvas.width, srcH = sourceCanvas.height;
   const n = Math.max(1, subdivisions);
+  // One reusable crop buffer + cached source pixel data, shared across
+  // every triangle in this call (up to 128 at the default 8x8
+  // subdivision) - see warpTriangle's/getSourceImageData's own doc
+  // comments for the real, measured reasons this matters: this was the
+  // dominant remaining memory cost in a real 3D-layer render even with
+  // per-frame global.gc() already in place elsewhere, AND (more
+  // seriously) a real correctness bug when this same cache used to be
+  // module-level instead of scoped to one call - see git history/the
+  // doc comment on getSourceImageData for the full story. A FRESH
+  // object every call, never shared across calls/frames, is what makes
+  // staleness structurally impossible while keeping the exact same
+  // performance win.
+  const cache = {};
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) {
       const u0 = i / n, u1 = (i + 1) / n, v0 = j / n, v1 = (j + 1) / n;
@@ -354,8 +412,8 @@ function warpImageToQuad(ctx, sourceCanvas, quad4, subdivisions = 8) {
       const sBR = [u1 * srcW, v1 * srcH], sBL = [u0 * srcW, v1 * srcH];
       const dTL = bilinearQuadPoint(quad4, u0, v0), dTR = bilinearQuadPoint(quad4, u1, v0);
       const dBR = bilinearQuadPoint(quad4, u1, v1), dBL = bilinearQuadPoint(quad4, u0, v1);
-      warpTriangle(ctx, sourceCanvas, [sTL, sTR, sBR], [dTL, dTR, dBR]);
-      warpTriangle(ctx, sourceCanvas, [sTL, sBR, sBL], [dTL, dBR, dBL]);
+      warpTriangle(ctx, sourceCanvas, [sTL, sTR, sBR], [dTL, dTR, dBR], 0.75, cache);
+      warpTriangle(ctx, sourceCanvas, [sTL, sBR, sBL], [dTL, dBR, dBL], 0.75, cache);
     }
   }
 }

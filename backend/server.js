@@ -218,7 +218,17 @@ const RENDER_WORKER_MAX_OLD_SPACE_MB = 400;
 function startRenderWorker(jobId, prompt, targetDurationSeconds, parentSceneJSON, onSettled) {
   const child = fork(path.join(__dirname, 'renderWorker.js'), {
     stdio: 'inherit',
-    execArgv: [`--max-old-space-size=${RENDER_WORKER_MAX_OLD_SPACE_MB}`],
+    // --expose-gc: REQUIRED for renderEngine.js's own periodic global.gc()
+    // calls during the frame loop to actually run (real, measured fix
+    // for native Skia memory piling up faster than V8's own heap-based
+    // GC heuristics ever trigger for - see renderEngine.js's own doc
+    // comment at the call site for the full incident/measurement).
+    // Without this flag, global.gc simply doesn't exist and that
+    // periodic call becomes a silent no-op, NOT a crash - but also not
+    // a fix. --max-old-space-size alone (already present below) never
+    // covered this; it only caps the JS heap, which stays small
+    // regardless of how much native canvas memory accumulates.
+    execArgv: [`--max-old-space-size=${RENDER_WORKER_MAX_OLD_SPACE_MB}`, '--expose-gc'],
   });
 
   let settled = false;

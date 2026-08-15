@@ -114,6 +114,18 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
     built.set(i, await buildOneBeat(beatRanges[i]));
   }
 
+  // A transition's "outgoing" side is always the SAME frozen moment
+  // (prevBeat.range.duration - see the doc comment above) for every
+  // single frame of the transition window, yet the naive version of
+  // this loop re-rendered that identical frame from scratch on every
+  // one of those frames - real, wasted CPU work, and (found via direct
+  // memory profiling, not assumed) a real contributor to peak memory:
+  // re-running a full beat's render (potentially a whole 3D scene with
+  // several layers) repeatedly, once per transition frame, when it only
+  // ever needed to happen ONCE per beat per chunk. Cached here, keyed
+  // by the outgoing beat's own index.
+  const frozenFrameCache = new Map();
+
   const canvas = createCanvas(OUTPUT_WIDTH, OUTPUT_HEIGHT);
   const ctx = canvas.getContext('2d');
   ctx.scale(RENDER_SCALE, RENDER_SCALE);
@@ -135,8 +147,12 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
       if (inTransition) {
         const prevBeat = built.get(beatIndex - 1);
-        const prevCanvas = createCanvas(WIDTH, HEIGHT);
-        prevBeat.visualObj.render(prevCanvas.getContext('2d'), prevBeat.range.duration);
+        let prevCanvas = frozenFrameCache.get(beatIndex - 1);
+        if (!prevCanvas) {
+          prevCanvas = createCanvas(WIDTH, HEIGHT);
+          prevBeat.visualObj.render(prevCanvas.getContext('2d'), prevBeat.range.duration);
+          frozenFrameCache.set(beatIndex - 1, prevCanvas);
+        }
         const currCanvas = createCanvas(WIDTH, HEIGHT);
         visualObj.render(currCanvas.getContext('2d'), localT);
         const progress = Math.min(1, Math.max(0, localT / transitionDuration));
@@ -151,7 +167,47 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       const frameIndex = frame - startFrame;
       fs.writeFileSync(path.join(framesDir, `f${String(frameIndex).padStart(6, '0')}.png`), png);
 
-      if (frameIndex % 10 === 0) {
+      // CRITICAL, not optional - real production incident (site going
+      // fully unresponsive, discovered via CORS errors that were
+      // actually a symptom of the whole container getting OOM-killed).
+      // Measured directly, not assumed: every real frame render (via
+      // sceneBuilder.js -> layerStack.js) allocates several fresh
+      // full-frame canvases (the layer-stack accumulator, one per
+      // layer, one more per track-matte source) - each one a small JS
+      // wrapper object with several MB of NATIVE Skia pixel memory
+      // attached via napi-rs. V8's own GC decides when to collect based
+      // on JS HEAP size, which stays tiny here (a canvas wrapper is
+      // small) regardless of how much native memory is actually piling
+      // up - so V8 never feels "pressured" to collect, and native RSS
+      // grows essentially unbounded.
+      //
+      // A SINGLE synchronous global.gc() call does NOT fix this -
+      // measured directly, not assumed: calling global.gc() alone every
+      // 5 frames left RSS growing identically to no gc() at all (both
+      // reached ~7.2GB over the same run). The native finalizers that
+      // actually release napi-rs's Skia pixel buffers apparently need
+      // an event-loop tick to run - they are not completed synchronously
+      // inside a single global.gc() call. The REAL fix, confirmed by
+      // direct A/B measurement on identical content: gc() -> yield to
+      // the event loop -> gc() AGAIN. That exact sequence held RSS
+      // perfectly flat (~80MB) on a simple 2D beat; every-5-frames on a
+      // heavier real render (3D layer warping + transitions, each
+      // allocating far more canvases per frame) still peaked over 1GB,
+      // so this runs EVERY frame, not every 5 - measured to be cheap
+      // (it did not slow the render down; likely cheaper than the
+      // memory-pressure/allocator overhead it avoids). --max-old-space-size
+      // (already set on the render worker forks) never covered any of
+      // this - it only bounds the JS heap, which was never where this
+      // memory actually lived. Requires --expose-gc on the forked
+      // render process (server.js/longVideoOrchestrator.js); guarded so
+      // this is a silent no-op (not a crash) if that flag is ever
+      // missing, though production must always pass it for this fix to
+      // actually take effect.
+      if (global.gc) {
+        global.gc();
+        await new Promise((resolve) => setImmediate(resolve));
+        global.gc();
+      } else if (frameIndex % 10 === 0) {
         await new Promise((resolve) => setImmediate(resolve));
       }
       if (onProgress && frameIndex % 5 === 0) {

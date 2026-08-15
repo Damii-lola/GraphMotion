@@ -143,10 +143,17 @@ class PuppetMesh {
  */
 function warpPuppetMesh(ctx, sourceCanvas, mesh, t) {
   const current = mesh.getCurrentPositions(t);
+  // Fresh per call, never shared across frames - required for
+  // correctness if sourceCanvas's own content ever changes between
+  // calls (an animated puppet source, not just a deformed static one) -
+  // see layer3d.js's getSourceImageData doc comment for the real bug
+  // this exact pattern was found to cause when it used to be a
+  // persistent, module-level cache instead.
+  const cache = {};
   for (const [i0, i1, i2] of mesh.triangleIndices) {
     const srcTri = [mesh.restPoints[i0], mesh.restPoints[i1], mesh.restPoints[i2]];
     const dstTri = [current[i0], current[i1], current[i2]];
-    warpTriangle(ctx, sourceCanvas, srcTri, dstTri);
+    warpTriangle(ctx, sourceCanvas, srcTri, dstTri, 0.75, cache);
   }
 }
 

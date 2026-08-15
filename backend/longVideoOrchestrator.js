@@ -118,7 +118,13 @@ function renderSingleChunk(jobId, sceneJSON, timeStart, timeEnd, outputPath, chu
   return new Promise((resolve, reject) => {
     const child = fork(path.join(__dirname, 'renderChunkWorker.js'), {
       stdio: 'inherit',
-      execArgv: [`--max-old-space-size=${CHUNK_WORKER_MAX_OLD_SPACE_MB}`],
+      // --expose-gc: required for renderEngine.js's own periodic
+      // global.gc() calls to actually run - see its doc comment at the
+      // call site. Without this, native Skia canvas memory piles up
+      // essentially unbounded within a single chunk (measured directly:
+      // ~50MB/frame with no ceiling), which --max-old-space-size alone
+      // never covered since it only bounds the JS heap.
+      execArgv: [`--max-old-space-size=${CHUNK_WORKER_MAX_OLD_SPACE_MB}`, '--expose-gc'],
     });
 
     // Real bug fixed here: this used to resolve/reject the moment the
