@@ -25,18 +25,10 @@ function imagesDirFor(jobId) {
  * Pollinations is free and unauthenticated; treating its failure as
  * routine, not exceptional, is the actual design, not a gap.
  */
-// iconCallout/badgeUnlock always draw their own inline icon and never
-// consult the resolved image map (see TEMPLATES_WITH_OWN_ICON in
-// renderEngine.js) - skipping them here avoids burning a fetch against
-// a free, rate-limit-sensitive service on an image that could never be
-// shown, regardless of whether Mistral followed the schema's guidance.
-const TEMPLATES_WITHOUT_IMAGE_SUPPORT = new Set(['iconCallout', 'badgeUnlock']);
-
 async function prefetchBeatImages(sceneJSON, jobId) {
   const scenesWithPrompts = sceneJSON.scenes
     .map((scene, index) => ({ scene, index }))
-    .filter(({ scene }) => !TEMPLATES_WITHOUT_IMAGE_SUPPORT.has(scene.template)
-      && typeof scene.params?.imagePrompt === 'string' && scene.params.imagePrompt.trim().length > 0);
+    .filter(({ scene }) => typeof scene.params?.imagePrompt === 'string' && scene.params.imagePrompt.trim().length > 0);
 
   const renderScenes = sceneJSON.scenes.map((scene) => ({ ...scene, params: { ...scene.params } }));
 
