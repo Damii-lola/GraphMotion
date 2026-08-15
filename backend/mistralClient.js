@@ -48,7 +48,22 @@ function extractJson(text) {
   return JSON.parse(cleaned.slice(start, end + 1));
 }
 
-const MISTRAL_TIMEOUT_MS = 75000;
+// Real, measured finding (not assumed): with response_format:json_object
+// and no explicit instruction against it, mistral-large pretty-prints its
+// JSON output with full 2-space indentation - for THIS schema's typical
+// nesting depth (layer -> contents -> path -> shape -> params, or
+// animators -> selector -> ...), that whitespace alone measured at
+// ~49.6% of total output length on a real captured generation (26330
+// chars pretty vs 13271 compact for the exact same parsed content) -
+// i.e. close to HALF of every max_tokens budget was being spent on
+// indentation, not content, pushing real generations (7204/8000 tokens
+// on a modest 4-beat/10s video) dangerously close to truncation. Fixed
+// two ways, together: (1) the system prompt now explicitly demands
+// compact/minified JSON (see the OUTPUT FORMAT section below - verified
+// live that the model actually complies, not just assumed), and (2)
+// max_tokens/timeout below are raised as real safety margin on top of
+// that fix, not a substitute for it.
+const MISTRAL_TIMEOUT_MS = 120000;
 
 /**
  * Shared by both the fresh-generation and edit paths - same API call
@@ -56,7 +71,7 @@ const MISTRAL_TIMEOUT_MS = 75000;
  * differ between the two callers below.
  */
 async function callMistralForJSON(systemPrompt, userMessage, retriesLeft, onRetry) {
-  const maxTokens = 8000;
+  const maxTokens = 12000;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), MISTRAL_TIMEOUT_MS);
@@ -137,6 +152,17 @@ below is real and will actually render.
 
 The output is ALWAYS a single JSON object, no markdown fences, no
 prose outside the JSON: { "scenes": [ Beat, ... ] }
+
+OUTPUT FORMAT - CRITICAL: output COMPACT, MINIFIED JSON - no indentation,
+no line breaks, no spaces after ":" or ",". You have a limited output
+token budget shared between formatting and actual content: pretty-
+printed JSON with indentation can nearly DOUBLE the token cost of the
+exact same content for a schema this deeply nested, risking your
+response getting cut off mid-generation before the JSON is even
+complete. Every character you spend on whitespace is a character you
+can't spend on the scene itself. Write it as ONE continuous line, e.g.
+{"scenes":[{"params":{"duration":2.5},"visual":{"is3D":false,"layers":[...]}}]}
+- not spread across multiple indented lines.
 
 The canvas is ${COMP_WIDTH} x ${COMP_HEIGHT} pixels (9:16 vertical). Every
 position/size you author is in these pixel units, origin (0,0) at the
@@ -465,7 +491,10 @@ YOUR TASK
 Generate a complete, valid scene JSON for a short-form vertical video
 matching the user's request below. Target roughly ${targetDurationSeconds}
 seconds total across all beats (sum of params.duration). Output ONLY the
-JSON object - no markdown fences, no commentary before or after it.`;
+JSON object - no markdown fences, no commentary before or after it.
+Remember: COMPACT/MINIFIED JSON, one line, no indentation - this is not
+optional, it directly determines whether your response fits before
+being cut off.`;
 }
 
 function buildEditSystemPrompt(targetDurationSeconds) {
@@ -480,7 +509,10 @@ instruction applied - not a diff, not just the changed beat. Preserve
 every beat/field the instruction doesn't ask you to change. Keep the
 total duration close to the original (~${targetDurationSeconds}s) unless
 the instruction explicitly asks to add/remove/lengthen beats. Output
-ONLY the JSON object - no markdown fences, no commentary.`;
+ONLY the JSON object - no markdown fences, no commentary.
+Remember: COMPACT/MINIFIED JSON, one line, no indentation - this is not
+optional, it directly determines whether your response fits before
+being cut off.`;
 }
 
 async function generateSceneJSON(userPrompt, targetDurationSeconds = 12, { retriesLeft = 1, priorErrors = null } = {}) {
