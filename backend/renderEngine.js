@@ -182,28 +182,37 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       // grows essentially unbounded.
       //
       // A SINGLE synchronous global.gc() call does NOT fix this -
-      // measured directly, not assumed: calling global.gc() alone every
-      // 5 frames left RSS growing identically to no gc() at all (both
-      // reached ~7.2GB over the same run). The native finalizers that
+      // measured directly, not assumed: calling global.gc() alone left
+      // RSS growing identically to no gc() at all (both reached
+      // multiple GB over the same run). The native finalizers that
       // actually release napi-rs's Skia pixel buffers apparently need
       // an event-loop tick to run - they are not completed synchronously
       // inside a single global.gc() call. The REAL fix, confirmed by
       // direct A/B measurement on identical content: gc() -> yield to
-      // the event loop -> gc() AGAIN. That exact sequence held RSS
-      // perfectly flat (~80MB) on a simple 2D beat; every-5-frames on a
-      // heavier real render (3D layer warping + transitions, each
-      // allocating far more canvases per frame) still peaked over 1GB,
-      // so this runs EVERY frame, not every 5 - measured to be cheap
-      // (it did not slow the render down; likely cheaper than the
-      // memory-pressure/allocator overhead it avoids). --max-old-space-size
-      // (already set on the render worker forks) never covered any of
-      // this - it only bounds the JS heap, which was never where this
-      // memory actually lived. Requires --expose-gc on the forked
-      // render process (server.js/longVideoOrchestrator.js); guarded so
-      // this is a silent no-op (not a crash) if that flag is ever
-      // missing, though production must always pass it for this fix to
-      // actually take effect.
-      if (global.gc) {
+      // the event loop -> gc() AGAIN.
+      //
+      // Cadence: a REAL production incident, not a hypothetical one,
+      // forced a second round of tuning here. Running this EVERY frame
+      // kept memory excellent (~245MB peak) but was measured to make
+      // frame generation ~4x slower locally - and on Render's actual
+      // (meaningfully slower/shared) CPU, that pushed a single 8s chunk
+      // (192 frames) well past its 3-minute timeout mid-render, taking
+      // the whole site down a second time. Swept several cadences on
+      // identical real content: every-frame = ~140s/~245MB; every-2nd-
+      // frame = ~38s/~316MB; every-3rd = ~38s/~431MB; every-5th =
+      // ~39s/~589MB. The cliff is specifically between "every frame"
+      // and "every other frame" - cadence 2 gets nearly all of the
+      // speed of looser cadences while keeping memory closest to the
+      // every-frame result, so that's what's used: real evidence, not a
+      // guess at a "reasonable" number. --max-old-space-size (already
+      // set on the render worker forks) never covered any of this - it
+      // only bounds the JS heap, which was never where this memory
+      // actually lived. Requires --expose-gc on the forked render
+      // process (server.js/longVideoOrchestrator.js); guarded so this
+      // is a silent no-op (not a crash) if that flag is ever missing,
+      // though production must always pass it for this fix to actually
+      // take effect.
+      if (frameIndex % 2 === 0 && global.gc) {
         global.gc();
         await new Promise((resolve) => setImmediate(resolve));
         global.gc();

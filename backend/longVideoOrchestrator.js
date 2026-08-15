@@ -29,8 +29,21 @@ const { buildTimeline, renderJobToFile } = require('./renderEngine');
 // chunks mean more frequent full reclamation and a lower per-process
 // ceiling, at the cost of more fork/spawn overhead - worth it when
 // the alternative is an OOM-flavored timeout.
+//
+// Pulled down AGAIN (8 -> 5) after this exact scenario played out for
+// real: 8s (192 frames) reliably hit the per-chunk timeout on
+// production once frames started rendering genuinely real content
+// (real per-frame throughput on Render's actual - meaningfully slower/
+// shared - CPU turned out to be ~1.4s/frame even after the memory
+// fixes, so 192 frames needed ~270s against a 3-minute timeout). This
+// number was calibrated back when a frame was a trivial flat-fill
+// placeholder and is stale now that frames do real, heavier
+// rendering - smaller chunks are the direct lever for "one chunk's
+// total work fits comfortably inside its own timeout" regardless of
+// exactly how much slower Render's CPU is than local dev, which isn't
+// something measurable from here.
 const CHUNK_THRESHOLD_SECONDS = 10;
-const CHUNK_SIZE_SECONDS = 8;
+const CHUNK_SIZE_SECONDS = 5;
 
 /**
  * Renders sceneJSON to outputPath, transparently chunking if the
@@ -150,16 +163,18 @@ function renderSingleChunk(jobId, sceneJSON, timeStart, timeEnd, outputPath, chu
         child.kill();
         reject(new Error(`Chunk ${chunkIndex} timed out`));
       }
-    }, 3 * 60 * 1000); // 3 min per-chunk safety timeout. Measured locally: an
-    // 8s/192-frame chunk takes ~13-27s wall-clock on a full-power dev
-    // machine (~7fps render throughput) - if Render's shared/throttled
-    // CPU is meaningfully slower than that (plausible on a budget
-    // tier), a genuinely healthy render could take several times
-    // longer without anything being actually stuck. 2 min cut that too
-    // close and may have been failing legitimate-but-slow renders, not
-    // just real hangs. The new per-frame/per-stage logging in
-    // renderEngine.js/renderChunkWorker.js will show the real number on
-    // the next run either way.
+    }, 4 * 60 * 1000); // 4 min per-chunk safety timeout (raised from 3min after
+    // a real production timeout: an 8s/192-frame chunk hit 3 minutes
+    // mid-render on Render's actual host, confirmed via the per-frame
+    // logging this comment used to speculate about needing - real
+    // throughput there measured at ~1.4s/frame even after the memory
+    // fixes (~4x slower than local dev's per-frame cost with the same
+    // fixes applied). CHUNK_SIZE_SECONDS was ALSO cut 8->5 above for the
+    // same incident - the two changes together, not either alone, are
+    // what actually bounds a real chunk's total time safely under this
+    // limit. This margin stacks on top of that reduction rather than
+    // substituting for it, since Render's exact throughput isn't
+    // something reliably measurable from local dev.
 
     function maybeFinish() {
       if (settled || !hasExited) return;
