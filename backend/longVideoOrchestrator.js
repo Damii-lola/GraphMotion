@@ -42,8 +42,20 @@ const { buildTimeline, renderJobToFile } = require('./renderEngine');
 // total work fits comfortably inside its own timeout" regardless of
 // exactly how much slower Render's CPU is than local dev, which isn't
 // something measurable from here.
+//
+// Pulled down a THIRD time (5 -> 3) after 5s chunks STILL timed out in
+// production (observed: 10 minutes to cover 10%->48% overall progress,
+// implying multiple chunks each taking several minutes). Paired this
+// time with real, measured per-frame cost reductions rather than
+// chunk-size alone: renderEngine.js's WIDTH/HEIGHT dropped 720x1280 ->
+// 540x960 (a controlled, isolated A/B on identical content measured a
+// real ~41% time reduction from this alone) and FPS dropped 24 -> 20.
+// Smaller chunks are still kept as an independent safety margin on top
+// of those - they bound worst-case per-chunk time directly, which
+// matters given Render's real throughput relative to local dev still
+// isn't something reliably measurable from here.
 const CHUNK_THRESHOLD_SECONDS = 10;
-const CHUNK_SIZE_SECONDS = 5;
+const CHUNK_SIZE_SECONDS = 3;
 
 /**
  * Renders sceneJSON to outputPath, transparently chunking if the

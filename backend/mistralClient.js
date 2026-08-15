@@ -128,14 +128,21 @@ async function callMistralForJSON(systemPrompt, userMessage, retriesLeft, onRetr
 }
 
 // ---------------------------------------------------------------------
-// The real system prompt. Composition is WIDTH x HEIGHT = 720 x 1280
-// (a 9:16 vertical short-form frame, matching renderEngine.js's own
-// real constants) - stated explicitly below since every layer position
-// in the schema is authored in these pixel units.
+// The real system prompt. Composition is WIDTH x HEIGHT = 540 x 960 (a
+// 9:16 vertical short-form frame, matching renderEngine.js's own real
+// constants) - stated explicitly below since every layer position in
+// the schema is authored in these pixel units. Was 720x1280 - lowered
+// together with renderEngine.js's own real render resolution after a
+// production timeout incident (real per-frame rendering cost scales
+// with pixel count across nearly the entire pipeline - see
+// renderEngine.js's own doc comment for the full story). MUST stay in
+// sync with renderEngine.js's WIDTH/HEIGHT - authored content is sized
+// in these absolute pixel units, so a mismatch here would make Mistral
+// author content proportioned for the wrong canvas size.
 // ---------------------------------------------------------------------
 
-const COMP_WIDTH = 720;
-const COMP_HEIGHT = 1280;
+const COMP_WIDTH = 540;
+const COMP_HEIGHT = 960;
 
 const SCHEMA_REFERENCE = `
 You are directing a REAL motion graphics rendering engine - not writing
@@ -167,7 +174,7 @@ can't spend on the scene itself. Write it as ONE continuous line, e.g.
 The canvas is ${COMP_WIDTH} x ${COMP_HEIGHT} pixels (9:16 vertical). Every
 position/size you author is in these pixel units, origin (0,0) at the
 top-left for 2D content. Keep primary content within a safe zone
-roughly 60px in from every edge so nothing critical is clipped.
+roughly 45px in from every edge so nothing critical is clipped.
 
 =====================================================================
 BEAT

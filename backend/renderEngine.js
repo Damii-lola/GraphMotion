@@ -20,12 +20,34 @@ const T = require('./engine/transitions');
  * so nothing upstream needs editing.
  */
 
-const WIDTH = 720;
-const HEIGHT = 1280;
-const OUTPUT_WIDTH = 540;
-const OUTPUT_HEIGHT = 960;
-const RENDER_SCALE = OUTPUT_WIDTH / WIDTH;
-const FPS = 24;
+// Real production incident, not a style choice: this used to render
+// everything at 720x1280 (WIDTH/HEIGHT, the size every beat/layer/
+// composition actually gets built at) and downscale to a 540x960
+// OUTPUT canvas via ctx.scale() purely for supersampled anti-aliasing.
+// That meant EVERY intermediate canvas throughout the whole pipeline
+// (the layer-stack accumulator, per-layer buffers, 3D layer buffers,
+// warp scratch/crop canvases, generate backgrounds) was paying for
+// 720x1280 = 921,600 pixels when only 540x960 = 518,400 were ever
+// actually delivered - 78% more pixel-processing cost than necessary,
+// multiplied through nearly every operation in the render (fills,
+// getImageData/putImageData reads, compositing, warping), not just one
+// hot spot. Confirmed as a real, measured cost: a live render on
+// Render's actual host was still timing out after the GC-cadence fix
+// (10 minutes to go from 10% to 48% progress) - CPU time, not memory,
+// was the remaining bottleneck. Now renders NATIVELY at the delivered
+// resolution - no separate OUTPUT_WIDTH/OUTPUT_HEIGHT/RENDER_SCALE, no
+// supersampling pass. The real quality cost (slightly less smooth
+// anti-aliasing on diagonal/curved edges, since there's no extra
+// downscale-blur step) is an accepted, deliberate tradeoff for a
+// system that was outright failing to finish rendering at all.
+const WIDTH = 540;
+const HEIGHT = 960;
+// 24 -> 20: total frame count (and so total render time, all else
+// equal) scales directly with FPS - a real, zero-risk lever with none
+// of the resolution change's coordinate-system implications (FPS never
+// affects authored pixel positions). Part of the same emergency
+// speed pass as the resolution change above.
+const FPS = 20;
 
 /**
  * Computes each beat's [start,end) window in the overall timeline via a
@@ -126,9 +148,8 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   // by the outgoing beat's own index.
   const frozenFrameCache = new Map();
 
-  const canvas = createCanvas(OUTPUT_WIDTH, OUTPUT_HEIGHT);
+  const canvas = createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext('2d');
-  ctx.scale(RENDER_SCALE, RENDER_SCALE);
 
   const renderStartedAt = Date.now();
   console.log(`[renderEngine] range ${timeStart}-${timeEnd}s: ${totalFrames} frames, ${neededIndices.size} beat(s) built, +0.0s`);
