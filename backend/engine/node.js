@@ -1,9 +1,25 @@
 const { fromTRS, multiply, transformPoint, toCanvasArgs } = require('./matrix2d');
-const { Property } = require('./keyframes');
 
-/** Accepts either a plain value or a Property (from keyframes.js) transparently. */
+/**
+ * Accepts either a plain value or ANY time-varying value transparently
+ * - keyframes.js's real Property, OR expressions.js's ExpressionProperty
+ * (batch 10), OR anything else implementing the same .valueAt(t)
+ * contract. Duck-typed on "has a real valueAt method" rather than
+ * `instanceof Property` specifically - a real bug found while wiring
+ * the engine into the actual AI pipeline (not caught by batch 10's own
+ * test suite, which only ever called ExpressionProperty.valueAt(t)
+ * DIRECTLY, never through this shared resolve() the rest of the engine
+ * actually uses internally): ExpressionProperty does NOT extend
+ * Property, so the old `instanceof Property` check silently returned
+ * the raw ExpressionProperty OBJECT instead of evaluating it anywhere
+ * this resolve() was called on one - confirmed directly before fixing.
+ * The duck-typed check is also the more correct fix in general, not
+ * just a patch for this one case: it makes resolve() polymorphic over
+ * the real ABSTRACTION ("something time-varying vs a plain value"),
+ * not coupled to one specific concrete class.
+ */
 function resolve(propOrValue, t) {
-  return propOrValue instanceof Property ? propOrValue.valueAt(t) : propOrValue;
+  return typeof propOrValue?.valueAt === 'function' ? propOrValue.valueAt(t) : propOrValue;
 }
 
 /**

@@ -1,4 +1,3 @@
-const { Property } = require('./keyframes');
 const { clamp01, lerpAngle } = require('./mathUtils');
 
 /**
@@ -15,7 +14,10 @@ const { clamp01, lerpAngle } = require('./mathUtils');
  * THIS file (not the reverse) - selectors are upstream of animation.
  */
 
-function resolveVal(v, t) { return v instanceof Property ? v.valueAt(t) : v; }
+// Duck-typed, not `instanceof Property` - see node.js's resolve() doc
+// comment for the real bug this convention fixes (ExpressionProperty,
+// batch 10, doesn't extend Property but must still work here).
+function resolveVal(v, t) { return typeof v?.valueAt === 'function' ? v.valueAt(t) : v; }
 
 /** Classic GLSL-style smoothstep - a cubic ease between two edges, degenerates to a hard step when edge0===edge1. */
 function smoothstep(edge0, edge1, x) {
