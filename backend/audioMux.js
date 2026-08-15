@@ -63,7 +63,14 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
   videoPath = path.resolve(videoPath);
   workDir = path.resolve(workDir);
 
-  const { beats } = buildTimeline(sceneJSON);
+  // renderEngine.js's buildTimeline() returns `beatRanges`, not `beats`
+  // - real regression found here (not assumed): its own return shape
+  // was rewritten in the sceneBuilder.js integration without checking
+  // every consumer, and this file's destructuring of a since-renamed
+  // field silently produced `undefined`, throwing on the very next
+  // `.length` access. Per-beat shape (`duration`, `end`) is unchanged
+  // and still exactly what this function needs.
+  const { beatRanges: beats } = buildTimeline(sceneJSON);
   const listPath = path.join(workDir, `${jobId}-audio-concat.txt`);
   const segmentPaths = [];
   const cleanupPaths = [];
