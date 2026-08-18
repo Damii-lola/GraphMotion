@@ -63,16 +63,27 @@ function extractJson(text) {
 // live that the model actually complies, not just assumed), and (2)
 // max_tokens/timeout below are raised as real safety margin on top of
 // that fix, not a substitute for it.
-const MISTRAL_TIMEOUT_MS = 120000;
+// Raised again (120s -> 180s) after the two-pass creative-treatment
+// architecture below made this a real, measured problem, not a
+// hypothetical one: the JSON-encoding call now has to both READ a long
+// director's treatment (large prompt) AND generate up to 18000 tokens
+// of genuinely richer content, and a live run timed out at 120s doing
+// exactly that. This is a different constraint from renderEngine.js's
+// own render-time budget (which stayed fast on purpose) - generation
+// quality, not generation speed, is the explicit priority here, so
+// giving Mistral real room to finish a richer response is the correct
+// tradeoff, not a regression.
+const MISTRAL_TIMEOUT_MS = 180000;
 
 /**
- * Shared by both the fresh-generation and edit paths - same API call
- * shape, same truncation detection. Only the system/user prompt
- * differ between the two callers below.
+ * The shared transport - one real HTTP call, one real timeout/abort,
+ * one real truncation check. `jsonMode` toggles response_format:
+ * json_object (for schema generation) off for the free-text creative-
+ * treatment pass below, which needs Mistral to actually write prose,
+ * not force everything into a JSON string. Returns the raw text;
+ * callers decide what to do with it (parse as JSON, or use as-is).
  */
-async function callMistralForJSON(systemPrompt, userMessage, retriesLeft, onRetry) {
-  const maxTokens = 12000;
-
+async function callMistralRaw(systemPrompt, userMessage, { jsonMode = true, maxTokens = 12000, temperature = 0.7 } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), MISTRAL_TIMEOUT_MS);
 
@@ -87,9 +98,9 @@ async function callMistralForJSON(systemPrompt, userMessage, retriesLeft, onRetr
       },
       body: JSON.stringify({
         model: MODEL,
-        temperature: 0.7,
+        temperature,
         max_tokens: maxTokens,
-        response_format: { type: 'json_object' },
+        ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage },
@@ -113,9 +124,24 @@ async function callMistralForJSON(systemPrompt, userMessage, retriesLeft, onRetr
   if (!rawText) throw new Error('Mistral returned no content');
 
   if (data.choices?.[0]?.finish_reason === 'length') {
-    throw new Error(`Mistral response was truncated (hit max_tokens=${maxTokens}) before completing the JSON`);
+    throw new Error(`Mistral response was truncated (hit max_tokens=${maxTokens}) before completing`);
   }
 
+  return rawText;
+}
+
+/**
+ * Shared by both the fresh-generation and edit paths - same API call
+ * shape, same truncation detection. Only the system/user prompt
+ * differ between the two callers below.
+ */
+async function callMistralForJSON(systemPrompt, userMessage, retriesLeft, onRetry) {
+  // Raised from 12000: encoding a genuinely rich, director-planned
+  // treatment (multiple background layers, real depth, more effects
+  // per beat) is real additional content, not waste - the compact-JSON
+  // fix already freed up the token budget this now spends on richer
+  // scenes instead of indentation.
+  const rawText = await callMistralRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 18000 });
   try {
     return extractJson(rawText);
   } catch (err) {
@@ -175,6 +201,16 @@ The canvas is ${COMP_WIDTH} x ${COMP_HEIGHT} pixels (9:16 vertical). Every
 position/size you author is in these pixel units, origin (0,0) at the
 top-left for 2D content. Keep primary content within a safe zone
 roughly 45px in from every edge so nothing critical is clipped.
+
+EVERY object in a "layers" array and EVERY object in a shape's
+"contents" array MUST include an explicit "type" field - this is
+REQUIRED, never optional, never implied by other fields present. A fill
+entry is {"type":"fill","color":"#rrggbb"} - NOT just {"color":"#rrggbb"}
+with "type" left out because it seems obvious from "color" alone. A
+layer is {"type":"shape",...} - NOT an object with contents/text/etc
+but no "type" key. This is the single most common structural mistake:
+double-check every object in every array has its own "type" before
+finishing.
 
 =====================================================================
 BEAT
@@ -276,7 +312,21 @@ LAYERDEF - one entry in "layers" (or "background")
                  // yourself, but DO give it full opacity - an invisible/
                  // zero-opacity matte source produces a fully-clipped result).
   "isAdjustmentLayer": boolean,  // this layer's "effects" post-process
-                                   // EVERYTHING below it instead of itself
+                                   // EVERYTHING below it instead of itself.
+                                   // THERE IS NO "adjustment" LAYER TYPE -
+                                   // an adjustment layer is a NORMAL layer
+                                   // (type:"shape" with a full-frame rect
+                                   // and no visible fill, or type:"null")
+                                   // with isAdjustmentLayer:true and a real
+                                   // "effects" array. WRONG:
+                                   // {"type":"adjustment","effects":[...]}.
+                                   // RIGHT: {"type":"shape","width":540,
+                                   // "height":960,"isAdjustmentLayer":true,
+                                   // "effects":[{"type":"curves","params":{...}}],
+                                   // "contents":[{"type":"path","shape":
+                                   // {"kind":"rectangle","params":{"width":540,
+                                   // "height":960}}},{"type":"fill","color":
+                                   // "#000000","opacity":0}]}
   "effects": [ EffectDef, ... ],  // this layer's own effects stack, see below
   "parent": <layerId>,            // real parenting - this layer's transform
                                     // is relative to the parent's
@@ -328,7 +378,10 @@ LAYERDEF - one entry in "layers" (or "background")
 =====================================================================
 SHAPECONTENTITEM - entries in a shape layer's "contents" array, applied
 TOP TO BOTTOM building up a running path list (this mirrors the real
-engine exactly, not a simplification):
+engine exactly, not a simplification). ONLY these 7 types are valid
+here - grain/noise/blur/glow and every other EFFECTS-list name belongs
+on the LAYER's own "effects" array instead (see EFFECTS below), never
+inside "contents":
 =====================================================================
 { "type": "path", "shape": { "kind": ${SHAPE_KINDS.map((k) => `"${k}"`).join(' | ')}, "params": {...} } }
     rectangle: { width, height, position:[x,y] (default [0,0], CENTERED on
@@ -347,6 +400,17 @@ engine exactly, not a simplification):
 { "type": "repeater", "copies": AnimatableValue<number>,
     "transform": { "position":[dx,dy], "rotation", "scale":[sx,sy], "anchor" },
     "startOpacity", "endOpacity", "order": "below" | "above" }
+    // ONLY valid INSIDE a shape layer's own "contents" array - stamps N
+    // copies of the raw PATH GEOMETRY built so far in that same
+    // contents list. There is NO layer-level "repeater" field (a
+    // precomp/shape/etc layer object itself can never have "repeater"
+    // as a sibling of "type"/"layers"/"effects" - the engine silently
+    // ignores it there instead of erroring, so this fails invisibly,
+    // not loudly). To repeat a whole complex composed element (not just
+    // one shape's geometry), build ONE real precomp layer, then wrap
+    // copies of THAT precomp inside multiple shape layers each with
+    // their own position/rotation, or accept repeating just the raw
+    // geometry within one shape as this feature actually supports.
     // stamps N copies, each offset by one more increment of "transform"
 { "type": "pathOp", "mode": ${PATH_OP_MODES.map((m) => `"${m}"`).join(' | ')} }
     // boolean-combines all paths built so far
@@ -355,7 +419,16 @@ engine exactly, not a simplification):
     "cap": "butt"|"round"|"square", "join": "miter"|"round"|"bevel", "dash": [number,...], "opacity" }
 { "type": "group", "contents": [ ShapeContentItem, ... ],
     "transform": { "position","rotation","scale","anchor","opacity" } }
-    // nests a sub-stack under its own extra transform
+    // "transform" is a FIELD on the group item, sitting next to
+    // "contents" - it is NOT its own ShapeContentItem type. WRONG:
+    // {"contents":[...,{"type":"transform","position":[...]}]}. RIGHT:
+    // {"type":"group","contents":[...],"transform":{"position":[...]}}.
+    // nests a sub-stack under its own extra transform - a group's own
+    // "contents" is STILL only ever these same 7 ShapeContentItem types,
+    // even nested several groups deep. There is NO {"type":"effect",...}
+    // ShapeContentItem at any nesting depth - effects ALWAYS belong on
+    // the enclosing LAYER's own "effects" array (see EFFECTS below),
+    // never anywhere inside any "contents" array, group or not.
 
 Colors are always full 6-digit hex ("#rrggbb" or "#rrggbbaa") - 3-digit
 shorthand ("#333") is NOT supported and will render wrong.
@@ -415,8 +488,16 @@ critical labels.
 =====================================================================
 EFFECTS - EffectDef: { "type": <name>, "params": {...} }, real per-type params:
 =====================================================================
-Applied to a layer via its own "effects" array (see LAYERDEF above).
-Valid types: ${EFFECT_TYPES.join(', ')}
+Applied to a layer via its own "effects" array (see LAYERDEF above) -
+NEVER inside a shape's "contents" array (that array only ever takes the
+SHAPECONTENTITEM types listed above - path/trim/repeater/pathOp/fill/
+stroke/group - a shape content item can NEVER have type:"addNoise" or
+any other effect name). Effects and generate kinds are also two
+DIFFERENT lists - "gradientRamp"/"checkerboard"/etc (GENERATE KINDS,
+below) only ever appear inside a "generate" layer's generate.kind, NEVER
+inside an effects[].type, and vice versa: nothing in this EFFECTS list
+is ever a valid generate.kind.
+Valid effect types: ${EFFECT_TYPES.join(', ')}
 
   gaussianBlur: { radius=8 }
   boxBlur: { radius=8, iterations=1 }
@@ -452,6 +533,17 @@ Valid types: ${EFFECT_TYPES.join(', ')}
 Use effects with intent (a subtle dropShadow/outerGlow for depth, a
 tasteful gaussianBlur for a defocused background layer, grain for
 texture) - don't stack many strong effects on everything.
+
+THERE IS NO "vignette" EFFECT - it is not in the list above and never
+will validate. For a real vignette (darkened frame edges, a very common
+professional technique), build it as its own separate, extra layer, NOT
+an effect: a "generate" layer using gradientRamp with shape:"radial",
+startColor:"#ffffff" (center, white = unchanged), endColor:"#000000"
+(edges, black = fully darkened), sized to fill the frame, positioned
+last (on top) in "layers" with "blendMode":"multiply" and a modest
+"opacity" (0.4-0.7). White-to-black under multiply is exact and doesn't
+depend on alpha-channel hex support - don't use a transparent center via
+alpha hex for this, use the multiply blend mode instead.
 
 =====================================================================
 GENERATE KINDS - for "generate" layers and the "background" field:
@@ -543,7 +635,113 @@ DESIGN QUALITY - this is the whole point, not an afterthought
   short-form viewer. Match each beat's duration to how much is actually
   happening in it - don't stretch a simple idea across several empty
   seconds.
+- DON'T STACK MULTIPLE DARK OVERLAYS ON YOUR OWN BACKGROUND - opacity
+  compounds MULTIPLICATIVELY, not additively: two separate 30%-opacity
+  black fills over the same background don't add to 60%, they combine
+  to ~51% (1-0.7*0.7), and three or four "subtle vignette" layers
+  stacked the same way can silently crush an intended vivid color down
+  to something that reads as flat black on screen even though it's
+  technically not RGB (0,0,0). If you want a vignette/grain/darkening
+  treatment, apply it in ONE deliberate layer at a real, considered
+  opacity - not several small "just in case" overlays that combine into
+  an accidentally near-black result, wasting the palette you picked.
 `.trim();
+
+// ---------------------------------------------------------------------
+// The creative-treatment pass. Real architectural change, not more
+// prompt wording: a single call that has to simultaneously invent a
+// professional-grade design AND obey strict JSON syntax measurably
+// produces thinner, more generic output than letting the model think
+// through the design in free text first, unconstrained by structure,
+// then translate an already-good plan into the schema as a second,
+// separate step. This mirrors how a real studio actually works (a
+// director's treatment exists before an animator opens After Effects)
+// and is the direct, structural answer to "tell it to be an expert" vs
+// "make it think like one" - the treatment pass has no JSON to produce
+// at all, so nothing competes with the model actually reasoning about
+// composition, hierarchy, and motion.
+// ---------------------------------------------------------------------
+
+function buildTreatmentSystemPrompt(targetDurationSeconds) {
+  return `You are a world-class motion graphics director and animator -
+20+ years of real hands-on After Effects experience at top-tier
+studios, the kind of person clients pay a premium for because every
+single frame is intentional, layered, and alive. You are planning (NOT
+building yet) a ${targetDurationSeconds}-second short-form vertical
+video (${COMP_WIDTH}x${COMP_HEIGHT}px, 9:16) for the request below.
+
+You are briefing a REAL, capable engine - not a limited template tool.
+It genuinely supports: real bezier shapes (rectangles/ellipses/polygons/
+stars, with trim-path "draw on" reveals, repeaters, boolean path
+operations), real per-character text animation (staggered reveals,
+organic wiggle, text on a bezier path), real 3D layers with an
+animatable camera and real point/spot/directional/ambient lighting
+(rotating cards, parallax depth, dramatic camera moves), real blend
+modes and track mattes (one layer's shape or luma masking another),
+adjustment layers (a color grade or effect applied to everything
+below), and a real effects library: blur (gaussian/directional/radial),
+color grading (curves/hue-sat/color-balance/levels), glow/drop-shadow/
+inner-shadow/stroke, film grain/noise, glitch (RGB-shift/scan-lines/
+block-displace), stylize (posterize/emboss/edge-detect), and distort
+warps (twirl/bulge/ripple/wave). Generated photos can be fetched for
+any beat. Real transitions (cross-dissolve, wipes, 3D card flip, glitch)
+connect beats. Plan USING these real capabilities, specifically and by
+name where they fit - don't describe something vague this engine can't
+build, and don't undersell it with something generic when a specific
+technique would sell the shot better.
+
+Write a concrete, opinionated, beat-by-beat treatment - not mood words,
+actual visual decisions a senior director would hand an animator to
+build frame-for-frame:
+
+1. THE HOOK: what's on screen in the first half-second and exactly why
+   it earns attention immediately (specific, not "an engaging visual").
+2. PALETTE & MOOD: 2-4 specific colors (describe them precisely enough
+   to pick real hex values from) and the visual mood they create
+   together, held consistent across the whole video.
+3. BEAT BY BEAT (beats are typically 2-4s each): for EVERY beat, cover
+   ALL of:
+   - What's happening, moment to moment
+   - The FULL background treatment - never just "a gradient": what's
+     layered underneath/around the main content (a subtle noise/grain
+     texture, a soft vignette, a secondary slow-drifting shape or
+     pattern, a color-graded adjustment layer)
+   - EVERY foreground element, specifically: what it is, roughly where
+     it sits, how it enters/moves/exits, and its role in the hierarchy
+     (name the ONE dominant focal element and what's clearly secondary/
+     supporting - never several same-weight elements competing)
+   - Real depth: is this beat flat 2D, or does it use real 3D (camera
+     move, a rotating/tilted object, layers at different depths for
+     parallax)? Prefer 3D for at least some beats in a longer video.
+   - Specific effects that sell the shot and why (a soft outer glow on
+     the focal text, a drop shadow separating layers, film grain for
+     texture, a track-matte reveal, a subtle color-graded adjustment
+     layer tying the beat to the palette) - not decoration for its own
+     sake, each choice should earn its place
+   - How this beat transitions into the next
+4. Fill the frame with intent every beat - avoid large dead margins;
+   every region of the frame should feel considered, not empty by
+   default.
+
+Be decisive and specific throughout, the way a real director committing
+to real choices would - no hedging, no "could be" or "maybe", no
+generic filler description. This treatment will be built EXACTLY as
+written, so anything vague or missing here will be vague or missing in
+the final video. Write it as plain prose/notes (not JSON) - a real
+creative document, as long and detailed as it needs to be to leave
+nothing for the next step to guess at.`;
+}
+
+async function generateCreativeTreatment(userPrompt, targetDurationSeconds) {
+  const systemPrompt = buildTreatmentSystemPrompt(targetDurationSeconds);
+  // Raised from 4000 after a live run hit that cap and got cut off mid-
+  // treatment - real evidence the model wanted to be MORE thorough than
+  // the cap allowed, not less (an earlier successful treatment already
+  // ran ~11.8k chars, close to the old ceiling). A truncated treatment
+  // feeds incomplete instructions into the JSON pass, so this needs
+  // real headroom, not a tight budget - plain text is cheap regardless.
+  return callMistralRaw(systemPrompt, userPrompt, { jsonMode: false, maxTokens: 8000, temperature: 0.85 });
+}
 
 function buildGenerationSystemPrompt(targetDurationSeconds) {
   return `${SCHEMA_REFERENCE}
@@ -578,26 +776,43 @@ optional, it directly determines whether your response fits before
 being cut off.`;
 }
 
-async function generateSceneJSON(userPrompt, targetDurationSeconds = 12, { retriesLeft = 1, priorErrors = null } = {}) {
-  const systemPrompt = buildGenerationSystemPrompt(targetDurationSeconds);
-  const userMessage = priorErrors
-    ? `${userPrompt}\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON.`
-    : userPrompt;
+async function generateSceneJSON(userPrompt, targetDurationSeconds = 12, { retriesLeft = 2, priorErrors = null, treatment = null } = {}) {
+  // Raised from 1: a schema-validation retry and a JSON-parse retry
+  // (inside callMistralForJSON) share this SAME counter, and a live run
+  // hit both in sequence - a validation error consumed the only retry,
+  // leaving none left when the correction attempt then had its own
+  // minor JSON syntax slip. Encoding a genuinely rich, director-planned
+  // treatment (many more layers/effects/groups than a thin generation)
+  // means more surface area for small, VARIED one-off mistakes - 2
+  // retries gives real room to correct more than one before giving up.
+  // The treatment is planned ONCE per request, not regenerated on a
+  // validation retry - a retry means the JSON ENCODING of an already-
+  // good plan had a mistake, not that the creative plan itself was
+  // wrong. Re-planning on every retry would also make retries slower
+  // and risk an inconsistent design across attempts.
+  if (!treatment) {
+    console.log('[mistralClient] planning creative treatment...');
+    treatment = await generateCreativeTreatment(userPrompt, targetDurationSeconds);
+  }
 
-  const result = await callMistralForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateSceneJSON(userPrompt, targetDurationSeconds, { retriesLeft: nextRetriesLeft, priorErrors }));
+  const systemPrompt = buildGenerationSystemPrompt(targetDurationSeconds);
+  let userMessage = `CREATIVE TREATMENT (already planned by a senior director - encode this EXACTLY and FAITHFULLY, missing nothing; every VISUAL decision below must become real layers/effects/animators from the schema above, never simplified or dropped to something generic. The treatment may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead (a hard hit, a flash, a snap into place) rather than inventing a nonexistent field. Only use real fields from the schema above - never invent new ones.):\n${treatment}\n\nOriginal request: ${userPrompt}`;
+  if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON - still encoding the treatment above.`;
+
+  const result = await callMistralForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateSceneJSON(userPrompt, targetDurationSeconds, { retriesLeft: nextRetriesLeft, priorErrors, treatment }));
 
   const { valid, errors } = validateSceneJSON(result);
   if (!valid) {
     if (retriesLeft > 0) {
       console.warn(`[mistralClient] generated scene JSON failed validation (${errors.length} error(s)), retrying: ${errors.slice(0, 3).join('; ')}`);
-      return generateSceneJSON(userPrompt, targetDurationSeconds, { retriesLeft: retriesLeft - 1, priorErrors: errors });
+      return generateSceneJSON(userPrompt, targetDurationSeconds, { retriesLeft: retriesLeft - 1, priorErrors: errors, treatment });
     }
     throw new Error(`Mistral-generated scene JSON failed schema validation after retries: ${errors.join('; ')}`);
   }
   return result;
 }
 
-async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds = 12, { retriesLeft = 1, priorErrors = null } = {}) {
+async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds = 12, { retriesLeft = 2, priorErrors = null } = {}) {
   const systemPrompt = buildEditSystemPrompt(targetDurationSeconds);
   let userMessage = `Current JSON:\n${JSON.stringify(previousSceneJSON)}\n\nInstruction: ${editInstruction}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON.`;

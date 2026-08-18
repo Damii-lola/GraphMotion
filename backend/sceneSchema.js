@@ -399,6 +399,23 @@ function validateSceneJSON(sceneJSON) {
   }
   if (sceneJSON.scenes.length === 0) errors.push('scenes: must contain at least one beat');
 
+  // Real bug found via a live-rendered, user-reported output (not
+  // theoretical): on a long, deeply-nested, COMPACT (whitespace-free)
+  // generation, the model lost track of its own bracket nesting and
+  // left an entire beat's worth of content (params/visual/transitionIn)
+  // sitting as SIBLING keys on the root object instead of nested as the
+  // next element INSIDE the "scenes" array - valid JSON syntax, so it
+  // parsed fine, but the render pipeline only ever reads sceneJSON.scenes,
+  // so that whole beat was silently dropped with no error anywhere.
+  // "scenes" is the only real root key; anything else here is almost
+  // certainly exactly this failure, so it's flagged explicitly rather
+  // than silently ignored.
+  const ROOT_KEYS = new Set(['scenes']);
+  const strayRootKeys = Object.keys(sceneJSON).filter((k) => !ROOT_KEYS.has(k));
+  if (strayRootKeys.length > 0) {
+    errors.push(`root: unexpected top-level key(s) [${strayRootKeys.join(', ')}] - "scenes" is the ONLY valid root key. This usually means a beat's content (params/visual/etc) was accidentally placed as a SIBLING of "scenes" instead of nested INSIDE the "scenes" array as its next element - move it into "scenes" as its own {params,visual} object.`);
+  }
+
   sceneJSON.scenes.forEach((beat, i) => {
     const path = `scenes[${i}]`;
     if (!isPlainObject(beat.params) || typeof beat.params.duration !== 'number' || beat.params.duration <= 0) {
