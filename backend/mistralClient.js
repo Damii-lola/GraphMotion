@@ -1,6 +1,6 @@
 const fetch = require('node-fetch');
 const {
-  validateSceneJSON, LAYER_TYPES, SHAPE_KINDS, PATH_OP_MODES,
+  validateSceneJSON, LAYER_TYPES, SHAPE_KINDS, SHAPE_CONTENT_TYPES, PATH_OP_MODES,
   RANGE_SELECTOR_SHAPES, TRACK_MATTE_TYPES, GENERATE_KINDS, LIGHT_TYPES,
   FALLOFF_TYPES, BLEND_MODE_NAMES, EASING_NAMES, EFFECT_TYPES, TRANSITION_TYPES,
 } = require('./sceneSchema');
@@ -211,6 +211,49 @@ layer is {"type":"shape",...} - NOT an object with contents/text/etc
 but no "type" key. This is the single most common structural mistake:
 double-check every object in every array has its own "type" before
 finishing.
+
+FOUR COMPLETELY SEPARATE "type" VOCABULARIES - THEY NEVER CROSS OVER.
+This schema has four different closed lists of names that all sound
+"effect-ish" but belong to four unrelated fields. Using a name from the
+wrong list is the single most common mistake in real generated output -
+memorize which list each name lives in:
+
+  1. LAYER "type" (what KIND of layer this is):
+     ${LAYER_TYPES.join(', ')}
+  2. SHAPE CONTENT "type" (entries inside a shape layer's "contents"
+     array - building/filling/stroking/trimming/repeating a path):
+     ${SHAPE_CONTENT_TYPES.join(', ')}
+  3. EFFECT "type" (entries inside ANY layer's "effects" array - post-
+     processing already-rendered pixels: blur/color/glow/grain/glitch/
+     distort):
+     ${EFFECT_TYPES.join(', ')}
+  4. GENERATE "kind" (inside a "generate" layer's generate.kind field -
+     procedurally drawing brand new pixels from nothing):
+     ${GENERATE_KINDS.join(', ')}
+  (plus a fifth, separate list for "transitionIn.type" - see
+  TRANSITIONS below - ${TRANSITION_TYPES.join(', ')})
+
+Concretely, real mistakes seen in actual generated output that WILL
+fail validation - never do these:
+  WRONG: {"type":"trim",...} inside an "effects" array (trim is a SHAPE
+    CONTENT type - it belongs inside "contents", not "effects")
+  WRONG: {"type":"repeater",...} or {"type":"linearWipe",...} inside an
+    "effects" array (repeater is a shape content type; linearWipe is a
+    TRANSITION type - neither is a real effect)
+  WRONG: "generate":{"kind":"addGrain",...} (addGrain/addNoise are
+    EFFECTS - grain/noise texture is added to something that already
+    exists via a layer's "effects" array, never generated from nothing
+    via generate.kind)
+  WRONG: {"type":"adjustment",...} as a layer type (adjustment layers
+    are a normal layer with isAdjustmentLayer:true, not a distinct type)
+  RIGHT: want grain on a background? {"type":"generate","generate":
+    {"kind":"fractalNoise",...},"effects":[{"type":"addGrain",
+    "params":{...}}]} - generate the base texture, THEN add the grain
+    effect on top, as two separate real mechanisms, not one field
+    doing both jobs.
+
+Before finishing, mentally check every single "type"/"kind" value you
+wrote against the list it's actually supposed to come from.
 
 =====================================================================
 BEAT
@@ -776,16 +819,19 @@ optional, it directly determines whether your response fits before
 being cut off.`;
 }
 
-async function generateSceneJSON(userPrompt, targetDurationSeconds = 12, { retriesLeft = 2, priorErrors = null, treatment = null } = {}) {
-  // Raised from 1: a schema-validation retry and a JSON-parse retry
-  // (inside callMistralForJSON) share this SAME counter, and a live run
-  // hit both in sequence - a validation error consumed the only retry,
-  // leaving none left when the correction attempt then had its own
-  // minor JSON syntax slip. Encoding a genuinely rich, director-planned
-  // treatment (many more layers/effects/groups than a thin generation)
-  // means more surface area for small, VARIED one-off mistakes - 2
-  // retries gives real room to correct more than one before giving up.
-  // The treatment is planned ONCE per request, not regenerated on a
+async function generateSceneJSON(userPrompt, targetDurationSeconds = 12, { retriesLeft = 3, priorErrors = null, treatment = null } = {}) {
+  // Raised 1 -> 2 -> 3, each time after a real live run exhausted the
+  // budget before converging: a schema-validation retry and a JSON-
+  // parse retry (inside callMistralForJSON) share this SAME counter,
+  // and encoding a genuinely rich, director-planned treatment (many
+  // more layers/effects/groups than a thin generation) gives real
+  // surface area for SEVERAL DIFFERENT, unrelated mistakes in one
+  // generation (e.g. a stray root key AND an effect-type confusion AND
+  // a truncated string, all at once) - each retry can realistically fix
+  // only the mistakes present in THAT attempt, and a fresh regeneration
+  // can introduce different ones than it had before, so 2 retries
+  // wasn't consistently enough headroom to fully converge. The
+  // treatment is planned ONCE per request, not regenerated on a
   // validation retry - a retry means the JSON ENCODING of an already-
   // good plan had a mistake, not that the creative plan itself was
   // wrong. Re-planning on every retry would also make retries slower
@@ -812,7 +858,7 @@ async function generateSceneJSON(userPrompt, targetDurationSeconds = 12, { retri
   return result;
 }
 
-async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds = 12, { retriesLeft = 2, priorErrors = null } = {}) {
+async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds = 12, { retriesLeft = 3, priorErrors = null } = {}) {
   const systemPrompt = buildEditSystemPrompt(targetDurationSeconds);
   let userMessage = `Current JSON:\n${JSON.stringify(previousSceneJSON)}\n\nInstruction: ${editInstruction}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON.`;
