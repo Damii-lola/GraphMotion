@@ -196,6 +196,68 @@ const TRANSITION_TYPES = [
 function isPlainObject(v) { return typeof v === 'object' && v !== null && !Array.isArray(v); }
 function isNumberArray(v, len) { return Array.isArray(v) && v.length === len && v.every((n) => typeof n === 'number'); }
 
+// ---------------------------------------------------------------------
+// Real, repeated finding across MULTIPLE live generations (not a
+// one-off): the model consistently invents/misplaces type names across
+// these FOUR separate closed vocabularies (a real layer type, a real
+// shape-content type, a real effect type, a real generate kind) despite
+// prose warnings already covering it - "trim" (a real shape-content
+// type) used as an effects[].type, "adjustmentLayer" (not real at all -
+// the real mechanism is isAdjustmentLayer:true) used as a layer type,
+// "outerStroke" (not real - the real name is "layerStroke") used as an
+// effect. A bare "expected one of: <40 names>" error clearly wasn't
+// enough context for retries to reliably converge (confirmed directly:
+// the SAME class of mistake recurred, with different specific names,
+// across three separate live retries in one generation). This builds a
+// far more targeted correction: if the invalid value IS a real name
+// from a DIFFERENT vocabulary, say so explicitly (the exact, common
+// case above); otherwise suggest the closest real name by edit
+// distance (catches near-misses/typos like "outerStroke" ~ "layerStroke").
+// ---------------------------------------------------------------------
+
+const NAMED_VOCABULARIES = {
+  'a layer type': LAYER_TYPES,
+  'a shape-content type': SHAPE_CONTENT_TYPES,
+  'an effect type': EFFECT_TYPES,
+  'a generate kind': GENERATE_KINDS,
+  'a transition type': TRANSITION_TYPES,
+  'a selector type': SELECTOR_TYPES,
+};
+
+/** Classic dynamic-programming edit distance - small, fixed-size inputs (short identifier strings), no need for anything fancier. */
+function editDistance(a, b) {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+/**
+ * Builds a targeted "here's specifically what's wrong" suffix for a bad
+ * type/kind value: names which OTHER real vocabulary it actually
+ * belongs to if it's a real name used in the wrong place (the common,
+ * confirmed case), otherwise the closest real name in the CORRECT list
+ * by edit distance (typos/near-misses), otherwise nothing extra.
+ */
+function suggestFix(value, correctList, ownVocabName) {
+  if (typeof value !== 'string') return '';
+  for (const [vocabName, list] of Object.entries(NAMED_VOCABULARIES)) {
+    if (vocabName === ownVocabName) continue;
+    if (list.includes(value)) return ` "${value}" IS a real name, but it's ${vocabName}, not ${ownVocabName} - it belongs in a different field entirely, not here.`;
+  }
+  let best = null; let bestDist = Infinity;
+  for (const candidate of correctList) {
+    const d = editDistance(value, candidate);
+    if (d < bestDist) { bestDist = d; best = candidate; }
+  }
+  if (best && bestDist <= 3) return ` Did you mean "${best}"?`;
+  return '';
+}
+
 /**
  * Validates an AnimatableValue at `path` (for error messages). Accepts
  * a plain number, a plain number-array of `vectorLen` (if given), a
@@ -282,7 +344,8 @@ function validateSelector(sel, path, errors) {
 
 function validateShapeContentItem(item, path, errors) {
   if (!isPlainObject(item) || !SHAPE_CONTENT_TYPES.includes(item.type)) {
-    errors.push(`${path}.type: "${item && item.type}" is not a real shape content type (expected one of ${SHAPE_CONTENT_TYPES.join(', ')})`);
+    const val = item && item.type;
+    errors.push(`${path}.type: "${val}" is not a real shape content type (expected one of ${SHAPE_CONTENT_TYPES.join(', ')}).${suggestFix(val, SHAPE_CONTENT_TYPES, 'a shape-content type')}`);
     return;
   }
   if (item.type === 'path') {
@@ -299,14 +362,19 @@ function validateShapeContentItem(item, path, errors) {
 
 function validateEffect(effect, path, errors) {
   if (!isPlainObject(effect) || !EFFECT_TYPES.includes(effect.type)) {
-    errors.push(`${path}.type: "${effect && effect.type}" is not a real effect type (expected one of ${EFFECT_TYPES.join(', ')})`);
+    const val = effect && effect.type;
+    errors.push(`${path}.type: "${val}" is not a real effect type (expected one of ${EFFECT_TYPES.join(', ')}).${suggestFix(val, EFFECT_TYPES, 'an effect type')}`);
   }
 }
 
 function validateLayer(layer, path, errors, knownIds) {
   if (!isPlainObject(layer)) { errors.push(`${path}: must be an object`); return; }
   if (!LAYER_TYPES.includes(layer.type)) {
-    errors.push(`${path}.type: "${layer.type}" is not a real layer type (expected one of ${LAYER_TYPES.join(', ')})`);
+    if (layer.isAdjustmentLayer !== undefined || /adjust/i.test(String(layer.type))) {
+      errors.push(`${path}.type: "${layer.type}" is not a real layer type. THERE IS NO "adjustment"/"adjustmentLayer" TYPE - an adjustment layer is a NORMAL layer (e.g. "type":"shape" or "type":"null") with "isAdjustmentLayer":true and a real "effects" array. Use one of ${LAYER_TYPES.join(', ')} for "type", and set isAdjustmentLayer:true separately.`);
+    } else {
+      errors.push(`${path}.type: "${layer.type}" is not a real layer type (expected one of ${LAYER_TYPES.join(', ')}).${suggestFix(layer.type, LAYER_TYPES, 'a layer type')}`);
+    }
   }
   if (layer.id) knownIds.add(layer.id);
 
@@ -329,7 +397,8 @@ function validateLayer(layer, path, errors, knownIds) {
     }
   } else if (layer.type === 'generate') {
     if (!layer.generate || !GENERATE_KINDS.includes(layer.generate.kind)) {
-      errors.push(`${path}.generate.kind: "${layer.generate && layer.generate.kind}" is not real (expected one of ${GENERATE_KINDS.join(', ')})`);
+      const val = layer.generate && layer.generate.kind;
+      errors.push(`${path}.generate.kind: "${val}" is not real (expected one of ${GENERATE_KINDS.join(', ')}).${suggestFix(val, GENERATE_KINDS, 'a generate kind')}`);
     }
   } else if (layer.type === 'precomp') {
     if (!Array.isArray(layer.layers)) errors.push(`${path}.layers: a precomp requires a nested layers array`);
