@@ -456,6 +456,26 @@ function validateBeatVisual(visual, path, errors, knownIds) {
 }
 
 /**
+ * Validates ONE beat ({params, visual}) in isolation - the same check
+ * validateSceneJSON runs per-beat inside its own loop, pulled out as
+ * its own function so mistralClient.js's per-beat generation (each beat
+ * generated and validated/retried independently, rather than the whole
+ * multi-beat scene in one call - see the architecture note above
+ * generateBeatJSON there for why) can validate a single beat without
+ * needing a full {scenes:[...]} wrapper around it.
+ */
+function validateBeat(beat, path = 'beat') {
+  const errors = [];
+  if (!isPlainObject(beat)) return { valid: false, errors: [`${path}: must be an object`] };
+  if (!isPlainObject(beat.params) || typeof beat.params.duration !== 'number' || beat.params.duration <= 0) {
+    errors.push(`${path}.params.duration: is required and must be a positive number`);
+  }
+  const knownIds = new Set();
+  validateBeatVisual(beat.visual, `${path}.visual`, errors, knownIds);
+  return { valid: errors.length === 0, errors };
+}
+
+/**
  * The real, top-level validator - checks the whole sceneJSON structure
  * and returns { valid, errors }. Never throws; callers decide what to
  * do with a non-empty errors list (mistralClient.js retries generation
@@ -486,12 +506,8 @@ function validateSceneJSON(sceneJSON) {
   }
 
   sceneJSON.scenes.forEach((beat, i) => {
-    const path = `scenes[${i}]`;
-    if (!isPlainObject(beat.params) || typeof beat.params.duration !== 'number' || beat.params.duration <= 0) {
-      errors.push(`${path}.params.duration: is required and must be a positive number`);
-    }
-    const knownIds = new Set();
-    validateBeatVisual(beat.visual, `${path}.visual`, errors, knownIds);
+    const { errors: beatErrors } = validateBeat(beat, `scenes[${i}]`);
+    errors.push(...beatErrors);
   });
 
   return { valid: errors.length === 0, errors };
@@ -499,6 +515,7 @@ function validateSceneJSON(sceneJSON) {
 
 module.exports = {
   validateSceneJSON,
+  validateBeat,
   LAYER_TYPES,
   SHAPE_KINDS,
   SHAPE_CONTENT_TYPES,
