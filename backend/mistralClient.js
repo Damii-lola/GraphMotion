@@ -212,13 +212,14 @@ but no "type" key. This is the single most common structural mistake:
 double-check every object in every array has its own "type" before
 finishing.
 
-FOUR COMPLETELY SEPARATE "type" VOCABULARIES - THEY NEVER CROSS OVER.
-This schema has four different closed lists of names that all sound
-"effect-ish" but belong to four unrelated fields. Using a name from the
+SIX COMPLETELY SEPARATE "type" VOCABULARIES - THEY NEVER CROSS OVER.
+This schema has six different closed lists of names that all sound
+adjacent but belong to six unrelated fields. Using a name from the
 wrong list is the single most common mistake in real generated output -
 memorize which list each name lives in:
 
-  1. LAYER "type" (what KIND of layer this is):
+  1. LAYER "type" (what KIND of layer this is, inside "layers"/
+     "background"/a precomp's "layers"):
      ${LAYER_TYPES.join(', ')}
   2. SHAPE CONTENT "type" (entries inside a shape layer's "contents"
      array - building/filling/stroking/trimming/repeating a path):
@@ -230,8 +231,11 @@ memorize which list each name lives in:
   4. GENERATE "kind" (inside a "generate" layer's generate.kind field -
      procedurally drawing brand new pixels from nothing):
      ${GENERATE_KINDS.join(', ')}
-  (plus a fifth, separate list for "transitionIn.type" - see
-  TRANSITIONS below - ${TRANSITION_TYPES.join(', ')})
+  5. TRANSITION "type" (inside "transitionIn.type" only):
+     ${TRANSITION_TYPES.join(', ')}
+  6. LIGHT "type" (inside an entry of the beat-level "lights" array
+     ONLY - lights are NEVER layers, they never appear in "layers"):
+     ${LIGHT_TYPES.join(', ')}
 
 Concretely, real mistakes seen in actual generated output that WILL
 fail validation - never do these:
@@ -240,6 +244,13 @@ fail validation - never do these:
   WRONG: {"type":"repeater",...} or {"type":"linearWipe",...} inside an
     "effects" array (repeater is a shape content type; linearWipe is a
     TRANSITION type - neither is a real effect)
+  WRONG: {"type":"transform",...} anywhere - THERE IS NO "transform"
+    EFFECT. A layer's position/rotation/scale/anchor ARE its transform,
+    set directly as normal fields on the layer itself - never wrap a
+    transform in an effects-array entry.
+  WRONG: {"type":"spot",...} or {"type":"ambient",...} inside "layers" -
+    those are LIGHT types, they belong in the beat's own "lights" array,
+    never mixed into "layers".
   WRONG: "generate":{"kind":"addGrain",...} (addGrain/addNoise are
     EFFECTS - grain/noise texture is added to something that already
     exists via a layer's "effects" array, never generated from nothing
@@ -251,9 +262,19 @@ fail validation - never do these:
     "params":{...}}]} - generate the base texture, THEN add the grain
     effect on top, as two separate real mechanisms, not one field
     doing both jobs.
+  RIGHT: want a spotlight? Add {"type":"spot",...} to the beat's
+    "lights" array (a sibling of "layers", not inside it) - never as a
+    "layers" entry.
 
 Before finishing, mentally check every single "type"/"kind" value you
 wrote against the list it's actually supposed to come from.
+
+JSON STRING ESCAPING - a real, repeated failure: any quote character
+("), backslash (\\), or literal newline INSIDE a text value (e.g.
+"text":"...") MUST be escaped (\\", \\\\, \\n) or the JSON becomes
+invalid and your entire response is unusable. If a piece of copy would
+naturally use a quote mark, either escape it properly or rephrase to
+avoid it - a broken response is worse than a slightly reworded line.
 
 =====================================================================
 BEAT
@@ -819,21 +840,25 @@ optional, it directly determines whether your response fits before
 being cut off.`;
 }
 
-async function generateSceneJSON(userPrompt, targetDurationSeconds = 12, { retriesLeft = 3, priorErrors = null, treatment = null } = {}) {
-  // Raised 1 -> 2 -> 3, each time after a real live run exhausted the
-  // budget before converging: a schema-validation retry and a JSON-
-  // parse retry (inside callMistralForJSON) share this SAME counter,
-  // and encoding a genuinely rich, director-planned treatment (many
-  // more layers/effects/groups than a thin generation) gives real
+async function generateSceneJSON(userPrompt, targetDurationSeconds = 12, { retriesLeft = 4, priorErrors = null, treatment = null } = {}) {
+  // Raised 1 -> 2 -> 3 -> 4, each time after a real live run exhausted
+  // the budget before converging: a schema-validation retry and a
+  // JSON-parse retry (inside callMistralForJSON) share this SAME
+  // counter, and encoding a genuinely rich, director-planned treatment
+  // (many more layers/effects/groups than a thin generation) gives real
   // surface area for SEVERAL DIFFERENT, unrelated mistakes in one
   // generation (e.g. a stray root key AND an effect-type confusion AND
   // a truncated string, all at once) - each retry can realistically fix
   // only the mistakes present in THAT attempt, and a fresh regeneration
-  // can introduce different ones than it had before, so 2 retries
-  // wasn't consistently enough headroom to fully converge. The
-  // treatment is planned ONCE per request, not regenerated on a
-  // validation retry - a retry means the JSON ENCODING of an already-
-  // good plan had a mistake, not that the creative plan itself was
+  // can introduce different ones than it had before. One real run spent
+  // 2 of 3 retries on back-to-back JSON-parse failures (malformed string
+  // escaping) before validation even got a turn, then still ran out
+  // fixing content mistakes - the shared counter needs enough total
+  // headroom to absorb BOTH kinds of hiccup in the same request, not
+  // just one or the other. The treatment is planned ONCE per request,
+  // not regenerated on a validation retry - a retry means the JSON
+  // ENCODING of an already-good plan had a mistake, not that the
+  // creative plan itself was
   // wrong. Re-planning on every retry would also make retries slower
   // and risk an inconsistent design across attempts.
   if (!treatment) {
@@ -858,7 +883,7 @@ async function generateSceneJSON(userPrompt, targetDurationSeconds = 12, { retri
   return result;
 }
 
-async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds = 12, { retriesLeft = 3, priorErrors = null } = {}) {
+async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds = 12, { retriesLeft = 4, priorErrors = null } = {}) {
   const systemPrompt = buildEditSystemPrompt(targetDurationSeconds);
   let userMessage = `Current JSON:\n${JSON.stringify(previousSceneJSON)}\n\nInstruction: ${editInstruction}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON.`;
