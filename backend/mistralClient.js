@@ -365,8 +365,27 @@ LAYERDEF - one entry in "layers" (or "background")
   "rotation": AnimatableValue<number> (2D only, degrees),
   "rotationX"/"rotationY"/"rotationZ": AnimatableValue<number> (3D only, degrees),
   "scale": AnimatableValue<[sx,sy]> (2D) or [sx,sy,sz] (3D),
-  "anchor": AnimatableValue<[x,y]> or [x,y,z> - the pivot point for rotation/scale,
+  "anchor": AnimatableValue<[x,y]> or [x,y,z] - the pivot point for
+            rotation/scale, ALSO the point of the layer that lands
+            exactly at "position". Default [0,0,0] is the layer's own
+            TOP-LEFT corner (matching AE), NOT its center.
   "opacity": AnimatableValue<number> (0-1, default 1),
+
+  CRITICAL for any 3D layer ("is3D":true) that has an explicit
+  width/height (a shape/text/generate layer, not the default full-frame
+  size): "position" places the ANCHOR point, and anchor defaults to the
+  layer's own TOP-LEFT corner - so setting position to the frame's
+  center ([${COMP_WIDTH / 2},${COMP_HEIGHT / 2}]) WITHOUT also setting
+  anchor puts the layer's TOP-LEFT corner at the frame center, pushing
+  most of a sizeable layer off-screen (confirmed directly: a 486x576
+  card at position:[270,480] with no anchor rendered almost entirely
+  off-frame, invisible, despite having a correct size, position-looking-
+  right, and a bright fill color - the anchor was the actual problem).
+  To center a sized 3D layer on its own "position", ALWAYS also set
+  "anchor":[width/2,height/2,0] explicitly. This does NOT apply to 2D
+  layers (which have no such buffer-clipping concern) or to 3D layers
+  deliberately pivoting off-center (e.g. a page-flip rotating around an
+  edge, where the top-left default is exactly correct).
 
   "blendMode": ${BLEND_MODE_NAMES.join(' | ')}  // 2D only, default "normal"
   "trackMatte": { "source": <layerId>, "type": ${TRACK_MATTE_TYPES.map((t) => `"${t}"`).join(' | ')} },
