@@ -150,6 +150,20 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
 
   const canvas = createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext('2d');
+  // Reused across every transition frame instead of allocated fresh
+  // each time - found via direct memory profiling (614MB peak RSS on a
+  // real 4-beat scene, far above this project's 100MB target): the
+  // main `canvas` above was already a persistent, reused buffer, but
+  // this one (the "current beat, mid-transition" scratch canvas) was
+  // being createCanvas()'d fresh on EVERY transition frame, on top of
+  // the 2-3 more canvases each transition function in transitions.js
+  // allocates internally per call - a real burst of native Skia buffer
+  // churn concentrated specifically in transition windows, exactly the
+  // kind of native-memory-GC-doesn't-feel-pressured-by growth this
+  // file's own gc()-cadence comment above already describes for the
+  // unrelated layer-stack case.
+  const transitionCurrCanvas = createCanvas(WIDTH, HEIGHT);
+  const transitionCurrCtx = transitionCurrCanvas.getContext('2d');
 
   const renderStartedAt = Date.now();
   console.log(`[renderEngine] range ${timeStart}-${timeEnd}s: ${totalFrames} frames, ${neededIndices.size} beat(s) built, +0.0s`);
@@ -174,11 +188,11 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
           prevBeat.visualObj.render(prevCanvas.getContext('2d'), prevBeat.range.duration);
           frozenFrameCache.set(beatIndex - 1, prevCanvas);
         }
-        const currCanvas = createCanvas(WIDTH, HEIGHT);
-        visualObj.render(currCanvas.getContext('2d'), localT);
+        transitionCurrCtx.clearRect(0, 0, WIDTH, HEIGHT);
+        visualObj.render(transitionCurrCtx, localT);
         const progress = Math.min(1, Math.max(0, localT / transitionDuration));
         const transitionFn = T[transitionDef.type] || T.crossDissolve;
-        const composited = transitionFn(prevCanvas, currCanvas, progress, transitionDef.params || {});
+        const composited = transitionFn(prevCanvas, transitionCurrCanvas, progress, transitionDef.params || {});
         ctx.drawImage(composited, 0, 0);
       } else {
         visualObj.render(ctx, localT);
@@ -243,7 +257,17 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       // is a silent no-op (not a crash) if that flag is ever missing,
       // though production must always pass it for this fix to actually
       // take effect.
-      if (frameIndex % 2 === 0 && global.gc) {
+      // inTransition frames allocate several EXTRA canvases per frame
+      // (transitions.js's own 2-3 internal buffers, on top of the
+      // normal per-layer render cost) - a real, concentrated burst of
+      // native memory churn the every-2nd-frame cadence above wasn't
+      // tuned for (that cadence was benchmarked on ordinary, non-
+      // transition frames). Forcing every-frame gc() ONLY for this
+      // short, bounded window (transitions are typically well under a
+      // second) buys back most of the peak-memory cost of that churn
+      // without paying the ~4x slowdown of every-frame gc() across the
+      // WHOLE video - the cheaper cadence still applies everywhere else.
+      if ((inTransition || frameIndex % 2 === 0) && global.gc) {
         global.gc();
         await new Promise((resolve) => setImmediate(resolve));
         global.gc();
