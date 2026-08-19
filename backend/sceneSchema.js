@@ -374,7 +374,7 @@ function validateShapeContentItem(item, path, errors) {
       } else {
         anchors.forEach((a, i) => {
           if (!isPlainObject(a) || !isNumberArray(a.point, 2)) {
-            errors.push(`${path}.shape.params.anchors[${i}].point: must be a real [x,y] pixel coordinate.`);
+            errors.push(`${path}.shape.params.anchors[${i}].point: must be a real [x,y] pixel coordinate. Got ${JSON.stringify(a)}. Each anchor is an OBJECT with a "point" field holding a plain [x,y] array - e.g. {"point":[10,20]}, NOT a bare [x,y] array as the anchor itself, and NOT {"x":10,"y":20} for "point".`);
           }
         });
       }
@@ -738,6 +738,37 @@ function autoRepairBeat(beat) {
           if (typeof ax === 'number' && typeof ay === 'number' && ax > 0 && ay > 0
               && Math.abs(ax - halfW) < halfW * 0.3 && Math.abs(ay - halfH) < halfH * 0.3) {
             layer.anchor = [0, 0];
+          }
+        }
+
+        // Malformed customPath anchor points - confirmed live to recur
+        // across multiple retries (different beats, different anchor
+        // indices) without converging, because the old error message
+        // gave the model no signal about what it actually sent. Two
+        // mechanical mistakes are safe to silently fix: (a) a bare
+        // [x,y] array used AS the anchor entry itself, instead of the
+        // required {"point":[x,y]} object wrapper - an easy confusion
+        // given polygon/star's OWN params use plain coordinate-shaped
+        // values elsewhere in this same shape vocabulary; (b) "point"
+        // given as {"x":..,"y":..} instead of a [x,y] array - the
+        // single most common coordinate-shape mistake throughout this
+        // whole schema. Anything else (missing point entirely, a
+        // keyframed/expression value, etc.) is left alone - validation
+        // still catches and clearly messages it, this only handles the
+        // two shapes worth guessing at automatically.
+        if (Array.isArray(layer.contents)) {
+          for (const item of layer.contents) {
+            if (isPlainObject(item) && item.type === 'path' && isPlainObject(item.shape) && item.shape.kind === 'customPath'
+                && isPlainObject(item.shape.params) && Array.isArray(item.shape.params.anchors)) {
+              item.shape.params.anchors = item.shape.params.anchors.map((a) => {
+                if (isNumberArray(a, 2)) return { point: a };
+                if (isPlainObject(a) && isPlainObject(a.point)
+                    && typeof a.point.x === 'number' && typeof a.point.y === 'number') {
+                  return { ...a, point: [a.point.x, a.point.y] };
+                }
+                return a;
+              });
+            }
           }
         }
 
