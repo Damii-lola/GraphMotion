@@ -385,6 +385,22 @@ LAYERDEF - one entry in "layers" (or "background")
             only when deliberately pivoting off-center (e.g. a
             page-flip rotating around an edge).
 
+  CRITICAL for 3D layers' "position" Z component (the 3rd number):
+  LARGER z = FURTHER from the camera = drawn BEHIND everything with a
+  smaller z (this matches real After Effects: increasing Z Position
+  pushes a 3D layer further INTO the screen, away from the viewer -
+  NOT "closer"/"more on top"). Confirmed as a real, live bug: a beat
+  with an opaque full-frame "paper" layer at z:0 and several info/text/
+  bar layers at z:1, z:2, z:3 (intending them to read as "layered ON
+  TOP of the paper") instead rendered as a completely blank paper -
+  because those larger-z layers were actually FURTHER from the camera
+  than the paper, so the paper drew on top and hid all of them. To
+  layer content IN FRONT of something, give it a SMALLER z (including
+  negative, e.g. z:-10, z:-20 - there is no floor), not a larger one.
+  When in doubt, keep foreground/informational content at z:0 or
+  negative z, and only push something backward (positive z) when you
+  specifically want it to sit behind other content.
+
   "blendMode": ${BLEND_MODE_NAMES.join(' | ')}  // 2D only, default "normal"
   "trackMatte": { "source": <layerId>, "type": ${TRACK_MATTE_TYPES.map((t) => `"${t}"`).join(' | ')} },
                  // 2D only - clips THIS layer to another layer's shape/luma.
