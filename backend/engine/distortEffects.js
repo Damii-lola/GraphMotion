@@ -28,6 +28,19 @@ const { clamp01 } = require('./mathUtils');
  * real source pixels, rather than clamping to the edge - a distorted
  * image should reveal transparency where it pulls in content from
  * beyond the source's own bounds, not smear the edge pixel outward.
+ *
+ * The 4 corner samples are premultiplied by their own alpha before
+ * being weighted-averaged, then the blended result is un-premultiplied
+ * back to straight alpha - NOT a redundant precaution. Confirmed as a
+ * real, previously-live bug (see blurEffects.js's premultiplyAlpha doc
+ * comment for the full direct repro): blending straight-alpha RGB
+ * across corners of mixed opacity drags color toward black at any
+ * edge where content meets transparency, because a fully-transparent
+ * neighbor still stores literal (usually black) RGB that gets mixed in
+ * at full spatial weight regardless of its own near-zero alpha. Every
+ * caller of this function (radialBlur, and every warp effect below -
+ * twirl, bulge, rippleWarp, waveWarp, displacementMap) inherits the
+ * fix for free just by this one function being correct.
  */
 function sampleBilinear(data, width, height, x, y) {
   const x0 = Math.floor(x), y0 = Math.floor(y);
@@ -35,14 +48,23 @@ function sampleBilinear(data, width, height, x, y) {
   if (x0 < 0 || y0 < 0 || x1 >= width || y1 >= height) return [0, 0, 0, 0];
   const fx = x - x0, fy = y - y0;
   const idx = (xx, yy) => (yy * width + xx) * 4;
-  const p00 = idx(x0, y0), p10 = idx(x1, y0), p01 = idx(x0, y1), p11 = idx(x1, y1);
-  const out = [0, 0, 0, 0];
-  for (let c = 0; c < 4; c++) {
-    const top = data[p00 + c] * (1 - fx) + data[p10 + c] * fx;
-    const bottom = data[p01 + c] * (1 - fx) + data[p11 + c] * fx;
-    out[c] = top * (1 - fy) + bottom * fy;
+  const corners = [
+    [idx(x0, y0), (1 - fx) * (1 - fy)],
+    [idx(x1, y0), fx * (1 - fy)],
+    [idx(x0, y1), (1 - fx) * fy],
+    [idx(x1, y1), fx * fy],
+  ];
+  let r = 0, g = 0, b = 0, a = 0;
+  for (const [p, w] of corners) {
+    const alpha = data[p + 3] / 255;
+    r += data[p] * alpha * w;
+    g += data[p + 1] * alpha * w;
+    b += data[p + 2] * alpha * w;
+    a += data[p + 3] * w;
   }
-  return out;
+  if (a <= 0) return [0, 0, 0, 0];
+  const invA = 255 / a;
+  return [r * invA, g * invA, b * invA, a];
 }
 
 /**

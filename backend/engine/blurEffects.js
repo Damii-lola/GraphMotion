@@ -17,6 +17,65 @@ const { sampleBilinear } = require('./distortEffects');
 function clampInt(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
 function clampByte(v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
 
+/**
+ * Converts straight (unpremultiplied) RGBA bytes - what canvas
+ * ImageData actually stores, per spec - into PREMULTIPLIED RGBA
+ * (RGB channels scaled by their own alpha), the only representation
+ * that's safe to linearly blend/convolve.
+ *
+ * Exists to fix a real, confirmed, and fairly severe bug: every blur
+ * in this file was convolving RGB and alpha as independent channels
+ * on STRAIGHT alpha data. That's wrong whenever a kernel mixes an
+ * opaque/colored pixel with a transparent neighbor - a fully
+ * transparent pixel still stores SOME literal RGB (usually (0,0,0),
+ * i.e. "transparent black"), and averaging that raw black into a
+ * neighboring color's RGB (weighted only by the kernel's spatial
+ * weight, with no regard for that neighbor's near-zero alpha) drags
+ * every soft/blurred edge toward black - a fringe that gets darker
+ * the more transparent the neighboring pixels are. Confirmed directly
+ * on a solid teal square blurred against a transparent background: a
+ * pixel at 4% resulting alpha (barely visible) still read pure
+ * (0,0,0) instead of anything resembling the source teal - and this
+ * wasn't a subtle rounding difference, the near-edge pixel's RGB had
+ * been scaled down by essentially the SAME factor as its alpha,
+ * exactly the signature of blending straight-alpha data as if it were
+ * already premultiplied.
+ *
+ * Premultiplying first makes a fully-transparent pixel's color
+ * contribution genuinely zero (0*anything=0) rather than "spatially
+ * weighted raw black", so blended edges fade toward transparency
+ * while KEEPING their true hue, instead of muddying toward black.
+ * unpremultiplyToBytes (below) reverses this once, after all
+ * convolution passes are done, back to the straight-alpha bytes
+ * ImageData expects.
+ */
+function premultiplyAlpha(data) {
+  const out = new Float32Array(data.length);
+  for (let i = 0; i < data.length; i += 4) {
+    const a = data[i + 3] / 255;
+    out[i] = data[i] * a;
+    out[i + 1] = data[i + 1] * a;
+    out[i + 2] = data[i + 2] * a;
+    out[i + 3] = data[i + 3];
+  }
+  return out;
+}
+
+/** Reverses premultiplyAlpha, rounding straight back to bytes in one place (so rounding error is only introduced once, at the very end - matching convolve1D's own existing float-until-the-last-step discipline). A fully-transparent output pixel (alpha<=0) has no recoverable color, so it's written as fully transparent black rather than dividing by zero. */
+function unpremultiplyToBytes(premultiplied) {
+  const out = new Uint8ClampedArray(premultiplied.length);
+  for (let i = 0; i < premultiplied.length; i += 4) {
+    const a = premultiplied[i + 3];
+    if (a <= 0) { out[i] = 0; out[i + 1] = 0; out[i + 2] = 0; out[i + 3] = 0; continue; }
+    const invA = 255 / a;
+    out[i] = clampByte(Math.round(premultiplied[i] * invA));
+    out[i + 1] = clampByte(Math.round(premultiplied[i + 1] * invA));
+    out[i + 2] = clampByte(Math.round(premultiplied[i + 2] * invA));
+    out[i + 3] = clampByte(Math.round(a));
+  }
+  return out;
+}
+
 /** A real 1D Gaussian kernel, computed from the actual Gaussian PDF formula and normalized to sum to 1 (so blurring preserves overall brightness/energy - a real, testable property, not just "looks about right"). radius = ceil(sigma*3) captures >99% of a Gaussian's mass (the standard "3-sigma" rule), so truncating there is a negligible, well-understood approximation of an otherwise infinite kernel. */
 function buildGaussianKernel(sigma) {
   const radius = Math.max(1, Math.ceil(sigma * 3));
@@ -81,9 +140,10 @@ function gaussianBlur(imageData, { radius = 8 } = {}) {
   if (radius <= 0) return imageData;
   const sigma = radius / 3;
   const { kernel, radius: kr } = buildGaussianKernel(sigma);
-  const pass1 = convolve1D(data, width, height, kernel, kr, true);
+  const premultiplied = premultiplyAlpha(data);
+  const pass1 = convolve1D(premultiplied, width, height, kernel, kr, true);
   const pass2 = convolve1D(pass1, width, height, kernel, kr, false);
-  for (let i = 0; i < data.length; i++) data[i] = Math.round(clampByte(pass2[i]));
+  data.set(unpremultiplyToBytes(pass2));
   return imageData;
 }
 
@@ -92,12 +152,12 @@ function boxBlur(imageData, { radius = 8, iterations = 1 } = {}) {
   const { width, height, data } = imageData;
   if (radius <= 0) return imageData;
   const { kernel, radius: kr } = buildBoxKernel(radius);
-  let current = data;
+  let current = premultiplyAlpha(data);
   for (let it = 0; it < iterations; it++) {
     const pass1 = convolve1D(current, width, height, kernel, kr, true);
     current = convolve1D(pass1, width, height, kernel, kr, false);
   }
-  for (let i = 0; i < data.length; i++) data[i] = Math.round(clampByte(current[i]));
+  data.set(unpremultiplyToBytes(current));
   return imageData;
 }
 
@@ -129,8 +189,9 @@ function directionalBlur(imageData, { length = 20, angle = 0 } = {}) {
   const radius = Math.round(length / 2);
   const { kernel } = buildBoxKernel(radius);
   const angleRad = (angle * Math.PI) / 180;
-  const result = convolveDirectional(data, width, height, kernel, radius, angleRad);
-  for (let i = 0; i < data.length; i++) data[i] = Math.round(clampByte(result[i]));
+  const premultiplied = premultiplyAlpha(data);
+  const result = convolveDirectional(premultiplied, width, height, kernel, radius, angleRad);
+  data.set(unpremultiplyToBytes(result));
   return imageData;
 }
 
@@ -167,14 +228,24 @@ function radialBlur(imageData, { amount = 10, center = null, mode = 'zoom', samp
           sx = c[0] + (x - c[0]) * strength;
           sy = c[1] + (y - c[1]) * strength;
         }
+        // sampleBilinear returns straight (unpremultiplied) alpha - see
+        // its own doc comment. Averaging N straight-alpha samples
+        // directly has the exact same black-fringing bug premultiplyAlpha
+        // was written to fix (blurEffects.js), just one level up: a
+        // sample that lands on transparent content still contributes
+        // its raw (usually black) RGB at full 1/samples weight
+        // regardless of its own near-zero alpha. So each sample is
+        // premultiplied here before summing, and the sum is
+        // un-premultiplied once below, after all samples are combined.
         const [pr, pg, pb, pa] = sampleBilinear(src, width, height, sx, sy);
-        r += pr; g += pg; b += pb; a += pa;
+        const sAlpha = pa / 255;
+        r += pr * sAlpha; g += pg * sAlpha; b += pb * sAlpha; a += pa;
       }
       const oi = (y * width + x) * 4;
       out[oi] = r / samples; out[oi + 1] = g / samples; out[oi + 2] = b / samples; out[oi + 3] = a / samples;
     }
   }
-  for (let i = 0; i < data.length; i++) data[i] = Math.round(clampByte(out[i]));
+  data.set(unpremultiplyToBytes(out));
   return imageData;
 }
 
