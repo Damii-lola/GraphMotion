@@ -147,6 +147,22 @@ function currentAdaptiveInterval() {
   return currentCallIntervalMs;
 }
 
+// Tried a small (3-way) concurrency pool here instead of full
+// serialization, reasoning that a clean, zero-retry, zero-429 4-beat
+// generation still taking ~3 minutes (1 treatment + 4 beat calls) meant
+// the bottleneck must be the serialization itself, not the API. Tested
+// live before committing to it (per this project's own verification
+// discipline) - and the very first real run under concurrency:3 hit
+// real 429s almost immediately ("rate limited... waiting 2698ms...
+// waiting 4852ms..."), and the reactive backoff, while it correctly
+// engaged, wasn't enough to save the run from the 6-minute hard
+// timeout anyway. That's direct, live confirmation of exactly what the
+// ORIGINAL full-serialization design's own doc comment already said
+// from an earlier live incident: this key's real per-key rate limit
+// doesn't tolerate concurrent requests at all, so 3-way concurrency
+// made a real generation strictly WORSE (failed outright) instead of
+// faster. Reverted back to full serialization - see queueMistralCall's
+// own doc comment for the (still valid, now twice-confirmed) reasoning.
 let callQueueTail = Promise.resolve();
 function queueMistralCall(fn) {
   const scheduled = callQueueTail.then(() => sleep(currentAdaptiveInterval())).then(fn);
