@@ -582,10 +582,18 @@ function validateBeatVisual(visual, path, errors, knownIds) {
  * lever on the actual reported problem (generation taking long enough
  * to hit its own 6-minute hard timeout).
  *
- * Deliberately does NOT attempt to fix anything requiring judgment
- * (missing shape contents, duplicate positions - auto-picking a new
- * position risks a worse layout than the AI would choose on a real
- * retry) - those still go through the normal validate-and-retry path.
+ * Deliberately does NOT attempt to fix anything with NO safe
+ * mechanical answer at all (missing shape contents, unresolvable
+ * layer/effect types) - those still go through the normal validate-
+ * and-retry path. Duplicate positions and content-types-in-"effects"
+ * WERE originally left out of this function for the same reason, but
+ * live data changed that call: a real production run showed these two
+ * were BY FAR the most frequently recurring blockers (duplicate
+ * positions alone appeared in nearly every single retry across a
+ * whole run that still hit its 6-minute timeout) - "not perfectly
+ * ideal" beats a beat's whole generation timing out, so both now get
+ * a deterministic, always-reasonable (if not always author-optimal)
+ * mechanical fix instead of forcing a full retry every time.
  *
  * Called BEFORE validateBeat, so anything this successfully repairs
  * never even reaches validation as an error, let alone a retry.
@@ -629,21 +637,36 @@ function autoRepairBeat(beat) {
           }
         }
 
-        // Effect-type items misplaced inside "contents" (the "trim
-        // sitting in effects" mistake's mirror image, e.g. "outerGlow"/
-        // "dropShadow" appearing as a contents entry) - relocated to
-        // the layer's own "effects" array, where the object's own
-        // {type,params} shape already matches exactly what an
-        // EffectDef looks like, no reshaping needed. Content-type
-        // items found in "effects" are NOT auto-moved the other
-        // direction - contents order matters for path/trim/fill/stroke
-        // sequencing, and guessing the right insertion point is a real
-        // judgment call this function deliberately leaves to a retry.
+        // Effect-type items misplaced inside "contents" (e.g.
+        // "outerGlow"/"dropShadow" appearing as a contents entry) -
+        // relocated to the layer's own "effects" array, where the
+        // object's own {type,params} shape already matches exactly
+        // what an EffectDef looks like, no reshaping needed.
         if (Array.isArray(layer.contents)) {
-          const misplaced = layer.contents.filter((item) => isPlainObject(item) && EFFECT_TYPES.includes(item.type));
-          if (misplaced.length > 0) {
+          const misplacedEffects = layer.contents.filter((item) => isPlainObject(item) && EFFECT_TYPES.includes(item.type));
+          if (misplacedEffects.length > 0) {
             layer.contents = layer.contents.filter((item) => !(isPlainObject(item) && EFFECT_TYPES.includes(item.type)));
-            layer.effects = [...(Array.isArray(layer.effects) ? layer.effects : []), ...misplaced];
+            layer.effects = [...(Array.isArray(layer.effects) ? layer.effects : []), ...misplacedEffects];
+          }
+        }
+
+        // The mirror image - content-type items (by far most often
+        // "trim"/"repeater") misplaced inside the layer's "effects"
+        // array. Relocated to the END of "contents" rather than left
+        // for a retry: contents ORDER genuinely matters for path/trim/
+        // fill/stroke sequencing, so appending isn't guaranteed to be
+        // exactly the position the author intended - but a trim/
+        // repeater applied to "whatever paths already exist above it"
+        // is a coherent, non-crashing, generally-sensible placement in
+        // the overwhelmingly common case, and confirmed live to be by
+        // far the single most frequently recurring blocker of all - a
+        // less-than-perfect but valid contents order beats forcing a
+        // full beat retry over it every time.
+        if (Array.isArray(layer.effects)) {
+          const misplacedContent = layer.effects.filter((item) => isPlainObject(item) && SHAPE_CONTENT_TYPES.includes(item.type));
+          if (misplacedContent.length > 0) {
+            layer.effects = layer.effects.filter((item) => !(isPlainObject(item) && SHAPE_CONTENT_TYPES.includes(item.type)));
+            layer.contents = [...(Array.isArray(layer.contents) ? layer.contents : []), ...misplacedContent];
           }
         }
       }
@@ -672,6 +695,58 @@ function autoRepairBeat(beat) {
 
   if (isPlainObject(beat.visual.background)) walkLayers([beat.visual.background]);
   walkLayers(beat.visual.layers);
+
+  autoSpreadDuplicatePositions(beat.visual);
+}
+
+/**
+ * Auto-fixes the "sibling layers left at an identical position" case
+ * (confirmed live to be the single most frequently recurring blocker
+ * of all - it showed up in nearly every retry across a whole real
+ * production run that still hit its own 6-minute timeout). Mirrors
+ * validateBeatVisual's OWN detection heuristic exactly (same "exempt
+ * anything tied for the beat's largest explicit size, or with no
+ * explicit size at all" logic - see that function's doc comment for
+ * why: full-frame overlay/matte layers legitimately share a position,
+ * that's normal compositing, not this bug), so this only ever touches
+ * layers the validator would ALSO have flagged.
+ *
+ * The fix itself is a plain, deterministic horizontal row centered on
+ * the group's original shared position - not necessarily the exact
+ * layout the AI would have chosen on a real retry, but a real,
+ * non-overlapping spread beats forcing a full beat regeneration over
+ * something this mechanical every single time.
+ */
+function autoSpreadDuplicatePositions(visual) {
+  if (!Array.isArray(visual.layers)) return;
+  const layersWithSize = visual.layers.filter((l) => isPlainObject(l) && typeof l.width === 'number' && typeof l.height === 'number');
+  const maxW = layersWithSize.length ? Math.max(...layersWithSize.map((l) => l.width)) : 0;
+  const maxH = layersWithSize.length ? Math.max(...layersWithSize.map((l) => l.height)) : 0;
+
+  const groups = new Map();
+  visual.layers.forEach((layer, i) => {
+    if (!isPlainObject(layer) || layer.parent || !isNumberArray(layer.position, 2)) return;
+    if (typeof layer.width !== 'number' || typeof layer.height !== 'number') return;
+    if (layer.width >= maxW && layer.height >= maxH) return;
+    const key = JSON.stringify(layer.position);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(i);
+  });
+
+  for (const [key, indices] of groups) {
+    if (indices.length < 2) continue;
+    const [cx, cy] = JSON.parse(key);
+    // Spacing derived from the group's own average width, so small
+    // icons spread tighter than large cards - falls back to a
+    // reasonable flat default if width is somehow still missing.
+    const avgWidth = indices.reduce((sum, i) => sum + (visual.layers[i].width || 120), 0) / indices.length;
+    const spacing = Math.max(80, avgWidth * 1.15);
+    const totalSpan = spacing * (indices.length - 1);
+    indices.forEach((layerIndex, k) => {
+      const offsetX = -totalSpan / 2 + spacing * k;
+      visual.layers[layerIndex].position = [cx + offsetX, cy];
+    });
+  }
 }
 
 /**
