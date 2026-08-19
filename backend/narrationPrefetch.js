@@ -9,14 +9,14 @@ function narrationDirFor(jobId) {
   return path.join(os.tmpdir(), 'shortform-renders', `${jobId}-narration`);
 }
 
-// MVP product decision: no long videos, period. targetDurationSeconds
-// already asks Mistral for <=30s (server.js/sceneTemplates.js), but
-// that's a request, not a guarantee - narration duration below is
-// measured from the REAL generated audio, which can run longer than
-// whatever line length the model intended. This is the actual
-// enforcement: whatever comes out the other end of narration gets
-// hard-trimmed to fit, not just asked nicely.
-const MAX_TOTAL_DURATION_SECONDS = 30;
+// Explicit product decision: no video may exceed 45s, period, regardless
+// of the user's prompt. targetDurationSeconds already asks Mistral for
+// <=45s (server.js), but that's a request, not a guarantee - narration
+// duration below is measured from the REAL generated audio, which can
+// run longer than whatever line length the model intended. This is the
+// actual enforcement: whatever comes out the other end of narration
+// gets hard-trimmed to fit, not just asked nicely.
+const MAX_TOTAL_DURATION_SECONDS = 45;
 
 /**
  * Drops trailing beats (and their audio) once the running total would

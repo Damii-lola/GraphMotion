@@ -482,7 +482,7 @@ BEAT
   "visual": BeatVisual
 }
 
-Whole-video duration is capped at 30 seconds of narration. Pace beats
+Whole-video duration is capped at 45 seconds of narration. Pace beats
 accordingly: for short-form content, 2-5 seconds per beat is typical;
 a beat with narration should roughly match how long that line takes to
 speak (~2.5-3 words/second is a reasonable estimate).

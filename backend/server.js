@@ -131,17 +131,17 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
   }
 
   // Clamp to a sane range regardless of what the client sends - 8s
-  // floor matches the shortest videos already supported, 120s (2min)
-  // is the new ceiling. Defaults to the original short-form length
-  // when omitted, so existing callers get identical behavior to
-  // before this feature existed.
+  // floor matches the shortest videos already supported. Defaults to
+  // the original short-form length when omitted, so existing callers
+  // get identical behavior to before this feature existed.
   let duration = Number(targetDurationSeconds);
   if (!Number.isFinite(duration)) duration = 12;
-  // MVP decision: no long-video support at all - 30s is the hard
-  // product ceiling, not just a soft target. See narrationPrefetch.js's
-  // post-narration trim for the real enforcement (narration-driven
-  // durations can overshoot whatever's requested here).
-  duration = Math.max(8, Math.min(30, Math.round(duration)));
+  // Explicit product decision: 45s is the hard ceiling, not just a
+  // soft target - no video may exceed it regardless of what the
+  // user's prompt asks for. See narrationPrefetch.js's post-narration
+  // trim for the real enforcement (narration-driven durations can
+  // overshoot whatever's requested here).
+  duration = Math.max(8, Math.min(45, Math.round(duration)));
 
   const identifier = userId || req.ip;
 
