@@ -568,6 +568,113 @@ function validateBeatVisual(visual, path, errors, knownIds) {
 }
 
 /**
+ * Mutates `beat` IN PLACE, silently fixing the small set of real,
+ * recurring generation mistakes that are SAFE and MECHANICAL to
+ * correct - no ambiguity about author intent, no risk of changing what
+ * the beat actually looks like beyond fixing the mistake itself. Exists
+ * because live testing showed the reject-and-retry loop, while it DOES
+ * eventually converge, is too slow for these specific categories:
+ * every one of them recurred across MANY separate real generations,
+ * each occurrence costing a full extra retry round-trip (a real
+ * Mistral call, adaptive-queue spacing, and re-validation) for a
+ * mistake this function can fix in microseconds with zero ambiguity.
+ * Cutting these out of the retry loop entirely is a direct, measured
+ * lever on the actual reported problem (generation taking long enough
+ * to hit its own 6-minute hard timeout).
+ *
+ * Deliberately does NOT attempt to fix anything requiring judgment
+ * (missing shape contents, duplicate positions - auto-picking a new
+ * position risks a worse layout than the AI would choose on a real
+ * retry) - those still go through the normal validate-and-retry path.
+ *
+ * Called BEFORE validateBeat, so anything this successfully repairs
+ * never even reaches validation as an error, let alone a retry.
+ */
+function autoRepairBeat(beat) {
+  if (!isPlainObject(beat) || !isPlainObject(beat.visual)) return;
+
+  const walkLayers = (layers) => {
+    if (!Array.isArray(layers)) return;
+    for (const layer of layers) {
+      if (!isPlainObject(layer)) continue;
+
+      if (layer.type === 'shape') {
+        // Missing top-level width/height, derivable from the shape's
+        // own first sized path content - the exact real pattern found
+        // live: the AI puts width/height on the rectangle/ellipse's
+        // own shape.params but forgets the separate layer-level
+        // requirement, even though the numbers are RIGHT THERE one
+        // level down.
+        if ((typeof layer.width !== 'number' || typeof layer.height !== 'number') && Array.isArray(layer.contents)) {
+          const sized = layer.contents.find((item) => isPlainObject(item) && item.type === 'path'
+            && isPlainObject(item.shape) && isPlainObject(item.shape.params)
+            && typeof item.shape.params.width === 'number' && typeof item.shape.params.height === 'number');
+          if (sized) {
+            if (typeof layer.width !== 'number') layer.width = sized.shape.params.width;
+            if (typeof layer.height !== 'number') layer.height = sized.shape.params.height;
+          }
+        }
+
+        // Backwards anchor (~half the shape's own width/height) -
+        // the confirmed-live "trying to center it, got it backwards"
+        // mistake. [0,0] is the genuinely correct centering anchor for
+        // a shape layer (see the identical check in validateLayer's
+        // own doc comment for the full story).
+        if (Array.isArray(layer.anchor) && typeof layer.width === 'number' && typeof layer.height === 'number') {
+          const [ax, ay] = layer.anchor;
+          const halfW = layer.width / 2, halfH = layer.height / 2;
+          if (typeof ax === 'number' && typeof ay === 'number' && ax > 0 && ay > 0
+              && Math.abs(ax - halfW) < halfW * 0.3 && Math.abs(ay - halfH) < halfH * 0.3) {
+            layer.anchor = [0, 0];
+          }
+        }
+
+        // Effect-type items misplaced inside "contents" (the "trim
+        // sitting in effects" mistake's mirror image, e.g. "outerGlow"/
+        // "dropShadow" appearing as a contents entry) - relocated to
+        // the layer's own "effects" array, where the object's own
+        // {type,params} shape already matches exactly what an
+        // EffectDef looks like, no reshaping needed. Content-type
+        // items found in "effects" are NOT auto-moved the other
+        // direction - contents order matters for path/trim/fill/stroke
+        // sequencing, and guessing the right insertion point is a real
+        // judgment call this function deliberately leaves to a retry.
+        if (Array.isArray(layer.contents)) {
+          const misplaced = layer.contents.filter((item) => isPlainObject(item) && EFFECT_TYPES.includes(item.type));
+          if (misplaced.length > 0) {
+            layer.contents = layer.contents.filter((item) => !(isPlainObject(item) && EFFECT_TYPES.includes(item.type)));
+            layer.effects = [...(Array.isArray(layer.effects) ? layer.effects : []), ...misplaced];
+          }
+        }
+      }
+
+      if (Array.isArray(layer.effects)) {
+        // Effect entries with a "type" that isn't a real effect AND
+        // has no other real, single, unambiguous destination anywhere
+        // in the schema (a hallucinated name like "wiggle"/
+        // "expression"/"blendMode" - none of these are ever correct
+        // ANYWHERE, unlike "trim"/"gradientRamp" which at least belong
+        // somewhere) are dropped outright - losing one stylistic
+        // effect on one layer is a far smaller change than failing the
+        // whole beat and forcing a full regeneration over it.
+        const NEVER_VALID_ANYWHERE = new Set(['wiggle', 'expression', 'blendMode', 'transform', 'adjustment', 'adjustmentLayer']);
+        layer.effects = layer.effects.filter((e) => {
+          if (!isPlainObject(e)) return false;
+          if (GENERATE_KINDS.includes(e.type)) return false; // e.g. "gradientRamp" used as an effect - no safe move target, drop it
+          if (NEVER_VALID_ANYWHERE.has(e.type)) return false;
+          return true;
+        });
+      }
+
+      if (layer.type === 'precomp') walkLayers(layer.layers);
+    }
+  };
+
+  if (isPlainObject(beat.visual.background)) walkLayers([beat.visual.background]);
+  walkLayers(beat.visual.layers);
+}
+
+/**
  * Validates ONE beat ({params, visual}) in isolation - the same check
  * validateSceneJSON runs per-beat inside its own loop, pulled out as
  * its own function so mistralClient.js's per-beat generation (each beat
@@ -577,6 +684,7 @@ function validateBeatVisual(visual, path, errors, knownIds) {
  * needing a full {scenes:[...]} wrapper around it.
  */
 function validateBeat(beat, path = 'beat') {
+  autoRepairBeat(beat);
   const errors = [];
   if (!isPlainObject(beat)) return { valid: false, errors: [`${path}: must be an object`] };
   if (!isPlainObject(beat.params) || typeof beat.params.duration !== 'number' || beat.params.duration <= 0) {
