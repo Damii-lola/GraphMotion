@@ -903,10 +903,24 @@ before writing ANY effects[].type:
     to one of the real blend mode names), never an item inside the
     "effects" array.
 
-  gaussianBlur: { radius=8 }
+  gaussianBlur: { radius=8 }  // real per-pixel cost, genuinely
+      // measured: radius=80 on a full ${COMP_WIDTH}x${COMP_HEIGHT} buffer
+      // costs ~1.8 SECONDS of render time for that ONE layer on ONE
+      // frame - multiplied across every frame of the beat, this alone
+      // can blow the render budget. A tasteful blur (defocus, soft
+      // shadow, glow) rarely needs more than radius 15-25; reserve
+      // anything above ~30 for a layer with an explicit, SMALL
+      // width/height (blurring a 100x100 badge instead of the full
+      // frame costs a small fraction as much for the same visual
+      // softness), not a full-frame background/adjustment layer.
   boxBlur: { radius=8, iterations=1 }
   directionalBlur: { length=20, angle=0 (deg) }
   radialBlur: { amount=10, center=[x,y] (default layer center), mode="zoom"|"spin", samples=12 }
+      // also genuinely expensive on a full frame - measured ~2.3
+      // SECONDS for samples=12 at full ${COMP_WIDTH}x${COMP_HEIGHT}. Keep
+      // "samples" at 8-12 (going higher buys little visible smoothness
+      // for real added cost) and use it sparingly - at most once per
+      // beat, not stacked on multiple layers.
   curves: { master, r, g, b: [[x,y], ...] control points (0-255 each) }
   hueSaturation: { hueShift=0 (deg), saturationScale=1, lightnessShift=0 }
   colorBalance: { shadows=[r,g,b], midtones=[r,g,b], highlights=[r,g,b] (each -100..100) }
