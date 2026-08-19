@@ -1229,7 +1229,7 @@ async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
   if (parsed && parsed.beats.length > 0) {
     console.log(`[mistralClient] encoding ${parsed.beats.length} beat(s) independently...`);
     const scenes = await Promise.all(
-      parsed.beats.map((beatChunk, i) => generateOneBeat(parsed.preamble, beatChunk, i, parsed.beats.length, { retriesLeft: 5 })),
+      parsed.beats.map((beatChunk, i) => generateOneBeat(parsed.preamble, beatChunk, i, parsed.beats.length, { retriesLeft: 7 })),
     );
     return { scenes };
   }
