@@ -182,6 +182,30 @@ const TRANSITION_TYPES = [
 function isPlainObject(v) { return typeof v === 'object' && v !== null && !Array.isArray(v); }
 function isNumberArray(v, len) { return Array.isArray(v) && v.length === len && v.every((n) => typeof n === 'number'); }
 
+/**
+ * A "text" layer has no literal width/height field (unlike "shape"), but
+ * follows the IDENTICAL local-origin-centered drawing convention -
+ * buildTextDraw always renders with centerX/centerY at the layer's own
+ * (0,0), wrapped to "maxWidth" (see sceneBuilder.js). So the same
+ * "anchor set to roughly half the size, trying to center it" mistake
+ * confirmed live on shape layers (anchor:[240,44] on a maxWidth:480
+ * headline - 240 is exactly half of 480) applies here too. There's no
+ * rendered line count available at validation time (no canvas), so the
+ * effective height is an ESTIMATE: average glyph width ~0.55x fontSize
+ * (typical for bold sans-serif) to guess how many wrapped lines the text
+ * needs, then that many lineHeights. It only needs to be roughly right -
+ * it feeds a loose tolerance check, not an exact one.
+ */
+function estimateTextEffectiveSize(layer) {
+  const width = typeof layer.maxWidth === 'number' ? layer.maxWidth : 900;
+  const fontSize = typeof layer.fontSize === 'number' ? layer.fontSize : 48;
+  const lineHeight = typeof layer.lineHeight === 'number' ? layer.lineHeight : fontSize * 1.15;
+  const text = typeof layer.text === 'string' ? layer.text : '';
+  const estCharWidth = fontSize * 0.55;
+  const estLines = text.length > 0 ? Math.max(1, Math.round((text.length * estCharWidth) / width)) : 1;
+  return { width, height: lineHeight * estLines };
+}
+
 // ---------------------------------------------------------------------
 // Real, repeated finding across MULTIPLE live generations (not a
 // one-off): the model consistently invents/misplaces type names across
@@ -443,6 +467,23 @@ function validateLayer(layer, path, errors, knownIds) {
     }
   }
 
+  // Identical mistake, identical convention, "text" layer version - see
+  // estimateTextEffectiveSize's doc comment for why height is estimated
+  // rather than read from a literal field. Confirmed directly on real
+  // generated output: a "WAIT... THIS IS REAL?" headline with
+  // maxWidth:480 used anchor:[240,44] (240 = exactly half of 480),
+  // rendering almost entirely off-frame; the same layer with anchor
+  // omitted (or [0,0]) rendered correctly centered.
+  if (layer.type === 'text' && Array.isArray(layer.anchor)) {
+    const [ax, ay] = layer.anchor;
+    const { width: effW, height: effH } = estimateTextEffectiveSize(layer);
+    const halfW = effW / 2, halfH = effH / 2;
+    if (typeof ax === 'number' && typeof ay === 'number' && ax > 0 && ay > 0
+        && Math.abs(ax - halfW) < halfW * 0.3 && Math.abs(ay - halfH) < halfH * 0.6) {
+      errors.push(`${path}.anchor: [${ax},${ay}] looks like roughly half this text layer's own maxWidth/rendered-height (~${Math.round(effW)}x${Math.round(effH)}) - for a "text" layer this is BACKWARDS, the exact same mistake as on shape layers. Text is already drawn centered on its own local (0,0) (both "position" and any wrapped multi-line layout are built around that origin), so this anchor shifts it OFF-center by roughly half its size - often enough to push it partly or entirely off-frame. To center this layer on "position", either omit "anchor" entirely or set it to [0,0] explicitly.`);
+    }
+  }
+
   if (layer.type === 'shape') {
     if (!Array.isArray(layer.contents)) errors.push(`${path}.contents: a shape layer requires a contents array`);
     else layer.contents.forEach((item, i) => validateShapeContentItem(item, `${path}.contents[${i}]`, errors));
@@ -668,6 +709,19 @@ function autoRepairBeat(beat) {
             layer.effects = layer.effects.filter((item) => !(isPlainObject(item) && SHAPE_CONTENT_TYPES.includes(item.type)));
             layer.contents = [...(Array.isArray(layer.contents) ? layer.contents : []), ...misplacedContent];
           }
+        }
+      }
+
+      if (layer.type === 'text' && Array.isArray(layer.anchor)) {
+        // Backwards anchor, text-layer version of the shape fix above -
+        // see estimateTextEffectiveSize's doc comment and the matching
+        // validateLayer check for the full story.
+        const [ax, ay] = layer.anchor;
+        const { width: effW, height: effH } = estimateTextEffectiveSize(layer);
+        const halfW = effW / 2, halfH = effH / 2;
+        if (typeof ax === 'number' && typeof ay === 'number' && ax > 0 && ay > 0
+            && Math.abs(ax - halfW) < halfW * 0.3 && Math.abs(ay - halfH) < halfH * 0.6) {
+          layer.anchor = [0, 0];
         }
       }
 
