@@ -627,20 +627,30 @@ here: ${SHAPE_CONTENT_TYPES.join(', ')}. Every EFFECTS-list name
 (gaussianBlur, dropShadow, outerGlow, addGrain, addNoise, rgbShift,
 curves, and everything else in the EFFECTS list below) belongs on the
 LAYER's own "effects" array instead, NEVER inside "contents" - this is
-a real, repeated live mistake ("outerGlow" specifically keeps showing
-up inside "contents" arrays), stated again here because it is the
+a real, repeated live mistake (both "outerGlow" AND "dropShadow"
+specifically keep showing up inside "contents" arrays, confirmed
+across separate real generations), stated again here because it is the
 single most common shape-content error despite already being covered
-by the cross-vocabulary section above. A complete, correct worked
-example - a circle with a real glow, structured the RIGHT way:
+by the cross-vocabulary section above. Two complete, correct worked
+examples showing the SAME right pattern with two different effects,
+since this is a general rule about the FIELD, not a one-off exception
+for a single effect name:
   {"type":"shape","id":"orb","width":120,"height":120,"contents":[
     {"type":"path","shape":{"kind":"ellipse","params":{"width":120,"height":120}}},
     {"type":"fill","color":"#00D4AA"}
   ],"effects":[
     {"type":"outerGlow","params":{"color":"#00D4AA","opacity":0.6,"blur":20,"blendMode":"screen"}}
   ]}
-Notice "outerGlow" sits in "effects" (a sibling of "contents" on the
-LAYER object, not an entry inside "contents" itself) - "contents" ends
-at "fill", it never contains an effect name at any point.
+  {"type":"shape","id":"card","width":300,"height":200,"contents":[
+    {"type":"path","shape":{"kind":"rectangle","params":{"width":300,"height":200,"roundness":16}}},
+    {"type":"fill","color":"#F5F5F5"}
+  ],"effects":[
+    {"type":"dropShadow","params":{"color":"#000000","opacity":0.5,"distance":10,"angle":90,"blur":20}}
+  ]}
+In BOTH, the effect name sits in "effects" (a sibling of "contents" on
+the LAYER object, not an entry inside "contents" itself) - "contents"
+always ends at the last "fill"/"stroke", it never contains an effect
+name at any point, for ANY effect, not just these two.
 =====================================================================
 { "type": "path", "shape": { "kind": ${SHAPE_KINDS.map((k) => `"${k}"`).join(' | ')}, "params": {...} } }
     rectangle: { width, height, position:[x,y] (default [0,0], CENTERED on
@@ -963,6 +973,15 @@ DESIGN QUALITY - this is the whole point, not an afterthought
 - Use color with intent (a coherent palette across the whole video, not
   random hex values per beat) and real hierarchy (one clear focal
   element per beat, not several competing ones).
+- EVERY layer in "layers" needs its OWN "position" - a real, common
+  live mistake: 2+ layers left at the same position (very often
+  [${COMP_WIDTH / 2},${COMP_HEIGHT / 2}], the frame center, the natural
+  default to reach for) stack fully on top of each other instead of
+  reading as the row/grid/scattered composition that was probably
+  intended. Before finishing a beat, scan every layer's "position" and
+  make sure no two non-parented siblings share an identical value
+  (unless they're genuinely both full-frame background/overlay layers,
+  where sharing the center IS correct).
 - Prefer real keyframed motion with eased interpolation over static
   layers or expression-only wiggle for primary content; save
   expressions for secondary/ambient motion (background drift, idle
