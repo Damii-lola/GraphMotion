@@ -357,6 +357,32 @@ function validateShapeContentItem(item, path, errors) {
   } else if (item.type === 'group') {
     if (!Array.isArray(item.contents)) errors.push(`${path}.contents: a group requires a contents array`);
     else item.contents.forEach((sub, i) => validateShapeContentItem(sub, `${path}.contents[${i}]`, errors));
+  } else if (item.type === 'repeater' && isPlainObject(item.transform)) {
+    // Real, previously-completely-silent bug found via direct frame
+    // isolation: a live-generated repeater used per-copy
+    // {"expression":"Math.cos(index*45)*200","base":0} objects for
+    // transform.position, clearly assuming (reasonably, given real AE
+    // repeaters DO support this) that each copy gets its own
+    // expression-evaluated offset with an "index" variable. This
+    // engine's actual repeater (engine/repeater.js) has NO such
+    // feature - it reads transform.position/rotation/scale/anchor as
+    // PLAIN STATIC NUMBERS exactly once, then COMPOUNDS that one fixed
+    // per-copy delta across copies (matrix power, matching AE's real
+    // "Transform: compounds per copy" behavior - a genuinely powerful,
+    // correct way to build fans/circles/spirals on its own, just not
+    // via expressions). Feeding it an {expression,...} object where a
+    // number is expected doesn't error - it silently corrupts the
+    // per-copy matrix into NaN, which then compounds, so every copy
+    // except the very first (which starts from an untouched identity
+    // matrix) vanishes with no error anywhere. Confirmed directly: a
+    // repeater meant to show 8 shapes rendered exactly 1.
+    const isNumericPlain = (v) => typeof v === 'number' || (Array.isArray(v) && v.every((x) => typeof x === 'number'));
+    for (const field of ['position', 'rotation', 'scale', 'anchor']) {
+      const val = item.transform[field];
+      if (val !== undefined && !isNumericPlain(val)) {
+        errors.push(`${path}.transform.${field}: must be a plain static number (or [x,y] of plain numbers) - repeater "transform" fields do NOT support AnimatableValue keyframes or {"expression":...} objects, and there is no "index" variable available to them. Got ${JSON.stringify(val)}. This is NOT a limitation to work around - the SAME per-copy transform is automatically COMPOUNDED across every copy (copy 2 gets the transform applied twice, copy 3 three times, etc, matching real After Effects), which is how a repeater naturally fans out into a circle/spiral/ring using nothing but one fixed rotation and/or position value.`);
+      }
+    }
   }
 }
 

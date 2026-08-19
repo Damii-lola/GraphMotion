@@ -131,6 +131,44 @@ function offsetAnimatable(animatable, offset) {
   return [(v[0] || 0) - offset[0], (v[1] || 0) - offset[1], (v[2] || 0) - (offset[2] || 0)];
 }
 
+/**
+ * Wraps an already-built animatable (same contract as offsetAnimatable
+ * above) so any resolved vector shorter than `defaults` gets its
+ * MISSING trailing components filled in from `defaults`, instead of
+ * left `undefined`.
+ *
+ * Exists because of a real, serious, and completely silent bug found
+ * by isolating a live-generated 3D layer that rendered as totally
+ * invisible with no error anywhere: its "scale" keyframes used 2D-style
+ * [sx,sy] values (a natural mistake - 2D layers really do use 2-element
+ * scale, and "uniform scale" naturally reads as just two numbers) on a
+ * 3D layer, which needs [sx,sy,sz]. matrix4.js's scale/compose math
+ * never checked its inputs existed, so the missing sz produced
+ * `undefined`, which every arithmetic op downstream silently turned
+ * into NaN, which propagated through the ENTIRE local transform matrix
+ * (matrix multiplication mixes every component together) - not just
+ * the Z axis. The result: this Layer3D's projected corners were all
+ * NaN, `camera.project`'s depth check (`NaN > 0` is always false) made
+ * renderScene3D treat it as "entirely behind the camera" and silently
+ * skip it - no exception, no warning, just a layer that never appears
+ * in a single frame despite being fully present and valid-looking in
+ * the JSON. Confirmed directly: stripping just this layer's "scale"
+ * field made it render immediately; restoring it made it vanish again.
+ *
+ * Applied to "scale" (missing components default to 1 - no scaling on
+ * that axis) and "anchor" (missing components default to that layer's
+ * own center - matching buildLayer3D's own anchor default) so a
+ * same-shape mistake can degrade gracefully into "this axis behaves as
+ * if unset" instead of nuking the whole layer.
+ */
+function padVector3(animatable, defaults) {
+  const pad = (v) => defaults.map((d, i) => (v[i] !== undefined ? v[i] : d));
+  if (typeof animatable?.valueAt === 'function') {
+    return { valueAt: (t) => pad(animatable.valueAt(t)) };
+  }
+  return pad(animatable);
+}
+
 /** A shape-geometry parameter (or any effect param) is treated as a static value - if given an AnimatableValue shape, it's resolved ONCE at t=0 rather than crashing, a reasonable fallback for a field this file intentionally doesn't re-evaluate per frame (see the class-level design-boundary note above). */
 function resolveStatic(value) {
   const built = buildAnimatable(value);
@@ -539,7 +577,13 @@ function buildLayer3D(layerDef, beatContext) {
     rotationX: buildAnimatable(layerDef.rotationX ?? 0),
     rotationY: buildAnimatable(layerDef.rotationY ?? 0),
     rotationZ: buildAnimatable(layerDef.rotationZ ?? 0),
-    scale: buildAnimatable(layerDef.scale ?? [1, 1, 1]),
+    // padVector3 guards against a real, previously-silent bug: a
+    // 2-element [sx,sy] scale (natural but wrong on a 3D layer) leaves
+    // sz undefined, which corrupts the whole transform matrix into NaN
+    // and makes the layer vanish from every frame with zero errors -
+    // see padVector3's own doc comment for the full, directly-confirmed
+    // story.
+    scale: padVector3(buildAnimatable(layerDef.scale ?? [1, 1, 1]), [1, 1, 1]),
     // Default anchor CENTERED ([w/2,h/2,0]), not the plane's top-left
     // corner - a real, deliberate default-behavior change, not just
     // another prompt fix. Real, repeated evidence across multiple live
@@ -558,7 +602,9 @@ function buildLayer3D(layerDef, beatContext) {
     // page-flip rotating around an edge) can still set anchor explicitly
     // - that's a real, legitimate, but comparatively rare case, not the
     // common one this default should optimize for.
-    anchor: buildAnimatable(layerDef.anchor ?? [w / 2, h / 2, 0]),
+    // Same NaN-guard as scale above, defaulting a missing component to
+    // this layer's own center rather than leaving it undefined.
+    anchor: padVector3(buildAnimatable(layerDef.anchor ?? [w / 2, h / 2, 0]), [w / 2, h / 2, 0]),
     opacity: buildAnimatable(layerDef.opacity ?? 1),
     width: w,
     height: h,

@@ -509,6 +509,33 @@ inside "contents":
     // their own position/rotation, or accept repeating just the raw
     // geometry within one shape as this feature actually supports.
     // stamps N copies, each offset by one more increment of "transform"
+    //
+    // CRITICAL: every field inside "transform" (position/rotation/
+    // scale/anchor) MUST be a plain static number (or [x,y] of plain
+    // numbers) - NEVER an AnimatableValue (no keyframes, no
+    // {"expression":...}), and there is NO "index"/"i"/per-copy
+    // variable available inside them. Confirmed as a real, completely
+    // silent live bug: a repeater given
+    // {"position":[{"expression":"Math.cos(index*45)*200","base":0},...]}
+    // (assuming, reasonably but wrongly, that each copy could compute
+    // its own placement) rendered exactly ONE copy instead of 8, with
+    // no error anywhere - the engine doesn't evaluate per-copy
+    // expressions at all, it takes the ONE transform you give it and
+    // COMPOUNDS it across copies (copy 2 = transform applied twice,
+    // copy 3 = three times, ...), exactly matching real After Effects'
+    // own Repeater. This is not a workaround-needed limitation - it's
+    // the CORRECT, powerful way to build a fan/circle/spiral/ring: set
+    // "rotation" to the angle between copies (e.g. 45 for 8 copies
+    // evenly around a circle, since 8*45=360) and/or "position" to a
+    // fixed offset, and the compounding does the rest automatically.
+    // Want 8 shards scattered evenly in a ring? Don't compute 8
+    // positions yourself - build the PATH itself already offset from
+    // local (0,0) (e.g. a small shape drawn 200px up from origin), then
+    // use transform:{"rotation":45} (360/8 copies) with position left
+    // at its [0,0] default: each successive copy is that same fixed
+    // rotation compounded ON TOP of the last (45, then 90, then 135...),
+    // which spins that one offset shape all the way around into a
+    // perfect ring automatically - no per-copy math needed anywhere.
 { "type": "pathOp", "mode": ${PATH_OP_MODES.map((m) => `"${m}"`).join(' | ')} }
     // boolean-combines all paths built so far
 { "type": "fill", "color": "#rrggbb", "opacity": AnimatableValue<0-1>, "fillRule": "nonzero" | "evenodd" }
