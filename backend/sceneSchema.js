@@ -457,6 +457,45 @@ function validateBeatVisual(visual, path, errors, knownIds) {
     errors.push(`${path}.layers: must contain at least one layer - a beat with zero foreground layers renders as an empty/dead frame with nothing happening for its entire duration.`);
   }
   visual.layers.forEach((layer, i) => validateLayer(layer, `${path}.layers[${i}]`, errors, knownIds, !!visual.is3D));
+  // Real bug found via direct JSON inspection of a live-generated beat:
+  // two "cell" precomps meant to sit side-by-side both independently
+  // left "position" at the schema's default [0,0] - they don't share a
+  // "parent", they're just both un-set. Confirmed directly via a
+  // rendered frame: instead of a spread-out grid, they stack fully on
+  // top of each other at the frame's top-left corner. Shown up
+  // independently across more than one real generation, so it's
+  // detected structurally rather than left to prompt guidance alone.
+  //
+  // False-positive risk this had to be guarded against (found while
+  // testing this exact check against real captured beats): full-frame
+  // overlay/matte/background layers (a wipe matte, a paper texture, a
+  // full-frame color layer) LEGITIMATELY share the same frame-filling
+  // position with each other - that's normal, correct compositing, not
+  // a "forgot to spread these out" mistake. So only layers that are
+  // SMALLER than the beat's own largest explicit layer are eligible to
+  // be flagged; anything tied for the largest explicit width/height in
+  // the beat is treated as a background/overlay-style layer and
+  // exempted, and layers with no explicit width/height at all (text
+  // layers, generate/image layers meant to fill their container - both
+  // extremely common and NOT a sign of this bug) are exempted too
+  // rather than guessed at.
+  const layersWithSize = visual.layers.filter((l) => typeof l.width === 'number' && typeof l.height === 'number');
+  const maxW = layersWithSize.length ? Math.max(...layersWithSize.map((l) => l.width)) : 0;
+  const maxH = layersWithSize.length ? Math.max(...layersWithSize.map((l) => l.height)) : 0;
+  const positionGroups = new Map();
+  visual.layers.forEach((layer, i) => {
+    if (layer.parent || !Array.isArray(layer.position)) return;
+    if (typeof layer.width !== 'number' || typeof layer.height !== 'number') return;
+    if (layer.width >= maxW && layer.height >= maxH) return;
+    const key = JSON.stringify(layer.position);
+    if (!positionGroups.has(key)) positionGroups.set(key, []);
+    positionGroups.get(key).push(i);
+  });
+  for (const [key, indices] of positionGroups) {
+    if (indices.length > 1) {
+      errors.push(`${path}.layers: layers at indices [${indices.join(', ')}] all share the identical un-animated position ${key} - sibling elements need distinct "position" values or they'll render stacked/overlapping instead of spread out (e.g. as a row, grid, or scattered composition). Give each one its own real position.`);
+    }
+  }
 
   if (visual.is3D) {
     if (Array.isArray(visual.lights)) visual.lights.forEach((l, i) => validateLight(l, `${path}.lights[${i}]`, errors));
