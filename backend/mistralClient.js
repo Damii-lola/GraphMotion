@@ -87,26 +87,69 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 /**
  * A shared, module-level call queue that spaces out EVERY Mistral
- * request by at least MIN_CALL_INTERVAL_MS from the previous one's
- * start, regardless of how many callers are concurrently trying to
- * call in - found necessary via actual live testing, not assumed: with
- * generateSceneJSON's real per-beat concurrent architecture (N beats,
- * each with its own validation-retry budget, all firing via
- * Promise.all), even reactive 429-backoff (below) wasn't enough - a
- * genuinely low-rate-limit key got 429'd on nearly EVERY request for
- * almost 3 minutes straight and the whole generation still ultimately
- * failed, because backoff only reacts AFTER a burst already happened;
- * it doesn't prevent the burst. This queue prevents the burst at the
- * source: every call waits its turn AND a minimum spacing, so 5
+ * request from the previous one's start, regardless of how many
+ * callers are concurrently trying to call in - found necessary via
+ * actual live testing, not assumed: with generateSceneJSON's real
+ * per-beat concurrent architecture (N beats, each with its own
+ * validation-retry budget, all firing via Promise.all), even reactive
+ * 429-backoff (below) wasn't enough on its own - a genuinely
+ * low-rate-limit key got 429'd on nearly EVERY request for almost 3
+ * minutes straight and the whole generation still ultimately failed,
+ * because backoff only reacts AFTER a burst already happened; it
+ * doesn't prevent the burst. This queue prevents the burst at the
+ * source: every call waits its turn AND a minimum spacing, so N
  * concurrent beats naturally serialize into one evenly-paced stream
- * instead of slamming the API all at once. `.catch(() => {})` on the
- * chained promise is deliberate - one caller's request failing must
- * never break the queue for every caller after it.
+ * instead of slamming the API all at once.
+ *
+ * The spacing is ADAPTIVE, not a fixed constant - found necessary via
+ * a SECOND real, live problem the original fixed 3.5s spacing itself
+ * caused: a real production job sat "stuck" for 15+ minutes (the
+ * frontend's own client-side give-up threshold) because a genuinely
+ * complex, many-layer beat needed several retries, and EVERY one of
+ * those retries - even though this specific key was no longer being
+ * rate-limited at all - still paid the full worst-case 3.5s tax,
+ * compounding across every beat sharing the one serialized queue.
+ * Being permanently conservative for a rate limit that usually isn't
+ * even being hit wastes real, meaningful wall-clock time on every
+ * single generation, not just the rare rate-limited ones. Starting
+ * fast (MIN_CALL_INTERVAL_MS) and only escalating reactively when a
+ * 429 is actually observed (recordRateLimitHit, called from the 429
+ * handler below) - then decaying back toward the fast floor once
+ * enough time has passed without another one - keeps the common case
+ * quick while still slowing down exactly when the API actually asks
+ * for it, instead of guessing worst-case for every single call.
+ * `.catch(() => {})` on the chained promise is deliberate - one
+ * caller's request failing must never break the queue for every
+ * caller after it.
  */
-const MIN_CALL_INTERVAL_MS = 3500;
+const MIN_CALL_INTERVAL_MS = 1200;
+const MAX_CALL_INTERVAL_MS = 5000;
+const RATE_LIMIT_DECAY_MS = 20000; // how long an elevated interval persists after the last 429 before easing back down
+let currentCallIntervalMs = MIN_CALL_INTERVAL_MS;
+let lastRateLimitHitAt = 0;
+
+function recordRateLimitHit() {
+  currentCallIntervalMs = MAX_CALL_INTERVAL_MS;
+  lastRateLimitHitAt = Date.now();
+}
+
+function currentAdaptiveInterval() {
+  if (currentCallIntervalMs <= MIN_CALL_INTERVAL_MS) return MIN_CALL_INTERVAL_MS;
+  const sinceLastHit = Date.now() - lastRateLimitHitAt;
+  if (sinceLastHit > RATE_LIMIT_DECAY_MS) {
+    // Ease back down by half once the decay window has passed, rather
+    // than snapping straight back to the fast floor - a real rate
+    // limit that was just hit is more likely to still be nearby than
+    // one from a while ago, so this eases off gradually.
+    currentCallIntervalMs = Math.max(MIN_CALL_INTERVAL_MS, Math.round(currentCallIntervalMs / 2));
+    lastRateLimitHitAt = Date.now();
+  }
+  return currentCallIntervalMs;
+}
+
 let callQueueTail = Promise.resolve();
 function queueMistralCall(fn) {
-  const scheduled = callQueueTail.then(() => sleep(MIN_CALL_INTERVAL_MS)).then(fn);
+  const scheduled = callQueueTail.then(() => sleep(currentAdaptiveInterval())).then(fn);
   callQueueTail = scheduled.catch(() => {});
   return scheduled;
 }
@@ -190,6 +233,7 @@ async function callMistralRaw(systemPrompt, userMessage, { jsonMode = true, maxT
   if (!response.ok) {
     const errText = await response.text();
     if (response.status === 429 && rateLimitRetriesLeft > 0) {
+      recordRateLimitHit(); // slow the shared queue down for every OTHER in-flight caller too, not just this retry
       // Prefer the server's own Retry-After if it sent one; otherwise
       // exponential backoff with jitter (jitter matters specifically
       // BECAUSE several beats retry concurrently - without it, they'd
