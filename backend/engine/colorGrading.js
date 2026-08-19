@@ -38,8 +38,8 @@ function identityLUT() {
 // ---------------------------------------------------------------------
 
 /**
- * Builds a 256-entry lookup table from control points {x,y} (both in
- * 0-255 space) via a monotonic cubic Hermite spline:
+ * Builds a 256-entry lookup table from control points (both in 0-255
+ * space) via a monotonic cubic Hermite spline:
  * 1. Compute each segment's secant slope (delta).
  * 2. Seed each point's tangent as the average of its two adjacent
  *    secants (endpoints just take their single neighboring secant).
@@ -49,9 +49,26 @@ function identityLUT() {
  *    rescale them down to the largest values that stay monotonic.
  * Values outside the given control-point range clamp to the nearest
  * endpoint's y (matching how a real curves tool's flat curve ends behave).
+ *
+ * Control points are `[x, y]` TUPLES - matching mistralClient.js's own
+ * schema docs ("master, r, g, b: [[x,y], ...] control points") and
+ * every real AI-generated "curves" effect, which always sends this
+ * exact array-of-arrays shape. This function used to assume `{x, y}`
+ * OBJECTS instead - a real, severe, previously-undiscovered bug found
+ * via a live render that came back completely black: `pts[k].x` on a
+ * plain `[x,y]` array is `undefined` (arrays have no `.x` property),
+ * which cascaded NaN through every downstream calculation (secant
+ * slopes, tangents, the final LUT value), and Uint8ClampedArray
+ * silently clamps a NaN assignment to 0 - so EVERY lut entry became 0,
+ * turning every single pixel of the entire accumulated composition
+ * (curves was applied via an isAdjustmentLayer, which post-processes
+ * everything composited so far) pure black, with no error anywhere.
+ * Confirmed directly: isolating this exact real beat's null-adjustment-
+ * layer-with-curves reproduced total blackness; removing just this one
+ * layer restored the beat's normal content immediately.
  */
 function buildMonotonicCurveLUT(controlPoints) {
-  const pts = [...controlPoints].sort((a, b) => a.x - b.x);
+  const pts = [...controlPoints].map((p) => (Array.isArray(p) ? { x: p[0], y: p[1] } : p)).sort((a, b) => a.x - b.x);
   const n = pts.length;
   const lut = new Uint8ClampedArray(256);
 
