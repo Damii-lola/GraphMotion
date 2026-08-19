@@ -818,6 +818,21 @@ motion on text that isn't the primary thing being read, or use it only
 on "opacity"/"scale" with a small range, never on "position" for short
 critical labels.
 
+NEVER set a layer's own top-level "opacity" to a static 0 just because
+it has a per-character reveal animator - the animator's "opacity"
+DELTA only ever controls per-CHARACTER alpha inside the text draw
+call, it has NO WAY to reach back and override the LAYER's own
+opacity, which gates the entire composited layer multiplicatively no
+matter what the animator does internally. A static "opacity":0 at the
+layer level makes the WHOLE layer permanently invisible for its entire
+duration, animator or not - confirmed as a real, live bug: a headline
+with "opacity":0 plus a correctly-configured reveal animator rendered
+as nothing at all, the whole beat through. To start a layer invisible
+and reveal it, either OMIT "opacity" entirely (default 1) and let the
+per-character animator's own "opacity" delta do the reveal, or animate
+the LAYER's own "opacity" with real keyframes (0 -> 1) - never a plain
+static 0.
+
 =====================================================================
 EFFECTS - EffectDef: { "type": <name>, "params": {...} }, real per-type params:
 =====================================================================

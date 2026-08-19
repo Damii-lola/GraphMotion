@@ -434,6 +434,28 @@ function validateLayer(layer, path, errors, knownIds) {
   if (layer.blendMode && !BLEND_MODE_NAMES.includes(layer.blendMode)) {
     errors.push(`${path}.blendMode: "${layer.blendMode}" is not a real blend mode (expected one of ${BLEND_MODE_NAMES.join(', ')})`);
   }
+
+  // Real, confirmed-live bug: a layer's own top-level "opacity" and a
+  // per-character animator's "opacity" DELTA are two entirely separate
+  // mechanisms - the animator only ever modulates per-CHARACTER alpha
+  // inside the text draw call, it has no way to reach back and affect
+  // the LAYER's own opacity, which gates the whole composited result
+  // multiplicatively (Node.getWorldOpacity -> ctx.globalAlpha) no
+  // matter what the animator does internally. A static "opacity":0 at
+  // the layer level is a hard, permanent 0% for the layer's entire
+  // duration. Confirmed directly: a real generated "FACT #2" headline
+  // with "opacity":0 plus a per-character reveal animator (clearly
+  // intended to fade the text in) rendered as nothing - fully
+  // invisible - for the ENTIRE beat, even though the animator itself
+  // was correctly configured and would have worked fine had layer
+  // opacity been left at its default. Only flagged for a plain STATIC
+  // 0 (not an AnimatableValue/keyframes object that legitimately
+  // starts at 0 and animates up on its own) alongside a non-empty
+  // "animators" array - a keyframed layer opacity with no animators is
+  // a completely different, valid use case, untouched here.
+  if (layer.opacity === 0 && Array.isArray(layer.animators) && layer.animators.length > 0) {
+    errors.push(`${path}.opacity: is a static 0 - combined with a per-character "animators" reveal, this makes the ENTIRE layer permanently invisible for its whole duration, since the animator only controls per-character alpha and can never override the layer's own opacity. Omit "opacity" entirely (default 1) and let the animator's own per-character "opacity" delta handle the reveal instead.`);
+  }
   if (layer.trackMatte) {
     if (!layer.trackMatte.source) errors.push(`${path}.trackMatte.source: is required (the id of the matte layer)`);
     if (!TRACK_MATTE_TYPES.includes(layer.trackMatte.type)) errors.push(`${path}.trackMatte.type: "${layer.trackMatte.type}" is not real (expected one of ${TRACK_MATTE_TYPES.join(', ')})`);
@@ -652,6 +674,15 @@ function autoRepairBeat(beat) {
     if (!Array.isArray(layers)) return;
     for (const layer of layers) {
       if (!isPlainObject(layer)) continue;
+
+      // Static layer-level opacity:0 alongside a reveal animator -
+      // see validateLayer's matching check for the full story. Not
+      // scoped to any one layer type since any layer (shape/text/
+      // image/generate) can carry "animators" and this same
+      // self-defeating mistake.
+      if (layer.opacity === 0 && Array.isArray(layer.animators) && layer.animators.length > 0) {
+        delete layer.opacity;
+      }
 
       if (layer.type === 'shape') {
         // Missing top-level width/height, derivable from the shape's
