@@ -156,6 +156,34 @@ async function callMistralRaw(systemPrompt, userMessage, { jsonMode = true, maxT
     });
   } catch (err) {
     if (err.name === 'AbortError') throw new Error(`Mistral request timed out after ${MISTRAL_TIMEOUT_MS}ms`);
+    // Real, live-confirmed gap: a transient network error (ECONNRESET,
+    // ETIMEDOUT, DNS hiccups - routine and expected over enough HTTP
+    // calls, not exceptional) used to propagate straight up and, via
+    // Promise.all in generateSceneJSON, kill the ENTIRE multi-beat
+    // generation even when every other beat's own retries were
+    // otherwise converging fine - confirmed directly: a live run's
+    // beats were making real progress (successfully catching and
+    // fixing real validation errors) when one single ECONNRESET on one
+    // beat's one request took the whole generation down. Retried the
+    // same way as a 429 (same shared backoff/attempt budget) rather
+    // than left to fail immediately, since this is exactly the kind of
+    // routine transient failure a normal HTTP client is expected to
+    // absorb, not surface as a hard error.
+    // node-fetch v2 FetchError normally forwards the underlying Node
+    // error's `.code`, but that's not 100% guaranteed across every
+    // failure path - falling back to checking the message text too
+    // means this still catches the real case even if `.code` is ever
+    // missing/different than expected.
+    const transientCodes = ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND'];
+    const isTransientNetworkError = transientCodes.includes(err.code)
+      || transientCodes.some((code) => String(err.message).includes(code));
+    if (isTransientNetworkError && rateLimitRetriesLeft > 0) {
+      const attempt = MAX_RATE_LIMIT_RETRIES - rateLimitRetriesLeft;
+      const backoffMs = Math.min(2000 * 2 ** attempt, 30000) + Math.random() * 1000;
+      console.warn(`[mistralClient] transient network error (${err.code}), waiting ${Math.round(backoffMs)}ms before retry (${rateLimitRetriesLeft} left)`);
+      await sleep(backoffMs);
+      return callMistralRaw(systemPrompt, userMessage, { jsonMode, maxTokens, temperature }, rateLimitRetriesLeft - 1);
+    }
     throw err;
   }
 
