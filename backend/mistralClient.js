@@ -549,10 +549,42 @@ LAYERDEF - one entry in "layers" (or "background")
   "effects": [ EffectDef, ... ],  // this layer's own effects stack, see below
   "parent": <layerId>,            // real parenting - this layer's transform
                                     // is relative to the parent's
-  "width", "height": number  // REQUIRED for "shape"/"generate" layers
-                              // (defaults to the full frame size if omitted,
-                              // which is correct for a full-frame background
-                              // but wrong for a smaller object)
+  "width", "height": number  // REQUIRED for "shape"/"generate" layers.
+                              // CRITICAL, stated bluntly because this is
+                              // THE single most common real generation
+                              // mistake by far: this is a TOP-LEVEL field
+                              // on the LAYER object itself (a sibling of
+                              // "id"/"type"/"position"/"contents"), NOT
+                              // nested inside a content item's
+                              // shape.params. A rectangle/ellipse's own
+                              // "width"/"height" inside its shape.params
+                              // describes that ONE path's geometry - it
+                              // does NOT also satisfy the layer's own
+                              // separate width/height requirement, even
+                              // when the numbers would be identical.
+                              // WRONG (layer-level width/height missing,
+                              // even though the shape's own params have
+                              // them): {"type":"shape","position":[270,480],
+                              // "contents":[{"type":"path","shape":
+                              // {"kind":"rectangle","params":{"width":300,
+                              // "height":300}}},{"type":"fill","color":
+                              // "#fff"}]}
+                              // RIGHT (both present - the layer's OWN
+                              // width/height, AND the shape's own,
+                              // matching in this common case but two
+                              // genuinely separate fields):
+                              // {"type":"shape","width":300,"height":300,
+                              // "position":[270,480],"contents":[{"type":
+                              // "path","shape":{"kind":"rectangle","params":
+                              // {"width":300,"height":300}}},{"type":"fill",
+                              // "color":"#fff"}]}
+                              // Before finishing, check EVERY "shape" and
+                              // "generate" layer in the whole beat has its
+                              // own top-level width/height set - not just
+                              // the ones that feel like they need it.
+                              // Omitting it defaults to the full frame
+                              // size, correct for a full-frame background,
+                              // wrong for anything smaller.
 
   // --- type:"shape" ---
   "contents": [ ShapeContentItem, ... ],   // see below
@@ -591,9 +623,24 @@ LAYERDEF - one entry in "layers" (or "background")
 SHAPECONTENTITEM - entries in a shape layer's "contents" array, applied
 TOP TO BOTTOM building up a running path list (this mirrors the real
 engine exactly, not a simplification). ONLY these 7 types are valid
-here - grain/noise/blur/glow and every other EFFECTS-list name belongs
-on the LAYER's own "effects" array instead (see EFFECTS below), never
-inside "contents":
+here: ${SHAPE_CONTENT_TYPES.join(', ')}. Every EFFECTS-list name
+(gaussianBlur, dropShadow, outerGlow, addGrain, addNoise, rgbShift,
+curves, and everything else in the EFFECTS list below) belongs on the
+LAYER's own "effects" array instead, NEVER inside "contents" - this is
+a real, repeated live mistake ("outerGlow" specifically keeps showing
+up inside "contents" arrays), stated again here because it is the
+single most common shape-content error despite already being covered
+by the cross-vocabulary section above. A complete, correct worked
+example - a circle with a real glow, structured the RIGHT way:
+  {"type":"shape","id":"orb","width":120,"height":120,"contents":[
+    {"type":"path","shape":{"kind":"ellipse","params":{"width":120,"height":120}}},
+    {"type":"fill","color":"#00D4AA"}
+  ],"effects":[
+    {"type":"outerGlow","params":{"color":"#00D4AA","opacity":0.6,"blur":20,"blendMode":"screen"}}
+  ]}
+Notice "outerGlow" sits in "effects" (a sibling of "contents" on the
+LAYER object, not an entry inside "contents" itself) - "contents" ends
+at "fill", it never contains an effect name at any point.
 =====================================================================
 { "type": "path", "shape": { "kind": ${SHAPE_KINDS.map((k) => `"${k}"`).join(' | ')}, "params": {...} } }
     rectangle: { width, height, position:[x,y] (default [0,0], CENTERED on
