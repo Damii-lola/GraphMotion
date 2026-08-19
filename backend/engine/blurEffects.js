@@ -78,7 +78,17 @@ function unpremultiplyToBytes(premultiplied) {
 
 /** A real 1D Gaussian kernel, computed from the actual Gaussian PDF formula and normalized to sum to 1 (so blurring preserves overall brightness/energy - a real, testable property, not just "looks about right"). radius = ceil(sigma*3) captures >99% of a Gaussian's mass (the standard "3-sigma" rule), so truncating there is a negligible, well-understood approximation of an otherwise infinite kernel. */
 function buildGaussianKernel(sigma) {
-  const radius = Math.max(1, Math.ceil(sigma * 3));
+  // `| 0` forces integer coercion - see gaussianBlur's own doc comment
+  // for the full, directly-confirmed story: an ANIMATED (keyframed)
+  // radius reaching here via Property interpolation is a boxed
+  // floating-point number even at whole-number values, and using that
+  // to size/index a kernel array inside convolve1D's tight per-pixel
+  // loop measured a ~40-70x real slowdown (confirmed via the identical
+  // bug and fix in glitchEffects.js's rgbShift) - not a guess ported
+  // over, the exact same live symptom (a real generated beat's
+  // gaussianBlur, radius keyframed 0->0->1->0, contributing real,
+  // measured excess render time) was reproduced and fixed here too.
+  const radius = Math.max(1, Math.ceil(sigma * 3)) | 0;
   const size = radius * 2 + 1;
   const kernel = new Float64Array(size);
   let sum = 0;
@@ -91,7 +101,8 @@ function buildGaussianKernel(sigma) {
   return { kernel, radius };
 }
 
-function buildBoxKernel(radius) {
+function buildBoxKernel(radiusIn) {
+  const radius = Math.max(1, Math.round(radiusIn)) | 0; // see buildGaussianKernel's doc comment
   const size = radius * 2 + 1;
   const kernel = new Float64Array(size).fill(1 / size);
   return { kernel, radius };

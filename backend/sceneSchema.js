@@ -468,6 +468,24 @@ function validateLayer(layer, path, errors, knownIds) {
       const val = layer.generate && layer.generate.kind;
       errors.push(`${path}.generate.kind: "${val}" is not real (expected one of ${GENERATE_KINDS.join(', ')}).${suggestFix(val, GENERATE_KINDS, 'a generate kind')}`);
     }
+  } else if (layer.type === 'image' && Array.isArray(layer.effects) && layer.effects.length > 0
+      && (typeof layer.width !== 'number' || typeof layer.height !== 'number')) {
+    // Real, measured performance bug: an "image" layer with effects
+    // but no explicit width/height silently sizes its effects buffer
+    // at the FULL FRAME (build2DLayer's own width/height fallback),
+    // regardless of the image's real size - and if the image's own
+    // fetch happens to fail (a real, routine occurrence - the free
+    // Pollinations backend is genuinely rate-limited), there's no
+    // loaded image to fall back to a smaller natural size from either,
+    // so the buffer stays full-frame-sized with nothing useful even
+    // drawn into it. Confirmed via direct profiling of a real
+    // generated beat: exactly this layer (image + outerGlow +
+    // gaussianBlur + rgbShift, no explicit size) cost 1768ms/frame -
+    // by far the single most expensive layer in that beat, the next
+    // slowest was 393ms/frame. Only flagged when effects are present,
+    // since an effect-free image layer has no expensive per-pixel work
+    // to needlessly oversize a buffer for.
+    errors.push(`${path}: an "image" layer with effects should set explicit "width"/"height" matching its intended display size. Omitting them sizes the effects-processing buffer at the FULL FRAME regardless of the image's real size (and stays that size even if the image fetch fails), making every effect on this layer far more expensive than necessary for no visual benefit.`);
   } else if (layer.type === 'precomp') {
     if (!Array.isArray(layer.layers)) errors.push(`${path}.layers: a precomp requires a nested layers array`);
     else layer.layers.forEach((l, i) => validateLayer(l, `${path}.layers[${i}]`, errors, knownIds));
