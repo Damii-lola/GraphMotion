@@ -156,9 +156,9 @@ const RATE_LIMIT_DECAY_MS = 20000; // how long an elevated interval persists aft
  * the exact same serialized/adaptively-paced treatment that was
  * already confirmed necessary for a single key on its own.
  */
-function makeKeyQueueState(key) {
+function makeKeyQueueState(key, index) {
   return {
-    key, callQueueTail: Promise.resolve(), currentCallIntervalMs: MIN_CALL_INTERVAL_MS, lastRateLimitHitAt: 0,
+    key, label: `key${index + 1}`, callQueueTail: Promise.resolve(), currentCallIntervalMs: MIN_CALL_INTERVAL_MS, lastRateLimitHitAt: 0,
   };
 }
 const keyQueues = KEYS.map(makeKeyQueueState);
@@ -228,6 +228,13 @@ async function callMistralRaw(systemPrompt, userMessage, { jsonMode = true, maxT
   try {
     response = await queueMistralCall((key, state) => {
       usedKeyState = state;
+      // Per-call timing/key logging - added specifically because a
+      // real production run showed a 2-MINUTE gap between "planning
+      // treatment" and "encoding beats" with no 429/retry logged in
+      // between, meaning a single call itself took that long. Without
+      // this, there was no way to tell WHICH call was slow or which
+      // key handled it - every future slow run now logs exactly that.
+      const callStart = Date.now();
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), MISTRAL_TIMEOUT_MS);
       return fetch('https://api.mistral.ai/v1/chat/completions', {
@@ -247,7 +254,10 @@ async function callMistralRaw(systemPrompt, userMessage, { jsonMode = true, maxT
             { role: 'user', content: userMessage },
           ],
         }),
-      }).finally(() => clearTimeout(timeout));
+      }).finally(() => {
+        clearTimeout(timeout);
+        console.log(`[mistralClient] ${state.label}: request took ${Date.now() - callStart}ms`);
+      });
     });
   } catch (err) {
     if (err.name === 'AbortError') throw new Error(`Mistral request timed out after ${MISTRAL_TIMEOUT_MS}ms`);
