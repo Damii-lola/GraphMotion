@@ -580,7 +580,23 @@ inside "contents":
     (that param only re-centers the path within the layer's local space).
 { "type": "trim", "start": AnimatableValue<0-100>, "end": AnimatableValue<0-100>,
     "offset": AnimatableValue<0-100>, "multiple": "individually" | "simultaneously" }
-    // real Trim Paths - animate start/end for a genuine "drawing on" reveal
+    // real Trim Paths - animate start/end for a genuine "drawing on" reveal.
+    // CRITICAL, stated again here because it is the single most common
+    // real mistake in actual generated output despite being flagged
+    // repeatedly: "trim" is a SHAPE CONTENT item, a sibling of "path"/
+    // "fill"/"stroke" INSIDE a shape layer's own "contents" array. It is
+    // NEVER an entry in any layer's "effects" array, no matter how
+    // natural that placement feels (After Effects' own UI shows "Trim
+    // Paths" nested under a shape's contents too, not in the Effects
+    // panel - the two engines actually agree here). A complete, correct
+    // worked example - a circle that draws itself on, start to finish:
+    //   {"type":"shape","width":200,"height":200,"contents":[
+    //     {"type":"path","shape":{"kind":"ellipse","params":{"width":200,"height":200}}},
+    //     {"type":"trim","start":0,"end":{"keyframes":[{"time":0,"value":0},{"time":1,"value":100}]},"offset":0},
+    //     {"type":"stroke","color":"#00D4AA","width":6}
+    //   ]}
+    // Notice "trim" sits BETWEEN "path" and "stroke" in "contents" -
+    // never inside a top-level "effects":[...] array anywhere.
 { "type": "repeater", "copies": AnimatableValue<number>,
     "transform": { "position":[dx,dy], "rotation", "scale":[sx,sy], "anchor" },
     "startOpacity", "endOpacity", "order": "below" | "above" }
@@ -734,6 +750,10 @@ before writing ANY effects[].type:
     standalone entry in an effects array.
   "adjustmentLayer" - not a real name anywhere. An adjustment layer is
     isAdjustmentLayer:true on a normal layer, not a type or effect name.
+  "blendMode" - not an effect. "blendMode" is a LAYER-level field
+    (a sibling of "type"/"position"/"effects" on the layer itself, set
+    to one of the real blend mode names), never an item inside the
+    "effects" array.
 
   gaussianBlur: { radius=8 }
   boxBlur: { radius=8, iterations=1 }
