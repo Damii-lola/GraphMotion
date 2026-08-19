@@ -1148,6 +1148,20 @@ async function generateOneBeat(preamble, beatChunk, beatIndex, totalBeats, { ret
     if (priorErrors.some((e) => e.includes('visual.layers') && e.includes('required and must be an array'))) {
       notes.push('The root object MUST be exactly {"params":{"duration":...,...},"visual":{"layers":[...],...}} - "layers" is a direct property of "visual" (a sibling of "background"/"transitionIn"), an ARRAY of LayerDef objects. It is never nested inside "params", never renamed, and never omitted even for a simple beat (a single layer is still layers:[{...}], not an empty/missing array).');
     }
+    // Real, observed pattern: "a shape layer requires width/height"
+    // recurred across MULTIPLE retries for the same beat, exhausting
+    // the entire retry budget without ever fully converging (unlike
+    // most other error types, which typically clear within 1-2
+    // retries) - the model seems to correct SOME flagged shape layers
+    // each attempt while leaving (or newly introducing) others, rather
+    // than treating it as a blanket rule to apply to every shape layer
+    // at once. Called out explicitly as a checklist instruction instead
+    // of letting it read as N separate, easy-to-address-one-at-a-time
+    // line items.
+    const widthHeightErrors = priorErrors.filter((e) => e.includes('requires its own top-level "width" and "height"'));
+    if (widthHeightErrors.length >= 2) {
+      notes.push(`${widthHeightErrors.length} separate "shape" layers are missing required width/height. This is not N separate problems to fix one at a time - go through EVERY "shape" layer in this beat (not just the ones listed below) and confirm each one has an explicit top-level "width" and "height", since a fix pass that only touches the flagged layers risks leaving others (or introducing new ones) broken the same way.`);
+    }
     const rootCauseNote = notes.length ? `\n\nNOTE: ${notes.join(' ')}` : '';
     userMessage += `\n\nYour previous attempt for THIS beat produced invalid JSON:\n${priorErrors.join('\n')}${rootCauseNote}\n\nFix these specific problems and output the complete, corrected beat JSON.`;
   }
