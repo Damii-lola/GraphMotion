@@ -423,14 +423,33 @@ LAYERDEF - one entry in "layers" (or "background")
   "rotation": AnimatableValue<number> (degrees),
   "scale": AnimatableValue<[sx,sy]>,
   "anchor": AnimatableValue<[x,y]> - the pivot point for rotation/scale,
-            ALSO the point of the layer that lands exactly at
-            "position". Default [0,0] is the layer's own TOP-LEFT
-            corner (matching AE), NOT its center - so a layer at
-            position:[centerX,centerY] with no anchor has its top-left
-            corner (not its middle) at the frame center. Set
-            anchor:[width/2,height/2] explicitly whenever you want
-            "position" to mean "center" (the overwhelmingly common
-            case for a hero element).
+            ALSO the point of the layer's OWN CONTENT that lands
+            exactly at "position". THE CORRECT VALUE TO CENTER A LAYER
+            DEPENDS ON ITS TYPE - this is not one uniform rule, and
+            getting it backwards silently shifts the layer off by half
+            its own width/height (confirmed as a real, live bug: a
+            420x60 badge given anchor:[210,30] - "half its size", the
+            wrong choice for a shape - rendered shifted a full 210px
+            off its intended center, clipped off the frame edge):
+              - "shape"/"text" layers: their own content is ALREADY
+                drawn CENTERED on local (0,0) (matching real vector-
+                tool authoring). To center this layer on "position",
+                OMIT "anchor" entirely (default [0,0] already IS the
+                center) - do NOT set anchor:[width/2,height/2] here,
+                that shifts a centered shape/text layer OFF-center by
+                half its own size, the exact opposite of the intent.
+              - "image"/"generate" layers: their content draws TOP-LEFT
+                anchored at local (0,0) (matching how a photo/texture
+                naturally fills a box from its corner). To center THIS
+                layer on "position", DO set explicit
+                anchor:[width/2,height/2] - here (and only here) that's
+                correct, since without it "position" places the image's
+                top-left corner, not its middle.
+            An off-center PIVOT (rotation/scale around a corner or
+            edge, e.g. a page-flip) is a real, legitimate reason to set
+            a different anchor value on either layer type - just don't
+            reach for width/2,height/2 out of habit on a shape/text
+            layer expecting it to center things, it does the opposite.
 
   "blendMode": ${BLEND_MODE_NAMES.join(' | ')}  // default "normal"
   "trackMatte": { "source": <layerId>, "type": ${TRACK_MATTE_TYPES.map((t) => `"${t}"`).join(' | ')} },

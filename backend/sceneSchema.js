@@ -410,9 +410,54 @@ function validateLayer(layer, path, errors, knownIds) {
   }
   if (Array.isArray(layer.effects)) layer.effects.forEach((e, i) => validateEffect(e, `${path}.effects[${i}]`, errors));
 
+  // Real, confirmed-live bug: unlike "image"/"generate" layers (whose
+  // content draws top-left-anchored, so anchor:[width/2,height/2] IS
+  // the correct way to center them), a "shape" layer's own content is
+  // ALREADY drawn centered on its own local (0,0) - so giving it
+  // anchor:[width/2,height/2] (the natural-seeming "half the size"
+  // choice, and what the prompt used to recommend uniformly for every
+  // layer type) shifts it OFF-center by half its own width/height, the
+  // opposite of the intent. Confirmed directly: a 420x60 badge given
+  // anchor:[210,30] rendered clipped off the frame edge; the same
+  // layer with anchor omitted (or [0,0]) rendered correctly centered.
+  // Flagged only when anchor closely matches exactly half the layer's
+  // own declared width/height - a real, deliberately off-center pivot
+  // (a page-flip rotating around an edge) would use a different value,
+  // not this specific "trying to center it and getting it backwards"
+  // pattern.
+  if (layer.type === 'shape' && Array.isArray(layer.anchor)
+      && typeof layer.width === 'number' && typeof layer.height === 'number') {
+    const [ax, ay] = layer.anchor;
+    // Loose (30%) tolerance, not an exact match - real generated
+    // anchors aiming for "half the size" are often APPROXIMATIONS
+    // (e.g. derived from a related text layer's maxWidth/lineHeight
+    // instead of this shape's own exact width/height), confirmed
+    // directly: a real badge sized 420x60 used anchor:[200,26] - off
+    // from the true half [210,30] by 10px/4px, close enough that
+    // it's unmistakably the same "trying to center it, backwards"
+    // mistake, but too far off for a tight pixel tolerance to catch.
+    const halfW = layer.width / 2, halfH = layer.height / 2;
+    if (typeof ax === 'number' && typeof ay === 'number' && ax > 0 && ay > 0
+        && Math.abs(ax - halfW) < halfW * 0.3 && Math.abs(ay - halfH) < halfH * 0.3) {
+      errors.push(`${path}.anchor: [${ax},${ay}] is approximately half this shape's own width/height (${layer.width}x${layer.height}) - for a "shape" layer this is BACKWARDS. Shape content is already centered on its own local (0,0), so this anchor value shifts it OFF-center by roughly half its size instead of centering it. To center this layer on "position", either omit "anchor" entirely or set it to [0,0] explicitly.`);
+    }
+  }
+
   if (layer.type === 'shape') {
     if (!Array.isArray(layer.contents)) errors.push(`${path}.contents: a shape layer requires a contents array`);
     else layer.contents.forEach((item, i) => validateShapeContentItem(item, `${path}.contents[${i}]`, errors));
+    // The prompt has always documented width/height as REQUIRED for
+    // shape layers, but nothing actually enforced that until now - a
+    // real generation omitted them entirely (they only appeared nested
+    // inside the shape's own path geometry params, a DIFFERENT field),
+    // which silently falls back to the full frame size for effect-
+    // buffer sizing (build2DLayer's own `layerDef.width || beatContext.width`)
+    // and, worse, meant the anchor-centering check above had no
+    // dimensions to check against at all, letting the very anchor bug
+    // that check exists to catch slip through unflagged.
+    if (typeof layer.width !== 'number' || typeof layer.height !== 'number') {
+      errors.push(`${path}: a "shape" layer requires its own top-level "width" and "height" (a sibling of "position"/"contents", not nested inside a content item's shape.params) - this is the layer's own bounding size, separate from any individual path's geometry, and other logic (anchor centering, effect-buffer sizing) depends on it being present and accurate.`);
+    }
   } else if (layer.type === 'text') {
     if (typeof layer.text !== 'string' || layer.text.length === 0) errors.push(`${path}.text: is required and must be a non-empty string`);
     if (Array.isArray(layer.animators)) {
