@@ -32,28 +32,27 @@ const { BLEND_MODE_MAP } = require('./engine/layerStack');
  *
  * BeatVisual:
  *   {
- *     is3D: boolean (default false) - chooses the render path:
- *       false -> a real Composition/Node tree (batches 1-6: blend
- *         modes, track mattes, adjustment layers, shape layers, text)
- *       true  -> a real Layer3D+Camera+Lights scene (batch 7-8) -
- *         EVERY layer becomes a flat plane in a shared 3D space; each
- *         plane's own CONTENT is still built by the exact same 2D
- *         layer-building code (a 3D layer is fundamentally "a flat 2D
- *         layer with a 3D transform," matching how AE itself works -
- *         see layer3d.js's own class doc comment), so nothing about
- *         layer content authoring differs between 2D and 3D beats,
- *         only how the finished planes get positioned/lit/projected.
  *     background: LayerDef | null - an optional full-frame layer
  *       drawn first, before `layers` (typically a "generate" layer -
  *       gradient/fractal-noise/checkerboard - or a solid fill).
  *     layers: [LayerDef, ...] - stacking order matches AE: LATER
  *       entries in this array are DRAWN LATER, i.e. they render on TOP.
- *     camera: CameraDef (only consulted if is3D)
- *     lights: [LightDef, ...] (only consulted if is3D)
  *     transitionIn: TransitionDef | null - how this beat transitions
  *       IN from whatever the previous beat ended on (real transitions.js
  *       reuse, batch 11) - omit for a hard cut.
  *   }
+ *
+ * NOTE: this engine is deliberately 2D-only - there is no true 3D
+ * rendering path (no camera, no lighting, no perspective-projected
+ * layers). A previous 3D system (Layer3D/Camera/Light, real per-pixel
+ * perspective warping) was removed entirely: it was measured to be the
+ * dominant driver of both a severe memory problem (~580MB peak RSS on
+ * a single 3D beat against a 100MB target) and a severe speed problem
+ * (per-frame render time roughly 10x'ing during 3D beats). Any
+ * "depth"/"perspective" look now comes from honest 2D approximations -
+ * ordinary scale/skew/rotation tricks (see transitions.js's card3DFlip
+ * for the canonical example: a card "closing" to edge-on via scaleX ->
+ * 0, not real projection) - never a genuine camera/lighting model.
  *
  * AnimatableValue<T>: every transform/effect-parameter number or
  * vector in this schema accepts THREE forms, matching how every real
@@ -74,25 +73,21 @@ const { BLEND_MODE_MAP } = require('./engine/layerStack');
  *       or a trackMatte's `source`),
  *     type: 'shape' | 'text' | 'image' | 'precomp' | 'null' | 'generate',
  *
- *     position, rotation (2D) or rotationX/rotationY/rotationZ (3D),
- *     scale, anchor, opacity: AnimatableValue<...> - the common
- *       transform every layer has (matches node.js's real Node fields
- *       for 2D, layer3d.js's real Layer3D fields for 3D)
+ *     position, rotation, scale, anchor, opacity: AnimatableValue<...> -
+ *       the common transform every layer has (matches node.js's real
+ *       Node fields)
  *
- *     blendMode: one of BLEND_MODE_NAMES below (2D only - a real
- *       Composition-level concept, batch 3)
+ *     blendMode: one of BLEND_MODE_NAMES below (a real Composition-level
+ *       concept, batch 3)
  *     trackMatte: { source: <layerId>, type: 'alpha'|'alphaInverted'|
- *       'luma'|'lumaInverted' } (2D only)
+ *       'luma'|'lumaInverted' }
  *     isAdjustmentLayer: boolean - this layer's `effects` post-process
  *       the ENTIRE accumulator below it (batch 3's real mechanism),
  *       rather than only itself
  *     effects: [EffectDef, ...] - applied to THIS layer's own rendered
  *       content, in order, regardless of isAdjustmentLayer (a real,
  *       general per-layer effects stack - see EFFECT_TYPES below)
- *     parent: <layerId> - real Node/Layer3D parenting (batch 2/7)
- *     material: { ambient, diffuse, specularStrength, shininess } (3D
- *       only - opts this layer INTO real scene lighting, batch 8;
- *       omit for an unlit/self-illuminated layer)
+ *     parent: <layerId> - real Node parenting (batch 2)
  *     width, height: number - this layer's own content bounding size
  *       (required for shape/generate layers; text uses maxWidth
  *       instead; image defaults to the fetched image's natural size)
@@ -155,13 +150,6 @@ const { BLEND_MODE_MAP } = require('./engine/layerStack');
  * real engine function (colorGrading.js/blurEffects.js/noiseEffects.js/
  * glitchEffects.js/stylizeEffects.js/layerStyles.js/distortEffects.js).
  *
- * CameraDef (batch 7): { position: AnimatableValue<[x,y,z]>,
- *   pointOfInterest: AnimatableValue<[x,y,z]>, zoom: AnimatableValue<number> }
- *
- * LightDef (batch 8): { type:'point'|'spot'|'directional'|'ambient',
- *   position, pointOfInterest, color, intensity, falloff:'none'|'smooth'|
- *   'inverseSquareClamped', falloffRadius, coneAngle, coneFeather }
- *
  * TransitionDef (batch 11): { type: <name from TRANSITION_TYPES below>,
  *   duration, params:{...real per-type params from transitions.js} }
  */
@@ -174,8 +162,6 @@ const SELECTOR_TYPES = ['range', 'wiggly'];
 const RANGE_SELECTOR_SHAPES = ['square', 'rampUp', 'rampDown', 'triangle', 'round', 'smooth'];
 const TRACK_MATTE_TYPES = ['alpha', 'alphaInverted', 'luma', 'lumaInverted'];
 const GENERATE_KINDS = ['gradientRamp', 'checkerboard', 'grid', 'lensFlare', 'fractalNoise'];
-const LIGHT_TYPES = ['point', 'spot', 'directional', 'ambient'];
-const FALLOFF_TYPES = ['none', 'smooth', 'inverseSquareClamped'];
 const BLEND_MODE_NAMES = Object.keys(BLEND_MODE_MAP);
 const EASING_NAMES = Object.keys(EASING_REGISTRY);
 
@@ -393,7 +379,7 @@ function validateEffect(effect, path, errors) {
   }
 }
 
-function validateLayer(layer, path, errors, knownIds, is3D = false) {
+function validateLayer(layer, path, errors, knownIds) {
   if (!isPlainObject(layer)) { errors.push(`${path}: must be an object`); return; }
   if (!LAYER_TYPES.includes(layer.type)) {
     if (layer.isAdjustmentLayer !== undefined || /adjust/i.test(String(layer.type))) {
@@ -413,26 +399,6 @@ function validateLayer(layer, path, errors, knownIds, is3D = false) {
   }
   if (Array.isArray(layer.effects)) layer.effects.forEach((e, i) => validateEffect(e, `${path}.effects[${i}]`, errors));
 
-  // Real bug found via direct inspection of a live-generated 3D beat: a
-  // "shards" precomp layer set an explicit anchor:[60,60,0] (sized for
-  // its real, intended ~120x120 footprint) but omitted width/height
-  // entirely. buildLayer3D's own width/height fallback (`layerDef.width
-  // || beatContext.width`) then silently expanded it to the FULL FRAME
-  // size (540x960) while the anchor stayed pinned near its old, now-
-  // wrong corner - the layer's actual center moved to (270,480) but its
-  // pivot stayed at (60,60), so "position" no longer places the layer
-  // where it visually appears to, throwing it badly off from its
-  // intended frame-center placement. This is exactly the kind of silent
-  // fallback-vs-explicit-value mismatch prompting alone won't reliably
-  // prevent, so it's enforced structurally: a 3D layer that sets an
-  // explicit anchor MUST also set explicit width/height (so the anchor
-  // is guaranteed to describe the layer's REAL footprint), or omit
-  // anchor entirely and get the correct auto-centered default.
-  if (is3D && layer.anchor !== undefined && layer.type !== 'null'
-      && (layer.width === undefined || layer.height === undefined)) {
-    errors.push(`${path}: sets an explicit "anchor" but omits "width"/"height". For a 3D layer, omitting width/height falls back to the FULL FRAME size, which will not match an anchor chosen for the layer's real (usually smaller) intended size, throwing its actual position off badly. Either set explicit "width" and "height" alongside "anchor", or omit "anchor" entirely to get the correct auto-centered default.`);
-  }
-
   if (layer.type === 'shape') {
     if (!Array.isArray(layer.contents)) errors.push(`${path}.contents: a shape layer requires a contents array`);
     else layer.contents.forEach((item, i) => validateShapeContentItem(item, `${path}.contents[${i}]`, errors));
@@ -449,16 +415,6 @@ function validateLayer(layer, path, errors, knownIds, is3D = false) {
   } else if (layer.type === 'precomp') {
     if (!Array.isArray(layer.layers)) errors.push(`${path}.layers: a precomp requires a nested layers array`);
     else layer.layers.forEach((l, i) => validateLayer(l, `${path}.layers[${i}]`, errors, knownIds));
-  }
-}
-
-function validateLight(light, path, errors) {
-  if (!isPlainObject(light) || !LIGHT_TYPES.includes(light.type)) {
-    errors.push(`${path}.type: "${light && light.type}" is not a real light type (expected one of ${LIGHT_TYPES.join(', ')})`);
-    return;
-  }
-  if (light.falloff && !FALLOFF_TYPES.includes(light.falloff)) {
-    errors.push(`${path}.falloff: "${light.falloff}" is not real (expected one of ${FALLOFF_TYPES.join(', ')})`);
   }
 }
 
@@ -482,7 +438,7 @@ function validateBeatVisual(visual, path, errors, knownIds) {
   if (visual.layers.length === 0) {
     errors.push(`${path}.layers: must contain at least one layer - a beat with zero foreground layers renders as an empty/dead frame with nothing happening for its entire duration.`);
   }
-  visual.layers.forEach((layer, i) => validateLayer(layer, `${path}.layers[${i}]`, errors, knownIds, !!visual.is3D));
+  visual.layers.forEach((layer, i) => validateLayer(layer, `${path}.layers[${i}]`, errors, knownIds));
   // Real bug found via direct JSON inspection of a live-generated beat:
   // two "cell" precomps meant to sit side-by-side both independently
   // left "position" at the schema's default [0,0] - they don't share a
@@ -523,9 +479,6 @@ function validateBeatVisual(visual, path, errors, knownIds) {
     }
   }
 
-  if (visual.is3D) {
-    if (Array.isArray(visual.lights)) visual.lights.forEach((l, i) => validateLight(l, `${path}.lights[${i}]`, errors));
-  }
   if (visual.transitionIn) validateTransition(visual.transitionIn, `${path}.transitionIn`, errors);
 
   // Cross-reference parent/trackMatte ids against ids actually declared
@@ -609,8 +562,6 @@ module.exports = {
   RANGE_SELECTOR_SHAPES,
   TRACK_MATTE_TYPES,
   GENERATE_KINDS,
-  LIGHT_TYPES,
-  FALLOFF_TYPES,
   BLEND_MODE_NAMES,
   EASING_NAMES,
   EFFECT_TYPES,

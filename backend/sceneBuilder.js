@@ -4,9 +4,6 @@ const { ExpressionProperty } = require('./engine/expressions');
 const { Node, resolve } = require('./engine/node');
 const { Composition, PrecompNode } = require('./engine/composition');
 const { renderContents } = require('./engine/shapeLayer');
-const { Layer3D, renderScene3D } = require('./engine/layer3d');
-const { Camera } = require('./engine/camera3d');
-const { Light } = require('./engine/lights');
 const {
   rectanglePath, ellipsePath, polygonPath, starPath,
 } = require('./engine/shapePrimitives');
@@ -38,9 +35,9 @@ const T = require('./engine/transitions');
 
 /**
  * The real interpreter: turns validated scene JSON (sceneSchema.js)
- * into actual calls against the batch 1-11 engine - Nodes,
- * Compositions, ShapeLayers, Layer3Ds, Cameras, Lights, real Property/
- * ExpressionProperty animation, real effect functions. This is the
+ * into actual calls against the engine - Nodes, Compositions,
+ * ShapeLayers, real Property/ExpressionProperty animation, real effect
+ * functions. This is the
  * piece that makes "the AI directs a real engine" true in practice,
  * not just in architecture - every construct in the schema maps to a
  * genuine, already-tested engine call, not a re-implementation.
@@ -63,7 +60,7 @@ const T = require('./engine/transitions');
 // Animatable value resolution
 // ---------------------------------------------------------------------
 
-/** Turns a schema AnimatableValue into a real Property, ExpressionProperty, or plain value - usable anywhere the engine's own resolve() is called (every Node/Layer3D/Camera/Light/ShapeLayer transform field). */
+/** Turns a schema AnimatableValue into a real Property, ExpressionProperty, or plain value - usable anywhere the engine's own resolve() is called (every Node/ShapeLayer transform field). */
 function buildAnimatable(value) {
   if (value === undefined || value === null) return value;
   if (typeof value === 'number' || Array.isArray(value)) return value;
@@ -89,84 +86,6 @@ function buildAnimatable(value) {
     return new ExpressionProperty(value.expression, { baseProperty, seed: value.seed || 0 });
   }
   return value;
-}
-
-/**
- * Wraps an already-built animatable (plain array | Property |
- * ExpressionProperty, i.e. anything the engine's own resolve() already
- * accepts) so that resolving it at any t subtracts a fixed [x,y,z]
- * offset from whatever the underlying value resolves to. Duck-types
- * the exact same `.valueAt(t)` contract resolve() itself checks for
- * (engine/node.js: `typeof propOrValue?.valueAt === 'function'`), so
- * the result is itself a valid drop-in animatable regardless of
- * whether the thing it wraps is static or animated/expression-driven.
- *
- * Exists to solve one specific, real coordinate-system mismatch: 3D
- * layers' `position` is native WORLD-space, where (0,0,z) projects to
- * the screen CENTER under the default (and virtually every real)
- * camera - fundamentally different from 2D layers' `position`, which
- * is literal top-left-origin pixel coordinates, where the screen
- * center is (width/2,height/2). Confirmed via direct testing that both
- * a hand-written test script AND real Mistral generations independently
- * made the identical mistake of authoring 3D position in pixel-center
- * terms (e.g. [270,480,0] on a 540x960 frame) - a natural error since
- * every OTHER position field in this schema (2D layers, shape-content
- * offsets) already uses pixel coordinates. Rather than keep re-fighting
- * that confusion via prompt wording, buildLayer3D now accepts 3D
- * `position` in the SAME pixel-coordinate convention as everything
- * else, and this wrapper performs the actual pixel->world conversion
- * (subtract half the frame dimensions) transparently at resolve time,
- * so authors never need to think in two different coordinate systems.
- */
-function offsetAnimatable(animatable, offset) {
-  if (typeof animatable?.valueAt === 'function') {
-    return {
-      valueAt(t) {
-        const v = animatable.valueAt(t);
-        return [(v[0] || 0) - offset[0], (v[1] || 0) - offset[1], (v[2] || 0) - (offset[2] || 0)];
-      },
-    };
-  }
-  const v = animatable;
-  return [(v[0] || 0) - offset[0], (v[1] || 0) - offset[1], (v[2] || 0) - (offset[2] || 0)];
-}
-
-/**
- * Wraps an already-built animatable (same contract as offsetAnimatable
- * above) so any resolved vector shorter than `defaults` gets its
- * MISSING trailing components filled in from `defaults`, instead of
- * left `undefined`.
- *
- * Exists because of a real, serious, and completely silent bug found
- * by isolating a live-generated 3D layer that rendered as totally
- * invisible with no error anywhere: its "scale" keyframes used 2D-style
- * [sx,sy] values (a natural mistake - 2D layers really do use 2-element
- * scale, and "uniform scale" naturally reads as just two numbers) on a
- * 3D layer, which needs [sx,sy,sz]. matrix4.js's scale/compose math
- * never checked its inputs existed, so the missing sz produced
- * `undefined`, which every arithmetic op downstream silently turned
- * into NaN, which propagated through the ENTIRE local transform matrix
- * (matrix multiplication mixes every component together) - not just
- * the Z axis. The result: this Layer3D's projected corners were all
- * NaN, `camera.project`'s depth check (`NaN > 0` is always false) made
- * renderScene3D treat it as "entirely behind the camera" and silently
- * skip it - no exception, no warning, just a layer that never appears
- * in a single frame despite being fully present and valid-looking in
- * the JSON. Confirmed directly: stripping just this layer's "scale"
- * field made it render immediately; restoring it made it vanish again.
- *
- * Applied to "scale" (missing components default to 1 - no scaling on
- * that axis) and "anchor" (missing components default to that layer's
- * own center - matching buildLayer3D's own anchor default) so a
- * same-shape mistake can degrade gracefully into "this axis behaves as
- * if unset" instead of nuking the whole layer.
- */
-function padVector3(animatable, defaults) {
-  const pad = (v) => defaults.map((d, i) => (v[i] !== undefined ? v[i] : d));
-  if (typeof animatable?.valueAt === 'function') {
-    return { valueAt: (t) => pad(animatable.valueAt(t)) };
-  }
-  return pad(animatable);
 }
 
 /** A shape-geometry parameter (or any effect param) is treated as a static value - if given an AnimatableValue shape, it's resolved ONCE at t=0 rather than crashing, a reasonable fallback for a field this file intentionally doesn't re-evaluate per frame (see the class-level design-boundary note above). */
@@ -347,7 +266,7 @@ function applyEffectsToCanvas(canvas, effectsDef, t) {
 // ---------------------------------------------------------------------
 // Layer content builders - one per schema layer `type`, each returning
 // a (ctx, t) => void draw function operating in the layer's own LOCAL
-// space (its own transform is applied by the Node/Layer3D wrapper).
+// space (its own transform is applied by the Node wrapper).
 // ---------------------------------------------------------------------
 
 function buildShapeDraw(layerDef) {
@@ -383,7 +302,7 @@ function buildTextDraw(layerDef) {
   });
 }
 
-/** `w`/`h` are the CALLER's already-resolved size (layerDef.width/height falling back to beatContext's, exactly like every other builder here) - NOT re-derived from layerDef alone, which would silently pass `undefined` into buildGenerateCanvas -> createCanvas for any generate layer that omits explicit width/height (the common case for a full-frame background, e.g. a 3D beat's `background`). Real bug found via direct smoke-test crash, not assumed. */
+/** `w`/`h` are the CALLER's already-resolved size (layerDef.width/height falling back to beatContext's, exactly like every other builder here) - NOT re-derived from layerDef alone, which would silently pass `undefined` into buildGenerateCanvas -> createCanvas for any generate layer that omits explicit width/height (the common case for a full-frame background). Real bug found via direct smoke-test crash, not assumed. */
 function buildGenerateDraw(layerDef, w, h) {
   let cached = null;
   return (ctx) => {
@@ -403,7 +322,7 @@ function buildImageDraw(layerDef, beatContext) {
   };
 }
 
-/** Recursively collects every `type:'image'` layer def reachable from a beat's visual - background, top-level layers (2D or 3D, since a 3D beat's layers are built via the exact same 2D layer-building code per this file's own class doc), and any precomp nesting. */
+/** Recursively collects every `type:'image'` layer def reachable from a beat's visual - background, top-level layers, and any precomp nesting. */
 function collectImageLayerDefs(visual) {
   const out = [];
   function walk(layerDef) {
@@ -460,7 +379,7 @@ function withEffects(rawDraw, layerDef, contentWidth, contentHeight) {
 }
 
 // ---------------------------------------------------------------------
-// Node / Layer3D construction - the common transform + dispatch layer
+// Node construction - the common transform + dispatch layer
 // ---------------------------------------------------------------------
 
 function commonNodeOpts(layerDef) {
@@ -479,7 +398,7 @@ function commonNodeOpts(layerDef) {
   };
 }
 
-/** Builds a 2D layer (Node or ShapeLayer) - the shared foundation ALSO used to build each 3D layer's own flat content (see buildLayer3D below), matching how AE's own 3D layers are fundamentally 2D content with a 3D transform, not a separate authoring model. */
+/** Builds a 2D layer (Node or ShapeLayer). */
 function build2DLayer(layerDef, beatContext, idMap) {
   let node;
   const w = layerDef.width || beatContext.width;
@@ -524,123 +443,6 @@ function wireTrackMattesAndParents(layerDefs, idMap) {
   }
 }
 
-/** Builds a Layer3D whose own flat content is rendered by the SAME 2D layer-building logic above - a real, direct reuse (a 3D layer's "content" is just "a rendered 2D layer placed on a plane"), not two parallel authoring systems. */
-function buildLayer3D(layerDef, beatContext) {
-  // Must match build2DLayer's own width/height fallback exactly - this
-  // layer's inner 2D content (built via build2DLayer just below) sizes
-  // itself against beatContext.width/height when layerDef omits its
-  // own, so this Layer3D's own buffer (getContentCanvas in layer3d.js,
-  // created at exactly this.width x this.height) has to agree, or the
-  // inner content silently gets clipped to whatever smaller size this
-  // fell back to. Real bug found here via direct signature review, not
-  // assumption: a 3D `background` layer (the common case that omits
-  // width/height entirely, meaning "fill the frame") would previously
-  // build its content assuming the full frame size while this layer's
-  // own canvas was allocated at a hardcoded 300x300, clipping it to the
-  // top-left corner.
-  const w = layerDef.width || beatContext.width || 300;
-  const h = layerDef.height || beatContext.height || 300;
-  const idMap = new Map();
-  // Real bug found via direct render inspection (a shape-content layer
-  // rendered as only its top-left QUADRANT, the rest silently clipped):
-  // shapePrimitives.js's shapes (and textAnimator.js's default
-  // centerX/centerY=0) follow AE's own real authoring convention of
-  // being CENTERED on their own local origin - fine in the 2D
-  // Composition path, whose canvas is the full frame with no local
-  // clipping boundary, but fatal here, where getContentCanvas() (layer3d.js)
-  // allocates a HARD-CLIPPED buffer of exactly width x height with zero
-  // margin: content centered at local (0,0) only half-overlaps that
-  // buffer on each axis, so 3/4 of it falls outside [0,w]x[0,h] and is
-  // irrecoverably lost. generate/image content (buildGenerateDraw/
-  // buildImageDraw) already draws top-left-anchored at (0,0), filling
-  // the buffer correctly with NO such issue - only shape/text need the
-  // extra centering offset, so this is applied conditionally rather
-  // than uniformly (a uniform offset would break the already-correct
-  // generate/image case).
-  const CENTERED_CONTENT_TYPES = new Set(['shape', 'text']);
-  const innerPosition = CENTERED_CONTENT_TYPES.has(layerDef.type) ? [w / 2, h / 2] : [0, 0];
-  const node2D = build2DLayer({ ...layerDef, position: innerPosition, anchor: [0, 0] }, beatContext, idMap);
-
-  // 3D `position` is authored in the SAME pixel-coordinate convention
-  // as 2D layers (frame center = [beatContext.width/2,beatContext.height/2]),
-  // NOT the engine's native world-space (frame center = [0,0,z]) - see
-  // offsetAnimatable's doc comment for the full story of why this
-  // conversion exists. Default (when position is omitted) is pixel-style
-  // frame-center, which offsetAnimatable then correctly resolves to
-  // world (0,0,0).
-  const frameCenterX = (beatContext.width || 540) / 2;
-  const frameCenterY = (beatContext.height || 960) / 2;
-  const pixelPosition = buildAnimatable(layerDef.position ?? [frameCenterX, frameCenterY, 0]);
-
-  return new Layer3D({
-    position: offsetAnimatable(pixelPosition, [frameCenterX, frameCenterY, 0]),
-    rotationX: buildAnimatable(layerDef.rotationX ?? 0),
-    rotationY: buildAnimatable(layerDef.rotationY ?? 0),
-    rotationZ: buildAnimatable(layerDef.rotationZ ?? 0),
-    // padVector3 guards against a real, previously-silent bug: a
-    // 2-element [sx,sy] scale (natural but wrong on a 3D layer) leaves
-    // sz undefined, which corrupts the whole transform matrix into NaN
-    // and makes the layer vanish from every frame with zero errors -
-    // see padVector3's own doc comment for the full, directly-confirmed
-    // story.
-    scale: padVector3(buildAnimatable(layerDef.scale ?? [1, 1, 1]), [1, 1, 1]),
-    // Default anchor CENTERED ([w/2,h/2,0]), not the plane's top-left
-    // corner - a real, deliberate default-behavior change, not just
-    // another prompt fix. Real, repeated evidence across multiple live
-    // generations (not a hypothetical): even with explicit, prominent
-    // prompt guidance telling the model to set anchor:[width/2,height/2,0]
-    // whenever it wants "position" to mean "center" (the overwhelmingly
-    // common case), compliance was inconsistent - one real beat had 3 of
-    // 5 3D layers correctly centered and 2 that omitted anchor entirely,
-    // rendering full-frame content almost entirely off-screen despite a
-    // frame-center "position". Prompting alone wasn't converging on this
-    // reliably, so the default itself now matches what nearly every real
-    // author actually wants: a layer's "position" places its CENTER,
-    // matching how AE's own Rectangle/shape tools already default a new
-    // shape layer's anchor to its own bounding-box center, not its
-    // corner. An author who deliberately wants an off-center pivot (a
-    // page-flip rotating around an edge) can still set anchor explicitly
-    // - that's a real, legitimate, but comparatively rare case, not the
-    // common one this default should optimize for.
-    // Same NaN-guard as scale above, defaulting a missing component to
-    // this layer's own center rather than leaving it undefined.
-    anchor: padVector3(buildAnimatable(layerDef.anchor ?? [w / 2, h / 2, 0]), [w / 2, h / 2, 0]),
-    opacity: buildAnimatable(layerDef.opacity ?? 1),
-    width: w,
-    height: h,
-    material: layerDef.material,
-    name: layerDef.id,
-    draw: (ctx, t) => node2D.render(ctx, t),
-  });
-}
-
-// ---------------------------------------------------------------------
-// Camera / Lights (batch 7/8)
-// ---------------------------------------------------------------------
-
-function buildCamera(cameraDef, width, height) {
-  if (!cameraDef) return new Camera({ position: [0, 0, -Math.max(width, height) * 1.4], pointOfInterest: [0, 0, 0], zoom: Math.max(width, height) * 1.4 });
-  return new Camera({
-    position: buildAnimatable(cameraDef.position ?? [0, 0, -1000]),
-    pointOfInterest: buildAnimatable(cameraDef.pointOfInterest ?? [0, 0, 0]),
-    zoom: buildAnimatable(cameraDef.zoom ?? 1000),
-  });
-}
-
-function buildLights(lightsDef) {
-  return (lightsDef || []).map((l) => new Light({
-    type: l.type,
-    position: buildAnimatable(l.position ?? [0, 0, -500]),
-    pointOfInterest: buildAnimatable(l.pointOfInterest ?? [0, 0, 0]),
-    color: l.color,
-    intensity: l.intensity,
-    falloff: l.falloff,
-    falloffRadius: l.falloffRadius,
-    coneAngle: l.coneAngle,
-    coneFeather: l.coneFeather,
-  }));
-}
-
 // ---------------------------------------------------------------------
 // Top-level: one beat's whole visual
 // ---------------------------------------------------------------------
@@ -654,48 +456,6 @@ function buildLights(lightsDef) {
 function buildBeatVisual(visual, beatContext) {
   const { width, height, duration } = beatContext;
   const idMap = new Map();
-
-  if (visual.is3D) {
-    const camera = buildCamera(visual.camera, width, height);
-    const lights = buildLights(visual.lights);
-    const layers = [];
-    // Went through THREE wrong attempts at making the background a
-    // depth-sorted 3D plane (positioning/anchor math that's easy to get
-    // subtly wrong, and even once the projected SIZE was right, the
-    // background still turned out fundamentally fragile there - see
-    // this file's own git history for the full story). The actual
-    // problem: renderScene3D depth-sorts every layer painter's-algorithm
-    // style by average projected corner depth, so putting the
-    // background INSIDE that same `layers` array only stays behind
-    // foreground content for as long as nothing else's depth happens to
-    // exceed it - confirmed directly via a real repro: a layer rotating
-    // around a corner (not center) anchor swings its own average corner
-    // depth well past a near-z=0 background's depth partway through an
-    // ordinary rotation, sorting the background ON TOP and hiding the
-    // foreground layer completely, for a chunk of the animation, with
-    // no error or warning anywhere.
-    //
-    // The actually-correct fix: don't put the background in the 3D
-    // depth-sorted stack AT ALL - render it as a plain flat 2D layer
-    // straight onto `ctx` BEFORE renderScene3D runs, exactly mirroring
-    // how the 2D (non-3D) path below already handles ITS OWN background
-    // (build2DLayer, default position [0,0], filling the frame from its
-    // own top-left - no anchor tricks, no depth tricks, nothing to get
-    // subtly wrong). This is also simply correct to how AE itself works:
-    // a comp's background isn't "the flattest plane in the 3D scene," a
-    // backdrop the 3D content sits in front of, unconditionally.
-    let backgroundNode = null;
-    if (visual.background) {
-      backgroundNode = build2DLayer({ ...visual.background, id: visual.background.id || '__background3d__' }, { ...beatContext, width, height }, new Map());
-    }
-    for (const layerDef of visual.layers) layers.push(buildLayer3D(layerDef, beatContext));
-    return {
-      render(ctx, t) {
-        if (backgroundNode) backgroundNode.render(ctx, t);
-        renderScene3D(ctx, width, height, layers, camera, t, { lights });
-      },
-    };
-  }
 
   const rootChildren = [];
   if (visual.background) rootChildren.push(build2DLayer({ ...visual.background, id: visual.background.id || '__background__' }, { ...beatContext, duration }, idMap));
@@ -713,5 +473,5 @@ function buildBeatVisual(visual, beatContext) {
 }
 
 module.exports = {
-  buildAnimatable, buildBeatVisual, buildCamera, buildLights, applyEffectsToCanvas, buildGenerateCanvas, loadBeatImages, T,
+  buildAnimatable, buildBeatVisual, applyEffectsToCanvas, buildGenerateCanvas, loadBeatImages, T,
 };

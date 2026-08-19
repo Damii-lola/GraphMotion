@@ -4,8 +4,6 @@ const { ellipsePath, starPath, polygonPath } = require('./shapePrimitives');
 const { renderPathToContext } = require('./path');
 const { fractalNoise } = require('./noiseEffects');
 const { rgbShift, blockDisplace } = require('./glitchEffects');
-const { Layer3D, renderScene3D } = require('./layer3d');
-const { Camera } = require('./camera3d');
 
 /**
  * A real transition vocabulary: every function here takes two already-
@@ -204,32 +202,52 @@ function gradientWipe(fromCanvas, toCanvas, t, {
 }
 
 /**
- * 3D Card Flip: `fromCanvas` rotates away (0deg -> 90deg, vanishing
- * edge-on via genuine perspective foreshortening) through the first
- * half of the transition, then `toCanvas` rotates in (-90deg -> 0deg)
- * through the second half - a direct, real reuse of layer3d.js's
- * Layer3D/Camera/renderScene3D (batch 7), not a faked 2D scale-squash
- * imitation of a 3D flip.
+ * Card Flip: `fromCanvas` "closes" (full width -> edge-on) through the
+ * first half of the transition, then `toCanvas` "opens" (edge-on ->
+ * full width) through the second half - the classic 2D motion-graphics
+ * card-flip trick (scale the flip axis down to ~0 to fake the card
+ * turning edge-on, since canvas 2D transforms are affine-only and can't
+ * do genuine perspective foreshortening), not true 3D projection. This
+ * engine no longer has a 3D rendering path at all (a deliberate scope
+ * cut - real 3D layers/camera/lighting were measured to be the
+ * dominant driver of both a severe memory problem, ~580MB peak RSS on
+ * a single 3D beat against a 100MB target, and a severe speed problem,
+ * per-frame render time roughly 10x'ing during 3D beats), so every
+ * "depth"/"perspective" effect in this engine is now this kind of
+ * honest 2D approximation. A flat multiply-darken proportional to how
+ * edge-on the card currently is sells the "turning into shadow" read
+ * that real lighting would have given for free - a cheap, deliberate
+ * stand-in, not an attempt to fake true 3D.
  */
 function card3DFlip(fromCanvas, toCanvas, t, { axis = 'y' } = {}) {
   const w = fromCanvas.width, h = fromCanvas.height;
-  const camera = new Camera({ position: [0, 0, -Math.max(w, h) * 1.8], pointOfInterest: [0, 0, 0], zoom: Math.max(w, h) * 1.8 });
   const firstHalf = t < 0.5;
   const content = firstHalf ? fromCanvas : toCanvas;
   const localT = firstHalf ? t * 2 : (t - 0.5) * 2;
-  const angle = firstHalf ? localT * (Math.PI / 2) : -((1 - localT) * (Math.PI / 2));
+  const angle = firstHalf ? localT * (Math.PI / 2) : (1 - localT) * (Math.PI / 2);
+  const scaleFactor = Math.max(0.001, Math.cos(angle)); // 1 (facing camera) -> ~0 (edge-on)
+  const shade = 0.55 + 0.45 * scaleFactor;
 
-  const layer = new Layer3D({
-    position: [0, 0, 0],
-    anchor: [w / 2, h / 2, 0],
-    width: w,
-    height: h,
-    content,
-    rotationY: axis === 'y' ? angle : 0,
-    rotationX: axis === 'x' ? angle : 0,
-  });
   const out = createCanvas(w, h);
-  renderScene3D(out.getContext('2d'), w, h, [layer], camera, 0);
+  const octx = out.getContext('2d');
+  octx.save();
+  octx.translate(w / 2, h / 2);
+  if (axis === 'x') octx.scale(1, scaleFactor);
+  else octx.scale(scaleFactor, 1);
+  octx.translate(-w / 2, -h / 2);
+  octx.drawImage(content, 0, 0);
+  octx.restore();
+
+  if (shade < 1) {
+    octx.save();
+    // 'source-atop' only paints over pixels the scaled content already
+    // covers (respecting its alpha), so this darkens just the visible
+    // card, not the surrounding transparent margin the scale left bare.
+    octx.globalCompositeOperation = 'source-atop';
+    octx.fillStyle = `rgba(0,0,0,${(1 - shade).toFixed(3)})`;
+    octx.fillRect(0, 0, w, h);
+    octx.restore();
+  }
   return out;
 }
 

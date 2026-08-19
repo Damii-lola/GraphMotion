@@ -1,4 +1,4 @@
-const { warpTriangle } = require('./layer3d');
+const { warpTriangle } = require('./triangleWarp');
 const { resolve } = require('./node');
 
 /**

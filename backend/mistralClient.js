@@ -1,8 +1,8 @@
 const fetch = require('node-fetch');
 const {
   validateSceneJSON, validateBeat, LAYER_TYPES, SHAPE_KINDS, SHAPE_CONTENT_TYPES, PATH_OP_MODES,
-  RANGE_SELECTOR_SHAPES, TRACK_MATTE_TYPES, GENERATE_KINDS, LIGHT_TYPES,
-  FALLOFF_TYPES, BLEND_MODE_NAMES, EASING_NAMES, EFFECT_TYPES, TRANSITION_TYPES,
+  RANGE_SELECTOR_SHAPES, TRACK_MATTE_TYPES, GENERATE_KINDS,
+  BLEND_MODE_NAMES, EASING_NAMES, EFFECT_TYPES, TRANSITION_TYPES,
 } = require('./sceneSchema');
 
 /**
@@ -83,39 +83,99 @@ const MISTRAL_TIMEOUT_MS = 180000;
  * not force everything into a JSON string. Returns the raw text;
  * callers decide what to do with it (parse as JSON, or use as-is).
  */
-async function callMistralRaw(systemPrompt, userMessage, { jsonMode = true, maxTokens = 12000, temperature = 0.7 } = {}) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), MISTRAL_TIMEOUT_MS);
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
+/**
+ * A shared, module-level call queue that spaces out EVERY Mistral
+ * request by at least MIN_CALL_INTERVAL_MS from the previous one's
+ * start, regardless of how many callers are concurrently trying to
+ * call in - found necessary via actual live testing, not assumed: with
+ * generateSceneJSON's real per-beat concurrent architecture (N beats,
+ * each with its own validation-retry budget, all firing via
+ * Promise.all), even reactive 429-backoff (below) wasn't enough - a
+ * genuinely low-rate-limit key got 429'd on nearly EVERY request for
+ * almost 3 minutes straight and the whole generation still ultimately
+ * failed, because backoff only reacts AFTER a burst already happened;
+ * it doesn't prevent the burst. This queue prevents the burst at the
+ * source: every call waits its turn AND a minimum spacing, so 5
+ * concurrent beats naturally serialize into one evenly-paced stream
+ * instead of slamming the API all at once. `.catch(() => {})` on the
+ * chained promise is deliberate - one caller's request failing must
+ * never break the queue for every caller after it.
+ */
+const MIN_CALL_INTERVAL_MS = 3500;
+let callQueueTail = Promise.resolve();
+function queueMistralCall(fn) {
+  const scheduled = callQueueTail.then(() => sleep(MIN_CALL_INTERVAL_MS)).then(fn);
+  callQueueTail = scheduled.catch(() => {});
+  return scheduled;
+}
+
+/**
+ * How many times a single call will transparently retry a 429 (rate
+ * limit) before giving up and throwing. Found as a REAL, live gap
+ * during actual testing (not theorized): generateSceneJSON fires one
+ * treatment call, THEN N beat-encoding calls CONCURRENTLY (each with
+ * its own internal validation-retry budget) - a real burst of
+ * simultaneous requests against one API key. Before this fix, ANY 429
+ * on ANY single one of those calls threw immediately with no backoff,
+ * which (via Promise.all in generateSceneJSON) failed the ENTIRE
+ * generation even though every other beat may have succeeded fine.
+ * Confirmed directly: a live run hit exactly this - one beat's request
+ * got rate-limited and took the whole video generation down with it.
+ */
+const MAX_RATE_LIMIT_RETRIES = 5;
+
+async function callMistralRaw(systemPrompt, userMessage, { jsonMode = true, maxTokens = 12000, temperature = 0.7 } = {}, rateLimitRetriesLeft = MAX_RATE_LIMIT_RETRIES) {
+  // Only the actual network call is queued/spaced - NOT the retry
+  // recursion below it, so a 429 retry re-enters the same shared queue
+  // (and gets its own turn + spacing) rather than bypassing it.
   let response;
   try {
-    response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${pickKey()}`,
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        temperature,
-        max_tokens: maxTokens,
-        ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage },
-        ],
-      }),
+    response = await queueMistralCall(() => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), MISTRAL_TIMEOUT_MS);
+      return fetch('https://api.mistral.ai/v1/chat/completions', {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${pickKey()}`,
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          temperature,
+          max_tokens: maxTokens,
+          ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage },
+          ],
+        }),
+      }).finally(() => clearTimeout(timeout));
     });
   } catch (err) {
     if (err.name === 'AbortError') throw new Error(`Mistral request timed out after ${MISTRAL_TIMEOUT_MS}ms`);
     throw err;
-  } finally {
-    clearTimeout(timeout);
   }
 
   if (!response.ok) {
     const errText = await response.text();
+    if (response.status === 429 && rateLimitRetriesLeft > 0) {
+      // Prefer the server's own Retry-After if it sent one; otherwise
+      // exponential backoff with jitter (jitter matters specifically
+      // BECAUSE several beats retry concurrently - without it, they'd
+      // all wake up and re-hit the API in the same instant, recreating
+      // the exact burst that caused the 429 in the first place).
+      const retryAfterHeader = response.headers.get('retry-after');
+      const attempt = MAX_RATE_LIMIT_RETRIES - rateLimitRetriesLeft;
+      const backoffMs = retryAfterHeader
+        ? Number(retryAfterHeader) * 1000
+        : Math.min(2000 * 2 ** attempt, 30000) + Math.random() * 1000;
+      console.warn(`[mistralClient] rate limited (429), waiting ${Math.round(backoffMs)}ms before retry (${rateLimitRetriesLeft} left)`);
+      await sleep(backoffMs);
+      return callMistralRaw(systemPrompt, userMessage, { jsonMode, maxTokens, temperature }, rateLimitRetriesLeft - 1);
+    }
     throw new Error(`Mistral API error ${response.status}: ${errText}`);
   }
 
@@ -174,11 +234,12 @@ const SCHEMA_REFERENCE = `
 You are directing a REAL motion graphics rendering engine - not writing
 a description of a video, not choosing from a fixed template library.
 Every field you output maps to an actual, already-built function call
-against a real 2D/3D compositing engine (comparable in capability to
+against a real 2D compositing engine (comparable in capability to
 After Effects: real bezier shapes, real per-character text animation,
-real 3D layers with perspective and lighting, real blend modes and
-track mattes, real blur/color-grading/glitch/distort effects, real
-transitions). Your job is to compose these real primitives into
+real blend modes and track mattes, real blur/color-grading/glitch/
+distort effects, real transitions, and 2D scale/skew/rotation tricks
+for fake depth/perspective moves - see the PERSPECTIVE & DEPTH section
+below). Your job is to compose these real primitives into
 genuinely well-designed, dynamic motion graphics - not a static image
 with a caption. Nothing here is decorative flavor text: every option
 below is real and will actually render.
@@ -194,7 +255,7 @@ exact same content for a schema this deeply nested, risking your
 response getting cut off mid-generation before the JSON is even
 complete. Every character you spend on whitespace is a character you
 can't spend on the scene itself. Write it as ONE continuous line, e.g.
-{"scenes":[{"params":{"duration":2.5},"visual":{"is3D":false,"layers":[...]}}]}
+{"scenes":[{"params":{"duration":2.5},"visual":{"layers":[...]}}]}
 - not spread across multiple indented lines.
 
 The canvas is ${COMP_WIDTH} x ${COMP_HEIGHT} pixels (9:16 vertical). Every
@@ -212,9 +273,9 @@ but no "type" key. This is the single most common structural mistake:
 double-check every object in every array has its own "type" before
 finishing.
 
-SIX COMPLETELY SEPARATE "type" VOCABULARIES - THEY NEVER CROSS OVER.
-This schema has six different closed lists of names that all sound
-adjacent but belong to six unrelated fields. Using a name from the
+FIVE COMPLETELY SEPARATE "type" VOCABULARIES - THEY NEVER CROSS OVER.
+This schema has five different closed lists of names that all sound
+adjacent but belong to five unrelated fields. Using a name from the
 wrong list is the single most common mistake in real generated output -
 memorize which list each name lives in:
 
@@ -233,9 +294,6 @@ memorize which list each name lives in:
      ${GENERATE_KINDS.join(', ')}
   5. TRANSITION "type" (inside "transitionIn.type" only):
      ${TRANSITION_TYPES.join(', ')}
-  6. LIGHT "type" (inside an entry of the beat-level "lights" array
-     ONLY - lights are NEVER layers, they never appear in "layers"):
-     ${LIGHT_TYPES.join(', ')}
 
 Concretely, real mistakes seen in actual generated output that WILL
 fail validation - never do these:
@@ -248,9 +306,6 @@ fail validation - never do these:
     EFFECT. A layer's position/rotation/scale/anchor ARE its transform,
     set directly as normal fields on the layer itself - never wrap a
     transform in an effects-array entry.
-  WRONG: {"type":"spot",...} or {"type":"ambient",...} inside "layers" -
-    those are LIGHT types, they belong in the beat's own "lights" array,
-    never mixed into "layers".
   WRONG: "generate":{"kind":"addGrain",...} (addGrain/addNoise are
     EFFECTS - grain/noise texture is added to something that already
     exists via a layer's "effects" array, never generated from nothing
@@ -262,9 +317,6 @@ fail validation - never do these:
     "params":{...}}]} - generate the base texture, THEN add the grain
     effect on top, as two separate real mechanisms, not one field
     doing both jobs.
-  RIGHT: want a spotlight? Add {"type":"spot",...} to the beat's
-    "lights" array (a sibling of "layers", not inside it) - never as a
-    "layers" entry.
 
 Before finishing, mentally check every single "type"/"kind" value you
 wrote against the list it's actually supposed to come from.
@@ -286,10 +338,22 @@ BEAT
                                // duration + 0.4s), so treat it as an ESTIMATE
                                // when narration is present, exact otherwise.
     "narration": string,      // optional spoken line for this beat (real TTS)
-    "imagePrompt": string     // optional - fetches a REAL photo for this beat;
-                               // reference it from a layer via {"type":"image",
-                               // "src":"beatImage"}. Omit if this beat doesn't
-                               // need a photo.
+    "imagePrompt": string     // fetches a REAL AI-generated photo for this
+                               // beat (free, via Pollinations/Flux) - this is
+                               // the PRIMARY hero-visual tool, not an
+                               // afterthought. Write it like a real photo/
+                               // render brief: concrete subject, lighting,
+                               // angle, mood, color grade (e.g. "a
+                               // translucent humanoid robot head in profile,
+                               // studio lighting, cinematic, soft blue-grey
+                               // palette" - not just "a robot"). Reference
+                               // the fetched photo from a layer via
+                               // {"type":"image","src":"beatImage"} (see the
+                               // "photo card" recipe above). Set this on
+                               // MOST beats by default; only skip it for a
+                               // beat that's specifically a pure data/chart/
+                               // icon moment where vector genuinely serves
+                               // the point better than a photo would.
   },
   "visual": BeatVisual
 }
@@ -324,12 +388,6 @@ nearly every layer's entrance (and often its whole duration).
 BEATVISUAL
 =====================================================================
 {
-  "is3D": boolean,            // false (default) = 2D composition. true = every
-                               // layer becomes a flat plane in real 3D space
-                               // with a camera and lights - use this for
-                               // genuine depth, perspective, rotating cards,
-                               // parallax. Layer AUTHORING (contents, text,
-                               // effects) is IDENTICAL in both modes.
   "background": LayerDef | null,  // optional full-frame layer drawn first
                                     // (typically a "generate" gradient/noise,
                                     // or a solid-fill shape sized to the frame)
@@ -344,8 +402,6 @@ BEATVISUAL
                                   // Never leave a beat with nothing in it.
                                   // Stacking order: LATER entries draw ON
                                   // TOP of earlier ones.
-  "camera": CameraDef,          // only used if is3D
-  "lights": [ LightDef, ... ],  // only used if is3D
   "transitionIn": TransitionDef | null  // how this beat enters from whatever
                                           // the PREVIOUS beat ended on. Omit
                                           // for a hard cut (fine for beat 1,
@@ -361,49 +417,24 @@ LAYERDEF - one entry in "layers" (or "background")
                           // trackMatte's "source" needs to reference this one
   "type": ${LAYER_TYPES.map((t) => `"${t}"`).join(' | ')},
 
-  "position": AnimatableValue<[x,y]> (2D) or [x,y,z] (3D). SAME pixel
-            coordinate convention in BOTH cases - [0,0] is the frame's
-            TOP-LEFT corner, [${COMP_WIDTH / 2},${COMP_HEIGHT / 2}] is
-            the frame's CENTER. (Internally, 3D position is converted
-            to the engine's native world-space automatically - you never
-            need to think about that, just use the same pixel numbers
-            you'd use for a 2D layer.) Default for 3D is the frame
-            center; 2D defaults to [0,0].
-  "rotation": AnimatableValue<number> (2D only, degrees),
-  "rotationX"/"rotationY"/"rotationZ": AnimatableValue<number> (3D only, degrees),
-  "scale": AnimatableValue<[sx,sy]> (2D) or [sx,sy,sz] (3D),
-  "anchor": AnimatableValue<[x,y]> or [x,y,z] - the pivot point for
-            rotation/scale, ALSO the point of the layer that lands
-            exactly at "position". For 2D layers, default [0,0,0] is the
-            layer's own TOP-LEFT corner (matching AE), NOT its center -
-            so a 2D layer at position:[centerX,centerY] with no anchor
-            has its top-left corner (not its middle) at the frame
-            center. For 3D layers, default is the layer's own CENTER
-            ([width/2,height/2,0]) - so a 3D layer just needs
-            "position" set to where its middle should go, nothing else,
-            for the overwhelmingly common case. Set anchor explicitly
-            only when deliberately pivoting off-center (e.g. a
-            page-flip rotating around an edge).
+  "position": AnimatableValue<[x,y]> - pixel coordinates, [0,0] is the
+            frame's TOP-LEFT corner, [${COMP_WIDTH / 2},${COMP_HEIGHT / 2}]
+            is the frame's CENTER. Default [0,0].
+  "rotation": AnimatableValue<number> (degrees),
+  "scale": AnimatableValue<[sx,sy]>,
+  "anchor": AnimatableValue<[x,y]> - the pivot point for rotation/scale,
+            ALSO the point of the layer that lands exactly at
+            "position". Default [0,0] is the layer's own TOP-LEFT
+            corner (matching AE), NOT its center - so a layer at
+            position:[centerX,centerY] with no anchor has its top-left
+            corner (not its middle) at the frame center. Set
+            anchor:[width/2,height/2] explicitly whenever you want
+            "position" to mean "center" (the overwhelmingly common
+            case for a hero element).
 
-  CRITICAL for 3D layers' "position" Z component (the 3rd number):
-  LARGER z = FURTHER from the camera = drawn BEHIND everything with a
-  smaller z (this matches real After Effects: increasing Z Position
-  pushes a 3D layer further INTO the screen, away from the viewer -
-  NOT "closer"/"more on top"). Confirmed as a real, live bug: a beat
-  with an opaque full-frame "paper" layer at z:0 and several info/text/
-  bar layers at z:1, z:2, z:3 (intending them to read as "layered ON
-  TOP of the paper") instead rendered as a completely blank paper -
-  because those larger-z layers were actually FURTHER from the camera
-  than the paper, so the paper drew on top and hid all of them. To
-  layer content IN FRONT of something, give it a SMALLER z (including
-  negative, e.g. z:-10, z:-20 - there is no floor), not a larger one.
-  When in doubt, keep foreground/informational content at z:0 or
-  negative z, and only push something backward (positive z) when you
-  specifically want it to sit behind other content.
-
-  "blendMode": ${BLEND_MODE_NAMES.join(' | ')}  // 2D only, default "normal"
+  "blendMode": ${BLEND_MODE_NAMES.join(' | ')}  // default "normal"
   "trackMatte": { "source": <layerId>, "type": ${TRACK_MATTE_TYPES.map((t) => `"${t}"`).join(' | ')} },
-                 // 2D only - clips THIS layer to another layer's shape/luma.
+                 // clips THIS layer to another layer's shape/luma.
                  // The source layer is automatically hidden from the normal
                  // stack once used as a matte (don't also try to hide it
                  // yourself, but DO give it full opacity - an invisible/
@@ -427,17 +458,10 @@ LAYERDEF - one entry in "layers" (or "background")
   "effects": [ EffectDef, ... ],  // this layer's own effects stack, see below
   "parent": <layerId>,            // real parenting - this layer's transform
                                     // is relative to the parent's
-  "material": { "ambient": 0-1, "diffuse": 0-1, "specularStrength": 0-1, "shininess": number },
-              // 3D only - opts this layer INTO real scene lighting (lit by
-              // "lights"). Omit for a flat, self-illuminated (unlit) layer -
-              // most UI/text/icon content should stay unlit; use material on
-              // things meant to look like real physical objects (cards,
-              // product shapes) in a 3D beat.
-  "width", "height": number  // REQUIRED for "shape"/"generate" layers, and for
-                              // any layer used inside an "is3D":true beat
+  "width", "height": number  // REQUIRED for "shape"/"generate" layers
                               // (defaults to the full frame size if omitted,
                               // which is correct for a full-frame background
-                              // but wrong for a smaller 3D object)
+                              // but wrong for a smaller object)
 
   // --- type:"shape" ---
   "contents": [ ShapeContentItem, ... ],   // see below
@@ -623,6 +647,31 @@ inside an effects[].type, and vice versa: nothing in this EFFECTS list
 is ever a valid generate.kind.
 Valid effect types: ${EFFECT_TYPES.join(', ')}
 
+NAMES THAT KEEP GETTING WRONGLY USED AS AN EFFECT TYPE - confirmed
+directly, repeatedly, across many real generations, despite the
+warning above already being present, so read this list literally
+before writing ANY effects[].type:
+  "gradientRamp"/"checkerboard"/"grid"/"lensFlare"/"fractalNoise" -
+    these are GENERATE KINDS (generate.kind on a "generate" layer),
+    never an effect.
+  "trim"/"path"/"fill"/"stroke"/"repeater"/"pathOp"/"group" - these are
+    SHAPE CONTENT types (inside a shape layer's "contents" array),
+    never an effect.
+  "linearWipe"/"crossDissolve"/"cardFlip3D"/"glitchCut" (or any other
+    TRANSITION_TYPES name) - these connect one BEAT to the next via
+    visual.transitionIn, never a per-layer effect.
+  "wiggle" - THERE IS NO "wiggle" EFFECT. For organic per-character
+    text motion, use the "wiggly" SELECTOR inside a text layer's
+    "animators" array instead (see TEXT ANIMATORS below) - a
+    completely different mechanism from the effects array.
+  "expression" - THERE IS NO "expression" EFFECT. An expression is an
+    AnimatableValue shape ({"expression":"...", "base":...}) that can
+    be used for almost any individual field (position, opacity, a
+    shape param, an effect PARAM's value) - it is never itself a
+    standalone entry in an effects array.
+  "adjustmentLayer" - not a real name anywhere. An adjustment layer is
+    isAdjustmentLayer:true on a normal layer, not a type or effect name.
+
   gaussianBlur: { radius=8 }
   boxBlur: { radius=8, iterations=1 }
   directionalBlur: { length=20, angle=0 (deg) }
@@ -685,29 +734,29 @@ A "generate" layer used as "background" should normally omit width/height
 top-left corner).
 
 =====================================================================
-3D: CAMERA / LIGHTS (only when "is3D": true)
+PERSPECTIVE & DEPTH - this engine is 2D-only, no real camera/3D layers
 =====================================================================
-CameraDef: { "position": AnimatableValue<[x,y,z]> (default [0,0,-1000]),
-  "pointOfInterest": AnimatableValue<[x,y,z]> (default [0,0,0], what the
-  camera looks at - world (0,0,z) projects to the CENTER of the frame under
-  the default/any origin-facing camera), "zoom": AnimatableValue<number>
-  (default 1000, larger = more telephoto) }. Omitting "camera" entirely uses
-  a sensible default. Animate position/pointOfInterest for real camera moves
-  (push-in, orbit, reveal).
-
-LightDef: { "type": ${LIGHT_TYPES.join(' | ')},
-  "position", "pointOfInterest" (spot/directional only, defines direction),
-  "color"="#ffffff", "intensity"=1,
-  "falloff": ${FALLOFF_TYPES.join(' | ')}, "falloffRadius"=500,
-  "coneAngle"=90, "coneFeather"=50 (spot only) }
-  // Only layers with a "material" set are actually lit - always include at
-  // least one "ambient" light in a lit 3D beat, or unlit-facing layers will
-  // render solid black.
-
-3D layers are flat planes with real perspective - great for rotating cards,
-parallax stacks (several layers at different z), and depth reveals. A
-layer's own content (shape/text/generate/image/effects) is authored
-EXACTLY like a 2D layer; only its position/rotation are 3D.
+There is no true 3D rendering here - no camera, no lighting, no
+perspective-projected planes. Every "depth"/"tilt"/"parallax" look is
+built from ordinary 2D position/rotation/scale, the same real technique
+professional 2D motion graphics has always used:
+  - PARALLAX: put several flat layers at different sizes/positions and
+    animate them at DIFFERENT speeds/amounts (background moves less,
+    foreground moves more) - reads as depth without any 3D math.
+  - FAKE TILT/CARD FLIP: animate "scale":[sx,1] or [1,sy] down toward
+    (near) 0 on one axis while the layer is mid-transition, optionally
+    paired with a small opposite-direction "rotation" - a classic,
+    convincing "turning away/edge-on" illusion using only an affine
+    scale, no perspective needed. (This is exactly how the
+    "card3DFlip" transition below works internally now.)
+  - DEPTH VIA SIZE/BLUR/GRADE: a "background" layer slightly smaller-
+    scaled, less saturated (hueSaturation effect), and/or softly
+    blurred (gaussianBlur) reads as "further away" next to a sharp,
+    full-contrast foreground layer - real depth-of-field, faked
+    cheaply and convincingly.
+  - LAYER ORDER IS YOUR ONLY "Z-AXIS": stacking order in the "layers"
+    array (later = drawn on top) is the entire depth model. There is
+    no z-position field on a layer at all.
 
 =====================================================================
 TRANSITIONS - TransitionDef: { "type": <name>, "duration": seconds, "params": {...} }
@@ -719,7 +768,9 @@ Valid types: ${TRANSITION_TYPES.join(', ')}
   irisWipe: { shape="ellipse"|"polygon"|"star", center=[x,y], points=5 }
   venetianBlinds: { stripes=10, direction="horizontal"|"vertical" }
   gradientWipe: { seed=0, scale=0.02, softness=0.15 }
-  card3DFlip: { axis="x"|"y" }
+  card3DFlip: { axis="x"|"y" }  // a 2D scale-based card-flip illusion
+                                 // (see PERSPECTIVE & DEPTH above) -
+                                 // NOT real 3D despite the name.
   glitchTransition: {}  (no params)
 
 duration is typically 0.4-0.8s. Vary transition choice across a video -
@@ -732,8 +783,9 @@ DESIGN QUALITY - this is the whole point, not an afterthought
   shot, not a slide: a background, an entrance animation, and (for
   text) a real per-character reveal, at minimum.
 - Vary composition across beats: don't repeat the same layout/shape/
-  color every time. Use is3D for at least some beats in a longer video
-  to get real depth and camera movement.
+  color every time. Use the PERSPECTIVE & DEPTH techniques above
+  (parallax, fake tilt/flip, depth-via-blur) for at least some beats in
+  a longer video to keep it from feeling flat and static.
 - Use color with intent (a coherent palette across the whole video, not
   random hex values per beat) and real hierarchy (one clear focal
   element per beat, not several competing ones).
@@ -805,24 +857,56 @@ building yet) a ${targetDurationSeconds}-second short-form vertical
 video (${COMP_WIDTH}x${COMP_HEIGHT}px, 9:16) for the request below.
 
 You are briefing a REAL, capable engine - not a limited template tool.
-It genuinely supports: real bezier shapes (rectangles/ellipses/polygons/
-stars, with trim-path "draw on" reveals, repeaters, boolean path
-operations), real per-character text animation (staggered reveals,
-organic wiggle, text on a bezier path), real 3D layers with an
-animatable camera and real point/spot/directional/ambient lighting
-(rotating cards, parallax depth, dramatic camera moves), real blend
-modes and track mattes (one layer's shape or luma masking another),
-adjustment layers (a color grade or effect applied to everything
-below), and a real effects library: blur (gaussian/directional/radial),
-color grading (curves/hue-sat/color-balance/levels), glow/drop-shadow/
-inner-shadow/stroke, film grain/noise, glitch (RGB-shift/scan-lines/
-block-displace), stylize (posterize/emboss/edge-detect), and distort
-warps (twirl/bulge/ripple/wave). Generated photos can be fetched for
-any beat. Real transitions (cross-dissolve, wipes, 3D card flip, glitch)
-connect beats. Plan USING these real capabilities, specifically and by
-name where they fit - don't describe something vague this engine can't
-build, and don't undersell it with something generic when a specific
-technique would sell the shot better.
+
+REAL PHOTOGRAPHIC CONTENT IS YOUR PRIMARY VISUAL TOOL, not a fallback.
+Every beat can fetch a real, on-prompt AI-generated photo (any subject:
+people, objects, environments, portraits, product shots, surreal
+composites - describe it like a real photography/render brief: subject,
+lighting, mood, angle, color grade) via "imagePrompt". THIS IS HOW
+PROFESSIONAL "AI facts"/tech/story short-form content actually looks -
+think a photorealistic hero image filling most of the frame, with
+vector graphics layered OVER it as ACCENTS (not the other way around):
+a dashed annotation box, a swooping arc, bold kinetic type with a drop
+shadow, a subtle RGB-split glitch on the headline. A video built ONLY
+from flat vector shapes with no photographic content reads as cheap
+and empty by comparison - default to giving most beats a real fetched
+photo as the hero visual UNLESS the beat is specifically a data/chart/
+icon moment where pure vector genuinely is the stronger choice.
+
+The professional "photo card" composite (this is the single most
+valuable recipe in this whole toolkit - use it constantly): (1) an
+"image" layer with src:"beatImage" sized to the desired card
+dimensions, (2) a "trackMatte" on it pointing at a rounded-rectangle
+shape layer (type:"alpha") to crop the photo to soft rounded corners
+instead of a hard rectangle, (3) a "dropShadow" effect on the image
+layer for real depth/lift off the background, (4) a slow, subtle
+animated scale (e.g. 1.0 -> 1.08 over the whole beat) for a Ken-Burns
+drift instead of a static, dead photo. Layer kinetic type and small
+accent shapes (dashed lines, arcs, corner brackets) around/over the
+card, exactly like a real motion-graphics template.
+
+Beyond photography, the engine ALSO genuinely supports: real bezier
+shapes (rectangles/ellipses/polygons/stars, with trim-path "draw on"
+reveals, repeaters, boolean path operations), real per-character text
+animation (staggered reveals, organic wiggle, text on a bezier path),
+2D fake-depth techniques (parallax layering - several flat layers
+moving at different speeds/amounts; scale-based card flips - animating
+scale toward 0 on one axis to fake a "turning edge-on" illusion;
+depth-via-blur/desaturation - a softly-blurred, less-saturated
+background reads as "further away" next to a sharp foreground; there
+is NO real 3D camera or lighting in this engine, don't plan a shot
+around one), real blend modes and track mattes (one layer's shape or luma
+masking another), adjustment layers (a color grade or effect applied
+to everything below), and a real effects library: blur (gaussian/
+directional/radial), color grading (curves/hue-sat/color-balance/
+levels), glow/drop-shadow/inner-shadow/stroke, film grain/noise, glitch
+(RGB-shift/scan-lines/block-displace), stylize (posterize/emboss/edge-
+detect), and distort warps (twirl/bulge/ripple/wave). Real transitions
+(cross-dissolve, wipes, a scale-based card flip, glitch) connect beats.
+Plan USING these real capabilities, specifically and by name where they
+fit - don't describe something vague this engine can't build, and
+don't undersell it with something generic when a specific technique
+would sell the shot better.
 
 Write a concrete, opinionated, beat-by-beat treatment - not mood words,
 actual visual decisions a senior director would hand an animator to
@@ -850,9 +934,11 @@ build frame-for-frame:
      it sits, how it enters/moves/exits, and its role in the hierarchy
      (name the ONE dominant focal element and what's clearly secondary/
      supporting - never several same-weight elements competing)
-   - Real depth: is this beat flat 2D, or does it use real 3D (camera
-     move, a rotating/tilted object, layers at different depths for
-     parallax)? Prefer 3D for at least some beats in a longer video.
+   - Depth and movement: does this beat use parallax (layers moving at
+     different speeds), a scale-based tilt/flip on an element, or
+     depth-via-blur (a softened background behind a sharp foreground)?
+     Prefer at least one of these in some beats of a longer video -
+     flat, static layers with no depth trick feel cheap by comparison.
    - Specific effects that sell the shot and why (a soft outer glow on
      the focal text, a drop shadow separating layers, film grain for
      texture, a track-matte reveal, a subtle color-graded adjustment
@@ -970,7 +1056,38 @@ being cut off.`;
 async function generateOneBeat(preamble, beatChunk, beatIndex, totalBeats, { retriesLeft = 3, priorErrors = null } = {}) {
   const systemPrompt = buildBeatEncodingSystemPrompt();
   let userMessage = `OVERALL VIDEO CONTEXT (hook + palette/mood, shared across every beat for visual consistency):\n${preamble}\n\nTHIS BEAT (beat ${beatIndex + 1} of ${totalBeats}, target duration ${beatChunk.duration}s) - encode this EXACTLY and FAITHFULLY, missing nothing; every VISUAL decision below must become real layers/effects/animators from the schema above, never simplified or dropped to something generic. Sound cues (a "clink", a "whoosh") have no schema field - translate them into a visual beat instead (a hard hit, a flash, a snap into place). Only use real fields from the schema above - never invent new ones.\n\n${beatChunk.text}`;
-  if (priorErrors) userMessage += `\n\nYour previous attempt for THIS beat produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected beat JSON.`;
+  if (priorErrors) {
+    // Real pattern found via live testing: a beat with many layers
+    // sometimes fails with a WALL of near-identical errors (e.g.
+    // "layers[1]: must be an object" repeated for layers[1] through
+    // layers[7]) - one underlying mistake (several array entries
+    // weren't full objects) reported as many separate lines, which
+    // buries the actual, single, fixable pattern instead of making it
+    // obvious. When that shape shows up, call it out explicitly before
+    // the full list so the retry fixes the ROOT cause instead of
+    // patching each line individually (which risks leaving the same
+    // root mistake elsewhere the validator didn't happen to flag).
+    const objectErrors = priorErrors.filter((e) => e.includes('must be an object'));
+    const notes = [];
+    if (objectErrors.length >= 3) {
+      notes.push(`${objectErrors.length} of these errors are "must be an object" on array entries - this usually means you wrote a plain string, a summary, or omitted an entry instead of a COMPLETE JSON object for every single array element (every layer, every content item, every effect). Every array in this schema requires a FULL object at every index - never a shorthand/placeholder value standing in for one.`);
+    }
+    // Real, observed pattern: this exact error ("visual.layers: is
+    // required and must be an array") recurred VERBATIM, unchanged,
+    // across every retry for one real beat - not converging toward a
+    // fix at all, unlike every other error type which at least changed
+    // shape between attempts. That strongly suggests the model doesn't
+    // understand WHAT structural mistake produces this message (likely
+    // nesting "layers" somewhere else, e.g. inside "params" instead of
+    // "visual", or naming it something else), so spell out the exact
+    // required shape literally rather than repeating the same abstract
+    // error a 2nd/3rd/4th time.
+    if (priorErrors.some((e) => e.includes('visual.layers') && e.includes('required and must be an array'))) {
+      notes.push('The root object MUST be exactly {"params":{"duration":...,...},"visual":{"layers":[...],...}} - "layers" is a direct property of "visual" (a sibling of "background"/"transitionIn"), an ARRAY of LayerDef objects. It is never nested inside "params", never renamed, and never omitted even for a simple beat (a single layer is still layers:[{...}], not an empty/missing array).');
+    }
+    const rootCauseNote = notes.length ? `\n\nNOTE: ${notes.join(' ')}` : '';
+    userMessage += `\n\nYour previous attempt for THIS beat produced invalid JSON:\n${priorErrors.join('\n')}${rootCauseNote}\n\nFix these specific problems and output the complete, corrected beat JSON.`;
+  }
 
   const result = await callMistralForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateOneBeat(preamble, beatChunk, beatIndex, totalBeats, { retriesLeft: nextRetriesLeft, priorErrors }));
 
@@ -1035,7 +1152,7 @@ async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
   if (parsed && parsed.beats.length > 0) {
     console.log(`[mistralClient] encoding ${parsed.beats.length} beat(s) independently...`);
     const scenes = await Promise.all(
-      parsed.beats.map((beatChunk, i) => generateOneBeat(parsed.preamble, beatChunk, i, parsed.beats.length, { retriesLeft: 3 })),
+      parsed.beats.map((beatChunk, i) => generateOneBeat(parsed.preamble, beatChunk, i, parsed.beats.length, { retriesLeft: 5 })),
     );
     return { scenes };
   }
