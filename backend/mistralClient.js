@@ -510,13 +510,21 @@ LAYERDEF - one entry in "layers" (or "background")
                 center) - do NOT set anchor:[width/2,height/2] here,
                 that shifts a centered shape/text layer OFF-center by
                 half its own size, the exact opposite of the intent.
-              - "image"/"generate" layers: their content draws TOP-LEFT
-                anchored at local (0,0) (matching how a photo/texture
-                naturally fills a box from its corner). To center THIS
-                layer on "position", DO set explicit
+              - "image"/"generate"/"precomp" layers: their content draws
+                TOP-LEFT anchored at local (0,0) (matching how a photo/
+                texture naturally fills a box from its corner - a
+                "precomp" is no different here, it's rendered into its
+                own width x height buffer and that buffer's top-left
+                corner is what lands at "position"). To center any of
+                these three on "position", DO set explicit
                 anchor:[width/2,height/2] - here (and only here) that's
-                correct, since without it "position" places the image's
-                top-left corner, not its middle.
+                correct, since without it "position" places the top-left
+                corner, not the middle. Confirmed as a real, live bug: a
+                400x300 "precomp" chart at position:[270,480] (frame
+                center) with no anchor set rendered with its top-left
+                corner AT the frame center instead - i.e. the whole
+                chart shifted down-and-right by half its own size,
+                clipping most of it off the right/bottom edges.
             An off-center PIVOT (rotation/scale around a corner or
             edge, e.g. a page-flip) is a real, legitimate reason to set
             a different anchor value on either layer type - just don't
@@ -615,6 +623,25 @@ LAYERDEF - one entry in "layers" (or "background")
   "isolate": boolean,             // default true (pre-composited as one flat
                                     // unit - needed for whole-group opacity/
                                     // blend to work correctly)
+      // A precomp's own "width"/"height" is the FULL EXTENT of its
+      // children's coordinate space - it is rendered into its own
+      // private width x height buffer FIRST, in total isolation from
+      // the outer frame's size, and every child layer's "position" is
+      // relative to THAT buffer's top-left corner (0,0), not the outer
+      // ${COMP_WIDTH}x${COMP_HEIGHT} frame. A child positioned outside
+      // [0,width]x[0,height] renders outside the precomp's own buffer
+      // and is clipped, gone, exactly as if it were outside the main
+      // frame. Confirmed as a real, live bug: a precomp declared
+      // "width":400,"height":300 for a bar chart, whose own child bars
+      // were positioned using y:400-600 - coordinates that would only
+      // make sense in the full outer frame's much taller space, not
+      // this precomp's actual 300px-tall inner canvas - rendered with
+      // most of the chart clipped off entirely. Before finishing, check
+      // that EVERY child layer inside a precomp uses position values
+      // that make sense for THAT precomp's own declared width/height
+      // (typically centered around [width/2,height/2] for content
+      // meant to sit centered within it), not values sized for the
+      // outer frame.
 
   // --- type:"generate" ---
   "generate": { "kind": ${GENERATE_KINDS.map((k) => `"${k}"`).join(' | ')}, "params": {...} }

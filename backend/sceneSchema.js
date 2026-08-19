@@ -557,7 +557,33 @@ function validateLayer(layer, path, errors, knownIds) {
     errors.push(`${path}: an "image" layer with effects should set explicit "width"/"height" matching its intended display size. Omitting them sizes the effects-processing buffer at the FULL FRAME regardless of the image's real size (and stays that size even if the image fetch fails), making every effect on this layer far more expensive than necessary for no visual benefit.`);
   } else if (layer.type === 'precomp') {
     if (!Array.isArray(layer.layers)) errors.push(`${path}.layers: a precomp requires a nested layers array`);
-    else layer.layers.forEach((l, i) => validateLayer(l, `${path}.layers[${i}]`, errors, knownIds));
+    else {
+      layer.layers.forEach((l, i) => validateLayer(l, `${path}.layers[${i}]`, errors, knownIds));
+      // Real, confirmed-live bug: a precomp's own declared width/height
+      // is the FULL EXTENT of its children's local coordinate space
+      // (see mistralClient.js's precomp doc for the full story) - a
+      // child positioned using coordinates sized for the OUTER frame
+      // (typically much bigger than a small precomp) renders outside
+      // the precomp's own private buffer and is silently clipped.
+      // Confirmed directly: a 400x300 chart precomp whose own bars
+      // were positioned at y:400-600 (coordinates that only make sense
+      // in the ~960px-tall outer frame) rendered mostly clipped off.
+      // Only checked for a PLAIN [x,y] position (not keyframed) against
+      // a generous 50%-beyond-bounds tolerance - loose enough to allow
+      // legitimate off-canvas entrance/exit motion, tight enough to
+      // catch "used outer-frame-sized coordinates by mistake".
+      if (typeof layer.width === 'number' && typeof layer.height === 'number') {
+        const marginX = layer.width * 0.5;
+        const marginY = layer.height * 0.5;
+        layer.layers.forEach((l, i) => {
+          if (!isPlainObject(l) || !isNumberArray(l.position, 2)) return;
+          const [px, py] = l.position;
+          if (px < -marginX || px > layer.width + marginX || py < -marginY || py > layer.height + marginY) {
+            errors.push(`${path}.layers[${i}].position: [${px},${py}] is far outside this precomp's own declared bounds (0,0)-(${layer.width},${layer.height}) - a precomp's children are positioned relative to ITS OWN width/height, not the outer frame's, so this renders clipped outside the precomp's private buffer. Reposition it to make sense within this precomp's own ${layer.width}x${layer.height} space (e.g. centered around [${layer.width / 2},${layer.height / 2}]).`);
+          }
+        });
+      }
+    }
   }
 }
 
