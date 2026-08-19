@@ -677,17 +677,26 @@
 
   function pollJob(jobId) {
     const POLL_INTERVAL_MS = 2000;
-    // Backend's own worst-case budget is now bigger than this used to
-    // assume: narration is sequential per beat (each up to ~30s with
-    // retry), then up to ~4 chunks (30s video / 8s chunks) each with
-    // its own 3min safety timeout in longVideoOrchestrator.js - a
-    // render that's genuinely working, just slow on a throttled host,
-    // can legitimately take longer than 6 minutes end to end without
-    // anything being stuck. Giving up client-side while the backend is
-    // still inside its own budget just misreports a slow-but-working
-    // render as failed (the job itself isn't lost - refreshing the
-    // page resumes polling it - but the user sees a false error first).
-    const MAX_WAIT_MS = 15 * 60 * 1000; // give up after 15 minutes
+    // Backend's own worst-case budget, kept in sync with the actual
+    // current backend numbers (this drifted stale once before - re-
+    // verified against the real code, not copied forward blind):
+    // generation itself now has a hard 6-minute outer timeout
+    // (mistralClient.js), then rendering chunks at CHUNK_SIZE_SECONDS=3s
+    // each with its own 4-minute safety timeout (longVideoOrchestrator.js)
+    // - a real, working, TYPICAL render (a default ~12s video is 4
+    // chunks) can legitimately take several minutes past generation
+    // without anything being stuck. This does NOT need to cover the
+    // absolute pathological worst case (every single chunk timing out
+    // independently) - that scenario resolves to a real job.status
+    // "failed" on its own (the backend's own per-chunk/per-generation
+    // timeouts guarantee that), which this poll loop already detects
+    // and surfaces immediately below, regardless of MAX_WAIT_MS. This
+    // only needs to comfortably cover ordinary, still-succeeding-but-
+    // slow operation. Giving up client-side while the backend is still
+    // genuinely working just misreports a slow-but-working render as
+    // failed (the job itself isn't lost - refreshing the page resumes
+    // polling it - but the user sees a false error first).
+    const MAX_WAIT_MS = 20 * 60 * 1000; // give up after 20 minutes
     const MAX_CONSECUTIVE_FAILURES = 5; // tolerate ~10s of blips (e.g. a server restart) before giving up
     const startedAt = Date.now();
     let consecutiveFailures = 0;
