@@ -382,13 +382,49 @@ async function loadBeatImages(visual, beatContext) {
 }
 
 /** Wraps any raw draw function with this layer's own effects stack (if any) - renders to an offscreen buffer sized to the layer's own content bounds, applies effects in order, draws the result. A layer with no effects skips the extra buffer entirely (drawn directly), so this costs nothing for the common case. */
-function withEffects(rawDraw, layerDef, contentWidth, contentHeight) {
+/**
+ * `centered` must be true for "shape"/"text" layers and false/omitted
+ * for "image"/"generate" - it's NOT a style choice, it has to match
+ * where each layer type actually draws its content. Real, severe bug
+ * found via live frame inspection: the buffer this function creates
+ * for effects processing is a PLAIN canvas whose own origin is its
+ * top-left corner, but "shape"/"text" content is drawn CENTERED on
+ * local (0,0) (the whole engine's established convention - see
+ * matrix2d.js/sceneSchema.js's anchor docs), spanning NEGATIVE as well
+ * as positive local coordinates. Canvas pixels don't exist at negative
+ * indices, so without `centered`, anything drawn left-of/above local
+ * origin was silently clipped - confirmed directly: a real generated
+ * "Giant isopods grow up to 2.5 feet long" caption with a "dropShadow"
+ * effect rendered with ONLY "t long" visible, the rest clipped off by
+ * exactly this. `centered` recenters the buffer's own origin to its
+ * middle (and draws it back offset by the same amount) so
+ * negative-coordinate content has somewhere real to land - exactly
+ * matching how the SAME layer already rendered correctly whenever it
+ * had no effects at all (and therefore no buffer indirection to get
+ * this wrong). "image"/"generate" content, by contrast, draws
+ * TOP-LEFT-anchored already fitting the buffer's native [0,w]x[0,h]
+ * range, so centering them would incorrectly shift their content by
+ * half their own size - `centered` must stay false there.
+ */
+function withEffects(rawDraw, layerDef, contentWidth, contentHeight, centered = false) {
   if (!layerDef.effects || layerDef.effects.length === 0) return rawDraw;
+  if (!centered) {
+    return (ctx, t) => {
+      const buffer = createCanvas(contentWidth, contentHeight);
+      rawDraw(buffer.getContext('2d'), t);
+      const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t);
+      ctx.drawImage(finalCanvas, 0, 0);
+    };
+  }
+  const offsetX = contentWidth / 2;
+  const offsetY = contentHeight / 2;
   return (ctx, t) => {
     const buffer = createCanvas(contentWidth, contentHeight);
-    rawDraw(buffer.getContext('2d'), t);
+    const bufferCtx = buffer.getContext('2d');
+    bufferCtx.translate(offsetX, offsetY);
+    rawDraw(bufferCtx, t);
     const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t);
-    ctx.drawImage(finalCanvas, 0, 0);
+    ctx.drawImage(finalCanvas, -offsetX, -offsetY);
   };
 }
 
@@ -448,10 +484,10 @@ function build2DLayer(layerDef, beatContext, idMap) {
     const rawContents = buildShapeContents(layerDef.contents);
     node = new Node({
       ...commonNodeOpts(layerDef),
-      draw: withEffects((ctx, t) => renderContents(ctx, rawContents, t), layerDef, w, h),
+      draw: withEffects((ctx, t) => renderContents(ctx, rawContents, t), layerDef, w, h, true),
     });
   } else if (layerDef.type === 'text') {
-    node = new Node({ ...commonNodeOpts(layerDef), draw: withEffects(buildTextDraw(layerDef, beatContext), layerDef, w, h) });
+    node = new Node({ ...commonNodeOpts(layerDef), draw: withEffects(buildTextDraw(layerDef, beatContext), layerDef, w, h, true) });
   } else if (layerDef.type === 'generate') {
     node = new Node({ ...commonNodeOpts(layerDef), draw: withEffects(buildGenerateDraw(layerDef, w, h), layerDef, w, h) });
   } else if (layerDef.type === 'image') {
