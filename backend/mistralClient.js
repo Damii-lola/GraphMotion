@@ -25,19 +25,32 @@ const {
  * back as context").
  */
 
-const KEYS = (process.env.MISTRAL_API_KEYS || '')
-  .split(',')
-  .map((k) => k.trim())
-  .filter(Boolean);
+// Two supported ways to configure keys, merged and deduped: the
+// original single comma-separated MISTRAL_API_KEYS, and individually
+// numbered MISTRAL_API_KEY_1, MISTRAL_API_KEY_2, ... (checked up to a
+// generous ceiling so gaps/out-of-order setting still work). Multiple
+// keys exist specifically so genuinely concurrent Mistral calls can
+// each use a DIFFERENT key's own independent rate-limit quota instead
+// of contending for one - see queueMistralCall's doc comment below for
+// why that's the real point (a single key was directly confirmed live
+// to NOT tolerate concurrent requests at all).
+function loadKeys() {
+  const fromCsv = (process.env.MISTRAL_API_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean);
+  const fromNumbered = [];
+  for (let i = 1; i <= 20; i++) {
+    const v = process.env[`MISTRAL_API_KEY_${i}`];
+    if (v && v.trim()) fromNumbered.push(v.trim());
+  }
+  return [...new Set([...fromCsv, ...fromNumbered])];
+}
+const KEYS = loadKeys();
 
 const MODEL = process.env.MISTRAL_MODEL || 'mistral-large-latest';
 
 if (KEYS.length === 0) {
-  console.warn('[mistralClient] No MISTRAL_API_KEYS configured');
-}
-
-function pickKey() {
-  return KEYS[Math.floor(Math.random() * KEYS.length)];
+  console.warn('[mistralClient] No MISTRAL_API_KEYS/MISTRAL_API_KEY_N configured');
+} else {
+  console.log(`[mistralClient] ${KEYS.length} Mistral API key(s) configured`);
 }
 
 function extractJson(text) {
@@ -125,48 +138,68 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 const MIN_CALL_INTERVAL_MS = 1200;
 const MAX_CALL_INTERVAL_MS = 5000;
 const RATE_LIMIT_DECAY_MS = 20000; // how long an elevated interval persists after the last 429 before easing back down
-let currentCallIntervalMs = MIN_CALL_INTERVAL_MS;
-let lastRateLimitHitAt = 0;
 
-function recordRateLimitHit() {
-  currentCallIntervalMs = MAX_CALL_INTERVAL_MS;
-  lastRateLimitHitAt = Date.now();
+/**
+ * A tried-and-reverted 3-way concurrency pool on top of a SINGLE key
+ * (see git history) hit real 429s almost immediately and made a real
+ * generation fail outright - direct, live confirmation that a single
+ * key's rate limit doesn't tolerate concurrent requests at all. That
+ * made the actual fix obvious: concurrency needs to spend a DIFFERENT
+ * key's own independent quota, not fight over one key's. Each
+ * configured key gets its own fully-isolated queue state (own
+ * serialized call chain, own adaptive interval, own rate-limit-hit
+ * clock) - a 429 on key A only slows down key A's future calls, never
+ * key B's. queueMistralCall round-robins across them, so with N keys
+ * configured, up to N calls now genuinely run in parallel (matching
+ * generateSceneJSON's own Promise.all-per-beat dispatch, which this
+ * finally lets mean something), while each individual key still gets
+ * the exact same serialized/adaptively-paced treatment that was
+ * already confirmed necessary for a single key on its own.
+ */
+function makeKeyQueueState(key) {
+  return {
+    key, callQueueTail: Promise.resolve(), currentCallIntervalMs: MIN_CALL_INTERVAL_MS, lastRateLimitHitAt: 0,
+  };
+}
+const keyQueues = KEYS.map(makeKeyQueueState);
+let nextKeyIndex = 0;
+
+function recordRateLimitHit(state) {
+  state.currentCallIntervalMs = MAX_CALL_INTERVAL_MS;
+  state.lastRateLimitHitAt = Date.now();
 }
 
-function currentAdaptiveInterval() {
-  if (currentCallIntervalMs <= MIN_CALL_INTERVAL_MS) return MIN_CALL_INTERVAL_MS;
-  const sinceLastHit = Date.now() - lastRateLimitHitAt;
+function currentAdaptiveInterval(state) {
+  if (state.currentCallIntervalMs <= MIN_CALL_INTERVAL_MS) return MIN_CALL_INTERVAL_MS;
+  const sinceLastHit = Date.now() - state.lastRateLimitHitAt;
   if (sinceLastHit > RATE_LIMIT_DECAY_MS) {
     // Ease back down by half once the decay window has passed, rather
     // than snapping straight back to the fast floor - a real rate
     // limit that was just hit is more likely to still be nearby than
     // one from a while ago, so this eases off gradually.
-    currentCallIntervalMs = Math.max(MIN_CALL_INTERVAL_MS, Math.round(currentCallIntervalMs / 2));
-    lastRateLimitHitAt = Date.now();
+    state.currentCallIntervalMs = Math.max(MIN_CALL_INTERVAL_MS, Math.round(state.currentCallIntervalMs / 2));
+    state.lastRateLimitHitAt = Date.now();
   }
-  return currentCallIntervalMs;
+  return state.currentCallIntervalMs;
 }
 
-// Tried a small (3-way) concurrency pool here instead of full
-// serialization, reasoning that a clean, zero-retry, zero-429 4-beat
-// generation still taking ~3 minutes (1 treatment + 4 beat calls) meant
-// the bottleneck must be the serialization itself, not the API. Tested
-// live before committing to it (per this project's own verification
-// discipline) - and the very first real run under concurrency:3 hit
-// real 429s almost immediately ("rate limited... waiting 2698ms...
-// waiting 4852ms..."), and the reactive backoff, while it correctly
-// engaged, wasn't enough to save the run from the 6-minute hard
-// timeout anyway. That's direct, live confirmation of exactly what the
-// ORIGINAL full-serialization design's own doc comment already said
-// from an earlier live incident: this key's real per-key rate limit
-// doesn't tolerate concurrent requests at all, so 3-way concurrency
-// made a real generation strictly WORSE (failed outright) instead of
-// faster. Reverted back to full serialization - see queueMistralCall's
-// own doc comment for the (still valid, now twice-confirmed) reasoning.
-let callQueueTail = Promise.resolve();
-function queueMistralCall(fn) {
-  const scheduled = callQueueTail.then(() => sleep(currentAdaptiveInterval())).then(fn);
-  callQueueTail = scheduled.catch(() => {});
+/**
+ * `makeFetch(key, state)` is called once THIS key's turn in ITS OWN
+ * queue arrives - callers use `key` for the Authorization header and
+ * hang onto `state` so a 429 can be reported back against the exact
+ * key that hit it (see callMistralRaw). Round-robin (not random)
+ * assignment so a burst of N concurrent calls (generateSceneJSON's own
+ * per-beat Promise.all) spreads evenly across every configured key
+ * instead of clumping.
+ */
+function queueMistralCall(makeFetch) {
+  if (keyQueues.length === 0) throw new Error('No Mistral API keys configured (MISTRAL_API_KEYS or MISTRAL_API_KEY_1/_2/...)');
+  const state = keyQueues[nextKeyIndex % keyQueues.length];
+  nextKeyIndex++;
+  const scheduled = state.callQueueTail
+    .then(() => sleep(currentAdaptiveInterval(state)))
+    .then(() => makeFetch(state.key, state));
+  state.callQueueTail = scheduled.catch(() => {});
   return scheduled;
 }
 
@@ -187,11 +220,14 @@ const MAX_RATE_LIMIT_RETRIES = 5;
 
 async function callMistralRaw(systemPrompt, userMessage, { jsonMode = true, maxTokens = 12000, temperature = 0.7 } = {}, rateLimitRetriesLeft = MAX_RATE_LIMIT_RETRIES) {
   // Only the actual network call is queued/spaced - NOT the retry
-  // recursion below it, so a 429 retry re-enters the same shared queue
-  // (and gets its own turn + spacing) rather than bypassing it.
+  // recursion below it, so a 429 retry re-enters the queue fresh (and
+  // - via round-robin - likely lands on a DIFFERENT key's queue this
+  // time, not necessarily the one that just got rate-limited).
   let response;
+  let usedKeyState; // set synchronously inside makeFetch, before any await - always populated by the time queueMistralCall resolves or rejects past this point
   try {
-    response = await queueMistralCall(() => {
+    response = await queueMistralCall((key, state) => {
+      usedKeyState = state;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), MISTRAL_TIMEOUT_MS);
       return fetch('https://api.mistral.ai/v1/chat/completions', {
@@ -199,7 +235,7 @@ async function callMistralRaw(systemPrompt, userMessage, { jsonMode = true, maxT
         signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${pickKey()}`,
+          Authorization: `Bearer ${key}`,
         },
         body: JSON.stringify({
           model: MODEL,
@@ -249,7 +285,7 @@ async function callMistralRaw(systemPrompt, userMessage, { jsonMode = true, maxT
   if (!response.ok) {
     const errText = await response.text();
     if (response.status === 429 && rateLimitRetriesLeft > 0) {
-      recordRateLimitHit(); // slow the shared queue down for every OTHER in-flight caller too, not just this retry
+      recordRateLimitHit(usedKeyState); // slow only THIS key's own queue down - other keys are unaffected, independent quotas
       // Prefer the server's own Retry-After if it sent one; otherwise
       // exponential backoff with jitter (jitter matters specifically
       // BECAUSE several beats retry concurrently - without it, they'd
