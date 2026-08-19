@@ -91,6 +91,46 @@ function buildAnimatable(value) {
   return value;
 }
 
+/**
+ * Wraps an already-built animatable (plain array | Property |
+ * ExpressionProperty, i.e. anything the engine's own resolve() already
+ * accepts) so that resolving it at any t subtracts a fixed [x,y,z]
+ * offset from whatever the underlying value resolves to. Duck-types
+ * the exact same `.valueAt(t)` contract resolve() itself checks for
+ * (engine/node.js: `typeof propOrValue?.valueAt === 'function'`), so
+ * the result is itself a valid drop-in animatable regardless of
+ * whether the thing it wraps is static or animated/expression-driven.
+ *
+ * Exists to solve one specific, real coordinate-system mismatch: 3D
+ * layers' `position` is native WORLD-space, where (0,0,z) projects to
+ * the screen CENTER under the default (and virtually every real)
+ * camera - fundamentally different from 2D layers' `position`, which
+ * is literal top-left-origin pixel coordinates, where the screen
+ * center is (width/2,height/2). Confirmed via direct testing that both
+ * a hand-written test script AND real Mistral generations independently
+ * made the identical mistake of authoring 3D position in pixel-center
+ * terms (e.g. [270,480,0] on a 540x960 frame) - a natural error since
+ * every OTHER position field in this schema (2D layers, shape-content
+ * offsets) already uses pixel coordinates. Rather than keep re-fighting
+ * that confusion via prompt wording, buildLayer3D now accepts 3D
+ * `position` in the SAME pixel-coordinate convention as everything
+ * else, and this wrapper performs the actual pixel->world conversion
+ * (subtract half the frame dimensions) transparently at resolve time,
+ * so authors never need to think in two different coordinate systems.
+ */
+function offsetAnimatable(animatable, offset) {
+  if (typeof animatable?.valueAt === 'function') {
+    return {
+      valueAt(t) {
+        const v = animatable.valueAt(t);
+        return [(v[0] || 0) - offset[0], (v[1] || 0) - offset[1], (v[2] || 0) - (offset[2] || 0)];
+      },
+    };
+  }
+  const v = animatable;
+  return [(v[0] || 0) - offset[0], (v[1] || 0) - offset[1], (v[2] || 0) - (offset[2] || 0)];
+}
+
 /** A shape-geometry parameter (or any effect param) is treated as a static value - if given an AnimatableValue shape, it's resolved ONCE at t=0 rather than crashing, a reasonable fallback for a field this file intentionally doesn't re-evaluate per frame (see the class-level design-boundary note above). */
 function resolveStatic(value) {
   const built = buildAnimatable(value);
@@ -483,13 +523,42 @@ function buildLayer3D(layerDef, beatContext) {
   const innerPosition = CENTERED_CONTENT_TYPES.has(layerDef.type) ? [w / 2, h / 2] : [0, 0];
   const node2D = build2DLayer({ ...layerDef, position: innerPosition, anchor: [0, 0] }, beatContext, idMap);
 
+  // 3D `position` is authored in the SAME pixel-coordinate convention
+  // as 2D layers (frame center = [beatContext.width/2,beatContext.height/2]),
+  // NOT the engine's native world-space (frame center = [0,0,z]) - see
+  // offsetAnimatable's doc comment for the full story of why this
+  // conversion exists. Default (when position is omitted) is pixel-style
+  // frame-center, which offsetAnimatable then correctly resolves to
+  // world (0,0,0).
+  const frameCenterX = (beatContext.width || 540) / 2;
+  const frameCenterY = (beatContext.height || 960) / 2;
+  const pixelPosition = buildAnimatable(layerDef.position ?? [frameCenterX, frameCenterY, 0]);
+
   return new Layer3D({
-    position: buildAnimatable(layerDef.position ?? [0, 0, 0]),
+    position: offsetAnimatable(pixelPosition, [frameCenterX, frameCenterY, 0]),
     rotationX: buildAnimatable(layerDef.rotationX ?? 0),
     rotationY: buildAnimatable(layerDef.rotationY ?? 0),
     rotationZ: buildAnimatable(layerDef.rotationZ ?? 0),
     scale: buildAnimatable(layerDef.scale ?? [1, 1, 1]),
-    anchor: buildAnimatable(layerDef.anchor ?? [0, 0, 0]),
+    // Default anchor CENTERED ([w/2,h/2,0]), not the plane's top-left
+    // corner - a real, deliberate default-behavior change, not just
+    // another prompt fix. Real, repeated evidence across multiple live
+    // generations (not a hypothetical): even with explicit, prominent
+    // prompt guidance telling the model to set anchor:[width/2,height/2,0]
+    // whenever it wants "position" to mean "center" (the overwhelmingly
+    // common case), compliance was inconsistent - one real beat had 3 of
+    // 5 3D layers correctly centered and 2 that omitted anchor entirely,
+    // rendering full-frame content almost entirely off-screen despite a
+    // frame-center "position". Prompting alone wasn't converging on this
+    // reliably, so the default itself now matches what nearly every real
+    // author actually wants: a layer's "position" places its CENTER,
+    // matching how AE's own Rectangle/shape tools already default a new
+    // shape layer's anchor to its own bounding-box center, not its
+    // corner. An author who deliberately wants an off-center pivot (a
+    // page-flip rotating around an edge) can still set anchor explicitly
+    // - that's a real, legitimate, but comparatively rare case, not the
+    // common one this default should optimize for.
+    anchor: buildAnimatable(layerDef.anchor ?? [w / 2, h / 2, 0]),
     opacity: buildAnimatable(layerDef.opacity ?? 1),
     width: w,
     height: h,

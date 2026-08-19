@@ -367,7 +367,7 @@ function validateEffect(effect, path, errors) {
   }
 }
 
-function validateLayer(layer, path, errors, knownIds) {
+function validateLayer(layer, path, errors, knownIds, is3D = false) {
   if (!isPlainObject(layer)) { errors.push(`${path}: must be an object`); return; }
   if (!LAYER_TYPES.includes(layer.type)) {
     if (layer.isAdjustmentLayer !== undefined || /adjust/i.test(String(layer.type))) {
@@ -386,6 +386,26 @@ function validateLayer(layer, path, errors, knownIds) {
     if (!TRACK_MATTE_TYPES.includes(layer.trackMatte.type)) errors.push(`${path}.trackMatte.type: "${layer.trackMatte.type}" is not real (expected one of ${TRACK_MATTE_TYPES.join(', ')})`);
   }
   if (Array.isArray(layer.effects)) layer.effects.forEach((e, i) => validateEffect(e, `${path}.effects[${i}]`, errors));
+
+  // Real bug found via direct inspection of a live-generated 3D beat: a
+  // "shards" precomp layer set an explicit anchor:[60,60,0] (sized for
+  // its real, intended ~120x120 footprint) but omitted width/height
+  // entirely. buildLayer3D's own width/height fallback (`layerDef.width
+  // || beatContext.width`) then silently expanded it to the FULL FRAME
+  // size (540x960) while the anchor stayed pinned near its old, now-
+  // wrong corner - the layer's actual center moved to (270,480) but its
+  // pivot stayed at (60,60), so "position" no longer places the layer
+  // where it visually appears to, throwing it badly off from its
+  // intended frame-center placement. This is exactly the kind of silent
+  // fallback-vs-explicit-value mismatch prompting alone won't reliably
+  // prevent, so it's enforced structurally: a 3D layer that sets an
+  // explicit anchor MUST also set explicit width/height (so the anchor
+  // is guaranteed to describe the layer's REAL footprint), or omit
+  // anchor entirely and get the correct auto-centered default.
+  if (is3D && layer.anchor !== undefined && layer.type !== 'null'
+      && (layer.width === undefined || layer.height === undefined)) {
+    errors.push(`${path}: sets an explicit "anchor" but omits "width"/"height". For a 3D layer, omitting width/height falls back to the FULL FRAME size, which will not match an anchor chosen for the layer's real (usually smaller) intended size, throwing its actual position off badly. Either set explicit "width" and "height" alongside "anchor", or omit "anchor" entirely to get the correct auto-centered default.`);
+  }
 
   if (layer.type === 'shape') {
     if (!Array.isArray(layer.contents)) errors.push(`${path}.contents: a shape layer requires a contents array`);
@@ -436,7 +456,7 @@ function validateBeatVisual(visual, path, errors, knownIds) {
   if (visual.layers.length === 0) {
     errors.push(`${path}.layers: must contain at least one layer - a beat with zero foreground layers renders as an empty/dead frame with nothing happening for its entire duration.`);
   }
-  visual.layers.forEach((layer, i) => validateLayer(layer, `${path}.layers[${i}]`, errors, knownIds));
+  visual.layers.forEach((layer, i) => validateLayer(layer, `${path}.layers[${i}]`, errors, knownIds, !!visual.is3D));
 
   if (visual.is3D) {
     if (Array.isArray(visual.lights)) visual.lights.forEach((l, i) => validateLight(l, `${path}.lights[${i}]`, errors));
