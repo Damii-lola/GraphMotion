@@ -118,6 +118,32 @@ function starPath({
   return roundedPolygonFromVertices(vertices, roundnessArr);
 }
 
+/**
+ * AE's Pen tool: an author-specified bezier path from explicit anchor
+ * points, rather than a procedurally-generated primitive. Genuinely
+ * trivial to add - path.js's renderPathToContext (and every other
+ * consumer of a shape's {anchors, closed} output: trimPaths.js,
+ * repeater.js, shapeLayer.js's fill/stroke) already works on this
+ * exact generic anchor format, and the schema's own text-on-path
+ * feature (onPath.anchors) already authors the identical shape from
+ * the outside - this just exposes that same already-tested format as
+ * a real shape kind too.
+ *
+ * Added directly in response to a real, repeated live-generation
+ * failure: with only 4 closed-form primitives (rectangle/ellipse/
+ * polygon/star) available, the model repeatedly tried to author
+ * custom icon-like marks (checkmarks, arrows, freeform glyphs) it had
+ * no correct way to express, and kept guessing "path" as the
+ * shape.kind (a natural but wrong guess - "path" IS the correct
+ * CONTENT ITEM type one level up, just not a shape KIND). Rather than
+ * keep telling the model "no, compose it from primitives instead" for
+ * something primitives genuinely can't build, this gives it the real
+ * capability AE's own Pen tool provides.
+ */
+function customPath({ anchors = [], closed = true } = {}) {
+  return { anchors, closed };
+}
+
 module.exports = {
-  rectanglePath, ellipsePath, polygonPath, starPath, roundedPolygonFromVertices, KAPPA,
+  rectanglePath, ellipsePath, polygonPath, starPath, customPath, roundedPolygonFromVertices, KAPPA,
 };

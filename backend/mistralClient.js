@@ -511,6 +511,22 @@ inside "contents":
     polygon:   { points (side count), radius, position, rotation (deg), roundness }
     star:      { points, innerRadius, outerRadius, position, rotation (deg),
                  innerRoundness, outerRoundness }
+    customPath: { anchors: [ {"point":[x,y], "outTangent":[dx,dy]?,
+                 "inTangent":[dx,dy]?}, ... ] (2+ points, REQUIRED),
+                 closed: boolean (default true) }
+      // the real Pen tool: an author-drawn bezier path from explicit
+      // points, for custom icon/glyph/mark shapes the 4 primitives
+      // above genuinely can't produce (a checkmark, an arrow, a custom
+      // logo mark). Each anchor is one point the path passes through,
+      // in the shape's own LOCAL coordinate space (same centered-on-
+      // (0,0) convention as every other shape kind - NOT frame pixel
+      // coordinates). outTangent/inTangent are OPTIONAL control-handle
+      // OFFSETS (not absolute points) from that anchor, matching AE's
+      // own direction-handle behavior - omit both for a straight line
+      // into/out of that anchor, a real, common, valid choice, not a
+      // fallback. THERE IS NO "path" shape kind - if you want a custom
+      // shape, "kind" is "customPath", not "path" (that word is
+      // already used one level up, for the CONTENT ITEM's own "type").
     NOTE: shape geometry is centered on its own local (0,0) by default,
     matching real vector-tool authoring - the LAYER's own position/anchor is
     what actually places it on screen, not the shape's own "position" param

@@ -5,7 +5,7 @@ const { Node, resolve } = require('./engine/node');
 const { Composition, PrecompNode } = require('./engine/composition');
 const { renderContents } = require('./engine/shapeLayer');
 const {
-  rectanglePath, ellipsePath, polygonPath, starPath,
+  rectanglePath, ellipsePath, polygonPath, starPath, customPath,
 } = require('./engine/shapePrimitives');
 const { renderAnimatedText } = require('./engine/textAnimator');
 const { renderAnimatedTextOnPath } = require('./engine/textPath');
@@ -109,7 +109,7 @@ function resolveParamsAtTime(params, t) {
 // ---------------------------------------------------------------------
 
 const SHAPE_BUILDERS = {
-  rectangle: rectanglePath, ellipse: ellipsePath, polygon: polygonPath, star: starPath,
+  rectangle: rectanglePath, ellipse: ellipsePath, polygon: polygonPath, star: starPath, customPath,
 };
 
 function buildShapePathDef(shapeDef) {

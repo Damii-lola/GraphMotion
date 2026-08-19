@@ -155,7 +155,7 @@ const { BLEND_MODE_MAP } = require('./engine/layerStack');
  */
 
 const LAYER_TYPES = ['shape', 'text', 'image', 'precomp', 'null', 'generate'];
-const SHAPE_KINDS = ['rectangle', 'ellipse', 'polygon', 'star'];
+const SHAPE_KINDS = ['rectangle', 'ellipse', 'polygon', 'star', 'customPath'];
 const SHAPE_CONTENT_TYPES = ['path', 'trim', 'repeater', 'pathOp', 'fill', 'stroke', 'group'];
 const PATH_OP_MODES = ['add', 'subtract', 'intersect', 'exclude', 'merge'];
 const SELECTOR_TYPES = ['range', 'wiggly'];
@@ -337,6 +337,17 @@ function validateShapeContentItem(item, path, errors) {
   if (item.type === 'path') {
     if (!item.shape || !SHAPE_KINDS.includes(item.shape.kind)) {
       errors.push(`${path}.shape.kind: "${item.shape && item.shape.kind}" is not a real shape kind (expected one of ${SHAPE_KINDS.join(', ')})`);
+    } else if (item.shape.kind === 'customPath') {
+      const anchors = item.shape.params && item.shape.params.anchors;
+      if (!Array.isArray(anchors) || anchors.length < 2) {
+        errors.push(`${path}.shape.params.anchors: a "customPath" shape requires an array of at least 2 anchor points ({"point":[x,y],"outTangent":[dx,dy]?,"inTangent":[dx,dy]?} - tangents optional, omit both for a straight-line segment into/out of that anchor).`);
+      } else {
+        anchors.forEach((a, i) => {
+          if (!isPlainObject(a) || !isNumberArray(a.point, 2)) {
+            errors.push(`${path}.shape.params.anchors[${i}].point: must be a real [x,y] pixel coordinate.`);
+          }
+        });
+      }
     }
   } else if (item.type === 'pathOp') {
     if (!PATH_OP_MODES.includes(item.mode)) errors.push(`${path}.mode: "${item.mode}" is not a real path operation mode (expected one of ${PATH_OP_MODES.join(', ')})`);
