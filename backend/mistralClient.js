@@ -1320,4 +1320,51 @@ async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targe
   return result;
 }
 
-module.exports = { generateSceneJSON, generateEditedSceneJSON };
+/**
+ * Real, missing safety net found while investigating a production
+ * report of a job stuck "processing" until the FRONTEND's own 15-
+ * minute client-side give-up kicked in: unlike the render phase
+ * (longVideoOrchestrator.js's per-chunk 4-minute timeout, with proper
+ * IPC failure reporting on every exit path), the GENERATION phase had
+ * no outer bound at all - its worst case was whatever a chain of
+ * nested retry budgets happened to add up to (per-beat validation
+ * retries x per-call rate-limit/network retries x however many beats),
+ * which is technically finite but not usefully bounded. Even a
+ * generation that's genuinely still making progress, just slowly, is
+ * indistinguishable from a real hang to a user watching a spinner -
+ * and renderWorker.js's own try/catch only catches THROWN errors, not
+ * "still running, just taking a very long time."
+ *
+ * Wrapping the exported entry points (not internal call sites) means
+ * every caller gets this for free with no other file needing changes.
+ * 6 minutes leaves real room for a genuinely rich multi-beat
+ * generation with several retries (each beat: up to 7 validation
+ * retries x up to 5 rate-limit/network retries, at the queue's now-
+ * adaptive 1.2-5s spacing) while still failing fast and CLEANLY well
+ * before the frontend's own 15-minute threshold - the difference
+ * between "the job failed, try again" appearing at minute 6 versus a
+ * dead spinner for 15 minutes with no real information either way.
+ */
+const GENERATION_HARD_TIMEOUT_MS = 6 * 60 * 1000;
+
+function withHardTimeout(promiseFactory, label) {
+  return async (...args) => {
+    let timeoutHandle;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutHandle = setTimeout(
+        () => reject(new Error(`${label} exceeded its ${GENERATION_HARD_TIMEOUT_MS / 1000}s hard timeout - failing fast instead of leaving the job stuck "processing" indefinitely.`)),
+        GENERATION_HARD_TIMEOUT_MS,
+      );
+    });
+    try {
+      return await Promise.race([promiseFactory(...args), timeoutPromise]);
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+  };
+}
+
+module.exports = {
+  generateSceneJSON: withHardTimeout(generateSceneJSON, 'generateSceneJSON'),
+  generateEditedSceneJSON: withHardTimeout(generateEditedSceneJSON, 'generateEditedSceneJSON'),
+};
