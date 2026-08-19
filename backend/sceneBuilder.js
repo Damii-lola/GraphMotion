@@ -274,7 +274,21 @@ function buildShapeDraw(layerDef) {
   return (ctx, t) => renderContents(ctx, contents, t);
 }
 
-function buildTextDraw(layerDef) {
+/**
+ * Real bug found via live frame inspection: the old hardcoded
+ * `maxWidth: layerDef.maxWidth || 900` fallback is WIDER than the
+ * entire 540px-wide comp, so any text layer that omits "maxWidth"
+ * (common - the prompt lists it as optional with no stated default)
+ * never wraps and gets centered as one long unbroken line, overflowing
+ * off BOTH edges of the frame. Confirmed directly: a real generated
+ * "THE OCEAN IS LYING TO YOU." headline with no "maxWidth" rendered
+ * with only "LYING TO YOU" visible, the rest pushed off-frame. The
+ * fallback now derives from the actual comp width instead of a
+ * disconnected constant, leaving a 30px margin each side (540-60=480,
+ * matching what real generations that DO set it explicitly tend to
+ * use) so omitting "maxWidth" is always safe by construction.
+ */
+function buildTextDraw(layerDef, beatContext) {
   const animators = (layerDef.animators || []).map(buildAnimator);
   const textOpts = {
     fontFamily: layerDef.fontFamily || 'sans-serif',
@@ -296,7 +310,7 @@ function buildTextDraw(layerDef) {
   }
   return (ctx, t) => renderAnimatedText(ctx, layerDef.text, t, {
     ...textOpts,
-    maxWidth: layerDef.maxWidth || 900,
+    maxWidth: layerDef.maxWidth || Math.max(100, beatContext.width - 60),
     centerX: layerDef.centerX || 0,
     centerY: layerDef.centerY || 0,
   });
@@ -437,7 +451,7 @@ function build2DLayer(layerDef, beatContext, idMap) {
       draw: withEffects((ctx, t) => renderContents(ctx, rawContents, t), layerDef, w, h),
     });
   } else if (layerDef.type === 'text') {
-    node = new Node({ ...commonNodeOpts(layerDef), draw: withEffects(buildTextDraw(layerDef), layerDef, w, h) });
+    node = new Node({ ...commonNodeOpts(layerDef), draw: withEffects(buildTextDraw(layerDef, beatContext), layerDef, w, h) });
   } else if (layerDef.type === 'generate') {
     node = new Node({ ...commonNodeOpts(layerDef), draw: withEffects(buildGenerateDraw(layerDef, w, h), layerDef, w, h) });
   } else if (layerDef.type === 'image') {

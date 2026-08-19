@@ -196,8 +196,14 @@ function isNumberArray(v, len) { return Array.isArray(v) && v.length === len && 
  * needs, then that many lineHeights. It only needs to be roughly right -
  * it feeds a loose tolerance check, not an exact one.
  */
+// Matches sceneBuilder.js's own buildTextDraw fallback (comp width 540
+// minus a 30px margin each side) - kept as a literal here since this
+// module validates JSON structurally and has no beatContext/comp size
+// of its own, and the engine only ever renders at this one fixed size.
+const DEFAULT_TEXT_MAX_WIDTH = 480;
+
 function estimateTextEffectiveSize(layer) {
-  const width = typeof layer.maxWidth === 'number' ? layer.maxWidth : 900;
+  const width = typeof layer.maxWidth === 'number' ? layer.maxWidth : DEFAULT_TEXT_MAX_WIDTH;
   const fontSize = typeof layer.fontSize === 'number' ? layer.fontSize : 48;
   const lineHeight = typeof layer.lineHeight === 'number' ? layer.lineHeight : fontSize * 1.15;
   const text = typeof layer.text === 'string' ? layer.text : '';
@@ -709,6 +715,17 @@ function autoRepairBeat(beat) {
             layer.effects = layer.effects.filter((item) => !(isPlainObject(item) && SHAPE_CONTENT_TYPES.includes(item.type)));
             layer.contents = [...(Array.isArray(layer.contents) ? layer.contents : []), ...misplacedContent];
           }
+        }
+      }
+
+      if (layer.type === 'text') {
+        // Missing/oversized "maxWidth" - the renderer's own fallback is
+        // now comp-width-safe (see sceneBuilder.js's buildTextDraw), but
+        // an EXPLICIT value the AI sets itself (e.g. copying a stray
+        // 900) isn't covered by that fallback at all, so clamp it here
+        // too rather than trusting every generation to pick a sane one.
+        if (typeof layer.maxWidth !== 'number' || layer.maxWidth > DEFAULT_TEXT_MAX_WIDTH) {
+          layer.maxWidth = DEFAULT_TEXT_MAX_WIDTH;
         }
       }
 

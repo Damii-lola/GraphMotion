@@ -68,11 +68,25 @@ function multiply(m1, m2) {
  * space on it), scale, rotate, THEN translate to the final position.
  * Composed via the primitives above (not hand-derived as one closed-
  * form expression) so each piece stays independently testable/correct.
+ *
+ * `rotation` is DEGREES (matching the schema's own documented units -
+ * every "rotation" field the AI generates, here and in the prompt, is
+ * "AnimatableValue<number> (degrees)"), converted to radians right here
+ * before reaching `rotate()`. A real, severe bug found via live frame
+ * inspection: this conversion never existed anywhere in the engine, so
+ * `rotate(rotation)` fed a raw DEGREE value straight into a function
+ * expecting RADIANS - confirmed directly, a text layer with
+ * "rotation":-3 (meant as a subtle -3deg stylistic tilt) rendered
+ * rotated -3 RADIANS (~-171.9deg), i.e. almost perfectly upside-down.
+ * This is the single shared choke point for every caller (Node's own
+ * layer transform, repeater.js's per-copy transform, shapeLayer.js's
+ * nested group transform), so fixing it here fixes all of them at once
+ * instead of patching each call site separately.
  */
 function fromTRS({ position = [0, 0], rotation = 0, scale: s = [1, 1], anchor = [0, 0] }) {
   let m = translate(-anchor[0], -anchor[1]);
   m = multiply(scale(s[0], s[1]), m);
-  m = multiply(rotate(rotation), m);
+  m = multiply(rotate((rotation * Math.PI) / 180), m);
   m = multiply(translate(position[0], position[1]), m);
   return m;
 }

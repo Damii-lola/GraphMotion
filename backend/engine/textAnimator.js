@@ -106,7 +106,11 @@ function renderAnimatedText(ctx, text, t, opts) {
     ctx.save();
     ctx.globalAlpha = finalOpacity;
     ctx.translate(c.x + dx, c.y + dy);
-    ctx.rotate(dRotation);
+    // dRotation accumulates animator "rotation" DELTAS, degrees like
+    // every other rotation field in the schema - ctx.rotate() itself
+    // wants radians, the same unit mismatch fixed in matrix2d.js's
+    // fromTRS (see its doc comment for the full story).
+    ctx.rotate((dRotation * Math.PI) / 180);
     ctx.scale(scaleMul, scaleMul);
     ctx.fillStyle = fillStyle;
     ctx.fillText(c.ch, 0, 0);

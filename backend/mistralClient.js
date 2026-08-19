@@ -592,6 +592,11 @@ LAYERDEF - one entry in "layers" (or "background")
   // --- type:"text" ---
   "text": string, "fontFamily": string, "fontWeight": string, "fontSize": number,
   "lineHeight": number, "maxWidth": number, "fillStyle": color,
+      // "maxWidth" controls line-wrapping (text wraps to a new line once a
+      // line would exceed it) - omitting it defaults to a safe ${COMP_WIDTH - 60}px
+      // (comp width minus margin), but for a large headline set it
+      // explicitly to control exactly where it wraps, e.g. ${Math.round(COMP_WIDTH * 0.85)}
+      // for most single-column text on this ${COMP_WIDTH}px-wide canvas.
   "animators": [ { "selector": SelectorDef, "properties": { "opacity": number,
       "position": [dx,dy], "scale": number, "rotation": number } }, ... ],
       // real per-character animation - see SELECTORS below. properties are

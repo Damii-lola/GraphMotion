@@ -141,7 +141,9 @@ function renderAnimatedTextOnPath(ctx, text, anchors, t, opts) {
     ctx.translate(c.x, c.y);
     ctx.rotate(c.angle);
     ctx.translate(dx, dy);
-    ctx.rotate(dRotation);
+    // Same degrees->radians fix as textAnimator.js's identical
+    // dRotation accumulator - see matrix2d.js's fromTRS doc comment.
+    ctx.rotate((dRotation * Math.PI) / 180);
     ctx.scale(scaleMul, scaleMul);
     ctx.fillStyle = fillStyle;
     ctx.fillText(c.ch, 0, 0);
