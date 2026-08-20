@@ -522,9 +522,19 @@ nearly every layer's entrance (and often its whole duration).
 BEATVISUAL
 =====================================================================
 {
-  "background": LayerDef | null,  // optional full-frame layer drawn first
-                                    // (typically a "generate" gradient/noise,
-                                    // or a solid-fill shape sized to the frame)
+  "background": LayerDef | null,  // optional full-frame layer drawn first.
+      // EXPLICIT PRODUCT RULE: a background must NEVER be a single flat
+      // color - always a real gradient. Use "generate":{"kind":
+      // "gradientRamp", ...} with "startColor"/"endColor" being a
+      // LIGHTER or DARKER variant of the SAME hue (e.g. startColor
+      // "#0A2435", endColor "#123449" - dim-to-normal of the same blue;
+      // or startColor "#1E5C8A", endColor "#0A2435" - light-to-normal),
+      // never startColor===endColor. Vary the hue from beat to beat
+      // across one video - don't reuse the identical background color
+      // for every single beat. A flat-fill shape background, or a
+      // "fractalNoise"/other generate kind with identical colorA/colorB,
+      // is enforced as a mistake (auto-corrected before it ever reaches
+      // validation), so always author a real 2-color gradientRamp here.
   "layers": [ LayerDef, ... ],  // REQUIRED, must be NON-EMPTY - every beat
                                   // needs real foreground content (text,
                                   // shapes, an image...). "background" alone

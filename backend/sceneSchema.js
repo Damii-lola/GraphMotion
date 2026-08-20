@@ -213,6 +213,92 @@ function estimateTextEffectiveSize(layer) {
 }
 
 // ---------------------------------------------------------------------
+// Explicit product rule (not a schema quirk): a beat's background may
+// NEVER be a single flat color - always a real 2-stop gradient. Small,
+// self-contained hex/RGB helpers rather than importing anything from
+// engine/ - this module validates JSON structurally and has always
+// stayed dependency-free from the rendering engine's own internals.
+// ---------------------------------------------------------------------
+function hexToRgbLocal(hex) {
+  const clean = String(hex).replace('#', '');
+  const full = clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean;
+  const num = parseInt(full, 16) || 0;
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+function rgbToHexLocal([r, g, b]) {
+  return `#${[r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('')}`;
+}
+/** Lightens (factor>0) or darkens (factor<0) a hex color toward white/black by a fraction of its remaining headroom - a plain RGB-space shift, not true HSL rotation, but that's all "light-to-normal"/"dim-to-normal" of the SAME hue actually needs. */
+function adjustLightness(hex, factor) {
+  const [r, g, b] = hexToRgbLocal(hex);
+  const mix = (c) => (factor >= 0 ? c + (255 - c) * factor : c + c * factor);
+  return rgbToHexLocal([mix(r), mix(g), mix(b)]);
+}
+
+const DEFAULT_BACKGROUND_HUES = ['#0A2435', '#1A1035', '#2A0A1F', '#0A2A1A', '#241A0A', '#1A2A24'];
+
+function isValidGradientBackground(bg) {
+  return isPlainObject(bg) && bg.type === 'generate' && isPlainObject(bg.generate)
+    && bg.generate.kind === 'gradientRamp' && isPlainObject(bg.generate.params)
+    && typeof bg.generate.params.startColor === 'string' && typeof bg.generate.params.endColor === 'string'
+    && bg.generate.params.startColor.toLowerCase() !== bg.generate.params.endColor.toLowerCase();
+}
+
+/** Best-effort salvage of "the one color this background was already using" from whatever shape it's currently in, so the repaired gradient stays roughly on-hue instead of picking something unrelated - only falls back to a fixed rotating palette when nothing usable is found at all. */
+function extractBaseColor(bg) {
+  if (isPlainObject(bg)) {
+    if (bg.type === 'generate' && isPlainObject(bg.generate) && isPlainObject(bg.generate.params)) {
+      const p = bg.generate.params;
+      if (typeof p.startColor === 'string') return p.startColor;
+      if (typeof p.colorA === 'string') return p.colorA;
+      if (typeof p.color === 'string') return p.color;
+    }
+    if (bg.type === 'shape' && Array.isArray(bg.contents)) {
+      const fillItem = bg.contents.find((c) => isPlainObject(c) && c.type === 'fill' && typeof c.color === 'string');
+      if (fillItem) return fillItem.color;
+    }
+  }
+  return DEFAULT_BACKGROUND_HUES[Math.floor(Math.random() * DEFAULT_BACKGROUND_HUES.length)];
+}
+
+/**
+ * Rebuilds a background wholesale into a canonical gradientRamp.
+ * Confirmed via real generated/rendered output: the AI regularly
+ * authors either a flat-fill shape background, or a "generate" layer
+ * whose colorA/colorB (or startColor/endColor) are IDENTICAL - both
+ * render as one unbroken flat color despite superficially looking like
+ * a gradient/noise layer in the JSON, and a real rendered video showed
+ * exactly this: the same flat dark color for the entire runtime.
+ * Keeps whatever base hue can be salvaged (extractBaseColor) and
+ * derives a genuinely different second stop - lighter OR darker,
+ * chosen at random each time this runs, so "not always the same
+ * color" holds both within a beat (a real 2-stop gradient) and across
+ * a video's several beats (each repair independently rerolls hue
+ * variant/shape/direction).
+ */
+function enforceGradientBackground(background) {
+  if (!isPlainObject(background) || isValidGradientBackground(background)) return background;
+  const baseColor = extractBaseColor(background);
+  const lighten = Math.random() < 0.5; // light-to-normal vs dim-to-normal
+  const otherColor = adjustLightness(baseColor, (lighten ? 1 : -1) * (0.28 + Math.random() * 0.14));
+  const [startColor, endColor] = lighten ? [otherColor, baseColor] : [baseColor, otherColor];
+  const shape = Math.random() < 0.5 ? 'linear' : 'radial';
+  return {
+    ...(background.id ? { id: background.id } : {}),
+    type: 'generate',
+    generate: {
+      kind: 'gradientRamp',
+      params: {
+        startColor,
+        endColor,
+        shape,
+        ...(shape === 'linear' ? { endPoint: Math.random() < 0.5 ? [0, 960] : [540, 0] } : {}),
+      },
+    },
+  };
+}
+
+// ---------------------------------------------------------------------
 // Real, repeated finding across MULTIPLE live generations (not a
 // one-off): the model consistently invents/misplaces type names across
 // these FOUR separate closed vocabularies (a real layer type, a real
@@ -852,7 +938,10 @@ function autoRepairBeat(beat) {
     }
   };
 
-  if (isPlainObject(beat.visual.background)) walkLayers([beat.visual.background]);
+  if (isPlainObject(beat.visual.background)) {
+    beat.visual.background = enforceGradientBackground(beat.visual.background);
+    walkLayers([beat.visual.background]);
+  }
   walkLayers(beat.visual.layers);
 
   autoSpreadDuplicatePositions(beat.visual);
