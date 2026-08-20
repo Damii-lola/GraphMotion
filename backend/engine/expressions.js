@@ -201,7 +201,24 @@ class ExpressionProperty {
       clamp: (v, lo, hi) => clamp(v, lo, hi),
     });
 
-    return this._script.runInContext(context);
+    // Real, confirmed-live crash: an expression referencing a variable
+    // this sandbox doesn't provide (most often "index" - a genuinely
+    // real AE per-character-animator expression variable, just not one
+    // this engine's own selector expression context happens to inject)
+    // throws a plain ReferenceError straight out of runInContext with
+    // NO handling anywhere above this, taking the ENTIRE render process
+    // down mid-frame. One malformed expression on one character
+    // shouldn't be able to crash a whole video - fall back to this
+    // property's own un-transformed base value (matching AE's real
+    // "value" semantics: an expression is an ADDITIVE layer on top of
+    // it, so losing the expression's contribution is a graceful
+    // degradation, not a meaningless default) and keep rendering.
+    try {
+      return this._script.runInContext(context);
+    } catch (err) {
+      console.warn(`[expressions] evaluation failed ("${this.expressionString}"): ${err.message} - using the property's own base value instead of crashing the render.`);
+      return baseValue;
+    }
   }
 }
 

@@ -237,11 +237,42 @@ function adjustLightness(hex, factor) {
 
 const DEFAULT_BACKGROUND_HUES = ['#0A2435', '#1A1035', '#2A0A1F', '#0A2A1A', '#241A0A', '#1A2A24'];
 
+/** Sum of per-channel absolute differences - cheap and good enough to distinguish "a real, visible gradient" from "technically two different hex strings that render as indistinguishable on screen". */
+function colorDistance(hexA, hexB) {
+  const [r1, g1, b1] = hexToRgbLocal(hexA);
+  const [r2, g2, b2] = hexToRgbLocal(hexB);
+  return Math.abs(r1 - r2) + Math.abs(g1 - g2) + Math.abs(b1 - b2);
+}
+// Confirmed live: a real generated gradient used startColor "#0A0A12"
+// and endColor "#06060b" - two DIFFERENT hex strings (passing a naive
+// string-inequality check) that are still close enough in value to
+// render as an essentially flat near-black backdrop. This threshold is
+// picked to let a real, subtle-but-visible gradient through while
+// rejecting a near-identical pair like that one (their distance is
+// ~13, well under this).
+const MIN_GRADIENT_COLOR_DISTANCE = 45;
+
 function isValidGradientBackground(bg) {
-  return isPlainObject(bg) && bg.type === 'generate' && isPlainObject(bg.generate)
-    && bg.generate.kind === 'gradientRamp' && isPlainObject(bg.generate.params)
-    && typeof bg.generate.params.startColor === 'string' && typeof bg.generate.params.endColor === 'string'
-    && bg.generate.params.startColor.toLowerCase() !== bg.generate.params.endColor.toLowerCase();
+  if (!isPlainObject(bg) || bg.type !== 'generate' || !isPlainObject(bg.generate)
+      || bg.generate.kind !== 'gradientRamp' || !isPlainObject(bg.generate.params)) return false;
+  const p = bg.generate.params;
+  if (typeof p.startColor !== 'string' || typeof p.endColor !== 'string') return false;
+  if (colorDistance(p.startColor, p.endColor) < MIN_GRADIENT_COLOR_DISTANCE) return false;
+  // Degenerate geometry: startPoint===endPoint collapses ANY gradient
+  // (linear or radial) into a near-flat single color, regardless of
+  // how different startColor/endColor are - confirmed live: a real
+  // generated radial gradient with startPoint===endPoint===[270,480]
+  // rendered almost the ENTIRE frame as flat black (its own endColor).
+  // A zero-length direction/radius leaves virtually every pixel beyond
+  // the single center point clamped to t=1 (generateEffects.js's own
+  // `radius = Math.hypot(dx,dy) || 1` - the "|| 1" fallback exists for
+  // exactly this degenerate case, but a 1px radius on a 540x960 frame
+  // is still visually indistinguishable from a hard cutoff).
+  if (Array.isArray(p.startPoint) && Array.isArray(p.endPoint)
+      && Math.abs(p.startPoint[0] - p.endPoint[0]) < 2 && Math.abs(p.startPoint[1] - p.endPoint[1]) < 2) {
+    return false;
+  }
+  return true;
 }
 
 /** Best-effort salvage of "the one color this background was already using" from whatever shape it's currently in, so the repaired gradient stays roughly on-hue instead of picking something unrelated - only falls back to a fixed rotating palette when nothing usable is found at all. */
@@ -390,6 +421,21 @@ function validateAnimatable(value, path, errors, vectorLen) {
     return;
   }
   if (typeof value.expression === 'string') {
+    // Real, confirmed-live crash (not theorized): a per-character range
+    // selector's "end" used {"expression":"(index===10||...)?0:100"} -
+    // "index" is a genuine, real After Effects expression convention,
+    // but this engine's own expression sandbox (expressions.js) only
+    // ever injects "time"/"value"/Math/the wiggle-loopOut-loopIn-
+    // linear-ease-random-clamp helpers, nothing per-character or per-
+    // copy - so this threw a bare ReferenceError straight out of
+    // vm.Script.runInContext with no handling anywhere above it,
+    // crashing the entire render process mid-frame (now ALSO hardened
+    // separately in expressions.js itself to never crash on this, but
+    // catching it here means a retry can fix the actual mistake instead
+    // of silently losing the intended per-character effect).
+    if (/\bindex\b/.test(value.expression)) {
+      errors.push(`${path}.expression: "${value.expression}" references "index", which is NOT a real variable anywhere in this engine's expression sandbox. "index" is a real After Effects convention, but this engine only ever provides "time" (current evaluation time) and "value" (this property's own base/keyframed value) inside an expression, plus Math and the wiggle/loopOut/loopIn/linear/ease/random/clamp helper functions - there is no per-character or per-copy index available. Build the effect from "time" instead - a per-character stagger already comes from the SELECTOR's own sweep (see SELECTORS), not from an index referenced inside the expression itself.`);
+    }
     if (value.base !== undefined) validateAnimatable(value.base, `${path}.base`, errors, vectorLen);
     return;
   }
@@ -439,8 +485,21 @@ function validateSelector(sel, path, errors) {
     errors.push(`${path}.type: "${sel.type}" is not a real selector type (expected one of ${SELECTOR_TYPES.join(', ')})`);
     return;
   }
-  if (sel.type === 'range' && sel.shape && !RANGE_SELECTOR_SHAPES.includes(sel.shape)) {
-    errors.push(`${path}.shape: "${sel.shape}" is not a real range-selector shape (expected one of ${RANGE_SELECTOR_SHAPES.join(', ')})`);
+  if (sel.type === 'range') {
+    if (sel.shape && !RANGE_SELECTOR_SHAPES.includes(sel.shape)) {
+      errors.push(`${path}.shape: "${sel.shape}" is not a real range-selector shape (expected one of ${RANGE_SELECTOR_SHAPES.join(', ')})`);
+    }
+    // Real gap found live: start/end/offset/amount are documented as
+    // AnimatableValue but were never actually routed through
+    // validateAnimatable - so a malformed one (most dangerously, an
+    // {"expression":...} referencing a variable that doesn't exist,
+    // e.g. "index") passed validation entirely and only failed at
+    // RENDER time, crashing the whole process (see validateAnimatable's
+    // own "index" check for the exact confirmed incident).
+    validateAnimatable(sel.start, `${path}.start`, errors);
+    validateAnimatable(sel.end, `${path}.end`, errors);
+    validateAnimatable(sel.offset, `${path}.offset`, errors);
+    validateAnimatable(sel.amount, `${path}.amount`, errors);
   }
 }
 
