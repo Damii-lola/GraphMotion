@@ -5,7 +5,6 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { buildBeatVisual, loadBeatImages } = require('./sceneBuilder');
-const T = require('./engine/transitions');
 
 /**
  * The rendering agent: turns validated scene JSON (sceneSchema.js) into
@@ -81,6 +80,80 @@ function findActiveBeatIndex(beatRanges, t) {
 }
 
 /**
+ * Deterministic per-video seed, hashed from stable sceneJSON content
+ * only (never Date.now/Math.random-without-a-seed/anything process-
+ * local) - board positions below are computed independently by EVERY
+ * chunk-worker process for a long video (each chunk is a fresh forked
+ * process per longVideoOrchestrator.js, receiving the same sceneJSON
+ * but otherwise sharing no state at all), so every chunk MUST derive
+ * the identical layout or beats would visibly jump between chunk
+ * boundaries in the final concatenated video. A simple FNV-1a-style
+ * hash over each beat's own duration/layer-count is enough entropy to
+ * vary between different videos while staying perfectly reproducible
+ * for the same one.
+ */
+function hashSceneJSONToSeed(sceneJSON) {
+  const s = (sceneJSON.scenes || []).map((sc) => `${sc.params?.duration || 0}|${(sc.visual?.layers || []).length}`).join(';');
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** Small, seeded PRNG (mulberry32) - deterministic across processes given the same seed, unlike Math.random(). */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function rand() {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Explicit product direction: replace fade/wipe transitions between
+ * separate beats with ONE continuous "board" the camera pans across -
+ * each beat's own 540x960 canvas sits at its own spot on this shared
+ * board, and moving between beats means panning the camera there
+ * instead of cross-fading two separate frames. Beat 0 anchors the
+ * board at (0,0); every later beat is placed at a RANDOM offset from
+ * the PREVIOUS beat's own position (random angle, distance 200-450px)
+ * - "random" and "never a consistent location" per spec, but bounded
+ * well under WIDTH/HEIGHT so consecutive beats' canvases always
+ * overlap enough during the pan that the viewport is never left
+ * showing a gap between them.
+ */
+function buildBoardLayout(sceneJSON, beatRanges) {
+  const rand = mulberry32(hashSceneJSONToSeed(sceneJSON));
+  const positions = [{ x: 0, y: 0 }];
+  for (let i = 1; i < beatRanges.length; i++) {
+    const angle = rand() * Math.PI * 2;
+    const distance = 200 + rand() * 250;
+    const prev = positions[i - 1];
+    positions.push({
+      x: Math.round(prev.x + Math.cos(angle) * distance),
+      y: Math.round(prev.y + Math.sin(angle) * distance),
+    });
+  }
+  return positions;
+}
+
+/** Standard ease-in-out-cubic - explicitly requested ("MAKE SURE THE MOVEMENT IS CUBIC") for the camera pan, smooth acceleration then deceleration rather than a linear/robotic glide. */
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2;
+}
+
+// Default camera-pan duration - a beat can still override it via its
+// existing "transitionIn.duration" field for pacing control (the
+// TYPE field, e.g. "crossDissolve"/"linearWipe", is no longer used at
+// all - every beat-to-beat change is now a pan, unconditionally, not
+// just beats that happen to set a transitionIn).
+const DEFAULT_PAN_DURATION_SECONDS = 0.6;
+
+/**
  * Builds the real, already-tested Node/Composition or Layer3D/Camera/
  * Light scene for ONE beat via sceneBuilder.js's buildBeatVisual - once
  * per beat (matching sceneBuilder.js's own "build once per beat, not
@@ -110,6 +183,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   fs.mkdirSync(framesDir, { recursive: true });
 
   const { beatRanges } = buildTimeline(sceneJSON);
+  const boardPositions = buildBoardLayout(sceneJSON, beatRanges);
 
   // Every beat overlapping this chunk's own [timeStart,timeEnd) range
   // needs its own frames rendered here - chunking forks a fresh OS
@@ -118,16 +192,17 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   // a beat built in an earlier/later chunk carries over; each chunk
   // rebuilds whatever beats it actually needs from the SAME full
   // sceneJSON it's always been given. A beat's own immediate
-  // PREDECESSOR is also built even when only needed for a transition
-  // (its own frames might belong to an earlier chunk) - transitionIn
-  // composites against whatever the previous beat "ended on" (its own
-  // final frame, held), so that predecessor's visual has to exist here
-  // too whenever the transition window falls inside this chunk.
+  // PREDECESSOR is also always built too (its own frames might belong
+  // to an earlier chunk) - EVERY beat-to-beat change now pans the
+  // camera against whatever the previous beat "ended on" (its own
+  // final frame, held), unconditionally, not just beats that happened
+  // to set a transitionIn - so that predecessor's visual has to exist
+  // here too whenever the pan window falls inside this chunk.
   const neededIndices = new Set();
   beatRanges.forEach((range, i) => {
     if (range.end > timeStart && range.start < timeEnd) {
       neededIndices.add(i);
-      if (i > 0 && range.scene.visual?.transitionIn) neededIndices.add(i - 1);
+      if (i > 0) neededIndices.add(i - 1);
     }
   });
 
@@ -136,16 +211,16 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
     built.set(i, await buildOneBeat(beatRanges[i]));
   }
 
-  // A transition's "outgoing" side is always the SAME frozen moment
+  // A pan's "outgoing" side is always the SAME frozen moment
   // (prevBeat.range.duration - see the doc comment above) for every
-  // single frame of the transition window, yet the naive version of
-  // this loop re-rendered that identical frame from scratch on every
-  // one of those frames - real, wasted CPU work, and (found via direct
-  // memory profiling, not assumed) a real contributor to peak memory:
-  // re-running a full beat's render (potentially a whole 3D scene with
-  // several layers) repeatedly, once per transition frame, when it only
-  // ever needed to happen ONCE per beat per chunk. Cached here, keyed
-  // by the outgoing beat's own index.
+  // single frame of the pan window, yet the naive version of this loop
+  // re-rendered that identical frame from scratch on every one of those
+  // frames - real, wasted CPU work, and (found via direct memory
+  // profiling, not assumed) a real contributor to peak memory:
+  // re-running a full beat's render (potentially a whole scene with
+  // several layers) repeatedly, once per pan frame, when it only ever
+  // needed to happen ONCE per beat per chunk. Cached here, keyed by the
+  // outgoing beat's own index.
   const frozenFrameCache = new Map();
 
   const canvas = createCanvas(WIDTH, HEIGHT);
@@ -175,12 +250,19 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       const { range, visualObj } = built.get(beatIndex);
       const localT = globalT - range.start;
 
-      const transitionDef = range.scene.visual?.transitionIn;
-      const transitionDuration = transitionDef ? Math.max(0.05, Number(transitionDef.duration) || 0.5) : 0;
-      const inTransition = beatIndex > 0 && transitionDef && localT < transitionDuration;
+      // Pan duration still honors an authored "transitionIn.duration"
+      // for pacing control (the TYPE field is ignored entirely now -
+      // every beat-to-beat change pans, unconditionally, not just
+      // beats that set one). Clamped to the CURRENT beat's own
+      // duration so a short beat can't end while still mid-pan into
+      // itself, which would leave it overlapping the NEXT beat's own
+      // incoming pan.
+      const requestedPanDuration = Number(range.scene.visual?.transitionIn?.duration) || DEFAULT_PAN_DURATION_SECONDS;
+      const panDuration = beatIndex > 0 ? Math.min(Math.max(0.05, requestedPanDuration), range.duration * 0.8) : 0;
+      const inPan = beatIndex > 0 && localT < panDuration;
 
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
-      if (inTransition) {
+      if (inPan) {
         const prevBeat = built.get(beatIndex - 1);
         let prevCanvas = frozenFrameCache.get(beatIndex - 1);
         if (!prevCanvas) {
@@ -190,10 +272,22 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         }
         transitionCurrCtx.clearRect(0, 0, WIDTH, HEIGHT);
         visualObj.render(transitionCurrCtx, localT);
-        const progress = Math.min(1, Math.max(0, localT / transitionDuration));
-        const transitionFn = T[transitionDef.type] || T.crossDissolve;
-        const composited = transitionFn(prevCanvas, transitionCurrCanvas, progress, transitionDef.params || {});
-        ctx.drawImage(composited, 0, 0);
+
+        // Camera position is a cubic-eased interpolation, in BOARD
+        // space, from the previous beat's own spot to this beat's -
+        // drawing each beat's canvas at (itsBoardPos - camera) is what
+        // actually produces the pan: at progress 0 the previous beat's
+        // canvas lands exactly at (0,0) (camera still parked on it)
+        // and the incoming beat is offset fully off-screen; at
+        // progress 1 it's the reverse.
+        const progress = easeInOutCubic(Math.min(1, Math.max(0, localT / panDuration)));
+        const prevPos = boardPositions[beatIndex - 1];
+        const currPos = boardPositions[beatIndex];
+        const camX = prevPos.x + (currPos.x - prevPos.x) * progress;
+        const camY = prevPos.y + (currPos.y - prevPos.y) * progress;
+
+        ctx.drawImage(prevCanvas, prevPos.x - camX, prevPos.y - camY);
+        ctx.drawImage(transitionCurrCanvas, currPos.x - camX, currPos.y - camY);
       } else {
         visualObj.render(ctx, localT);
       }
@@ -257,17 +351,17 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       // is a silent no-op (not a crash) if that flag is ever missing,
       // though production must always pass it for this fix to actually
       // take effect.
-      // inTransition frames allocate several EXTRA canvases per frame
-      // (transitions.js's own 2-3 internal buffers, on top of the
-      // normal per-layer render cost) - a real, concentrated burst of
-      // native memory churn the every-2nd-frame cadence above wasn't
-      // tuned for (that cadence was benchmarked on ordinary, non-
-      // transition frames). Forcing every-frame gc() ONLY for this
-      // short, bounded window (transitions are typically well under a
-      // second) buys back most of the peak-memory cost of that churn
-      // without paying the ~4x slowdown of every-frame gc() across the
-      // WHOLE video - the cheaper cadence still applies everywhere else.
-      if ((inTransition || frameIndex % 2 === 0) && global.gc) {
+      // inPan frames render TWO full beats' worth of content (the
+      // frozen outgoing canvas plus the live incoming one) instead of
+      // one - a real, concentrated burst of native memory churn the
+      // every-2nd-frame cadence above wasn't tuned for (that cadence
+      // was benchmarked on ordinary, single-beat frames). Forcing
+      // every-frame gc() ONLY for this short, bounded window (pans are
+      // well under a second) buys back most of the peak-memory cost of
+      // that churn without paying the ~4x slowdown of every-frame gc()
+      // across the WHOLE video - the cheaper cadence still applies
+      // everywhere else.
+      if ((inPan || frameIndex % 2 === 0) && global.gc) {
         global.gc();
         await new Promise((resolve) => setImmediate(resolve));
         global.gc();
