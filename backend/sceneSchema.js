@@ -773,35 +773,56 @@ function validateBeatVisual(visual, path, errors, knownIds) {
   //
   // Text layers get an ESTIMATED size here (sizeForSpreadCheck), not
   // exempted outright the way this used to treat "no explicit width/
-  // height" - a real, confirmed-live failure slipped straight through
-  // that old blanket exemption: 4 separate text layers meant to read
-  // as sequential words of one headline ("THE"/"OCEAN"/"HAS"/"RIVERS")
-  // were all left at the IDENTICAL position, rendering as fully
-  // illegible overlapping text. autoRepairBeat's own matching spread
-  // logic (autoSpreadDuplicatePositions) already fixes this
-  // mechanically before validation ever runs, so this check mostly
-  // exists as an independent confirmation/backstop now. The "tied for
-  // largest" exemption itself is tracked using ONLY explicitly-sized
-  // (shape/image) layers, same reasoning as autoSpreadDuplicatePositions -
+  // height". Detection is a real AABB overlap test (via
+  // representativePosition, resolving a keyframed position to its own
+  // settled/final value) rather than exact-position matching - a real,
+  // confirmed-live failure slipped through the OLD exact-match version
+  // twice over: once for 4 separate text layers left at the IDENTICAL
+  // static position, and again for layers whose positions were merely
+  // CLOSE (12px apart) or ANIMATED (keyframed, invisible to a plain
+  // `Array.isArray` check entirely) but still fully overlapped once
+  // rendered. autoRepairBeat's own matching spread logic
+  // (autoSpreadDuplicatePositions) already fixes this mechanically
+  // before validation ever runs, so this check mostly exists as an
+  // independent confirmation/backstop now. The "tied for largest"
+  // exemption itself is tracked using ONLY explicitly-sized (shape/
+  // image) layers, same reasoning as autoSpreadDuplicatePositions -
   // text has no legitimate "meant to overlap" case, so two same-size
   // headline words tying for "largest" must never exempt each other.
   const explicitSized = visual.layers.filter((l) => isPlainObject(l) && typeof l.width === 'number' && typeof l.height === 'number');
   const maxW = explicitSized.length ? Math.max(...explicitSized.map((l) => l.width)) : 0;
   const maxH = explicitSized.length ? Math.max(...explicitSized.map((l) => l.height)) : 0;
-  const positionGroups = new Map();
-  visual.layers.forEach((layer, i) => {
-    if (!isPlainObject(layer) || layer.parent || !Array.isArray(layer.position)) return;
+  const overlapEntries = visual.layers.map((layer, i) => {
+    if (!isPlainObject(layer) || layer.parent) return null;
+    const pos = representativePosition(layer.position);
+    if (!pos) return null;
     const size = sizeForSpreadCheck(layer);
-    if (!size) return;
+    if (!size) return null;
     const hasExplicitSize = typeof layer.width === 'number' && typeof layer.height === 'number';
-    if (hasExplicitSize && size.width >= maxW && size.height >= maxH) return;
-    const key = JSON.stringify(layer.position);
-    if (!positionGroups.has(key)) positionGroups.set(key, []);
-    positionGroups.get(key).push(i);
+    if (hasExplicitSize && size.width >= maxW && size.height >= maxH) return null;
+    return {
+      index: i, x: pos[0], y: pos[1], width: size.width, height: size.height,
+    };
+  }).filter(Boolean);
+  const parent = overlapEntries.map((_, i) => i);
+  function findRoot(i) { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
+  for (let a = 0; a < overlapEntries.length; a++) {
+    for (let b = a + 1; b < overlapEntries.length; b++) {
+      const A = overlapEntries[a]; const B = overlapEntries[b];
+      const overlapsX = Math.abs(A.x - B.x) < ((A.width + B.width) / 2) * 0.9;
+      const overlapsY = Math.abs(A.y - B.y) < ((A.height + B.height) / 2) * 0.9;
+      if (overlapsX && overlapsY) { const ra = findRoot(a); const rb = findRoot(b); if (ra !== rb) parent[ra] = rb; }
+    }
+  }
+  const positionGroups = new Map();
+  overlapEntries.forEach((e, i) => {
+    const root = findRoot(i);
+    if (!positionGroups.has(root)) positionGroups.set(root, []);
+    positionGroups.get(root).push(e.index);
   });
-  for (const [key, indices] of positionGroups) {
+  for (const indices of positionGroups.values()) {
     if (indices.length > 1) {
-      errors.push(`${path}.layers: layers at indices [${indices.join(', ')}] all share the identical un-animated position ${key} - sibling elements need distinct "position" values or they'll render stacked/overlapping instead of spread out (e.g. as a row, grid, or scattered composition). Give each one its own real position.`);
+      errors.push(`${path}.layers: layers at indices [${indices.join(', ')}] render visually overlapped (identical, near-identical, or merely close-enough positions given their own size) - sibling elements need distinct "position" values or they'll render stacked/overlapping instead of spread out (e.g. as a row, grid, or scattered composition). Give each one its own real position.`);
     }
   }
 
@@ -1043,82 +1064,187 @@ function sizeForSpreadCheck(layer) {
   return null;
 }
 
-function autoSpreadDuplicatePositions(visual) {
-  if (!Array.isArray(visual.layers)) return;
-  // Real, confirmed-live gap: this used to only ever consider layers
-  // with an explicit "width"/"height" field, which text layers (the
-  // CURRENT entire AI scope) never have - so it silently never
-  // touched them at all, letting a real mistake slip straight through
-  // to the final video: 4 separate text layers meant to read as
-  // sequential words of one headline ("THE"/"OCEAN"/"HAS"/"RIVERS")
-  // were all left at the IDENTICAL position, rendering as fully
-  // illegible stacked/overlapping text. Text layers now get an
-  // ESTIMATED size (sizeForSpreadCheck) so they're covered by the
-  // exact same detection/spread logic shape/image layers already had.
-  // The "exempt the largest" background-protection rule below only
-  // makes sense for a layer with an EXPLICIT width/height (a real,
-  // deliberate full-frame background/overlay choosing to share a
-  // position with another full-frame layer) - text has no legitimate
-  // "meant to overlap" case, so its max is tracked SEPARATELY and text
-  // is never exempted by it, no matter how large its own estimated
-  // size is relative to other text in the beat. Confirmed necessary
-  // live: without this split, two same-fontSize headline words tied
-  // for "largest" both got wrongly treated as an intentional shared-
+/**
+ * A REPRESENTATIVE resolved [x,y] for overlap purposes - the plain
+ * value directly for a static position, or the LAST keyframe's value
+ * for an animated one (its settled/resting spot, what it shows for
+ * most of its actual on-screen time once any entrance finishes - the
+ * same "final frame" convention already used elsewhere in this file/
+ * renderEngine.js for a frozen reference point). Real, confirmed-live
+ * gap this exists to close: overlap detection used to require an
+ * EXACT `isNumberArray` match, which only ever looked at plain [x,y]
+ * arrays - any keyframed position (an entrance animation, extremely
+ * common) was invisible to it entirely, regardless of where it
+ * actually settled. Returns null for anything unusable (an expression,
+ * a keyframe with a non-numeric value, no keyframes at all).
+ */
+function representativePosition(position) {
+  if (isNumberArray(position, 2)) return position;
+  if (isPlainObject(position) && Array.isArray(position.keyframes) && position.keyframes.length > 0) {
+    const last = position.keyframes[position.keyframes.length - 1];
+    if (isPlainObject(last) && isNumberArray(last.value, 2)) return last.value;
+  }
+  return null;
+}
+
+/** Shifts a layer's own position by [dx,dy] - every keyframe's value for an animated position (preserving the animation's own shape/timing, just moving the whole path to a new resting spot), or the value directly for a static one. */
+function shiftLayerPosition(layer, dx, dy) {
+  if (isNumberArray(layer.position, 2)) {
+    layer.position = [layer.position[0] + dx, layer.position[1] + dy];
+  } else if (isPlainObject(layer.position) && Array.isArray(layer.position.keyframes)) {
+    layer.position.keyframes.forEach((kf) => {
+      if (isPlainObject(kf) && isNumberArray(kf.value, 2)) kf.value = [kf.value[0] + dx, kf.value[1] + dy];
+    });
+  }
+}
+
+/**
+ * Detects and mechanically fixes layers that render visually
+ * overlapped - a real, confirmed-live, extremely common mistake:
+ * several text layers meant to read as separate lines/words of one
+ * headline, left at identical OR merely close-enough positions that
+ * their estimated bounding boxes overlap anyway (e.g. two 60px-font
+ * lines only 12px apart in y - nowhere near identical, but still
+ * fully overlapping on screen). Detection is a real AABB overlap
+ * test (not exact-position matching, which misses exactly this kind
+ * of near-miss and misses every keyframed/animated position outright
+ * - see representativePosition's own doc comment), grouped via
+ * union-find since overlap isn't naturally transitive-by-equality the
+ * way identical positions were.
+ *
+ * Run in a bounded loop (see autoSpreadDuplicatePositions below), not
+ * just once - confirmed necessary live: repositioning one overlapping
+ * GROUP can land it newly overlapping a layer that was never part of
+ * that group in the first place (its original, pre-repair position
+ * didn't overlap anything, only its NEW one does), which a single
+ * pass has no way to notice or correct.
+ */
+function runOverlapSpreadPass(visual) {
+  if (!Array.isArray(visual.layers)) return false;
+  // The "exempt the largest" background-protection rule only makes
+  // sense for a layer with an EXPLICIT width/height (a real,
+  // deliberate full-frame background/overlay choosing to share space
+  // with another full-frame layer) - text has no legitimate "meant to
+  // overlap" case, so its max is tracked SEPARATELY and text is never
+  // exempted by it, no matter how large its own estimated size is
+  // relative to other text in the beat. Confirmed necessary live:
+  // without this split, two same-fontSize headline words tied for
+  // "largest" both got wrongly treated as an intentional shared-
   // position pair and were left fully overlapping.
   const explicitSized = visual.layers.filter((l) => isPlainObject(l) && typeof l.width === 'number' && typeof l.height === 'number');
   const maxW = explicitSized.length ? Math.max(...explicitSized.map((l) => l.width)) : 0;
   const maxH = explicitSized.length ? Math.max(...explicitSized.map((l) => l.height)) : 0;
 
-  const groups = new Map();
-  visual.layers.forEach((layer, i) => {
-    if (!isPlainObject(layer) || layer.parent || !isNumberArray(layer.position, 2)) return;
+  const entries = visual.layers.map((layer, i) => {
+    if (!isPlainObject(layer) || layer.parent) return null;
+    const pos = representativePosition(layer.position);
+    if (!pos) return null;
     const size = sizeForSpreadCheck(layer);
-    if (!size) return;
+    if (!size) return null;
     const hasExplicitSize = typeof layer.width === 'number' && typeof layer.height === 'number';
-    if (hasExplicitSize && size.width >= maxW && size.height >= maxH) return;
-    const key = JSON.stringify(layer.position);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push({ index: i, width: size.width, height: size.height, isText: layer.type === 'text' });
+    if (hasExplicitSize && size.width >= maxW && size.height >= maxH) return null;
+    return {
+      index: i, x: pos[0], y: pos[1], width: size.width, height: size.height, isText: layer.type === 'text',
+    };
+  }).filter(Boolean);
+
+  // Union-find over pairwise AABB overlap. Each box is shrunk to 90%
+  // before testing - loose enough that a real, borderline near-miss
+  // (found live: a 2-line-wrapped headline whose true footprint a
+  // rough single-line height ESTIMATE understates) still gets pulled
+  // into the same group and repositioned together, while still
+  // leaving room for two boxes that are clearly, deliberately spaced
+  // apart to be left alone.
+  const parent = entries.map((_, i) => i);
+  function find(i) { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
+  function union(a, b) { const ra = find(a); const rb = find(b); if (ra !== rb) parent[ra] = rb; }
+  for (let a = 0; a < entries.length; a++) {
+    for (let b = a + 1; b < entries.length; b++) {
+      const A = entries[a]; const B = entries[b];
+      const overlapsX = Math.abs(A.x - B.x) < ((A.width + B.width) / 2) * 0.9;
+      const overlapsY = Math.abs(A.y - B.y) < ((A.height + B.height) / 2) * 0.9;
+      if (overlapsX && overlapsY) union(a, b);
+    }
+  }
+  const groups = new Map();
+  entries.forEach((e, i) => {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(e);
   });
 
-  for (const [key, entries] of groups) {
-    if (entries.length < 2) continue;
-    const [cx, cy] = JSON.parse(key);
+  let changed = false;
+  for (const groupEntries of groups.values()) {
+    if (groupEntries.length < 2) continue;
+    changed = true;
+    const cx = groupEntries.reduce((sum, e) => sum + e.x, 0) / groupEntries.length;
+    const cy = groupEntries.reduce((sum, e) => sum + e.y, 0) / groupEntries.length;
+    const allText = groupEntries.every((e) => e.isText);
     // A text-only group is stacked VERTICALLY (one per line) instead
     // of spread into a horizontal row - confirmed necessary live: 3-4
     // separate text layers meant to read as sequential words of one
-    // headline routinely need MORE total width than the row-spacing
-    // math has to work with (a real 4-word case needed ~1650px of row
-    // width against a 540px-wide frame), so a horizontal spread just
-    // pushes outer words off-frame instead of actually fixing
-    // legibility. Vertical stacking uses the frame's much deeper
-    // height budget instead and reads naturally as a multi-line
-    // headline, which is what these almost always actually are.
-    // Shape/image groups keep the original horizontal-row behavior
-    // unchanged (a row of icons/badges/cards, the case it was built
-    // for, has no such width problem).
-    if (entries.every((e) => e.isText)) {
-      const avgHeight = entries.reduce((sum, e) => sum + (e.height || 60), 0) / entries.length;
-      const spacing = Math.max(50, avgHeight * 0.85);
-      const totalSpan = spacing * (entries.length - 1);
-      entries.forEach(({ index }, k) => {
-        const offsetY = -totalSpan / 2 + spacing * k;
-        visual.layers[index].position = [cx, cy + offsetY];
+    // headline routinely need MORE total width than a row has to work
+    // with (a real 4-word case needed ~1650px of row width against a
+    // 540px-wide frame), so a horizontal spread just pushes outer
+    // words off-frame instead of actually fixing legibility. Vertical
+    // stacking uses the frame's much deeper height budget instead and
+    // reads naturally as a multi-line headline, which is what these
+    // almost always actually are.
+    //
+    // Laid out as a genuine CUMULATIVE top-to-bottom stack (each
+    // entry's own actual height, not a flat group-average spacing) -
+    // confirmed necessary live: averaging spacing across a group whose
+    // members vary a lot in size (a big wrapped 2-line headline next
+    // to a short single-line label) left some pairs still overlapping,
+    // since the average understated what the LARGER member actually
+    // needed. A cumulative stack can't make that mistake - it adds
+    // each member's own real height (plus a small gap) as it goes, so
+    // total spacing is exactly what THAT group needs, not an estimate.
+    // Original top-to-bottom order (by pre-repair y, not array index)
+    // is preserved so a genuine reading sequence isn't scrambled.
+    if (allText) {
+      const ordered = [...groupEntries].sort((a, b) => a.y - b.y);
+      const gap = 12;
+      const totalHeight = ordered.reduce((sum, e) => sum + (e.height || 60), 0) + gap * (ordered.length - 1);
+      let cursorY = cy - totalHeight / 2;
+      ordered.forEach((e) => {
+        const h = e.height || 60;
+        const targetY = cursorY + h / 2;
+        shiftLayerPosition(visual.layers[e.index], cx - e.x, targetY - e.y);
+        cursorY += h + gap;
       });
       continue;
     }
-    // Spacing derived from the group's own average width, so small
-    // icons/short words spread tighter than large cards/long words -
-    // falls back to a reasonable flat default if width is somehow
-    // still missing.
-    const avgWidth = entries.reduce((sum, e) => sum + (e.width || 120), 0) / entries.length;
-    const spacing = Math.max(80, avgWidth * 1.15);
-    const totalSpan = spacing * (entries.length - 1);
-    entries.forEach(({ index }, k) => {
-      const offsetX = -totalSpan / 2 + spacing * k;
-      visual.layers[index].position = [cx + offsetX, cy];
+    // Shape/image groups keep the original horizontal-row behavior
+    // (a row of icons/badges/cards, the case it was built for, has no
+    // such width problem).
+    const avgSpan = groupEntries.reduce((sum, e) => sum + (e.width || 120), 0) / groupEntries.length;
+    const spacing = Math.max(80, avgSpan * 1.15);
+    const totalSpan = spacing * (groupEntries.length - 1);
+    groupEntries.forEach((e, k) => {
+      const offset = -totalSpan / 2 + spacing * k;
+      const [targetX, targetY] = [cx + offset, cy];
+      shiftLayerPosition(visual.layers[e.index], targetX - e.x, targetY - e.y);
     });
   }
+  return changed;
+}
+
+// TWO passes, deliberately not more: a single pass can leave a
+// repositioned group newly overlapping a layer it never touched
+// (confirmed live, a common 2-group case - a 4-word headline stack
+// plus a separate subtitle line ended up only ~5px apart after the
+// first pass alone), so a second pass catches exactly that. Measured
+// directly that a THIRD+ pass does NOT keep improving things on a
+// genuinely messy many-element cluster - it oscillates instead (the
+// group's own center recomputes from already-shifted positions each
+// time, so a new overlap can appear while the original one still
+// hasn't fully resolved). Two passes is the sweet spot: enough to
+// catch the common "fixing A exposed a new conflict with B" case,
+// bounded enough to never reach the oscillation zone.
+function autoSpreadDuplicatePositions(visual) {
+  runOverlapSpreadPass(visual);
+  runOverlapSpreadPass(visual);
 }
 
 /**
