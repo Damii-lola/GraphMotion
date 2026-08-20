@@ -764,25 +764,37 @@ function validateBeatVisual(visual, path, errors, knownIds) {
   //
   // False-positive risk this had to be guarded against (found while
   // testing this exact check against real captured beats): full-frame
-  // overlay/matte/background layers (a wipe matte, a paper texture, a
-  // full-frame color layer) LEGITIMATELY share the same frame-filling
+  // overlay/matte layers LEGITIMATELY share the same frame-filling
   // position with each other - that's normal, correct compositing, not
   // a "forgot to spread these out" mistake. So only layers that are
-  // SMALLER than the beat's own largest explicit layer are eligible to
-  // be flagged; anything tied for the largest explicit width/height in
-  // the beat is treated as a background/overlay-style layer and
-  // exempted, and layers with no explicit width/height at all (text
-  // layers, generate/image layers meant to fill their container - both
-  // extremely common and NOT a sign of this bug) are exempted too
-  // rather than guessed at.
-  const layersWithSize = visual.layers.filter((l) => typeof l.width === 'number' && typeof l.height === 'number');
-  const maxW = layersWithSize.length ? Math.max(...layersWithSize.map((l) => l.width)) : 0;
-  const maxH = layersWithSize.length ? Math.max(...layersWithSize.map((l) => l.height)) : 0;
+  // SMALLER than the beat's own largest layer are eligible to be
+  // flagged; anything tied for the largest in the beat is treated as a
+  // background/overlay-style layer and exempted.
+  //
+  // Text layers get an ESTIMATED size here (sizeForSpreadCheck), not
+  // exempted outright the way this used to treat "no explicit width/
+  // height" - a real, confirmed-live failure slipped straight through
+  // that old blanket exemption: 4 separate text layers meant to read
+  // as sequential words of one headline ("THE"/"OCEAN"/"HAS"/"RIVERS")
+  // were all left at the IDENTICAL position, rendering as fully
+  // illegible overlapping text. autoRepairBeat's own matching spread
+  // logic (autoSpreadDuplicatePositions) already fixes this
+  // mechanically before validation ever runs, so this check mostly
+  // exists as an independent confirmation/backstop now. The "tied for
+  // largest" exemption itself is tracked using ONLY explicitly-sized
+  // (shape/image) layers, same reasoning as autoSpreadDuplicatePositions -
+  // text has no legitimate "meant to overlap" case, so two same-size
+  // headline words tying for "largest" must never exempt each other.
+  const explicitSized = visual.layers.filter((l) => isPlainObject(l) && typeof l.width === 'number' && typeof l.height === 'number');
+  const maxW = explicitSized.length ? Math.max(...explicitSized.map((l) => l.width)) : 0;
+  const maxH = explicitSized.length ? Math.max(...explicitSized.map((l) => l.height)) : 0;
   const positionGroups = new Map();
   visual.layers.forEach((layer, i) => {
-    if (layer.parent || !Array.isArray(layer.position)) return;
-    if (typeof layer.width !== 'number' || typeof layer.height !== 'number') return;
-    if (layer.width >= maxW && layer.height >= maxH) return;
+    if (!isPlainObject(layer) || layer.parent || !Array.isArray(layer.position)) return;
+    const size = sizeForSpreadCheck(layer);
+    if (!size) return;
+    const hasExplicitSize = typeof layer.width === 'number' && typeof layer.height === 'number';
+    if (hasExplicitSize && size.width >= maxW && size.height >= maxH) return;
     const key = JSON.stringify(layer.position);
     if (!positionGroups.has(key)) positionGroups.set(key, []);
     positionGroups.get(key).push(i);
@@ -1024,34 +1036,87 @@ function autoRepairBeat(beat) {
  * non-overlapping spread beats forcing a full beat regeneration over
  * something this mechanical every single time.
  */
+/** A layer's own size for duplicate-position detection - explicit width/height for shape/image layers, ESTIMATED for text (which never carries a literal width/height field at all). Returns null when neither is available. */
+function sizeForSpreadCheck(layer) {
+  if (typeof layer.width === 'number' && typeof layer.height === 'number') return { width: layer.width, height: layer.height };
+  if (layer.type === 'text') return estimateTextEffectiveSize(layer);
+  return null;
+}
+
 function autoSpreadDuplicatePositions(visual) {
   if (!Array.isArray(visual.layers)) return;
-  const layersWithSize = visual.layers.filter((l) => isPlainObject(l) && typeof l.width === 'number' && typeof l.height === 'number');
-  const maxW = layersWithSize.length ? Math.max(...layersWithSize.map((l) => l.width)) : 0;
-  const maxH = layersWithSize.length ? Math.max(...layersWithSize.map((l) => l.height)) : 0;
+  // Real, confirmed-live gap: this used to only ever consider layers
+  // with an explicit "width"/"height" field, which text layers (the
+  // CURRENT entire AI scope) never have - so it silently never
+  // touched them at all, letting a real mistake slip straight through
+  // to the final video: 4 separate text layers meant to read as
+  // sequential words of one headline ("THE"/"OCEAN"/"HAS"/"RIVERS")
+  // were all left at the IDENTICAL position, rendering as fully
+  // illegible stacked/overlapping text. Text layers now get an
+  // ESTIMATED size (sizeForSpreadCheck) so they're covered by the
+  // exact same detection/spread logic shape/image layers already had.
+  // The "exempt the largest" background-protection rule below only
+  // makes sense for a layer with an EXPLICIT width/height (a real,
+  // deliberate full-frame background/overlay choosing to share a
+  // position with another full-frame layer) - text has no legitimate
+  // "meant to overlap" case, so its max is tracked SEPARATELY and text
+  // is never exempted by it, no matter how large its own estimated
+  // size is relative to other text in the beat. Confirmed necessary
+  // live: without this split, two same-fontSize headline words tied
+  // for "largest" both got wrongly treated as an intentional shared-
+  // position pair and were left fully overlapping.
+  const explicitSized = visual.layers.filter((l) => isPlainObject(l) && typeof l.width === 'number' && typeof l.height === 'number');
+  const maxW = explicitSized.length ? Math.max(...explicitSized.map((l) => l.width)) : 0;
+  const maxH = explicitSized.length ? Math.max(...explicitSized.map((l) => l.height)) : 0;
 
   const groups = new Map();
   visual.layers.forEach((layer, i) => {
     if (!isPlainObject(layer) || layer.parent || !isNumberArray(layer.position, 2)) return;
-    if (typeof layer.width !== 'number' || typeof layer.height !== 'number') return;
-    if (layer.width >= maxW && layer.height >= maxH) return;
+    const size = sizeForSpreadCheck(layer);
+    if (!size) return;
+    const hasExplicitSize = typeof layer.width === 'number' && typeof layer.height === 'number';
+    if (hasExplicitSize && size.width >= maxW && size.height >= maxH) return;
     const key = JSON.stringify(layer.position);
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(i);
+    groups.get(key).push({ index: i, width: size.width, height: size.height, isText: layer.type === 'text' });
   });
 
-  for (const [key, indices] of groups) {
-    if (indices.length < 2) continue;
+  for (const [key, entries] of groups) {
+    if (entries.length < 2) continue;
     const [cx, cy] = JSON.parse(key);
+    // A text-only group is stacked VERTICALLY (one per line) instead
+    // of spread into a horizontal row - confirmed necessary live: 3-4
+    // separate text layers meant to read as sequential words of one
+    // headline routinely need MORE total width than the row-spacing
+    // math has to work with (a real 4-word case needed ~1650px of row
+    // width against a 540px-wide frame), so a horizontal spread just
+    // pushes outer words off-frame instead of actually fixing
+    // legibility. Vertical stacking uses the frame's much deeper
+    // height budget instead and reads naturally as a multi-line
+    // headline, which is what these almost always actually are.
+    // Shape/image groups keep the original horizontal-row behavior
+    // unchanged (a row of icons/badges/cards, the case it was built
+    // for, has no such width problem).
+    if (entries.every((e) => e.isText)) {
+      const avgHeight = entries.reduce((sum, e) => sum + (e.height || 60), 0) / entries.length;
+      const spacing = Math.max(50, avgHeight * 0.85);
+      const totalSpan = spacing * (entries.length - 1);
+      entries.forEach(({ index }, k) => {
+        const offsetY = -totalSpan / 2 + spacing * k;
+        visual.layers[index].position = [cx, cy + offsetY];
+      });
+      continue;
+    }
     // Spacing derived from the group's own average width, so small
-    // icons spread tighter than large cards - falls back to a
-    // reasonable flat default if width is somehow still missing.
-    const avgWidth = indices.reduce((sum, i) => sum + (visual.layers[i].width || 120), 0) / indices.length;
+    // icons/short words spread tighter than large cards/long words -
+    // falls back to a reasonable flat default if width is somehow
+    // still missing.
+    const avgWidth = entries.reduce((sum, e) => sum + (e.width || 120), 0) / entries.length;
     const spacing = Math.max(80, avgWidth * 1.15);
-    const totalSpan = spacing * (indices.length - 1);
-    indices.forEach((layerIndex, k) => {
+    const totalSpan = spacing * (entries.length - 1);
+    entries.forEach(({ index }, k) => {
       const offsetX = -totalSpan / 2 + spacing * k;
-      visual.layers[layerIndex].position = [cx + offsetX, cy];
+      visual.layers[index].position = [cx + offsetX, cy];
     });
   }
 }
