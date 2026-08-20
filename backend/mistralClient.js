@@ -370,26 +370,28 @@ const COMP_HEIGHT = 960;
 // precomps, generate kinds, fade/wipe transitions) still exists and
 // still works - sceneSchema.js still validates all of it and
 // sceneBuilder.js/renderEngine.js still render all of it - but the
-// PROMPT right now only asks for a real gradient background plus
-// real, well-animated TEXT. This is a deliberate reset after real
-// generated output combining many feature categories at once (shapes,
-// images, effects, precomps) kept producing broken, cluttered results
-// despite extensive prompt/validation work on each one individually -
-// getting text+background genuinely solid first, before asking for
-// more again, is the whole point. The camera panning between beats is
-// handled ENTIRELY by the render engine itself (renderEngine.js's own
-// automatic board-layout/pan logic) - nothing here authors or
-// controls it, it just happens.
+// PROMPT right now only asks for real, well-animated TEXT. This is a
+// deliberate reset after real generated output combining many feature
+// categories at once (shapes, images, effects, precomps) kept
+// producing broken, cluttered results despite extensive prompt/
+// validation work on each one individually - getting text genuinely
+// solid first, before asking for more again, is the whole point. Both
+// the background AND the camera panning between beats are handled
+// ENTIRELY by the render engine itself (renderEngine.js's own
+// automatic board-layout/pan/gradient logic) - nothing here authors or
+// controls either one, they just happen, ONE continuous background for
+// the whole video, panned across rather than swapped per beat.
 // ---------------------------------------------------------------------
 
 const SCHEMA_REFERENCE = `
 You are directing a REAL motion graphics rendering engine - not writing
 a description of a video. Every field you output maps to an actual,
 already-built function call. Your scope right now is DELIBERATELY
-narrow: a real gradient background, plus real, professionally-animated
-TEXT - that is the ENTIRE toolkit for this task, not a starting point
-to build on with other layer types. Nothing here is decorative flavor
-text: every option below is real and will actually render.
+narrow: real, professionally-animated TEXT - that is the ENTIRE
+toolkit for this task, not a starting point to build on with other
+layer types. The background is handled entirely elsewhere (see
+BEATVISUAL below) - you never author one. Nothing here is decorative
+flavor text: every option below is real and will actually render.
 
 The output is ALWAYS a single JSON object, no markdown fences, no
 prose outside the JSON: { "scenes": [ Beat, ... ] }
@@ -412,9 +414,7 @@ roughly 45px in from every edge so nothing critical is clipped.
 
 EVERY object in a "layers" array MUST include an explicit "type" field.
 Right now there is exactly ONE valid value: "type":"text" - every
-single layer you write is a text layer, no exceptions. "background" is
-the one other place a layer-shaped object appears (see BEATVISUAL
-below), and it always follows the gradient rule there, not "text".
+single layer you write is a text layer, no exceptions.
 
 JSON STRING ESCAPING - a real, repeated failure: any quote character
 ("), backslash (\\), or literal newline INSIDE a text value (e.g.
@@ -467,26 +467,6 @@ nearly every layer's entrance (and often its whole duration).
 BEATVISUAL
 =====================================================================
 {
-  "background": BackgroundDef,  // REQUIRED, always a real gradient.
-      // EXPLICIT PRODUCT RULE: a background must NEVER be a single flat
-      // color - always a real gradient. Write it as:
-      // {"type":"generate","generate":{"kind":"gradientRamp","params":
-      // {"startColor":"#0A2435","endColor":"#123449","shape":"linear"|
-      // "radial"}}} with "startColor"/"endColor" being a LIGHTER or
-      // DARKER variant of the SAME hue (e.g. "#0A2435" -> "#123449" is
-      // dim-to-normal of the same blue; "#1E5C8A" -> "#0A2435" is
-      // light-to-normal). The two colors must be MEANINGFULLY
-      // different, not just technically different strings - "#0A0A12"
-      // and "#06060b" are two different hex values that still render
-      // as an indistinguishable flat near-black on screen; aim for a
-      // clearly visible shift in brightness, not a few points of
-      // difference per channel. If "shape" is "radial", either OMIT
-      // "startPoint"/"endPoint" entirely (safe defaults) or make sure
-      // they are genuinely different points - two IDENTICAL points
-      // collapse a radial gradient to a 1px dot, rendering almost the
-      // entire frame as flat "endColor" (confirmed as a real, live
-      // bug). Vary the hue from beat to beat across one video - don't
-      // reuse the identical background color for every single beat.
   "layers": [ TextLayerDef, ... ]  // REQUIRED, must be NON-EMPTY - every
                                      // beat needs real text content. An
                                      // empty "layers" array renders as a
@@ -495,10 +475,13 @@ BEATVISUAL
                                      // duration. Stacking order: LATER
                                      // entries draw ON TOP of earlier ones.
 }
-The camera panning from one beat to the next is handled ENTIRELY by
-the render engine itself, automatically, between every beat - you
-never author, request, or control it. There is no "transitionIn"
-field to set right now.
+There is no "background" field here, and never author one. The ENTIRE
+video shares ONE continuous gradient background, generated and panned
+automatically by the render engine itself - not per beat, and not
+something you request or influence. Same for the camera panning from
+one beat to the next: handled ENTIRELY by the render engine,
+automatically, between every beat. You never author, request, or
+control either one. There is no "transitionIn" field to set right now.
 
 =====================================================================
 TEXTLAYERDEF - one entry in "layers", the ONLY layer shape right now
@@ -623,11 +606,10 @@ static 0.
 DESIGN QUALITY - this is the whole point, not an afterthought
 =====================================================================
 - Every beat should feel deliberately DESIGNED, not a plain slide: a
-  real gradient background plus a real per-character text reveal, at
-  minimum, every single beat.
-- Use color with intent - a coherent palette across the whole video
-  (related hues from beat to beat, not random unrelated ones), varying
-  the specific gradient per beat as required above.
+  real per-character text reveal, at minimum, every single beat (the
+  background is already handled for you).
+- Use TEXT color with intent - a coherent palette across the whole
+  video (related hues from beat to beat, not random unrelated ones).
 - EVERY layer in "layers" needs its OWN "position" - a real, common
   live mistake: 2+ layers left at the same position (very often
   [${COMP_WIDTH / 2},${COMP_HEIGHT / 2}], the frame center, the natural
@@ -678,13 +660,16 @@ alive. You are planning (NOT building yet) a ${targetDurationSeconds}-second
 short-form vertical video (${COMP_WIDTH}x${COMP_HEIGHT}px, 9:16) for the
 request below.
 
-Your toolkit right now is DELIBERATELY narrow, on purpose: a real
-gradient background, plus real, professionally-animated TEXT - that's
-it. No photos, no shapes, no icons, no effects layers, no charts. This
-is not a limitation to work around or apologize for - great kinetic
-typography (bold, well-paced, well-composed text alone) is a complete,
-respected genre of short-form content on its own, and the ENTIRE job
-here is nailing that, not describing things this pass can't build.
+Your toolkit right now is DELIBERATELY narrow, on purpose: real,
+professionally-animated TEXT - that's it. No photos, no shapes, no
+icons, no effects layers, no charts. The video's background is a
+single continuous gradient handled entirely by the render engine
+itself (not something you plan or describe) - your whole job is the
+text. This is not a limitation to work around or apologize for - great
+kinetic typography (bold, well-paced, well-composed text alone) is a
+complete, respected genre of short-form content on its own, and the
+ENTIRE job here is nailing that, not describing things this pass can't
+build.
 
 Write a concrete, opinionated, beat-by-beat treatment - not mood words,
 actual decisions a senior director would hand an animator to build
@@ -693,10 +678,10 @@ frame-for-frame:
 1. THE HOOK: the exact words on screen in the first half-second and
    why they earn attention immediately (specific, not "an engaging
    headline").
-2. PALETTE & MOOD: 2-4 specific colors (precise enough to pick real
-   hex values from) and the visual mood they create together, held
-   consistent (varying gradient shade beat to beat within that
-   palette) across the whole video.
+2. PALETTE & MOOD: 2-4 specific TEXT colors (precise enough to pick
+   real hex values from - the background itself is handled entirely by
+   the render engine, not something you plan) and the visual mood they
+   create together, held consistent across the whole video.
 3. BEAT BY BEAT (beats are typically 2-4s each): this section gets
    parsed PROGRAMMATICALLY by a script, so its structure is not
    optional - start each beat with its own line reading EXACTLY
@@ -707,7 +692,6 @@ frame-for-frame:
    is that beat's own full description. For EVERY beat, cover ALL of:
    - The exact text/words on screen (a headline, a stat, a short
      label) - be specific about the actual copy, not just its topic
-   - The background's gradient direction/color for this beat
    - How the text reveals: per-character sweep, timing, any position/
      scale motion on the reveal - specific enough to actually author
    - Hierarchy when a beat has more than one text element (which is
@@ -825,7 +809,7 @@ being cut off.`;
 
 async function generateOneBeat(preamble, beatChunk, beatIndex, totalBeats, { retriesLeft = 3, priorErrors = null } = {}) {
   const systemPrompt = buildBeatEncodingSystemPrompt();
-  let userMessage = `OVERALL VIDEO CONTEXT (hook + palette/mood, shared across every beat for visual consistency):\n${preamble}\n\nTHIS BEAT (beat ${beatIndex + 1} of ${totalBeats}, target duration ${beatChunk.duration}s) - encode this EXACTLY and FAITHFULLY, missing nothing; every decision below must become a real gradient background and real text layers/animators from the schema above, never simplified or dropped to something generic. Sound cues (a "clink", a "whoosh") have no schema field - translate them into a visual beat instead (a hard hit, a flash, a snap into place). Only use real fields from the schema above - never invent new ones.\n\n${beatChunk.text}`;
+  let userMessage = `OVERALL VIDEO CONTEXT (hook + palette/mood, shared across every beat for visual consistency):\n${preamble}\n\nTHIS BEAT (beat ${beatIndex + 1} of ${totalBeats}, target duration ${beatChunk.duration}s) - encode this EXACTLY and FAITHFULLY, missing nothing; every decision below must become real text layers/animators from the schema above, never simplified or dropped to something generic. Sound cues (a "clink", a "whoosh") have no schema field - translate them into a visual beat instead (a hard hit, a flash, a snap into place). Only use real fields from the schema above - never invent new ones.\n\n${beatChunk.text}`;
   if (priorErrors) {
     // Real pattern found via live testing: a beat with many layers
     // sometimes fails with a WALL of near-identical errors (e.g.
@@ -912,7 +896,7 @@ being cut off.`;
  */
 async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft = 4, priorErrors = null } = {}) {
   const systemPrompt = buildGenerationSystemPrompt(targetDurationSeconds);
-  let userMessage = `CREATIVE TREATMENT (already planned by a senior director - encode this EXACTLY and FAITHFULLY, missing nothing; every decision below must become a real gradient background and real text layers/animators from the schema above, never simplified or dropped to something generic. The treatment may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead (a hard hit, a flash, a snap into place) rather than inventing a nonexistent field. Only use real fields from the schema above - never invent new ones.):\n${treatment}\n\nOriginal request: ${userPrompt}`;
+  let userMessage = `CREATIVE TREATMENT (already planned by a senior director - encode this EXACTLY and FAITHFULLY, missing nothing; every decision below must become real text layers/animators from the schema above, never simplified or dropped to something generic. The treatment may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead (a hard hit, a flash, a snap into place) rather than inventing a nonexistent field. Only use real fields from the schema above - never invent new ones.):\n${treatment}\n\nOriginal request: ${userPrompt}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON - still encoding the treatment above.`;
 
   const result = await callMistralForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: nextRetriesLeft, priorErrors }));

@@ -5,6 +5,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { buildBeatVisual, loadBeatImages } = require('./sceneBuilder');
+const { gradientRamp } = require('./engine/generateEffects');
 
 /**
  * The rendering agent: turns validated scene JSON (sceneSchema.js) into
@@ -113,20 +114,52 @@ function mulberry32(seed) {
   };
 }
 
+// Small, self-contained hex helpers (deliberately duplicated rather
+// than imported from sceneSchema.js - that module stays dependency-
+// free from the render engine, and this needs its OWN version anyway
+// since sceneSchema.js's equivalent picks colors via Math.random(),
+// which is NOT safe here - see buildBoardLayoutAndBackground's doc
+// comment for why every random choice in this file has to come from
+// the one seeded stream instead.
+function hexToRgbLocal(hex) {
+  const clean = String(hex).replace('#', '');
+  const num = parseInt(clean, 16) || 0;
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+function rgbToHexLocal([r, g, b]) {
+  return `#${[r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('')}`;
+}
+function adjustLightness(hex, factor) {
+  const [r, g, b] = hexToRgbLocal(hex);
+  const mix = (c) => (factor >= 0 ? c + (255 - c) * factor : c + c * factor);
+  return rgbToHexLocal([mix(r), mix(g), mix(b)]);
+}
+const BOARD_BACKGROUND_HUES = ['#0A2435', '#1A1035', '#2A0A1F', '#0A2A1A', '#241A0A', '#1A2A24'];
+
 /**
- * Explicit product direction: replace fade/wipe transitions between
- * separate beats with ONE continuous "board" the camera pans across -
- * each beat's own 540x960 canvas sits at its own spot on this shared
- * board, and moving between beats means panning the camera there
- * instead of cross-fading two separate frames. Beat 0 anchors the
- * board at (0,0); every later beat is placed at a RANDOM offset from
- * the PREVIOUS beat's own position (random angle, distance 200-450px)
- * - "random" and "never a consistent location" per spec, but bounded
- * well under WIDTH/HEIGHT so consecutive beats' canvases always
- * overlap enough during the pan that the viewport is never left
- * showing a gap between them.
+ * Explicit product direction: ONE continuous background for the whole
+ * video, not a separate one per beat - the camera pans across DIFFERENT
+ * REGIONS of that SAME background as it moves between beats, rather
+ * than introducing a new one each time. Replaces the earlier per-beat-
+ * gradient version of this board (each beat used to bring its own
+ * "visual.background"): now the render engine owns the ONE shared
+ * background outright, sized to the full bounding box every beat's
+ * position spans (computed by the caller, once positions are known),
+ * and beats render with a transparent backdrop so this shows through
+ * everywhere there's no text.
+ *
+ * Both the board layout AND the background's color/shape draw from the
+ * SAME seeded rand() stream, in a fixed order - this is what keeps a
+ * long video's chunked rendering consistent: every chunk is a
+ * SEPARATELY FORKED process (longVideoOrchestrator.js) that only
+ * shares the sceneJSON itself, so any call to plain Math.random() here
+ * would make each chunk pick a DIFFERENT background/layout and the
+ * final video would visibly jump at every chunk boundary. Deterministic
+ * per-video, verified identical across separate real process
+ * invocations before this was trusted (see the original board-layout
+ * commit's own verification for the methodology, unchanged here).
  */
-function buildBoardLayout(sceneJSON, beatRanges) {
+function buildBoardLayoutAndBackground(sceneJSON, beatRanges) {
   const rand = mulberry32(hashSceneJSONToSeed(sceneJSON));
   const positions = [{ x: 0, y: 0 }];
   for (let i = 1; i < beatRanges.length; i++) {
@@ -138,7 +171,14 @@ function buildBoardLayout(sceneJSON, beatRanges) {
       y: Math.round(prev.y + Math.sin(angle) * distance),
     });
   }
-  return positions;
+
+  const baseColor = BOARD_BACKGROUND_HUES[Math.floor(rand() * BOARD_BACKGROUND_HUES.length)];
+  const lighten = rand() < 0.5;
+  const otherColor = adjustLightness(baseColor, (lighten ? 1 : -1) * (0.28 + rand() * 0.14));
+  const [startColor, endColor] = lighten ? [otherColor, baseColor] : [baseColor, otherColor];
+  const shape = rand() < 0.5 ? 'linear' : 'radial';
+
+  return { positions, background: { startColor, endColor, shape } };
 }
 
 /** Standard ease-in-out-cubic - explicitly requested ("MAKE SURE THE MOVEMENT IS CUBIC") for the camera pan, smooth acceleration then deceleration rather than a linear/robotic glide. */
@@ -183,7 +223,33 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   fs.mkdirSync(framesDir, { recursive: true });
 
   const { beatRanges } = buildTimeline(sceneJSON);
-  const boardPositions = buildBoardLayout(sceneJSON, beatRanges);
+  const { positions: boardPositions, background: boardBackgroundDef } = buildBoardLayoutAndBackground(sceneJSON, beatRanges);
+
+  // The ONE shared background, sized to cover every position the
+  // camera can ever be parked at (each beat's own WIDTHxHEIGHT
+  // footprint on the board) - built ONCE per chunk (not per frame,
+  // not per beat) since it's a single flat gradient with no per-frame
+  // variation at all, just panned under via translation like every
+  // other board-space element.
+  const boardMinX = Math.min(...boardPositions.map((p) => p.x));
+  const boardMinY = Math.min(...boardPositions.map((p) => p.y));
+  const boardMaxX = Math.max(...boardPositions.map((p) => p.x)) + WIDTH;
+  const boardMaxY = Math.max(...boardPositions.map((p) => p.y)) + HEIGHT;
+  const boardW = boardMaxX - boardMinX;
+  const boardH = boardMaxY - boardMinY;
+  // Radial needs genuinely distinct start/end points - identical points
+  // collapse the radius to a 1px dot (gradientRamp's own `|| 1`
+  // fallback), rendering almost the entire board as flat endColor -
+  // the exact degenerate-gradient bug already fixed once in
+  // sceneSchema.js's own background validation, avoided here by
+  // construction instead of needing a check.
+  const boardBackgroundCanvas = gradientRamp(boardW, boardH, {
+    startPoint: boardBackgroundDef.shape === 'radial' ? [boardW / 2, boardH / 2] : [0, 0],
+    endPoint: boardBackgroundDef.shape === 'radial' ? [boardW, boardH] : [0, boardH],
+    startColor: boardBackgroundDef.startColor,
+    endColor: boardBackgroundDef.endColor,
+    shape: boardBackgroundDef.shape,
+  });
 
   // Every beat overlapping this chunk's own [timeStart,timeEnd) range
   // needs its own frames rendered here - chunking forks a fresh OS
@@ -262,6 +328,31 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       const inPan = beatIndex > 0 && localT < panDuration;
 
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+      // Camera position, in BOARD space, is a cubic-eased interpolation
+      // from the previous beat's own spot to this beat's WHILE panning,
+      // or simply parked exactly on the current beat's spot otherwise -
+      // computed ONCE and reused for both the shared background draw
+      // and the beat canvas(es) below, so they always agree on exactly
+      // what the viewport is looking at.
+      let camX, camY;
+      if (inPan) {
+        const progress = easeInOutCubic(Math.min(1, Math.max(0, localT / panDuration)));
+        const prevPos = boardPositions[beatIndex - 1];
+        const currPos = boardPositions[beatIndex];
+        camX = prevPos.x + (currPos.x - prevPos.x) * progress;
+        camY = prevPos.y + (currPos.y - prevPos.y) * progress;
+      } else {
+        camX = boardPositions[beatIndex].x;
+        camY = boardPositions[beatIndex].y;
+      }
+
+      // The ONE shared background, panned under everything else - beats
+      // themselves render with a transparent backdrop now (no more
+      // per-beat "visual.background"), so this shows through everywhere
+      // there's no text, both while parked on a beat and mid-pan.
+      ctx.drawImage(boardBackgroundCanvas, boardMinX - camX, boardMinY - camY);
+
       if (inPan) {
         const prevBeat = built.get(beatIndex - 1);
         let prevCanvas = frozenFrameCache.get(beatIndex - 1);
@@ -273,19 +364,13 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         transitionCurrCtx.clearRect(0, 0, WIDTH, HEIGHT);
         visualObj.render(transitionCurrCtx, localT);
 
-        // Camera position is a cubic-eased interpolation, in BOARD
-        // space, from the previous beat's own spot to this beat's -
-        // drawing each beat's canvas at (itsBoardPos - camera) is what
+        // Drawing each beat's canvas at (itsBoardPos - camera) is what
         // actually produces the pan: at progress 0 the previous beat's
-        // canvas lands exactly at (0,0) (camera still parked on it)
-        // and the incoming beat is offset fully off-screen; at
-        // progress 1 it's the reverse.
-        const progress = easeInOutCubic(Math.min(1, Math.max(0, localT / panDuration)));
+        // canvas lands exactly at (0,0) (camera still parked on it) and
+        // the incoming beat is offset fully off-screen; at progress 1
+        // it's the reverse.
         const prevPos = boardPositions[beatIndex - 1];
         const currPos = boardPositions[beatIndex];
-        const camX = prevPos.x + (currPos.x - prevPos.x) * progress;
-        const camY = prevPos.y + (currPos.y - prevPos.y) * progress;
-
         ctx.drawImage(prevCanvas, prevPos.x - camX, prevPos.y - camY);
         ctx.drawImage(transitionCurrCanvas, currPos.x - camX, currPos.y - camY);
       } else {
