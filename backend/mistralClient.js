@@ -46,21 +46,16 @@ function loadKeys() {
 }
 const KEYS = loadKeys();
 
-// Tried switching large -> small for latency (several real runs on
-// large measured 140-240s per JSON-encoding call), but reverted after
-// direct measurement showed it was a net loss, not a win: small's
-// individual calls WERE dramatically faster (11-56s live), but it
-// never once produced valid, complete JSON across two full test runs
-// even with the retry budget raised to 16 - the failures weren't
-// occasional detail mistakes (the kind the retry-with-errors loop
-// exists to correct), they were structural chaos: malformed JSON
-// syntax, the wrong root key, whole missing scenes, all recurring
-// across many different retries in the SAME run. Large, despite being
-// slower per call, has a real track record of actually converging on
-// this schema's complexity (multiple confirmed full successes this
-// session) - reliability that a faster-but-non-convergent model can't
-// substitute for no matter how many retries it's given.
-const MODEL = process.env.MISTRAL_MODEL || 'mistral-large-latest';
+// Switched back to small-latest after adding real auto-repair for
+// several of the exact error categories that made it fail to converge
+// last time (duplicate-text layers, wiggly+position, malformed
+// highlight gradients, stray typeless layer entries - see
+// autoRepairBeat) - those are silently fixed in place now instead of
+// forcing a retry, which directly targets several of the recurring
+// failure modes observed. Small's per-call latency (11-56s measured
+// live) is dramatically better than large's (100-240s) whenever it
+// does converge.
+const MODEL = process.env.MISTRAL_MODEL || 'mistral-small-latest';
 
 if (KEYS.length === 0) {
   console.warn('[mistralClient] No MISTRAL_API_KEYS/MISTRAL_API_KEY_N configured');
