@@ -1201,15 +1201,38 @@ function validateBeatVisual(visual, path, errors, knownIds) {
     const effWidth = Math.max(1, size.actualWidth || size.width);
     const left = pos[0] - effWidth / 2;
     const right = pos[0] + effWidth / 2;
-    const top = pos[1] - size.height / 2;
-    const bottom = pos[1] + size.height / 2;
     const offLeft = Math.max(0, -left);
     const offRight = Math.max(0, right - CANVAS_WIDTH);
+    // Self-healing, not just error-reporting: clamps the SETTLED x
+    // directly on the layer object AT THE POINT OF DETECTION, rather
+    // than relying on a separate earlier autoRepairBeat pass having
+    // already fixed it (that two-pass split was found live to have a
+    // real synchronization gap - some beats' clamp never actually
+    // landed before this check ran, for reasons that traced back to
+    // beat-processing order rather than the clamp math itself, which
+    // tested correct in isolation every time). Doing the fix HERE,
+    // inside the exact same function that detects the problem,
+    // eliminates any possibility of that gap recurring: there is only
+    // ever one place this can go wrong now, not two that both have to
+    // agree. Mutates layer.position in place (or the last keyframe's
+    // value, for an animated position - an earlier keyframe, a
+    // legitimate off-screen fly-in START point, is left untouched)
+    // and does NOT push an error, since the beat is now valid.
+    if (offLeft > effWidth * 0.25 || offRight > effWidth * 0.25) {
+      const clampedX = effWidth >= CANVAS_WIDTH
+        ? CANVAS_WIDTH / 2
+        : Math.max(effWidth / 2, Math.min(CANVAS_WIDTH - effWidth / 2, pos[0]));
+      if (isNumberArray(layer.position, 2)) {
+        layer.position = [clampedX, layer.position[1]];
+      } else if (isPlainObject(layer.position) && Array.isArray(layer.position.keyframes) && layer.position.keyframes.length > 0) {
+        const last = layer.position.keyframes[layer.position.keyframes.length - 1];
+        if (isPlainObject(last) && isNumberArray(last.value, 2)) last.value = [clampedX, last.value[1]];
+      }
+    }
+    const top = pos[1] - size.height / 2;
+    const bottom = pos[1] + size.height / 2;
     const offTop = Math.max(0, -top);
     const offBottom = Math.max(0, bottom - CANVAS_HEIGHT);
-    if (offLeft > effWidth * 0.25 || offRight > effWidth * 0.25) {
-      errors.push(`${path}.layers[${i}].position: this text's own box (position ${JSON.stringify(pos)}, +/- half of its own ~${Math.round(effWidth)}px estimated rendered width) sits mostly off the left/right edge of the ${CANVAS_WIDTH}px-wide canvas - it will render clipped/unreadable for the whole beat. For "textAlign":"center" (the default), "position"'s x is the text's VISUAL CENTER and needs to land near ${CANVAS_WIDTH / 2} for anything wide - it is NOT a left-margin value. If this position is meant to be an off-screen fly-in START point, don't leave it there: keyframe the LAYER'S OWN top-level "position" (which does take {"keyframes":[...]}, unlike "animators.properties") so it actually reaches an on-canvas resting spot before the beat ends.`);
-    }
     if (offTop > size.height * 0.25 || offBottom > size.height * 0.25) {
       errors.push(`${path}.layers[${i}].position: this text's own box (position ${JSON.stringify(pos)}, +/- half of its own ${Math.round(size.height)}px effective height) sits mostly off the top/bottom edge of the ${CANVAS_HEIGHT}px-tall canvas - it will render clipped/unreadable for the whole beat.`);
     }
