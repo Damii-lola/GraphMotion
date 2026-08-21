@@ -477,6 +477,22 @@ ANIMATABLE VALUES - every transform/effect number or vector accepts:
      (${EASING_NAMES.filter((n) => !CUBIC_EASING_NAMES.includes(n)).join(', ')}
      all exist in the engine for other real uses elsewhere, but are NOT
      valid choices for the text-only content you're authoring here.)
+
+     A bouncy, overshoot-and-settle POP feel (the natural instinct for
+     a punchy scale entrance) does NOT need "easeOutBack"/
+     "easeOutElastic" - fake the exact same feel with a 3-keyframe
+     cubic-only scale sequence instead, overshooting PAST the landing
+     value then settling back onto it:
+       { "keyframes": [
+           { "time": 0,    "value": [1.3,1.3], "interpolation":"easing", "easing":"easeOutCubic" },
+           { "time": 0.15, "value": [0.95,0.95], "interpolation":"easing", "easing":"easeOutCubic" },
+           { "time": 0.25, "value": [1,1],     "interpolation":"easing", "easing":"easeOutCubic" }
+         ] }
+     (starts oversized, overshoots slightly PAST 1.0 down to 0.95, then
+     settles up to exactly 1.0 - reads as a real spring/bounce landing,
+     entirely built from "easeOutCubic" segments). Use this pattern -
+     not a non-cubic easing name - anywhere a bouncy/punchy pop is the
+     actual intent.
 3. An expression (real JS, sandboxed):
    { "expression": "wiggle(2, 20)", "base": <AnimatableValue> }
    "time" and "value" (= base's resolved value) are in scope. wiggle(freq,amp)
