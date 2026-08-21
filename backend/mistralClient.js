@@ -2,7 +2,7 @@ const fetch = require('node-fetch');
 const {
   validateSceneJSON, validateBeat, LAYER_TYPES, SHAPE_KINDS, SHAPE_CONTENT_TYPES, PATH_OP_MODES,
   RANGE_SELECTOR_SHAPES, TRACK_MATTE_TYPES, GENERATE_KINDS,
-  BLEND_MODE_NAMES, EASING_NAMES, EFFECT_TYPES, TRANSITION_TYPES,
+  BLEND_MODE_NAMES, EASING_NAMES, EFFECT_TYPES, TRANSITION_TYPES, CUBIC_EASING_NAMES,
 } = require('./sceneSchema');
 
 /**
@@ -449,11 +449,25 @@ ANIMATABLE VALUES - every transform/effect number or vector accepts:
 2. Real keyframes:
    { "keyframes": [
        { "time": 0,   "value": 0,   "interpolation": "easing", "easing": "easeOutCubic" },
-       { "time": 0.5, "value": 100, "interpolation": "easing", "easing": "easeInOutQuad" }
+       { "time": 0.5, "value": 100, "interpolation": "easing", "easing": "easeInOutCubic" }
      ] }
    interpolation: "hold" | "linear" | "easing" | "bezier"
-   easing (when interpolation is "easing"): one of
-     ${EASING_NAMES.join(', ')}
+   easing (when interpolation is "easing"): MUST be one of
+     ${CUBIC_EASING_NAMES.join(', ')} - NO OTHER EASING NAME. This is a
+     hard requirement, enforced by validation (not a style preference):
+     any "easing" interpolation keyframe using something other than
+     these three real cubic presets fails validation and is rejected.
+     - "easeOutCubic": motion that starts fast and settles - the
+       default choice for anything ENTERING (text reveals, a highlight
+       chip appearing, a value landing).
+     - "easeInCubic": motion that starts slow and accelerates away -
+       for anything EXITING or being dismissed.
+     - "easeInOutCubic": starts AND ends at rest - for a motion that
+       both begins and ends mid-timeline with nothing before/after it
+       to hand off to/from.
+     (${EASING_NAMES.filter((n) => !CUBIC_EASING_NAMES.includes(n)).join(', ')}
+     all exist in the engine for other real uses elsewhere, but are NOT
+     valid choices for the text-only content you're authoring here.)
 3. An expression (real JS, sandboxed):
    { "expression": "wiggle(2, 20)", "base": <AnimatableValue> }
    "time" and "value" (= base's resolved value) are in scope. wiggle(freq,amp)
@@ -545,6 +559,11 @@ TEXTLAYERDEF - one entry in "layers", the ONLY layer shape right now
       // start/end bracketing just that word's index) to accent a single
       // word a different color from the rest of the line - e.g. the rest of
       // a headline in white with one key word in a bright accent color.
+      // A color accent needs its OWN arrival moment too, same as every
+      // other property here - keyframe the selector's "end" (or "amount")
+      // from 0 to 100 starting a beat or two AFTER the word itself has
+      // already landed, so the color visibly SWITCHES ON mid-beat rather
+      // than being baked in from the character's very first frame.
   "highlights": [ { "selector": SelectorDef, "color": "#rrggbb" (solid) OR
       "gradient": { "from": "#rrggbb", "to": "#rrggbb" }, "paddingX": number,
       "paddingY": number, "cornerRadius": number }, ... ],
@@ -553,9 +572,16 @@ TEXTLAYERDEF - one entry in "layers", the ONLY layer shape right now
       // call-out label. Scope the selector to the target word with
       // basedOn:"words" (e.g. start/end bracketing exactly that one word).
       // paddingX/paddingY default to 8/4px, cornerRadius defaults to 6px.
-      // Static coverage (no keyframes on start/end) shows the chip for the
-      // layer's whole duration; animating start/end fades the chip in/out
-      // along with the reveal. NOT supported together with "onPath".
+      // NEVER give a highlight static full coverage (start:0,end:100 with
+      // no keyframes) - a real reference example of this exact effect
+      // shows the marker box arriving with its OWN motion, not present
+      // from the word's first frame. ALWAYS keyframe "end" (start fixed,
+      // end sweeping 0->100 over ~0.15-0.3s, timed to land shortly AFTER
+      // the word itself has already landed) so the chip visibly draws ON
+      // behind the word as its own distinct beat, exactly like the word
+      // reveal animator but as its own separate, later-timed motion - not
+      // simultaneous with the text reveal, and never simply "on" the
+      // whole time. NOT supported together with "onPath".
 }
 
 Colors are always full 6-digit hex ("#rrggbb" or "#rrggbbaa") - 3-digit
@@ -634,6 +660,21 @@ DESIGN QUALITY - this is the whole point, not an afterthought
 - Every beat should feel deliberately DESIGNED, not a plain slide: a
   real per-character text reveal, at minimum, every single beat (the
   background is already handled for you).
+- NOTHING IS STATIC. This is not just about the text reveal - EVERY
+  element that has its own timing (the headline's entrance, a
+  supporting label's entrance, a "color" accent switching on, a
+  "highlights" chip drawing in) needs its OWN separately-timed
+  animation, not all bundled into one simultaneous moment. Build beats
+  the way a real kinetic-typography edit is cut: short phrases
+  building up word-by-word or line-by-line, each new piece of text
+  landing roughly every 0.3-1s rather than one full sentence appearing
+  and sitting there - and once text HAS landed, a color accent or
+  highlight chip on it should still arrive its own beat later (a
+  distinctly separate, later-timed animation), never baked in from
+  that text's very first frame. A beat where everything animates in
+  at once and then nothing moves again is exactly the "static" failure
+  this rule exists to prevent, even if the initial reveal itself was
+  well-animated.
 - Use TEXT color with intent - a coherent palette across the whole
   video (related hues from beat to beat, not random unrelated ones).
   For the single most important word in a headline, consider an
@@ -649,10 +690,12 @@ DESIGN QUALITY - this is the whole point, not an afterthought
   every layer's "position" and make sure no two share an identical
   value (unless they're genuinely both meant to sit dead-center at
   different moments in time via animation).
-- Prefer real keyframed motion with eased interpolation for primary
-  text; keep position-based per-character animator deltas small (15-
-  40px) so characters don't visually overlap mid-reveal (see SELECTORS
-  above for the full reasoning).
+- Prefer real keyframed motion with "easing" interpolation for primary
+  text, and ALWAYS use one of ${CUBIC_EASING_NAMES.join(', ')} for it -
+  no other easing name is valid here (see ANIMATABLE VALUES above);
+  keep position-based per-character animator deltas small (15-40px) so
+  characters don't visually overlap mid-reveal (see SELECTORS above
+  for the full reasoning).
 - FILL THE FRAME with intent. A tiny line of text confined to one
   corner while most of the ${COMP_WIDTH}x${COMP_HEIGHT} frame sits
   empty reads as unfinished - use font size, line breaks, and multiple
@@ -724,13 +767,24 @@ frame-for-frame:
    next step, so a clear, well-separated breakdown here directly makes
    that easier to get right, every beat covering ALL of:
    - The exact text/words on screen (a headline, a stat, a short
-     label) - be specific about the actual copy, not just its topic
+     label) - be specific about the actual copy, not just its topic.
+     Favor SHORT phrases landing one after another (roughly every 0.3-
+     1s of screen time each) over one long sentence appearing all at
+     once - the pacing of a fast, well-cut kinetic-typography edit, not
+     a static caption card.
    - How the text reveals: per-character sweep, timing, any position/
      scale motion on the reveal - specific enough to actually author
    - Hierarchy when a beat has more than one text element (which is
      the dominant headline vs. a smaller supporting label, and roughly
      where each sits)
-   - How this beat's text lands and settles before the next beat
+   - Where a color accent or highlight marker belongs, and WHEN it
+     switches on relative to the text's own landing moment - it should
+     always be its own later, separately-timed beat of motion, never
+     simultaneous with (or baked into) the text reveal itself
+   - How this beat's text lands and settles before the next beat -
+     nothing in this beat should ever go fully motionless for more
+     than a fraction of a second; something is always either still
+     arriving, switching on, or settling
 4. Fill the frame with intent every beat - real font size and, where
    it earns its place, multiple text elements (a headline plus a
    supporting stat/label) - avoid one small line lost in a big empty

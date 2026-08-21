@@ -172,6 +172,9 @@ const SHAPE_KINDS = ['rectangle', 'ellipse', 'polygon', 'star', 'customPath'];
 const SHAPE_CONTENT_TYPES = ['path', 'trim', 'repeater', 'pathOp', 'fill', 'stroke', 'group'];
 const PATH_OP_MODES = ['add', 'subtract', 'intersect', 'exclude', 'merge'];
 const SELECTOR_TYPES = ['range', 'wiggly'];
+// Explicit product requirement: every eased keyframe uses one of these
+// three - see the "easing" interpolation check in validateAnimatable.
+const CUBIC_EASING_NAMES = ['easeInCubic', 'easeOutCubic', 'easeInOutCubic'];
 const RANGE_SELECTOR_SHAPES = ['square', 'rampUp', 'rampDown', 'triangle', 'round', 'smooth'];
 const TRACK_MATTE_TYPES = ['alpha', 'alphaInverted', 'luma', 'lumaInverted'];
 const GENERATE_KINDS = ['gradientRamp', 'checkerboard', 'grid', 'lensFlare', 'fractalNoise'];
@@ -442,6 +445,15 @@ function validateAnimatable(value, path, errors, vectorLen) {
       if (kf.value === undefined) errors.push(`${path}.keyframes[${i}].value: is required`);
       if (kf.easing && !EASING_NAMES.includes(kf.easing) && kf.easing !== 'cubicBezier') {
         errors.push(`${path}.keyframes[${i}].easing: "${kf.easing}" is not a real easing name (expected one of ${EASING_NAMES.join(', ')}, or cubicBezier)`);
+      } else if (kf.interpolation === 'easing' && !CUBIC_EASING_NAMES.includes(kf.easing)) {
+        // Explicit hard product requirement, not a stylistic default:
+        // every eased keyframe must use one of the three real cubic
+        // presets. Enforced here (not just documented in the prompt)
+        // for the same reason every other "advisory" rule in this file
+        // graduated to a hard check - prompt instructions alone don't
+        // reliably hold, a validation error is what actually guarantees
+        // mistralClient.js's retry-with-errors-fed-back loop corrects it.
+        errors.push(`${path}.keyframes[${i}].easing: "${kf.easing}" - "easing" interpolation must use one of ${CUBIC_EASING_NAMES.join(', ')} (a hard product requirement, not a suggestion). Use "easeOutCubic" for a settling entrance, "easeInCubic" for an accelerating exit, "easeInOutCubic" for motion that both starts and ends at rest.`);
       }
     });
     return;
@@ -629,6 +641,20 @@ function validateLayer(layer, path, errors, knownIds) {
   if (layer.blendMode && !BLEND_MODE_NAMES.includes(layer.blendMode)) {
     errors.push(`${path}.blendMode: "${layer.blendMode}" is not a real blend mode (expected one of ${BLEND_MODE_NAMES.join(', ')})`);
   }
+
+  // Real gap found the same way validateSelector's own start/end/
+  // offset/amount gap was found earlier: these five common transform
+  // fields are documented as AnimatableValue (JSDoc block up top) but
+  // were never actually routed through validateAnimatable at all - so
+  // a malformed one (most importantly for the cubic-easing product
+  // requirement: an "easing" keyframe using a non-cubic name) passed
+  // validation silently instead of being caught and retried. Position/
+  // scale/anchor are 2-vectors; rotation/opacity are scalars.
+  validateAnimatable(layer.position, `${path}.position`, errors, 2);
+  validateAnimatable(layer.rotation, `${path}.rotation`, errors);
+  validateAnimatable(layer.scale, `${path}.scale`, errors, 2);
+  validateAnimatable(layer.anchor, `${path}.anchor`, errors, 2);
+  validateAnimatable(layer.opacity, `${path}.opacity`, errors);
 
   // Real, confirmed-live bug: a layer's own top-level "opacity" and a
   // per-character animator's "opacity" DELTA are two entirely separate
@@ -1395,6 +1421,7 @@ module.exports = {
   RANGE_SELECTOR_SHAPES,
   TRACK_MATTE_TYPES,
   GENERATE_KINDS,
+  CUBIC_EASING_NAMES,
   BLEND_MODE_NAMES,
   EASING_NAMES,
   EFFECT_TYPES,
