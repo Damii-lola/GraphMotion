@@ -205,6 +205,17 @@ const TRANSITION_TYPES = [
 function isPlainObject(v) { return typeof v === 'object' && v !== null && !Array.isArray(v); }
 function isNumberArray(v, len) { return Array.isArray(v) && v.length === len && v.every((n) => typeof n === 'number'); }
 
+/** Loose, non-erroring shape check mirroring validateAnimatable's OWN acceptance rules (number / N-vector / {keyframes} / {expression}) - used by autoRepairBeat to silently drop a field that matches NONE of these shapes (falls back to the engine's own default) instead of forcing a retry over one malformed transform value. */
+function isValidAnimatableShape(v, vectorLen) {
+  if (v === undefined || v === null) return true;
+  if (typeof v === 'number') return true;
+  if (vectorLen && isNumberArray(v, vectorLen)) return true;
+  if (!isPlainObject(v)) return false;
+  if (Array.isArray(v.keyframes)) return true;
+  if (typeof v.expression === 'string') return true;
+  return false;
+}
+
 /**
  * A "text" layer has no literal width/height field (unlike "shape"), but
  * follows the IDENTICAL local-origin-centered drawing convention -
@@ -1055,6 +1066,42 @@ function autoRepairBeat(beat) {
         delete layer.opacity;
       }
 
+      // Real, repeatedly-recurring mistake: "position"/"scale"/"anchor"/
+      // "opacity"/"rotation" sent as something matching NONE of the
+      // real AnimatableValue shapes (not a number, not the right-size
+      // vector, not {keyframes}, not {expression} - e.g. `null`, a
+      // bare string, a malformed nested object). Rejecting outright
+      // forces a full retry over one field that has a perfectly safe
+      // fallback: the engine's own documented default for each
+      // (position/anchor [0,0], scale [1,1], opacity 1, rotation 0) -
+      // so the field is simply dropped rather than failing the beat.
+      if (!isValidAnimatableShape(layer.position, 2)) delete layer.position;
+      if (!isValidAnimatableShape(layer.scale, 2)) delete layer.scale;
+      if (!isValidAnimatableShape(layer.anchor, 2)) delete layer.anchor;
+      if (!isValidAnimatableShape(layer.opacity)) delete layer.opacity;
+      if (!isValidAnimatableShape(layer.rotation)) delete layer.rotation;
+
+      // Real, repeatedly-recurring mistake: an animator's "color" sent
+      // as an object instead of a hex string (e.g. a stray gradient-
+      // shaped {from,to}, or some other nested value) - salvages a real
+      // hex from a couple of plausible common shapes before giving up
+      // and dropping the property entirely (falls back to the layer's
+      // own fillStyle, same as never setting a color accent at all).
+      if (Array.isArray(layer.animators)) {
+        for (const a of layer.animators) {
+          if (!isPlainObject(a) || !isPlainObject(a.properties)) continue;
+          const c = a.properties.color;
+          if (c !== undefined && typeof c !== 'string') {
+            const salvaged = (isPlainObject(c) && HEX_COLOR_RE.test(c.from) && c.from)
+              || (isPlainObject(c) && HEX_COLOR_RE.test(c.color) && c.color)
+              || (isPlainObject(c) && HEX_COLOR_RE.test(c.hex) && c.hex)
+              || null;
+            if (salvaged) a.properties.color = salvaged;
+            else delete a.properties.color;
+          }
+        }
+      }
+
       if (layer.type === 'shape') {
         // Missing top-level width/height, derivable from the shape's
         // own first sized path content - the exact real pattern found
@@ -1282,8 +1329,15 @@ function autoRepairBeat(beat) {
   //    own "animators"/"highlights" entries (so an intended accent
   //    isn't silently lost, just correctly consolidated onto the one
   //    real layer), the duplicates are removed entirely.
+  // 3. A "type":"text" layer with a missing/empty "text" - confirmed
+  //    live, repeatedly, as its own separate failure from #2 (not a
+  //    duplicate of anything, just genuinely empty). There is no safe
+  //    way to fabricate real words the model never wrote, so - same
+  //    tradeoff as #1 - the layer itself is dropped rather than
+  //    failing the whole beat over one missing piece of text.
   if (Array.isArray(beat.visual.layers)) {
-    beat.visual.layers = beat.visual.layers.filter((l) => isPlainObject(l) && LAYER_TYPES.includes(l.type));
+    beat.visual.layers = beat.visual.layers.filter((l) => isPlainObject(l) && LAYER_TYPES.includes(l.type)
+      && !(l.type === 'text' && (typeof l.text !== 'string' || l.text.trim().length === 0)));
 
     const firstByText = new Map();
     const toRemove = new Set();
@@ -1620,6 +1674,19 @@ function validateSceneJSON(sceneJSON) {
   for (const k of Object.keys(sceneJSON)) {
     if (!ROOT_KEYS.has(k)) delete sceneJSON[k];
   }
+
+  // Real, repeatedly-recurring pattern: a truncated/malformed response
+  // leaves one or more `null` or clearly-incomplete stub entries INSIDE
+  // "scenes" (not missing entirely - the array slot exists, e.g. from
+  // JSON.parse salvage on a cut-off response) - these used to surface
+  // as a confusing cascade of per-field errors (".params.duration is
+  // required", ".visual is required") on something that was never a
+  // real beat to begin with. Dropped here instead, so the ONE real,
+  // actionable signal (mistralClient.js's own "too short" completeness
+  // check, comparing actual vs the treatment's planned beat count)
+  // fires cleanly instead of being buried under noise about a beat
+  // that was already known to be missing.
+  sceneJSON.scenes = sceneJSON.scenes.filter((beat) => isPlainObject(beat) && isPlainObject(beat.visual));
 
   sceneJSON.scenes.forEach((beat, i) => {
     const { errors: beatErrors } = validateBeat(beat, `scenes[${i}]`);
