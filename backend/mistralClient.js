@@ -690,14 +690,16 @@ frame-for-frame:
    real hex values from - the background itself is handled entirely by
    the render engine, not something you plan) and the visual mood they
    create together, held consistent across the whole video.
-3. BEAT BY BEAT (beats are typically 2-4s each): this section gets
-   parsed PROGRAMMATICALLY by a script, so its structure is not
-   optional - start each beat with its own line reading EXACTLY
+3. BEAT BY BEAT (beats are typically 2-4s each): keep this section
+   clearly structured - start each beat with its own line reading
    "===BEAT n=== duration:X.Xs" (n starting at 0, X.X the beat's own
    length in seconds, all beats summing to approximately
    ${targetDurationSeconds}s) on its own line, with nothing else on
    that line. Everything between one "===BEAT n===" line and the next
-   is that beat's own full description. For EVERY beat, cover ALL of:
+   is that beat's own full description - this is YOUR OWN plan, which
+   YOU will encode into the final "scenes" JSON array yourself in the
+   next step, so a clear, well-separated breakdown here directly makes
+   that easier to get right, every beat covering ALL of:
    - The exact text/words on screen (a headline, a stat, a short
      label) - be specific about the actual copy, not just its topic
    - How the text reveals: per-character sweep, timing, any position/
@@ -711,8 +713,7 @@ frame-for-frame:
    supporting stat/label) - avoid one small line lost in a big empty
    frame.
 
-Example of the required beat-header format (exact syntax, not just the
-idea - the parser looks for this literal pattern):
+Example of the beat-header format:
 ===BEAT 0=== duration:2.5s
 <full description of beat 0 here>
 ===BEAT 1=== duration:3.0s
@@ -754,130 +755,6 @@ optional, it directly determines whether your response fits before
 being cut off.`;
 }
 
-// ---------------------------------------------------------------------
-// Per-beat generation. Real architectural change, not another prompt
-// patch: asking one API call to correctly produce an ENTIRE multi-beat,
-// deeply-nested JSON document in one shot gives a genuinely rich
-// generation dozens of independent chances to go wrong (a stray root
-// key, a type/kind confusion, a truncated string, a missing field -
-// ANY of which fails the WHOLE document) - confirmed directly across
-// several live runs: the SAME class of mistake recurred with different
-// specifics attempt after attempt, and a single retry regenerating the
-// ENTIRE scene could fix one problem while introducing an unrelated new
-// one elsewhere, never fully converging within the retry budget.
-//
-// This parses the treatment's own required "===BEAT n===" structure
-// (see buildTreatmentSystemPrompt) and encodes EACH beat as its own
-// small, independent JSON generation+validation+retry - a much smaller
-// document per call, with far less surface area to go wrong, and a
-// failure in one beat costs one small retry rather than risking the
-// whole video. Beats are encoded CONCURRENTLY (they only read the
-// shared preamble, never each other's output), so total wall-clock
-// time stays close to one beat's own generation time rather than
-// summing every beat sequentially. Falls back to the previous single-
-// call whole-scene generation if the treatment's beat structure can't
-// be parsed (a real, if now rare, possibility - keeps this robust
-// rather than hard-failing on a parse gap).
-// ---------------------------------------------------------------------
-
-const BEAT_HEADER_RE = /===\s*BEAT\s+(\d+)\s*===\s*duration:\s*([\d.]+)\s*s?/gi;
-
-/**
- * Splits a treatment into { preamble, beats: [{index,duration,text}] }
- * using the required "===BEAT n=== duration:X.Xs" headers. Returns null
- * if no headers are found at all (signals the caller to fall back to
- * whole-scene generation instead of encoding zero beats).
- */
-function parseBeatsFromTreatment(treatment) {
-  const matches = [...treatment.matchAll(BEAT_HEADER_RE)];
-  if (matches.length === 0) return null;
-  const preamble = treatment.slice(0, matches[0].index).trim();
-  const beats = matches.map((m, i) => {
-    const start = m.index + m[0].length;
-    const end = i + 1 < matches.length ? matches[i + 1].index : treatment.length;
-    return { index: Number(m[1]), duration: Number(m[2]) || 0, text: treatment.slice(start, end).trim() };
-  });
-  return { preamble, beats };
-}
-
-function buildBeatEncodingSystemPrompt() {
-  return `${SCHEMA_REFERENCE}
-
-=====================================================================
-YOUR TASK
-=====================================================================
-You are encoding ONE SINGLE BEAT of a larger video - not the whole
-video, not a "scenes" array. Output ONLY a single JSON object shaped
-exactly like ONE beat: {"params":{...},"visual":{...}} - do NOT wrap it
-in {"scenes":[...]}, output that one object directly as the root.
-Remember: COMPACT/MINIFIED JSON, one line, no indentation - this is not
-optional, it directly determines whether your response fits before
-being cut off.`;
-}
-
-async function generateOneBeat(preamble, beatChunk, beatIndex, totalBeats, { retriesLeft = 3, priorErrors = null } = {}) {
-  const systemPrompt = buildBeatEncodingSystemPrompt();
-  let userMessage = `OVERALL VIDEO CONTEXT (hook + palette/mood, shared across every beat for visual consistency):\n${preamble}\n\nTHIS BEAT (beat ${beatIndex + 1} of ${totalBeats}, target duration ${beatChunk.duration}s) - encode this EXACTLY and FAITHFULLY, missing nothing; every decision below must become real text layers/animators from the schema above, never simplified or dropped to something generic. Sound cues (a "clink", a "whoosh") have no schema field - translate them into a visual beat instead (a hard hit, a flash, a snap into place). Only use real fields from the schema above - never invent new ones.\n\n${beatChunk.text}`;
-  if (priorErrors) {
-    // Real pattern found via live testing: a beat with many layers
-    // sometimes fails with a WALL of near-identical errors (e.g.
-    // "layers[1]: must be an object" repeated for layers[1] through
-    // layers[7]) - one underlying mistake (several array entries
-    // weren't full objects) reported as many separate lines, which
-    // buries the actual, single, fixable pattern instead of making it
-    // obvious. When that shape shows up, call it out explicitly before
-    // the full list so the retry fixes the ROOT cause instead of
-    // patching each line individually (which risks leaving the same
-    // root mistake elsewhere the validator didn't happen to flag).
-    const objectErrors = priorErrors.filter((e) => e.includes('must be an object'));
-    const notes = [];
-    if (objectErrors.length >= 3) {
-      notes.push(`${objectErrors.length} of these errors are "must be an object" on array entries - this usually means you wrote a plain string, a summary, or omitted an entry instead of a COMPLETE JSON object for every single array element (every layer, every content item, every effect). Every array in this schema requires a FULL object at every index - never a shorthand/placeholder value standing in for one.`);
-    }
-    // Real, observed pattern: this exact error ("visual.layers: is
-    // required and must be an array") recurred VERBATIM, unchanged,
-    // across every retry for one real beat - not converging toward a
-    // fix at all, unlike every other error type which at least changed
-    // shape between attempts. That strongly suggests the model doesn't
-    // understand WHAT structural mistake produces this message (likely
-    // nesting "layers" somewhere else, e.g. inside "params" instead of
-    // "visual", or naming it something else), so spell out the exact
-    // required shape literally rather than repeating the same abstract
-    // error a 2nd/3rd/4th time.
-    if (priorErrors.some((e) => e.includes('visual.layers') && e.includes('required and must be an array'))) {
-      notes.push('The root object MUST be exactly {"params":{"duration":...,...},"visual":{"layers":[...],...}} - "layers" is a direct property of "visual" (a sibling of "background"/"transitionIn"), an ARRAY of LayerDef objects. It is never nested inside "params", never renamed, and never omitted even for a simple beat (a single layer is still layers:[{...}], not an empty/missing array).');
-    }
-    // Real, observed pattern: "a shape layer requires width/height"
-    // recurred across MULTIPLE retries for the same beat, exhausting
-    // the entire retry budget without ever fully converging (unlike
-    // most other error types, which typically clear within 1-2
-    // retries) - the model seems to correct SOME flagged shape layers
-    // each attempt while leaving (or newly introducing) others, rather
-    // than treating it as a blanket rule to apply to every shape layer
-    // at once. Called out explicitly as a checklist instruction instead
-    // of letting it read as N separate, easy-to-address-one-at-a-time
-    // line items.
-    const widthHeightErrors = priorErrors.filter((e) => e.includes('requires its own top-level "width" and "height"'));
-    if (widthHeightErrors.length >= 2) {
-      notes.push(`${widthHeightErrors.length} separate "shape" layers are missing required width/height. This is not N separate problems to fix one at a time - go through EVERY "shape" layer in this beat (not just the ones listed below) and confirm each one has an explicit top-level "width" and "height", since a fix pass that only touches the flagged layers risks leaving others (or introducing new ones) broken the same way.`);
-    }
-    const rootCauseNote = notes.length ? `\n\nNOTE: ${notes.join(' ')}` : '';
-    userMessage += `\n\nYour previous attempt for THIS beat produced invalid JSON:\n${priorErrors.join('\n')}${rootCauseNote}\n\nFix these specific problems and output the complete, corrected beat JSON.`;
-  }
-
-  const result = await callMistralForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateOneBeat(preamble, beatChunk, beatIndex, totalBeats, { retriesLeft: nextRetriesLeft, priorErrors }));
-
-  const { valid, errors } = validateBeat(result, `beat[${beatIndex}]`);
-  if (!valid) {
-    if (retriesLeft > 0) {
-      console.warn(`[mistralClient] beat ${beatIndex} failed validation (${errors.length} error(s)), retrying: ${errors.slice(0, 3).join('; ')}`);
-      return generateOneBeat(preamble, beatChunk, beatIndex, totalBeats, { retriesLeft: retriesLeft - 1, priorErrors: errors });
-    }
-    throw new Error(`Beat ${beatIndex} failed schema validation after retries: ${errors.join('; ')}`);
-  }
-  return result;
-}
-
 function buildEditSystemPrompt(targetDurationSeconds) {
   return `${SCHEMA_REFERENCE}
 
@@ -897,12 +774,27 @@ being cut off.`;
 }
 
 /**
- * The fallback path - the previous whole-scene-in-one-call generation,
- * kept for when a treatment's beat structure can't be parsed (see
- * parseBeatsFromTreatment). Same retry-with-errors-fed-back design as
- * generateOneBeat, just for the entire {scenes:[...]} document at once.
+ * THE generation path - one single call encodes the ENTIRE
+ * {scenes:[...]} document from the treatment at once, with real
+ * retry-with-errors-fed-back on validation failure.
+ *
+ * Explicit product reset (not a return to an old default by accident):
+ * this used to be only a rare fallback, with per-beat CONCURRENT
+ * independent generation (each beat its own isolated call, no
+ * visibility into any other beat) as the primary path. Removed after
+ * real, repeated live failures traced directly to that isolation, not
+ * to whole-scene generation itself: beats generated with zero
+ * awareness of each other produced duplicate content (the same exact
+ * headline written twice, as two separate beats each independently
+ * decided it was a good hook), and a single stubborn beat exhausting
+ * its own retry budget failed the ENTIRE video even when every other
+ * beat had already generated correctly. One call that sees the whole
+ * treatment at once and writes every scene together doesn't have
+ * either failure mode - it has full context for what's already been
+ * said, and validation/retry now covers the whole video as one
+ * coherent unit rather than N independent ones.
  */
-async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft = 4, priorErrors = null } = {}) {
+async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft = 6, priorErrors = null } = {}) {
   const systemPrompt = buildGenerationSystemPrompt(targetDurationSeconds);
   let userMessage = `CREATIVE TREATMENT (already planned by a senior director - encode this EXACTLY and FAITHFULLY, missing nothing; every decision below must become real text layers/animators from the schema above, never simplified or dropped to something generic. The treatment may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead (a hard hit, a flash, a snap into place) rather than inventing a nonexistent field. Only use real fields from the schema above - never invent new ones.):\n${treatment}\n\nOriginal request: ${userPrompt}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON - still encoding the treatment above.`;
@@ -923,17 +815,7 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
 async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
   console.log('[mistralClient] planning creative treatment...');
   const treatment = await generateCreativeTreatment(userPrompt, targetDurationSeconds);
-
-  const parsed = parseBeatsFromTreatment(treatment);
-  if (parsed && parsed.beats.length > 0) {
-    console.log(`[mistralClient] encoding ${parsed.beats.length} beat(s) independently...`);
-    const scenes = await Promise.all(
-      parsed.beats.map((beatChunk, i) => generateOneBeat(parsed.preamble, beatChunk, i, parsed.beats.length, { retriesLeft: 7 })),
-    );
-    return { scenes };
-  }
-
-  console.warn('[mistralClient] could not parse "===BEAT n===" structure from the treatment, falling back to whole-scene generation');
+  console.log('[mistralClient] encoding whole scene in one pass...');
   return generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment);
 }
 
