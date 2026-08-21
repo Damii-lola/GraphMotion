@@ -626,32 +626,47 @@ TEXTLAYERDEF - one entry in "layers", the ONLY layer shape right now
       // full selector strength that character renders in this hex color
       // instead of the layer's own "fillStyle", blending smoothly at partial
       // strength. Use a selector scoped to ONE word (basedOn:"words",
-      // start/end bracketing just that word's index) to accent a single
+      // start/end computed as that word's exact PERCENTAGE range - see
+      // SELECTORS below for the precise formula) to accent a single
       // word a different color from the rest of the line - e.g. the rest of
       // a headline in white with one key word in a bright accent color.
+      // Remember "invert":false (see SELECTORS below) - without it the
+      // color lands on every OTHER word instead of the one you targeted.
       // A color accent needs its OWN arrival moment too, same as every
-      // other property here - keyframe the selector's "end" (or "amount")
-      // from 0 to 100 starting a beat or two AFTER the word itself has
-      // already landed, so the color visibly SWITCHES ON mid-beat rather
-      // than being baked in from the character's very first frame.
+      // other property here - to make it switch ON a beat or two AFTER
+      // the word has already landed, keep "start"/"end" FIXED on the
+      // target word the whole time and instead keyframe the selector's
+      // "amount" from 0 to 1 at the moment you want the color to
+      // appear. NEVER animate "start"/"end" for this purpose - that
+      // changes WHICH characters are covered (growing the selection),
+      // not WHEN the color switches on, and will color far more of the
+      // line than intended.
   "highlights": [ { "selector": SelectorDef, "color": "#rrggbb" (solid) OR
       "gradient": { "from": "#rrggbb", "to": "#rrggbb" }, "paddingX": number,
       "paddingY": number, "cornerRadius": number }, ... ],
       // a "marker highlighter" chip - a rounded-rect box drawn BEHIND one
       // word (or a short run of characters), like a highlighter stroke or a
       // call-out label. Scope the selector to the target word with
-      // basedOn:"words" (e.g. start/end bracketing exactly that one word).
+      // basedOn:"words" and start/end computed as the exact PERCENTAGE
+      // range for that one word index (see SELECTORS below for the
+      // precise formula and a worked example - do NOT guess small
+      // arbitrary numbers). Unlike an animator, a highlight's selector
+      // is used AS-IS with no invert - the word(s) your start/end
+      // percentage range actually covers are exactly what gets boxed,
+      // nothing more.
       // paddingX/paddingY default to 8/4px, cornerRadius defaults to 6px.
-      // NEVER give a highlight static full coverage (start:0,end:100 with
-      // no keyframes) - a real reference example of this exact effect
-      // shows the marker box arriving with its OWN motion, not present
-      // from the word's first frame. ALWAYS keyframe "end" (start fixed,
-      // end sweeping 0->100 over ~0.15-0.3s, timed to land shortly AFTER
-      // the word itself has already landed) so the chip visibly draws ON
-      // behind the word as its own distinct beat, exactly like the word
-      // reveal animator but as its own separate, later-timed motion - not
-      // simultaneous with the text reveal, and never simply "on" the
-      // whole time. NOT supported together with "onPath".
+      // NEVER give a highlight static full coverage - a real reference
+      // example of this exact effect shows the marker box arriving with
+      // its OWN motion, not present from the word's first frame. To
+      // animate it in: keep "start"/"end" FIXED on the target word's
+      // exact percentage range for the WHOLE beat (never animate them -
+      // see the "color" note above for exactly why that goes wrong),
+      // and instead keyframe "amount" from 0 to 1 over ~0.15-0.3s,
+      // timed to land shortly AFTER the word itself has already
+      // landed, so the chip visibly draws ON behind the still-correct
+      // word as its own distinct, later-timed motion - not simultaneous
+      // with the text reveal, and never simply "on" the whole time.
+      // NOT supported together with "onPath".
       //
       // CRITICAL: a highlight (or a "color" accent animator) ALWAYS
       // lives on the SAME layer as the text it's decorating, targeting
@@ -695,6 +710,36 @@ SELECTORS (per-character text animator drivers)
   // THE standard reveal driver. For a classic left-to-right character
   // reveal: keep "start" fixed at 0 and animate "end" from 0 to 100 over
   // your reveal duration (shape:"square" is a clean per-character cutoff).
+  //
+  // "start"/"end" are PERCENTAGES OF POSITION THROUGH THE TEXT (0-100),
+  // NEVER literal word/character indices - a real, confirmed-live
+  // mistake: writing {"start":6,"end":22} trying to target "the 3rd
+  // word" of an 8-word sentence actually selects almost nothing (word
+  // index has to be converted to a percentage first). To target ONE
+  // specific word at index i (0-indexed) out of N total words:
+  //   start = (i / N) * 100
+  //   end   = ((i + 1) / N) * 100
+  // Concrete worked example: highlighting exactly the 3rd word ("HOME",
+  // index 2) of "IT'S HOME TO SHARKS" (4 words total, N=4): start =
+  // (2/4)*100 = 50, end = (3/4)*100 = 75. NEVER guess small arbitrary
+  // numbers hoping they'll land near the right word - always compute
+  // the percentage from the real word count and target index.
+  //
+  // "invert" (on the ANIMATOR wrapping this selector, not the selector
+  // itself - see TEXTLAYERDEF's "animators" above) defaults to TRUE,
+  // meaning by default an animator applies its "properties" delta to
+  // the CHARACTERS NOT SELECTED by the range, not the ones selected -
+  // this is the correct default for the classic reveal case (start
+  // fixed at 0, end sweeping to 100: "not yet reached by the sweep" =
+  // hidden/offset, "reached" = landed). But a "color" accent animator
+  // is NOT a reveal - you want the color applied exactly where you
+  // targeted, not its complement. A real, confirmed-live bug: a
+  // "color" animator scoped to one word with no "invert" field ended
+  // up coloring EVERY OTHER word in the sentence instead, because the
+  // default invert flipped the selection. ALWAYS set "invert":false
+  // explicitly on any "color" animator (or any other non-reveal
+  // accent) targeting a specific word range - only leave "invert" at
+  // its default (or explicitly true) for an actual entrance reveal.
   //
   // DEFAULT REVEAL STYLE: a real, fast-cut kinetic-typography edit does
   // NOT slowly wipe each character in one at a time - words/short
