@@ -828,6 +828,15 @@ Each ShapeContentItem shape:
       "params": {...} } }
     // rectangle: {width,height,roundness?}  ellipse: {width,height}
     // polygon: {points,radius,rotation?}  star: {points,outerRadius,innerRadius,rotation?}
+    //   - "points" here is a plain NUMBER (how many sides/points the
+    //   REGULAR shape has, e.g. 6 for a hexagon, 5 for a 5-pointed
+    //   star) - it generates the shape from a side count + radius, it
+    //   is NEVER an array of hand-specified vertex coordinates (that
+    //   confusion with customPath's "anchors" crashed a real render):
+    //     WRONG: "points": [{"point":[0,-60]},{"point":[60,0]},...]
+    //     RIGHT: "points": 6, "radius": 60
+    //   For anything that isn't a regular polygon/star, use
+    //   "customPath" with real "anchors" instead.
     // customPath: {closed, anchors:[{point:[x,y],outTangent?,inTangent?},...]}
     //   - anchors is an OBJECT array, each {"point":[x,y]} - NOT bare
     //   [x,y] pairs. This is how you hand-draw a line/squiggle/curve

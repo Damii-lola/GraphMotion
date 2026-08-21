@@ -78,6 +78,21 @@ function trimPath(anchors, closed, {
   start = 0, end = 100, offset = 0, samplesPerSegment = 80,
 } = {}) {
   if (end <= start) return [];
+  // Real, confirmed-live crash: a degenerate path with fewer than 2
+  // real anchors reaching this point is possible from more than one
+  // source (a malformed customPath already caught by schema validation
+  // is ONE way, but a shape-primitive builder fed bad kind-specific
+  // params - e.g. "polygon" given an array where a numeric side-count
+  // was expected - can ALSO silently produce a near-empty anchor list
+  // that nothing upstream validates, since primitive params aren't
+  // schema-checked the way customPath's anchors array is). Trim Paths
+  // crashing the ENTIRE render over one degenerate shape among
+  // possibly dozens in a beat is a wildly disproportionate failure
+  // mode - confirmed directly: a real generation died at frame 180/240
+  // (9s into a 12s video, most of it already rendered) over exactly
+  // this. A shape with nothing real to trim contributes nothing to
+  // draw, which is a valid, harmless outcome - not a crash.
+  if (!Array.isArray(anchors) || anchors.length < 2) return [];
   const sampler = buildPathSampler(anchors, { samplesPerSegment, closed });
   const width = (end - start) / 100;
   const winStart = mod1(start / 100 + offset / 100);

@@ -645,6 +645,28 @@ function validateShapeContentItem(item, path, errors) {
           }
         });
       }
+    } else if (item.shape.kind === 'polygon' || item.shape.kind === 'star') {
+      // Real, confirmed-live crash this prevents: "points" here is the
+      // NUMBER OF SIDES (a regular polygon/star is generated from it,
+      // not hand-specified vertices) - confused with customPath's own
+      // "anchors" concept, a real generation instead sent an ARRAY of
+      // explicit {"point":[x,y]} vertex objects for "points". Nothing
+      // validated that shape, so it silently reached the polygon
+      // primitive builder, which produced a near-empty/degenerate path
+      // with no error anywhere - and THAT crashed the entire render
+      // process outright once a "trim" operator tried to sample it
+      // (now defensively handled in trimPaths.js too, but this is the
+      // actual root cause worth catching before it ever gets that far).
+      const p = item.shape.params;
+      if (!isPlainObject(p) || typeof p.points !== 'number' || p.points < 3) {
+        errors.push(`${path}.shape.params.points: must be a plain NUMBER >= 3 (the number of sides/points), not an array of vertex coordinates - "${item.shape.kind}" generates a REGULAR ${item.shape.kind} from a side count + radius, it does not take hand-specified vertices (that's what "customPath" is for). Got ${JSON.stringify(p && p.points)}.`);
+      }
+      if (item.shape.kind === 'polygon' && (!isPlainObject(p) || typeof p.radius !== 'number')) {
+        errors.push(`${path}.shape.params.radius: a "polygon" requires a real number "radius".`);
+      }
+      if (item.shape.kind === 'star' && (!isPlainObject(p) || typeof p.outerRadius !== 'number' || typeof p.innerRadius !== 'number')) {
+        errors.push(`${path}.shape.params: a "star" requires real number "outerRadius" and "innerRadius" values.`);
+      }
     }
   } else if (item.type === 'pathOp') {
     if (!PATH_OP_MODES.includes(item.mode)) errors.push(`${path}.mode: "${item.mode}" is not a real path operation mode (expected one of ${PATH_OP_MODES.join(', ')})`);
