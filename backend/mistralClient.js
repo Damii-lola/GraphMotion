@@ -403,7 +403,13 @@ async function callMistralForJSON(systemPrompt, userMessage, retriesLeft, onRetr
   // per beat) is real additional content, not waste - the compact-JSON
   // fix already freed up the token budget this now spends on richer
   // scenes instead of indentation.
-  const rawText = await callMistralRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 18000 });
+  // Raised again (18000 -> 28000) after a live run hit this ceiling
+  // outright ("Mistral response was truncated") once shapes/icons
+  // re-entered scope - a shape layer's own contents array (path+fill+
+  // trim, or path+stroke+trim for a doodle/ripple) is real additional
+  // JSON per layer that text-only beats never needed, and a 5-beat
+  // video now routinely uses several such layers.
+  const rawText = await callMistralRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 28000 });
   try {
     return extractJson(rawText);
   } catch (err) {
@@ -627,14 +633,24 @@ TEXTLAYERDEF - one entry in "layers"
 
   "text": string, "fontFamily": string, "fontWeight": string, "fontSize": number,
   "lineHeight": number, "maxWidth": number, "fillStyle": color, "textAlign": string,
-      // "fontFamily" MUST be one of ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')}
-      // - these are the ONLY fonts actually bundled and registered with
+      // "fontFamily" MUST be EXACTLY one of these four literal strings:
+      // ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')} -
+      // these are the ONLY fonts actually bundled and registered with
       // this engine (real .ttf files, loaded at startup on every host).
-      // ANY other name (including ones that sound plausible, like
-      // "Futura Condensed" or "Arial Black") is NOT installed and will
+      // Real, repeatedly-recurring mistake: Poppins is a well-known
+      // real font family with MANY real weights (Thin, Light, Regular,
+      // Medium, SemiBold, Bold, ExtraBold, Black), and the natural
+      // instinct is to reach for one of those familiar weight names -
+      // but this engine bundles ONLY the four exact strings above.
+      // "Poppins Regular"/"Poppins SemiBold"/"Poppins Light"/bare
+      // "Poppins" (no weight suffix at all) are ALL real Poppins
+      // weights that do NOT exist as bundled files here and WILL
       // silently fall back to a generic, unstyled default font -
-      // confirmed directly by measuring real glyph metrics, not a style
-      // guess. "Poppins Black" (weight 900) is the workhorse for bold
+      // confirmed directly by measuring real glyph metrics, not a
+      // style guess. There is no "regular"/"normal" weight bundled at
+      // all - "Poppins Medium" is the closest thing to a body-text
+      // weight available; use it, not "Poppins Regular". "Poppins
+      // Black" (weight 900) is the workhorse for bold
       // headline text - a heavy, rounded geometric grotesk, exactly the
       // kind of confident, punchy display type real kinetic-typography
       // edits use. "Poppins Bold"/"Poppins Medium" for secondary/
@@ -1207,8 +1223,26 @@ function buildGenerationSystemPrompt(targetDurationSeconds) {
   return `${SCHEMA_REFERENCE}
 
 =====================================================================
-YOUR TASK
+FINAL CHECKLIST - re-read this right before you write, and again for
+EVERY beat after the first (rules stated once at the top of a long
+generation are the ones most likely to slip by the last beat):
 =====================================================================
+- "easing" is ALWAYS one of ${CUBIC_EASING_NAMES.join(', ')} - never
+  easeOutQuad/easeOutBack/easeInOutSine/etc, on ANY property
+  (position/opacity/scale/rotation alike), on EVERY beat, not just the
+  first one you write.
+- "fontFamily" is ALWAYS EXACTLY one of ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')}
+  - never "Poppins Regular"/"Poppins SemiBold"/bare "Poppins"/any other
+  real Poppins weight name that sounds plausible but isn't bundled.
+- A shape content item's "type" is ALWAYS one of
+  ${SHAPE_CONTENT_TYPES.map((s) => `"${s}"`).join(', ')} - shape KIND
+  names ("rectangle"/"ellipse"/"customPath"/etc) belong one level
+  deeper, inside "shape.kind", never as the content item's own "type".
+- No two layers in the same beat ever share identical "text".
+- Every keyframe object has both a real "time" (number) and "value" -
+  never omit either.
+- Encode EVERY beat the treatment planned, none skipped or merged.
+
 Generate a complete, valid scene JSON for a short-form vertical video
 matching the user's request below. Target roughly ${targetDurationSeconds}
 seconds total across all beats (sum of params.duration). Output ONLY the
