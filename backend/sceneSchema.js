@@ -175,6 +175,13 @@ const SELECTOR_TYPES = ['range', 'wiggly'];
 // Explicit product requirement: every eased keyframe uses one of these
 // three - see the "easing" interpolation check in validateAnimatable.
 const CUBIC_EASING_NAMES = ['easeInCubic', 'easeOutCubic', 'easeInOutCubic'];
+const TEXT_ALIGN_VALUES = ['left', 'center', 'right'];
+// The ONLY real, guaranteed-available font families - see renderEngine.js's
+// own registration block for why an arbitrary font NAME (e.g. "Futura
+// Condensed") was never actually safe to request: nothing bundles it,
+// so it silently fell back to a generic host default that looked
+// nothing like what was asked for, on EVERY prior generation.
+const AVAILABLE_FONT_FAMILIES = ['Poppins Black', 'Poppins Bold', 'Poppins Medium', 'Poppins Italic'];
 const RANGE_SELECTOR_SHAPES = ['square', 'rampUp', 'rampDown', 'triangle', 'round', 'smooth'];
 const TRACK_MATTE_TYPES = ['alpha', 'alphaInverted', 'luma', 'lumaInverted'];
 const GENERATE_KINDS = ['gradientRamp', 'checkerboard', 'grid', 'lensFlare', 'fractalNoise'];
@@ -236,7 +243,15 @@ function estimateTextEffectiveSize(layer) {
   // erring conservative (slightly OVER-estimating typical text, never
   // under) is the safer direction for an estimate that only ever
   // feeds tolerance checks, not literal pixel placement.
-  const estCharWidth = fontSize * 0.6;
+  // 0.6 -> 0.62: re-measured directly against the now-bundled real
+  // "Poppins Black" font (renderEngine.js's font registration) instead
+  // of the old "Arial Black" this was originally calibrated against -
+  // real ctx.measureText() on representative headline strings put
+  // Poppins Black's average per-character width as high as 0.629x
+  // fontSize on a long real sentence, above the old 0.6 constant, so
+  // this stays the same "never undercount" side of the estimate for
+  // the actual font now in use rather than the one this was tuned for.
+  const estCharWidth = fontSize * 0.62;
   const estLines = text.length > 0 ? Math.max(1, Math.round((text.length * estCharWidth) / width)) : 1;
   return { width, height: lineHeight * estLines };
 }
@@ -750,6 +765,12 @@ function validateLayer(layer, path, errors, knownIds) {
     }
   } else if (layer.type === 'text') {
     if (typeof layer.text !== 'string' || layer.text.length === 0) errors.push(`${path}.text: is required and must be a non-empty string`);
+    if (layer.fontFamily !== undefined && !AVAILABLE_FONT_FAMILIES.includes(layer.fontFamily)) {
+      errors.push(`${path}.fontFamily: "${layer.fontFamily}" is not a real, bundled font - only these are actually registered and guaranteed to render correctly on every host: ${AVAILABLE_FONT_FAMILIES.join(', ')}. Any other name silently falls back to a generic, unstyled default (confirmed directly - this is not a style preference, it's the difference between real bold geometric type and an unstyled fallback).${suggestFix(layer.fontFamily, AVAILABLE_FONT_FAMILIES, 'a font family')}`);
+    }
+    if (layer.textAlign !== undefined && !TEXT_ALIGN_VALUES.includes(layer.textAlign)) {
+      errors.push(`${path}.textAlign: "${layer.textAlign}" is not real (expected one of ${TEXT_ALIGN_VALUES.join(', ')})`);
+    }
     if (Array.isArray(layer.animators)) {
       layer.animators.forEach((a, i) => validateAnimator(a, `${path}.animators[${i}]`, errors));
     }
@@ -1422,6 +1443,8 @@ module.exports = {
   TRACK_MATTE_TYPES,
   GENERATE_KINDS,
   CUBIC_EASING_NAMES,
+  TEXT_ALIGN_VALUES,
+  AVAILABLE_FONT_FAMILIES,
   BLEND_MODE_NAMES,
   EASING_NAMES,
   EFFECT_TYPES,

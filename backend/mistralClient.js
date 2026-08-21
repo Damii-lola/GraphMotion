@@ -3,6 +3,7 @@ const {
   validateSceneJSON, validateBeat, LAYER_TYPES, SHAPE_KINDS, SHAPE_CONTENT_TYPES, PATH_OP_MODES,
   RANGE_SELECTOR_SHAPES, TRACK_MATTE_TYPES, GENERATE_KINDS,
   BLEND_MODE_NAMES, EASING_NAMES, EFFECT_TYPES, TRANSITION_TYPES, CUBIC_EASING_NAMES,
+  TEXT_ALIGN_VALUES, AVAILABLE_FONT_FAMILIES,
 } = require('./sceneSchema');
 
 /**
@@ -533,7 +534,34 @@ TEXTLAYERDEF - one entry in "layers", the ONLY layer shape right now
             or animate THIS field with real keyframes (0 -> 1).
 
   "text": string, "fontFamily": string, "fontWeight": string, "fontSize": number,
-  "lineHeight": number, "maxWidth": number, "fillStyle": color,
+  "lineHeight": number, "maxWidth": number, "fillStyle": color, "textAlign": string,
+      // "fontFamily" MUST be one of ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')}
+      // - these are the ONLY fonts actually bundled and registered with
+      // this engine (real .ttf files, loaded at startup on every host).
+      // ANY other name (including ones that sound plausible, like
+      // "Futura Condensed" or "Arial Black") is NOT installed and will
+      // silently fall back to a generic, unstyled default font -
+      // confirmed directly by measuring real glyph metrics, not a style
+      // guess. "Poppins Black" (weight 900) is the workhorse for bold
+      // headline text - a heavy, rounded geometric grotesk, exactly the
+      // kind of confident, punchy display type real kinetic-typography
+      // edits use. "Poppins Bold"/"Poppins Medium" for secondary/
+      // supporting lines that should read as a clear step down in
+      // weight from the headline. "Poppins Italic" ONLY for a
+      // deliberate rhythm-break accent word (sparingly, at most once
+      // per beat), never as a primary headline face. Set "fontWeight"
+      // to match the family's own real weight ("900" for Black, "700"
+      // for Bold, "500" for Medium) - the GLYPHS themselves are already
+      // that weight; "fontWeight" here is bookkeeping, not synthetic
+      // bolding.
+      // "textAlign": "left" | "center" | "right", default "center".
+      // Real kinetic-typography edits overwhelmingly stack MULTI-WORD
+      // phrases LEFT-aligned (every line starts at the same left edge,
+      // ragged right) rather than each line individually centered on
+      // its own width - use "left" for any multi-line body headline
+      // building up phrase-by-phrase. Reserve "center" for a short,
+      // standalone one-or-two-word title-card moment (a single word or
+      // short phrase alone in the frame, not part of a longer build-up).
       // "maxWidth" controls line-wrapping (text wraps to a new line once a
       // line would exceed it) - omitting it defaults to a safe ${COMP_WIDTH - 60}px
       // (comp width minus margin), but for a large headline set it
@@ -597,6 +625,19 @@ SELECTORS (per-character text animator drivers)
   // THE standard reveal driver. For a classic left-to-right character
   // reveal: keep "start" fixed at 0 and animate "end" from 0 to 100 over
   // your reveal duration (shape:"square" is a clean per-character cutoff).
+  //
+  // DEFAULT REVEAL STYLE: a real, fast-cut kinetic-typography edit does
+  // NOT slowly wipe each character in one at a time - words/short
+  // phrases POP IN as a unit, fast (~0.15-0.35s total), landing on the
+  // very NEXT phrase before the last one has time to feel static. Use
+  // "basedOn":"words" with "end" sweeping 0->100 over that short a
+  // window as the DEFAULT (every word in the current phrase lands
+  // within a fraction of a second of each other, not staggered letter
+  // by letter) - reserve a slower "basedOn":"characters" sweep for the
+  // rare deliberate exception, not the default assumption. Pair the
+  // reveal with a small "scale" delta (e.g. properties.scale: 1.15-1.3)
+  // in addition to opacity/position for a punchy pop-in landing feel,
+  // not just a flat fade.
 { "type": "wiggly", "frequency": number, "seed": number, "correlation": 0-100,
   "minAmount": number, "maxAmount": number }
   // continuous organic per-character jitter, not a one-time reveal
@@ -772,8 +813,9 @@ frame-for-frame:
      1s of screen time each) over one long sentence appearing all at
      once - the pacing of a fast, well-cut kinetic-typography edit, not
      a static caption card.
-   - How the text reveals: per-character sweep, timing, any position/
-     scale motion on the reveal - specific enough to actually author
+   - How the text reveals: a fast word-level pop-in (~0.15-0.35s, the
+     default - see SELECTORS below), timing, any position/scale motion
+     on the reveal - specific enough to actually author
    - Hierarchy when a beat has more than one text element (which is
      the dominant headline vs. a smaller supporting label, and roughly
      where each sits)

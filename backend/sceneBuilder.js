@@ -309,6 +309,7 @@ function buildTextDraw(layerDef, beatContext) {
     fontSize: layerDef.fontSize || 48,
     lineHeight: layerDef.lineHeight || (layerDef.fontSize || 48) * 1.15,
     fillStyle: layerDef.fillStyle || '#ffffff',
+    textAlign: layerDef.textAlign || 'center',
     animators,
     highlights,
   };

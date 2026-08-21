@@ -1,4 +1,4 @@
-const { createCanvas } = require('@napi-rs/canvas');
+const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
 const ffmpegPath = require('ffmpeg-static');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -6,6 +6,47 @@ const os = require('os');
 const fs = require('fs');
 const { buildBeatVisual, loadBeatImages } = require('./sceneBuilder');
 const { gradientRamp } = require('./engine/generateEffects');
+
+// Real, previously-unnoticed root cause of "the font/animation still
+// looks wrong" complaints surviving every prompt-wording change: this
+// engine never bundled or registered a SINGLE real font file of its
+// own - every "fontFamily" the AI was ever told to use ("Futura
+// Condensed", "Arial Black", etc.) was just a name handed to the host
+// OS's own font lookup, with NO guarantee that name resolves to
+// anything real on whatever machine actually renders it. Confirmed
+// directly: on this dev machine, ctx.measureText() with
+// "Futura Condensed" produced the IDENTICAL glyph metrics as a
+// deliberately made-up, guaranteed-nonexistent font name - meaning it
+// was silently falling back to some generic default the entire time,
+// not the bold geometric look the prompt was asking for. Render's own
+// Linux container has an entirely different (and likely much sparser)
+// font set than this Windows dev machine, so the SAME prompt could
+// have been producing a DIFFERENT wrong fallback there too - the exact
+// "looks nothing like the reference" gap no amount of font-name
+// tuning in the prompt could ever fix, since the name was never being
+// honored anywhere.
+//
+// Fixed by bundling real, redistributable (SIL Open Font License)
+// Poppins weight files directly in the repo and registering them here
+// with explicit family aliases, so "Poppins Black"/"Poppins Bold"/
+// "Poppins Medium"/"Poppins Italic" resolve to the ACTUAL requested
+// glyphs identically on every host, dev machine or Render container,
+// regardless of what's otherwise installed there.
+const FONTS_DIR = path.join(__dirname, 'assets', 'fonts');
+const FONT_REGISTRATIONS = [
+  ['Poppins-Black.ttf', 'Poppins Black'],
+  ['Poppins-Bold.ttf', 'Poppins Bold'],
+  ['Poppins-Medium.ttf', 'Poppins Medium'],
+  ['Poppins-Italic.ttf', 'Poppins Italic'],
+];
+for (const [file, alias] of FONT_REGISTRATIONS) {
+  const fontPath = path.join(FONTS_DIR, file);
+  if (fs.existsSync(fontPath)) {
+    GlobalFonts.registerFromPath(fontPath, alias);
+  } else {
+    console.warn(`[renderEngine] font file missing, "${alias}" will fall back to a host default: ${fontPath}`);
+  }
+}
 
 /**
  * The rendering agent: turns validated scene JSON (sceneSchema.js) into

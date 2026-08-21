@@ -23,7 +23,9 @@ const {
 // basedOn:'words' selectors work.
 // ---------------------------------------------------------------------
 
-function layoutText(ctx, text, { fontFamily, fontWeight, fontSize, lineHeight, maxWidth, centerX, centerY }) {
+function layoutText(ctx, text, {
+  fontFamily, fontWeight, fontSize, lineHeight, maxWidth, centerX, centerY, textAlign = 'center',
+}) {
   ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
   const words = text.split(' ').filter((w) => w.length > 0);
   const lines = [];
@@ -46,7 +48,21 @@ function layoutText(ctx, text, { fontFamily, fontWeight, fontSize, lineHeight, m
   let wordIndex = 0;
   lines.forEach((lineWords, li) => {
     const lineWidth = lineWords.reduce((sum, w) => sum + ctx.measureText(`${w} `).width, 0);
-    let cx = centerX - lineWidth / 2;
+    // Each character is still drawn individually CENTERED on its own
+    // computed x (ctx.textAlign stays 'center' in renderAnimatedText
+    // below) - only where each LINE's own run of characters starts
+    // changes here. 'left'/'right' anchor every line to the same fixed
+    // edge of the "maxWidth" box (a real, stacked-left-aligned kinetic-
+    // typography paragraph, matching how short-form kinetic type is
+    // conventionally set) instead of each line individually centering
+    // on its own width, which is what made every previous line-break
+    // "wobble" left/right relative to its neighbors regardless of
+    // "textAlign" - the default here stays 'center' so existing
+    // content with no opinion renders unchanged.
+    let cx;
+    if (textAlign === 'left') cx = centerX - maxWidth / 2;
+    else if (textAlign === 'right') cx = centerX + maxWidth / 2 - lineWidth;
+    else cx = centerX - lineWidth / 2;
     const cy = startY + li * lineHeight;
     lineWords.forEach((word) => {
       for (const ch of word) {
@@ -165,11 +181,15 @@ function drawHighlights(ctx, chars, fontSize, highlights, t, totalChars, totalWo
 
 function renderAnimatedText(ctx, text, t, opts) {
   const {
-    fontFamily, fontWeight, fontSize, lineHeight, maxWidth, centerX, centerY,
+    fontFamily, fontWeight, fontSize, lineHeight, maxWidth, centerX, centerY, textAlign = 'center',
     fillStyle = '#FFFFFF', animators = [], highlights = [],
   } = opts;
 
-  const { chars, totalWords } = layoutText(ctx, text, { fontFamily, fontWeight, fontSize, lineHeight, maxWidth, centerX, centerY });
+  const {
+    chars, totalWords,
+  } = layoutText(ctx, text, {
+    fontFamily, fontWeight, fontSize, lineHeight, maxWidth, centerX, centerY, textAlign,
+  });
   const totalChars = chars.length;
 
   if (highlights.length > 0) drawHighlights(ctx, chars, fontSize, highlights, t, totalChars, totalWords);
