@@ -843,6 +843,24 @@ function validateLayer(layer, path, errors, knownIds) {
       if (typeof layer.icon !== 'string' || !/^[\w-]+:[\w-]+$/.test(layer.icon)) {
         errors.push(`${path}.icon: "${layer.icon}" must be a real Iconify name in "prefix:name" form (e.g. "mdi:rocket-launch", "simple-icons:youtube") - see ICONS below for how to pick a real one.`);
       }
+      // Real, confirmed-live bug: an icon layer with no "width"/
+      // "height" left the actual render size entirely up to
+      // buildImageDraw's own fallback (the rasterized icon's NATURAL
+      // pixel size, which iconFetch.js deliberately over-rasterizes at
+      // 2x for crisp downscaling - a "256px" default request becomes a
+      // 512px-wide rendered icon with no explicit size to shrink it
+      // back down). Confirmed directly: a real generated icon with no
+      // width/height rendered nearly as large as the frame itself,
+      // overlapping the text next to it - and having no width/height
+      // ALSO made it invisible to the overlap-detection/auto-spread
+      // system entirely (sizeForSpreadCheck has nothing to measure
+      // without one), so the collision was never caught or repaired
+      // either. width/height are required on every OTHER layer type
+      // with real bounding geometry (shape already requires them) -
+      // an icon is no different.
+      if (typeof layer.width !== 'number' || typeof layer.height !== 'number') {
+        errors.push(`${path}: an icon image layer requires its own top-level "width" and "height" (the actual rendered size) - omitting them lets the icon render at its raw rasterized size (can be much larger than intended) and makes it invisible to overlap detection, both confirmed as real live bugs.`);
+      }
       if (layer.iconColor !== undefined && !HEX_COLOR_RE.test(layer.iconColor)) {
         errors.push(`${path}.iconColor: "${layer.iconColor}" must be a 6-digit hex string.`);
       }
@@ -1076,6 +1094,18 @@ function autoRepairBeat(beat) {
     if (!Array.isArray(layers)) return;
     for (const layer of layers) {
       if (!isPlainObject(layer)) continue;
+
+      // Real, confirmed-live bug: an icon layer with no width/height
+      // renders at its raw rasterized pixel size (can be far larger
+      // than intended) and is invisible to overlap detection - see
+      // validateLayer's matching check for the full incident. Defaults
+      // to a sensible icon size rather than forcing a retry over a
+      // single missing pair of numbers.
+      if (layer.type === 'image' && typeof layer.icon === 'string'
+          && (typeof layer.width !== 'number' || typeof layer.height !== 'number')) {
+        if (typeof layer.width !== 'number') layer.width = 100;
+        if (typeof layer.height !== 'number') layer.height = 100;
+      }
 
       // Static layer-level opacity:0 alongside a reveal animator -
       // see validateLayer's matching check for the full story. Not
