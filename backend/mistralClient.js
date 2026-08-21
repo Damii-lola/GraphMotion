@@ -63,12 +63,44 @@ if (KEYS.length === 0) {
   console.log(`[mistralClient] ${KEYS.length} Mistral API key(s) configured`);
 }
 
+const { jsonrepair } = require('jsonrepair');
+
+// Real, repeatedly-recurring live failure: mistral-small-latest
+// (switched to for latency - see MODEL below) occasionally emits
+// almost-valid JSON with one small syntactic slip - most often a
+// missing comma between two array elements ("Expected ',' or ']'
+// after array element"), sometimes an unterminated string. The OLD
+// behavior treated this identically to a genuinely incomplete/garbage
+// response: give up immediately and force an entire fresh ~15-240s
+// Mistral call to regenerate the WHOLE document from scratch, even
+// though 99% of that same response was perfectly valid content sitting
+// right there. `jsonrepair` is a small, well-tested, purpose-built
+// library for exactly this class of "LLM emitted almost-valid JSON"
+// problem (missing/trailing commas, unquoted keys, unterminated
+// strings, etc.) - tried as a fast, free, LOCAL repair attempt before
+// ever falling back to a full network round-trip. Real, measured
+// asymmetry driving the ordering below: a successful repair costs
+// microseconds; a failed one costs nothing beyond the repair attempt
+// itself, since the original JSON.parse error is what triggers a
+// retry either way if repair also fails to produce valid JSON.
 function extractJson(text) {
   const cleaned = text.replace(/```json|```/g, '').trim();
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
   if (start === -1 || end === -1) throw new Error('No JSON object found in Mistral response');
-  return JSON.parse(cleaned.slice(start, end + 1));
+  const candidate = cleaned.slice(start, end + 1);
+  try {
+    return JSON.parse(candidate);
+  } catch (originalErr) {
+    try {
+      const repaired = jsonrepair(candidate);
+      const result = JSON.parse(repaired);
+      console.warn(`[mistralClient] JSON parse failed (${originalErr.message}) but jsonrepair recovered it locally - no retry needed`);
+      return result;
+    } catch (repairErr) {
+      throw originalErr; // repair didn't help either - surface the ORIGINAL error, more directly useful for debugging than jsonrepair's own
+    }
+  }
 }
 
 // Real, measured finding (not assumed): with response_format:json_object
