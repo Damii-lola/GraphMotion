@@ -534,10 +534,28 @@ TEXTLAYERDEF - one entry in "layers", the ONLY layer shape right now
       // 1.1-1.25x the font size) - omit it entirely to get a sane
       // default (fontSize*1.15) rather than guess at a multiplier.
   "animators": [ { "selector": SelectorDef, "properties": { "opacity": number,
-      "position": [dx,dy], "scale": number, "rotation": number } }, ... ],
-      // real per-character animation - see SELECTORS below. properties are
-      // DELTAS applied at full selector strength (e.g. position:[0,40] moves
-      // a character 40px down when "selected").
+      "position": [dx,dy], "scale": number, "rotation": number, "color": "#rrggbb" } }, ... ],
+      // real per-character animation - see SELECTORS below. opacity/position/
+      // scale/rotation are DELTAS applied at full selector strength (e.g.
+      // position:[0,40] moves a character 40px down when "selected"). "color"
+      // is DIFFERENT - not a delta, a per-character fill-color OVERRIDE: at
+      // full selector strength that character renders in this hex color
+      // instead of the layer's own "fillStyle", blending smoothly at partial
+      // strength. Use a selector scoped to ONE word (basedOn:"words",
+      // start/end bracketing just that word's index) to accent a single
+      // word a different color from the rest of the line - e.g. the rest of
+      // a headline in white with one key word in a bright accent color.
+  "highlights": [ { "selector": SelectorDef, "color": "#rrggbb" (solid) OR
+      "gradient": { "from": "#rrggbb", "to": "#rrggbb" }, "paddingX": number,
+      "paddingY": number, "cornerRadius": number }, ... ],
+      // a "marker highlighter" chip - a rounded-rect box drawn BEHIND one
+      // word (or a short run of characters), like a highlighter stroke or a
+      // call-out label. Scope the selector to the target word with
+      // basedOn:"words" (e.g. start/end bracketing exactly that one word).
+      // paddingX/paddingY default to 8/4px, cornerRadius defaults to 6px.
+      // Static coverage (no keyframes on start/end) shows the chip for the
+      // layer's whole duration; animating start/end fades the chip in/out
+      // along with the reveal. NOT supported together with "onPath".
 }
 
 Colors are always full 6-digit hex ("#rrggbb" or "#rrggbbaa") - 3-digit
@@ -618,6 +636,11 @@ DESIGN QUALITY - this is the whole point, not an afterthought
   background is already handled for you).
 - Use TEXT color with intent - a coherent palette across the whole
   video (related hues from beat to beat, not random unrelated ones).
+  For the single most important word in a headline, consider an
+  animator "color" accent or a "highlights" chip behind it instead of
+  leaving the whole line one flat color - used sparingly (one accented
+  word per beat, not every word), this is what makes a headline read
+  as designed rather than a plain text dump.
 - EVERY layer in "layers" needs its OWN "position" - a real, common
   live mistake: 2+ layers left at the same position (very often
   [${COMP_WIDTH / 2},${COMP_HEIGHT / 2}], the frame center, the natural

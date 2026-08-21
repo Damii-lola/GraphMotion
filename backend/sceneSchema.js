@@ -101,12 +101,25 @@ const { BLEND_MODE_MAP } = require('./engine/layerStack');
  *     text, fontFamily, fontWeight, fontSize, lineHeight, maxWidth,
  *       fillStyle: real renderAnimatedText params (batch 4)
  *     animators: [ { selector: SelectorDef, properties: { opacity,
- *       position:[dx,dy], scale, rotation } }, ... ] - real per-
- *       character animator stack (batch 4/5)
+ *       position:[dx,dy], scale, rotation, color:'#rrggbb' } }, ... ] -
+ *       real per-character animator stack (batch 4/5). "color" blends
+ *       the running per-character fill toward this hex color by the
+ *       selector's own strength (0=base fillStyle, 1=fully this color)
+ *       - use a selector scoped to one word (basedOn:'words') to accent
+ *       a single word a different color from the rest of the line.
+ *     highlights: [ { selector: SelectorDef, color:'#rrggbb' |
+ *       gradient:{from,to}, paddingX, paddingY, cornerRadius }, ... ] -
+ *       a rounded-rect "marker" chip drawn BEHIND a run of selected
+ *       characters (grouped per line, never spanning a line break).
+ *       Selector strength is used directly (no reveal inversion) and
+ *       also drives the chip's own opacity, so an animated start/end
+ *       can fade the chip in/out. Static coverage (no keyframes) draws
+ *       it fully opaque for the layer's whole duration.
  *     onPath: { anchors: [{point:[x,y], outTangent?, inTangent?}, ...],
  *       firstMargin, lastMargin, reversePath, perpendicularToPath,
  *       forceAlignment } - omit for straight-baseline text; present ->
- *       uses renderAnimatedTextOnPath instead (batch 5)
+ *       uses renderAnimatedTextOnPath instead (batch 5). NOTE: "highlights"
+ *       is NOT supported on path text - only on straight-baseline text.
  *
  *     --- type:'image' ---
  *     src: 'beatImage' (resolves to this beat's own params.imagePath,
@@ -470,10 +483,15 @@ function validateAnimatable(value, path, errors, vectorLen) {
 // loop corrects it before the JSON ever reaches the renderer.
 const MAX_TEXT_ANIMATOR_POSITION_DELTA = 150;
 
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
 function validateAnimator(a, path, errors) {
   if (!a.selector) { errors.push(`${path}.selector: is required`); return; }
   validateSelector(a.selector, `${path}.selector`, errors);
   const props = a.properties;
+  if (isPlainObject(props) && props.color !== undefined && !HEX_COLOR_RE.test(props.color)) {
+    errors.push(`${path}.properties.color: "${props.color}" must be a 6-digit hex string like "#ff3366" (no shorthand 3-digit form, no rgb()/named colors).`);
+  }
   if (isPlainObject(props) && Array.isArray(props.position)) {
     const [dx = 0, dy = 0] = props.position;
     if (Math.abs(dx) > MAX_TEXT_ANIMATOR_POSITION_DELTA || Math.abs(dy) > MAX_TEXT_ANIMATOR_POSITION_DELTA) {
@@ -513,6 +531,25 @@ function validateSelector(sel, path, errors) {
     validateAnimatable(sel.end, `${path}.end`, errors);
     validateAnimatable(sel.offset, `${path}.offset`, errors);
     validateAnimatable(sel.amount, `${path}.amount`, errors);
+  }
+}
+
+function validateHighlight(h, path, errors) {
+  if (!isPlainObject(h)) { errors.push(`${path}: must be an object`); return; }
+  if (!h.selector) { errors.push(`${path}.selector: is required (same SelectorDef shape as an animator's selector - e.g. a "range" selector with basedOn:"words" to box one specific word)`); }
+  else validateSelector(h.selector, `${path}.selector`, errors);
+  const hasColor = h.color !== undefined;
+  const hasGradient = h.gradient !== undefined;
+  if (!hasColor && !hasGradient) {
+    errors.push(`${path}: requires either "color" (solid hex fill) or "gradient" ({from,to} hex pair) - a highlight chip with neither has nothing to draw itself with.`);
+  }
+  if (hasColor && !HEX_COLOR_RE.test(h.color)) {
+    errors.push(`${path}.color: "${h.color}" must be a 6-digit hex string like "#ffe066".`);
+  }
+  if (hasGradient) {
+    if (!isPlainObject(h.gradient) || !HEX_COLOR_RE.test(h.gradient.from) || !HEX_COLOR_RE.test(h.gradient.to)) {
+      errors.push(`${path}.gradient: must be {"from":"#hex","to":"#hex"} - both 6-digit hex strings.`);
+    }
   }
 }
 
@@ -689,6 +726,12 @@ function validateLayer(layer, path, errors, knownIds) {
     if (typeof layer.text !== 'string' || layer.text.length === 0) errors.push(`${path}.text: is required and must be a non-empty string`);
     if (Array.isArray(layer.animators)) {
       layer.animators.forEach((a, i) => validateAnimator(a, `${path}.animators[${i}]`, errors));
+    }
+    if (Array.isArray(layer.highlights)) {
+      if (layer.onPath) {
+        errors.push(`${path}.highlights: not supported together with "onPath" - highlight chips only work on straight-baseline text. Remove one or the other.`);
+      }
+      layer.highlights.forEach((h, i) => validateHighlight(h, `${path}.highlights[${i}]`, errors));
     }
   } else if (layer.type === 'generate') {
     if (!layer.generate || !GENERATE_KINDS.includes(layer.generate.kind)) {

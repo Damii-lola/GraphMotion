@@ -288,8 +288,21 @@ function buildShapeDraw(layerDef) {
  * matching what real generations that DO set it explicitly tend to
  * use) so omitting "maxWidth" is always safe by construction.
  */
+/** A highlight chip's selector is used AS-IS (no reveal "1-strength" inversion, unlike buildAnimator) - a chip is a static call-out, not a per-character entrance sweep, so strength 1 = "shown" is already the intuitive default a JSON author would expect from a plain start/end range. */
+function buildHighlight(highlightDef) {
+  return {
+    selector: buildSelectorFn(highlightDef.selector),
+    color: highlightDef.color,
+    gradient: highlightDef.gradient,
+    paddingX: highlightDef.paddingX,
+    paddingY: highlightDef.paddingY,
+    cornerRadius: highlightDef.cornerRadius,
+  };
+}
+
 function buildTextDraw(layerDef, beatContext) {
   const animators = (layerDef.animators || []).map(buildAnimator);
+  const highlights = (layerDef.highlights || []).map(buildHighlight);
   const textOpts = {
     fontFamily: layerDef.fontFamily || 'sans-serif',
     fontWeight: layerDef.fontWeight || '700',
@@ -297,6 +310,7 @@ function buildTextDraw(layerDef, beatContext) {
     lineHeight: layerDef.lineHeight || (layerDef.fontSize || 48) * 1.15,
     fillStyle: layerDef.fillStyle || '#ffffff',
     animators,
+    highlights,
   };
   if (layerDef.onPath) {
     return (ctx, t) => renderAnimatedTextOnPath(ctx, layerDef.text, layerDef.onPath.anchors, t, {
