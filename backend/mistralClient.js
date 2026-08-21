@@ -565,24 +565,33 @@ nearly every layer's entrance (and often its whole duration).
 BEATVISUAL
 =====================================================================
 {
-  "layers": [ TextLayerDef, ... ]  // REQUIRED, must be NON-EMPTY - every
-                                     // beat needs real text content. An
-                                     // empty "layers" array renders as a
-                                     // dead, empty frame with nothing
-                                     // happening for that beat's WHOLE
-                                     // duration. Stacking order: LATER
-                                     // entries draw ON TOP of earlier ones.
+  "layers": [ TextLayerDef | ShapeLayerDef | ImageLayerDef, ... ]  //
+                                     // REQUIRED, must be NON-EMPTY - every
+                                     // beat needs real content, text at
+                                     // minimum. An empty "layers" array
+                                     // renders as a dead, empty frame with
+                                     // nothing happening for that beat's
+                                     // WHOLE duration. Stacking order:
+                                     // LATER entries draw ON TOP of
+                                     // earlier ones - background/decorative
+                                     // shapes and icons go FIRST, text
+                                     // LAST, so text always reads clearly
+                                     // on top.
 }
 There is no "background" field here, and never author one. The ENTIRE
-video shares ONE continuous gradient background, generated and panned
+video shares ONE continuous gradient BACKDROP, generated and panned
 automatically by the render engine itself - not per beat, and not
 something you request or influence. Same for the camera panning from
 one beat to the next: handled ENTIRELY by the render engine,
 automatically, between every beat. You never author, request, or
 control either one. There is no "transitionIn" field to set right now.
+That backdrop is the FLOOR, not the ceiling - real motion graphics
+(shapes, icons/logos) live in "layers" ON TOP of it, exactly like a
+real After Effects composition builds up from a base color into a full
+scene with foreground elements, not text floating alone on a gradient.
 
 =====================================================================
-TEXTLAYERDEF - one entry in "layers", the ONLY layer shape right now
+TEXTLAYERDEF - one entry in "layers"
 =====================================================================
 {
   "id": string,   // optional, only needed if nothing else references it
@@ -756,6 +765,121 @@ Colors are always full 6-digit hex ("#rrggbb" or "#rrggbbaa") - 3-digit
 shorthand ("#333") is NOT supported and will render wrong.
 
 =====================================================================
+SHAPELAYERDEF - real vector shapes: backgrounds, reveals, doodles, rings
+=====================================================================
+{
+  "id": string, "type": "shape",
+  "position", "rotation", "scale", "anchor", "opacity": AnimatableValue (same as TEXTLAYERDEF),
+  "width": number, "height": number,  // REQUIRED - this layer's own bounding size
+  "contents": [ ShapeContentItem, ... ]  // REQUIRED, stacks top-to-bottom
+}
+ShapeContentItem (each one appends to or transforms a running path list):
+  { "type":"path", "shape": { "kind": ${SHAPE_KINDS.map((s) => `"${s}"`).join(' | ')},
+      "params": {...} } }
+    // rectangle: {width,height,roundness?}  ellipse: {width,height}
+    // polygon: {points,radius,rotation?}  star: {points,outerRadius,innerRadius,rotation?}
+    // customPath: {closed, anchors:[{point:[x,y],outTangent?,inTangent?},...]}
+    //   - anchors is an OBJECT array, each {"point":[x,y]} - NOT bare
+    //   [x,y] pairs. This is how you hand-draw a line/squiggle/curve
+    //   (the tutorial's "Pen tool" equivalent) - a handful of anchor
+    //   points with small outTangent/inTangent offsets for curve, or
+    //   omit both for straight segments.
+  { "type":"fill", "color":"#rrggbb", "opacity": 0-1 }
+  { "type":"stroke", "color":"#rrggbb", "width": number,
+      "cap": "butt"|"round"|"square", "join": "miter"|"round"|"bevel",
+      "dash": [on,off]? }
+    // "cap":"round" is what makes a hand-drawn line/doodle look
+    // smooth-ended instead of blunt-cut - use it for any decorative
+    // line, not the default "butt".
+  { "type":"trim", "start": AnimatableValue<0-100>, "end": AnimatableValue<0-100>,
+      "offset": AnimatableValue<0-100>, "multiple": "individually"|"simultaneously" }
+    // THE reveal-a-shape-drawing-itself mechanic - see AE TECHNIQUE
+    // PATTERNS below for the real recipes this powers.
+  { "type":"pathOp", "mode": ${PATH_OP_MODES.map((s) => `"${s}"`).join(' | ')} }
+  { "type":"repeater", "copies": number,
+      "transform": {"position":[x,y],"rotation":number,"scale":[sx,sy],"anchor":[x,y]},
+      "startOpacity": 0-1, "endOpacity": 0-1, "order": "below"|"above" }
+    // "transform" fields are PLAIN STATIC NUMBERS, never AnimatableValue
+    // or expressions - the SAME transform COMPOUNDS across every copy
+    // (copy 2 gets it applied twice, copy 3 three times...), which is
+    // how you fan a shape into a circle/spiral/ring from one small
+    // rotation/position value, not by hand-placing each copy.
+  { "type":"group", "contents":[...], "transform":{...} }
+
+A shape layer's own content draws CENTERED on its local (0,0) - to
+center it on "position", omit "anchor" entirely (default [0,0] is
+already correct); do NOT set anchor to half the width/height, that
+shifts it OFF-center by that much (the exact opposite of centering).
+
+=====================================================================
+IMAGELAYERDEF / ICONS - real icons and brand logos, not invented ones
+=====================================================================
+{
+  "id": string, "type": "image",
+  "position", "rotation", "scale", "anchor", "opacity": AnimatableValue,
+  "width": number, "height": number,
+  "icon": "prefix:name",     // a REAL Iconify icon - see below
+  "iconColor": "#rrggbb"     // optional, recolors the icon (most Iconify
+                              // icons are single-color and take this
+                              // cleanly; omit for a multi-color icon
+                              // like a brand logo that should keep its
+                              // real colors)
+}
+"icon" MUST be a real icon that actually exists in Iconify's open
+library (api.iconify.design, ~200,000 icons, free, no key needed) -
+never invent a plausible-sounding name. Reliable, generic-concept sets
+to draw from (prefix "mdi:" = Material Design Icons, by far the
+largest/safest general-purpose set - rocket, lightbulb, chart-line,
+clock, star, heart, check-circle, alert, trending-up, and thousands
+more genuinely exist under "mdi:"). For a REAL brand/product logo, use
+the "simple-icons:" prefix with the lowercase product name (e.g.
+"simple-icons:youtube", "simple-icons:instagram", "simple-icons:apple")
+- this is a real, maintained set of actual brand marks, not something
+to guess the shape of yourself. If you are not confident an exact icon
+name is real, prefer a well-known "mdi:" concept icon over guessing at
+a more specific or brand-specific one.
+An image layer needs either "icon" or "src":"beatImage" (an AI-
+generated hero photo for this beat) - never both, never neither.
+
+=====================================================================
+AE TECHNIQUE PATTERNS - real recipes, not abstract capability
+=====================================================================
+These are concrete constructions to actually use, adapted directly
+from real professional motion-graphics technique - not a menu to
+sample from lightly. A beat that only uses per-character text reveals
+is not using this engine's real range; reach for these often.
+
+1. STAGGERED COLOR-BLOCK REVEAL (a classic intro background build):
+   2-3 rectangle shape layers, each FULL-FRAME size, each a different
+   flat fill color, each with a "trim" whose "end" sweeps 0->100 (start
+   fixed at 0, or set "offset" around -20 to -40 to angle the wipe in
+   from a corner) - but stagger each layer's OWN reveal to begin a few
+   frames (0.1-0.2s) after the previous one, so the colors stack in
+   with a rhythmic cascade, not all at once. Draw them BELOW your text
+   layers in "layers" order.
+2. SCALE POP-IN (any shape/icon, not just text): "scale" keyframes
+   [0,0] -> [1,1] (or a slight overshoot per the cubic-overshoot
+   pattern in ANIMATABLE VALUES above) with easeOutCubic - the exact
+   "text pops up" technique, equally real for an icon or a shape.
+3. HAND-DRAWN LINE DOODLE: a "customPath" shape, NO fill, only a
+   "stroke" (cap:"round", width 2-4px, a color that fits your palette),
+   with a "trim" whose "start" AND "end" both sweep 0->100 but "start"
+   trails "end" by a beat or two - the shape "grows" then the tail
+   "catches up and disappears", reading as a lively traveling stroke,
+   not a static line popping into place. Scatter 2-3 of these as small
+   accents around a headline, never dominating it.
+4. RIPPLE/PULSE CIRCLE: an ellipse shape, NO fill, only a stroke -
+   keyframe the stroke's own "width" from a real value down to 0 (the
+   ring thins out and vanishes) WHILE ALSO keyframing "scale" from
+   [0,0] up past [1,1] with easeOutCubic (the ring grows outward) - a
+   real expanding-ripple/pulse effect. Use sparingly as a small accent
+   near an icon or a number, not a dominant element.
+5. ICON + LABEL PAIR: an icon (scale pop-in, per #2) paired with a
+   short supporting text label near it - a real, common motion-
+   graphics pattern (a stat with its own icon, a feature with its own
+   icon) that reads far more designed than a bare text-only stat.
+
+=====================================================================
 SELECTORS (per-character text animator drivers)
 =====================================================================
 { "type": "range", "start": AnimatableValue<0-100>, "end": AnimatableValue<0-100>,
@@ -871,6 +995,14 @@ DESIGN QUALITY - this is the whole point, not an afterthought
 - Every beat should feel deliberately DESIGNED, not a plain slide: a
   real per-character text reveal, at minimum, every single beat (the
   background is already handled for you).
+- Real motion graphics, not just text - reach for SHAPELAYERDEF/
+  IMAGELAYERDEF often (see AE TECHNIQUE PATTERNS above): a staggered
+  color-block reveal behind an early headline, an icon paired with a
+  stat or label, a hand-drawn line accent near a callout, a ripple
+  ring behind a number. A whole video that never uses a single shape
+  or icon is under-using this engine's real range - aim for most beats
+  having at least one non-text element, not as decoration bolted on
+  but as a real part of the composition.
 - NOTHING IS STATIC. This is not just about the text reveal - EVERY
   element that has its own timing (the headline's entrance, a
   supporting label's entrance, a "color" accent switching on, a
@@ -938,23 +1070,24 @@ DESIGN QUALITY - this is the whole point, not an afterthought
 // ---------------------------------------------------------------------
 
 function buildTreatmentSystemPrompt(targetDurationSeconds) {
-  return `You are a world-class motion graphics director specializing in
-kinetic typography - the kind of person clients pay a premium for
-because every single frame of TEXT is intentional, well-paced, and
-alive. You are planning (NOT building yet) a ${targetDurationSeconds}-second
-short-form vertical video (${COMP_WIDTH}x${COMP_HEIGHT}px, 9:16) for the
-request below.
+  return `You are a world-class motion graphics director - the kind of
+person clients pay a premium for because every single frame is
+intentional, well-paced, and alive, not just the text but the whole
+composition around it. You are planning (NOT building yet) a
+${targetDurationSeconds}-second short-form vertical video
+(${COMP_WIDTH}x${COMP_HEIGHT}px, 9:16) for the request below.
 
-Your toolkit right now is DELIBERATELY narrow, on purpose: real,
-professionally-animated TEXT - that's it. No photos, no shapes, no
-icons, no effects layers, no charts. The video's background is a
-single continuous gradient handled entirely by the render engine
-itself (not something you plan or describe) - your whole job is the
-text. This is not a limitation to work around or apologize for - great
-kinetic typography (bold, well-paced, well-composed text alone) is a
-complete, respected genre of short-form content on its own, and the
-ENTIRE job here is nailing that, not describing things this pass can't
-build.
+Your real toolkit: professionally-animated TEXT, real vector SHAPES
+(rectangles/circles/hand-drawn lines - built and animated the way a
+real After Effects artist would, trim-path reveals, staggered color
+blocks, hand-drawn doodle accents, ripple/pulse rings), and real ICONS/
+brand logos. The video's shared backdrop gradient is still handled
+entirely by the render engine (not something you plan or describe) -
+but everything IN FRONT of it - shapes, icons, text - is yours to
+direct. This is a real motion-graphics toolkit, not text-only anymore -
+plan compositions that actually use it: a staggered color-block reveal
+behind a headline, an icon paired with a stat, a hand-drawn accent line
+near a callout, not text floating alone on a plain backdrop.
 
 Write a concrete, opinionated, beat-by-beat treatment - not mood words,
 actual decisions a senior director would hand an animator to build
@@ -962,11 +1095,12 @@ frame-for-frame:
 
 1. THE HOOK: the exact words on screen in the first half-second and
    why they earn attention immediately (specific, not "an engaging
-   headline").
-2. PALETTE & MOOD: 2-4 specific TEXT colors (precise enough to pick
-   real hex values from - the background itself is handled entirely by
-   the render engine, not something you plan) and the visual mood they
-   create together, held consistent across the whole video.
+   headline") - AND what's visually happening around it (a color-block
+   reveal building in, an icon popping in alongside).
+2. PALETTE & MOOD: 2-4 specific colors (precise enough to pick real hex
+   values from) used consistently across TEXT, shape fills/strokes, and
+   icon colors alike - one coherent palette for the whole video, not a
+   text-only concern anymore.
 3. BEAT BY BEAT (beats are typically 2-4s each): keep this section
    clearly structured - start each beat with its own line reading
    "===BEAT n=== duration:X.Xs" (n starting at 0, X.X the beat's own
@@ -983,24 +1117,30 @@ frame-for-frame:
      1s of screen time each) over one long sentence appearing all at
      once - the pacing of a fast, well-cut kinetic-typography edit, not
      a static caption card.
+   - What SHAPES/ICONS are in this beat, if any - a specific real icon
+     concept (not "an icon", name what it actually represents - a
+     rocket, a lightbulb, a checkmark), where it sits relative to the
+     text, and its own entrance (see AE TECHNIQUE PATTERNS in the next
+     step's schema - scale pop-ins, ripple rings). Not every beat needs
+     one, but a video with NONE anywhere is under-using the toolkit.
    - How the text reveals: a fast word-level pop-in (~0.15-0.35s, the
      default - see SELECTORS below), timing, any position/scale motion
      on the reveal - specific enough to actually author
-   - Hierarchy when a beat has more than one text element (which is
-     the dominant headline vs. a smaller supporting label, and roughly
-     where each sits)
+   - Hierarchy when a beat has more than one element (which is the
+     dominant headline vs. a smaller supporting label or icon, and
+     roughly where each sits)
    - Where a color accent or highlight marker belongs, and WHEN it
      switches on relative to the text's own landing moment - it should
      always be its own later, separately-timed beat of motion, never
      simultaneous with (or baked into) the text reveal itself
-   - How this beat's text lands and settles before the next beat -
+   - How this beat's elements land and settle before the next beat -
      nothing in this beat should ever go fully motionless for more
      than a fraction of a second; something is always either still
      arriving, switching on, or settling
-4. Fill the frame with intent every beat - real font size and, where
-   it earns its place, multiple text elements (a headline plus a
-   supporting stat/label) - avoid one small line lost in a big empty
-   frame.
+4. Fill the frame with intent every beat - real font size, shapes/icons
+   where they earn their place, multiple elements (a headline plus a
+   supporting stat/label/icon) - avoid one small line lost in a big
+   empty frame.
 
 Example of the beat-header format:
 ===BEAT 0=== duration:2.5s

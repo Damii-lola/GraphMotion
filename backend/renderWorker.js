@@ -9,6 +9,7 @@ const path = require('path');
 const { generateSceneJSON, generateEditedSceneJSON } = require('./mistralClient');
 const { renderLongFormVideo } = require('./longVideoOrchestrator');
 const { prefetchBeatImages, cleanupBeatImages } = require('./imagePrefetch');
+const { prefetchIcons, cleanupIcons } = require('./iconFetch');
 const { prefetchNarration, cleanupNarration } = require('./narrationPrefetch');
 const { muxNarrationOntoVideo } = require('./audioMux');
 
@@ -54,7 +55,8 @@ process.on('message', async ({ jobId, prompt, targetDurationSeconds, parentScene
     // timeline (and therefore image prefetch, which is keyed by beat
     // index rather than timing) needs to already reflect.
     const { sceneJSON: narratedSceneJSON, audioFiles } = await prefetchNarration(sceneJSON, jobId);
-    const renderSceneJSON = await prefetchBeatImages(narratedSceneJSON, jobId);
+    const imageResolvedSceneJSON = await prefetchBeatImages(narratedSceneJSON, jobId);
+    const renderSceneJSON = await prefetchIcons(imageResolvedSceneJSON, jobId);
 
     const renderedPath = await renderLongFormVideo(jobId, renderSceneJSON, (pct) => {
       if (process.send) process.send({ type: 'progress', jobId, progress: pct });
@@ -67,6 +69,7 @@ process.on('message', async ({ jobId, prompt, targetDurationSeconds, parentScene
     await sendAndFlush({ type: 'failed', jobId, error: String((err && err.message) || err) });
   } finally {
     cleanupBeatImages(jobId);
+    cleanupIcons(jobId);
     cleanupNarration(jobId);
     process.exit(0);
   }

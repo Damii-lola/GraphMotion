@@ -830,8 +830,25 @@ function validateLayer(layer, path, errors, knownIds) {
       const val = layer.generate && layer.generate.kind;
       errors.push(`${path}.generate.kind: "${val}" is not real (expected one of ${GENERATE_KINDS.join(', ')}).${suggestFix(val, GENERATE_KINDS, 'a generate kind')}`);
     }
-  } else if (layer.type === 'image' && Array.isArray(layer.effects) && layer.effects.length > 0
-      && (typeof layer.width !== 'number' || typeof layer.height !== 'number')) {
+  } else if (layer.type === 'image') {
+    // "icon" is the real, intended way to put a specific icon/logo on
+    // screen - a semantic Iconify name ("prefix:name", e.g.
+    // "mdi:rocket-launch" or "simple-icons:youtube" for a real brand
+    // logo), resolved to a real local PNG by iconFetch.js's own
+    // prefetch step (mirrors "beatImage"/imagePrompt->imagePath
+    // exactly) BEFORE the layer ever reaches the renderer - never a
+    // literal "src" path for an icon. An image layer needs one or the
+    // other; neither means nothing will ever be drawn.
+    if (layer.icon !== undefined) {
+      if (typeof layer.icon !== 'string' || !/^[\w-]+:[\w-]+$/.test(layer.icon)) {
+        errors.push(`${path}.icon: "${layer.icon}" must be a real Iconify name in "prefix:name" form (e.g. "mdi:rocket-launch", "simple-icons:youtube") - see ICONS below for how to pick a real one.`);
+      }
+      if (layer.iconColor !== undefined && !HEX_COLOR_RE.test(layer.iconColor)) {
+        errors.push(`${path}.iconColor: "${layer.iconColor}" must be a 6-digit hex string.`);
+      }
+    } else if (typeof layer.src !== 'string' || layer.src.trim().length === 0) {
+      errors.push(`${path}: an "image" layer needs either "icon" (a real Iconify icon name) or "src":"beatImage" - without one of these, nothing will ever be drawn for this layer.`);
+    }
     // Real, measured performance bug: an "image" layer with effects
     // but no explicit width/height silently sizes its effects buffer
     // at the FULL FRAME (build2DLayer's own width/height fallback),
@@ -847,7 +864,10 @@ function validateLayer(layer, path, errors, knownIds) {
     // slowest was 393ms/frame. Only flagged when effects are present,
     // since an effect-free image layer has no expensive per-pixel work
     // to needlessly oversize a buffer for.
-    errors.push(`${path}: an "image" layer with effects should set explicit "width"/"height" matching its intended display size. Omitting them sizes the effects-processing buffer at the FULL FRAME regardless of the image's real size (and stays that size even if the image fetch fails), making every effect on this layer far more expensive than necessary for no visual benefit.`);
+    if (Array.isArray(layer.effects) && layer.effects.length > 0
+        && (typeof layer.width !== 'number' || typeof layer.height !== 'number')) {
+      errors.push(`${path}: an "image" layer with effects should set explicit "width"/"height" matching its intended display size. Omitting them sizes the effects-processing buffer at the FULL FRAME regardless of the image's real size (and stays that size even if the image fetch fails), making every effect on this layer far more expensive than necessary for no visual benefit.`);
+    }
   } else if (layer.type === 'precomp') {
     if (!Array.isArray(layer.layers)) errors.push(`${path}.layers: a precomp requires a nested layers array`);
     else {
