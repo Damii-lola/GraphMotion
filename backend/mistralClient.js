@@ -652,6 +652,16 @@ TEXTLAYERDEF - one entry in "layers", the ONLY layer shape right now
       // SAME "3 FACTS" layer, with a selector scoped to just its first
       // character/word (e.g. basedOn:"characters", start:0,end:X% to
       // cover only "3") - never a duplicate sibling layer.
+      //
+      // Every "type":"text" layer's "text" field is REQUIRED and must
+      // be a real, non-empty string - there is no such thing as a
+      // "decoration-only" or "highlight-only" text layer with no text
+      // of its own. If a layer exists purely to add visual emphasis
+      // (a color accent, a highlight chip), that emphasis belongs as
+      // "highlights"/an animator "color" on an EXISTING layer that
+      // already has real words - it is never a reason to add another
+      // layer, and never a reason for a layer's own "text" to be
+      // omitted or empty.
 }
 
 Colors are always full 6-digit hex ("#rrggbb" or "#rrggbbaa") - 3-digit
