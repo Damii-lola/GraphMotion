@@ -236,6 +236,45 @@ function repairKeyframesMissingValue(value) {
 }
 
 /**
+ * Remaps a keyframe's "easing" to the closest real cubic preset when
+ * "interpolation" is "easing" but the name isn't one of the three this
+ * engine actually bundles - a well-established, extremely recurring
+ * mistake across this entire session, the model reaching for a real,
+ * familiar easing name ("easeOutBack", "easeOutBounce", "linear",
+ * "easeOutQuint") that simply isn't one of easeInCubic/easeOutCubic/
+ * easeInOutCubic. A hard validation error alone was never enough to
+ * stop this recurring even with prompt reinforcement, so - same
+ * treatment as every other well-established recurring mistake this
+ * session - converted to auto-repair. Inferred from the invalid name's
+ * own "In"/"Out" pattern (the overwhelming majority of real easing
+ * names follow this convention): contains "Out" but not "In" ->
+ * easeOutCubic (a settling entrance, the single most common real
+ * case); contains "In" but not "Out" -> easeInCubic (an accelerating
+ * exit); contains both, or matches neither (e.g. "linear") ->
+ * easeInOutCubic, a safe neutral default that both starts and ends at
+ * rest.
+ */
+function repairEasingName(name) {
+  if (CUBIC_EASING_NAMES.includes(name)) return name;
+  const hasIn = /in/i.test(name);
+  const hasOut = /out/i.test(name);
+  if (hasOut && !hasIn) return 'easeOutCubic';
+  if (hasIn && !hasOut) return 'easeInCubic';
+  return 'easeInOutCubic';
+}
+
+/** Applies repairEasingName to every keyframe of an AnimatableValue that opted into eased interpolation (interpolation:"easing") - the exact same condition validateAnimatable itself checks, see that function's own matching branch. */
+function repairKeyframeEasings(value) {
+  if (!isPlainObject(value) || !Array.isArray(value.keyframes)) return value;
+  for (const kf of value.keyframes) {
+    if (isPlainObject(kf) && kf.interpolation === 'easing' && kf.easing && !CUBIC_EASING_NAMES.includes(kf.easing)) {
+      kf.easing = repairEasingName(kf.easing);
+    }
+  }
+  return value;
+}
+
+/**
  * Repairs a SelectorDef's "start"/"end"/"offset"/"amount" fields in
  * place - each must be a number or a real AnimatableValue ({keyframes}
  * or {expression}), never anything else (a bare string, boolean, or
@@ -246,6 +285,9 @@ function repairKeyframesMissingValue(value) {
  */
 function repairSelectorFields(selector) {
   const defaults = { start: 0, end: 100, offset: 0, amount: 1 };
+  for (const field of Object.keys(defaults)) {
+    if (selector[field] !== undefined) selector[field] = repairKeyframeEasings(repairKeyframesMissingValue(selector[field]));
+  }
   for (const [field, fallback] of Object.entries(defaults)) {
     const v = selector[field];
     if (v !== undefined && !isValidAnimatableShape(v)) selector[field] = fallback;
@@ -1502,11 +1544,11 @@ function autoRepairBeat(beat) {
       // incomplete keyframe, drop just that keyframe and keep the rest
       // - only if NONE remain does the property fall through to the
       // "drop the whole field" repair immediately below.
-      layer.position = repairKeyframesMissingValue(layer.position);
-      layer.scale = repairKeyframesMissingValue(layer.scale);
-      layer.anchor = repairKeyframesMissingValue(layer.anchor);
-      layer.opacity = repairKeyframesMissingValue(layer.opacity);
-      layer.rotation = repairKeyframesMissingValue(layer.rotation);
+      layer.position = repairKeyframeEasings(repairKeyframesMissingValue(layer.position));
+      layer.scale = repairKeyframeEasings(repairKeyframesMissingValue(layer.scale));
+      layer.anchor = repairKeyframeEasings(repairKeyframesMissingValue(layer.anchor));
+      layer.opacity = repairKeyframeEasings(repairKeyframesMissingValue(layer.opacity));
+      layer.rotation = repairKeyframeEasings(repairKeyframesMissingValue(layer.rotation));
 
       // Real, repeatedly-recurring mistake: "position"/"scale"/"anchor"/
       // "opacity"/"rotation" sent as something matching NONE of the
@@ -1631,13 +1673,39 @@ function autoRepairBeat(beat) {
         // requirement, even though the numbers are RIGHT THERE one
         // level down.
         if ((typeof layer.width !== 'number' || typeof layer.height !== 'number') && Array.isArray(layer.contents)) {
-          const sized = layer.contents.find((item) => isPlainObject(item) && item.type === 'path'
-            && isPlainObject(item.shape) && isPlainObject(item.shape.params)
-            && typeof item.shape.params.width === 'number' && typeof item.shape.params.height === 'number');
-          if (sized) {
-            if (typeof layer.width !== 'number') layer.width = sized.shape.params.width;
-            if (typeof layer.height !== 'number') layer.height = sized.shape.params.height;
+          const firstPath = layer.contents.find((item) => isPlainObject(item) && item.type === 'path'
+            && isPlainObject(item.shape) && isPlainObject(item.shape.params));
+          const p = firstPath && firstPath.shape.params;
+          let derivedW; let derivedH;
+          if (p && typeof p.width === 'number' && typeof p.height === 'number') {
+            // rectangle/ellipse: width/height are already right there.
+            derivedW = p.width; derivedH = p.height;
+          } else if (firstPath && firstPath.shape.kind === 'polygon' && p && typeof p.radius === 'number') {
+            // A regular polygon's bounding box is its own circumscribed
+            // circle - 2x radius in both dimensions is a safe upper
+            // bound, exactly matching what sanitizeShapeContents's own
+            // default radius (50) would also produce if that ran first.
+            derivedW = p.radius * 2; derivedH = p.radius * 2;
+          } else if (firstPath && firstPath.shape.kind === 'star' && p && typeof p.outerRadius === 'number') {
+            derivedW = p.outerRadius * 2; derivedH = p.outerRadius * 2;
+          } else if (firstPath && firstPath.shape.kind === 'customPath' && Array.isArray(p && p.anchors)) {
+            // A hand-drawn path has no declared width/height anywhere -
+            // derive a real bounding box from its own anchor points,
+            // the only geometry actually available.
+            const xs = p.anchors.filter((a) => isPlainObject(a) && isNumberArray(a.point, 2)).map((a) => a.point[0]);
+            const ys = p.anchors.filter((a) => isPlainObject(a) && isNumberArray(a.point, 2)).map((a) => a.point[1]);
+            if (xs.length >= 2) {
+              derivedW = Math.max(1, Math.max(...xs) - Math.min(...xs));
+              derivedH = Math.max(1, Math.max(...ys) - Math.min(...ys));
+            }
           }
+          // Nothing informative to derive from at all (e.g. every
+          // content item was already stripped by sanitizeShapeContents,
+          // or a shape kind this doesn't specifically handle) - a
+          // generic default beats forcing a retry over two numbers.
+          if (derivedW === undefined || derivedH === undefined) { derivedW = 100; derivedH = 100; }
+          if (typeof layer.width !== 'number') layer.width = derivedW;
+          if (typeof layer.height !== 'number') layer.height = derivedH;
         }
 
         // Backwards anchor (~half the shape's own width/height) -
