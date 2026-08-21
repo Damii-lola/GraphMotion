@@ -46,7 +46,19 @@ function loadKeys() {
 }
 const KEYS = loadKeys();
 
-const MODEL = process.env.MISTRAL_MODEL || 'mistral-large-latest';
+// Switched default large -> small after repeated live timeouts: several
+// consecutive real runs measured individual JSON-encoding calls at
+// 140-240s on mistral-large-latest for this schema's now-larger
+// per-beat payload (color accents, highlights, cubic-only easing,
+// separately-timed everything), several hitting the per-request
+// timeout outright. mistral-small-latest is Mistral's own faster,
+// lower-latency tier - real risk/reward tradeoff (a smaller model may
+// need more validation retries to get details like the word-percentage
+// math exactly right), but a call that reliably lands under the
+// timeout beats one that reliably risks hitting it, and the retry-
+// with-errors-fed-back loop already exists specifically to correct
+// exactly this class of mistake regardless of which model produces it.
+const MODEL = process.env.MISTRAL_MODEL || 'mistral-small-latest';
 
 if (KEYS.length === 0) {
   console.warn('[mistralClient] No MISTRAL_API_KEYS/MISTRAL_API_KEY_N configured');
