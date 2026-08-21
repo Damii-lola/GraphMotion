@@ -1102,6 +1102,18 @@ function autoRepairBeat(beat) {
         }
       }
 
+      // Real, repeatedly-recurring mistake: an "animators"/"highlights"
+      // entry missing its "selector" entirely - there is no safe way
+      // to guess what selector was intended, so the whole malformed
+      // entry is dropped (loses one decorative effect on this layer,
+      // not the whole beat) rather than rejected outright.
+      if (Array.isArray(layer.animators)) {
+        layer.animators = layer.animators.filter((a) => isPlainObject(a) && isPlainObject(a.selector));
+      }
+      if (Array.isArray(layer.highlights)) {
+        layer.highlights = layer.highlights.filter((h) => isPlainObject(h) && isPlainObject(h.selector));
+      }
+
       if (layer.type === 'shape') {
         // Missing top-level width/height, derivable from the shape's
         // own first sized path content - the exact real pattern found
@@ -1597,9 +1609,25 @@ function runOverlapSpreadPass(visual) {
 // hasn't fully resolved). Two passes is the sweet spot: enough to
 // catch the common "fixing A exposed a new conflict with B" case,
 // bounded enough to never reach the oscillation zone.
+// Was a fixed 2 passes ("a third pass measured to OSCILLATE on a messy
+// many-element cluster"), raised to a bounded loop after a real live
+// case still reported overlap AFTER 2 passes (the validation backstop
+// correctly still caught it, forcing an otherwise-avoidable retry).
+// The original oscillation risk came from MULTIPLE independent
+// clusters re-grouping differently pass to pass; runOverlapSpreadPass
+// itself now merges every text-only cluster into ONE combined stack
+// per pass (see its own doc comment), which removes that specific
+// membership-churn mechanism - a further pass on an already-single-
+// group state can only refine spacing, not reshuffle who's grouped
+// with whom, so continuing is safe. Stops the moment a pass reports
+// nothing left to fix (the common case, after 1-2 passes); the cap
+// exists only as a distant safety net against a genuinely pathological
+// beat, not an expected ceiling.
 function autoSpreadDuplicatePositions(visual) {
-  runOverlapSpreadPass(visual);
-  runOverlapSpreadPass(visual);
+  for (let i = 0; i < 4; i++) {
+    const changed = runOverlapSpreadPass(visual);
+    if (!changed) break;
+  }
 }
 
 /**
