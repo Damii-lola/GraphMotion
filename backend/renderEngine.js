@@ -174,7 +174,12 @@ function buildBoardLayoutAndBackground(sceneJSON, beatRanges) {
     // just glides across more of that same continuous backdrop, no
     // gap risk at all, so distance is free to be a real, dramatic
     // sweep instead of a cautious short hop.
-    const distance = 700 + rand() * 600;
+    // Raised again (700-1300 -> 1600-2600) - still too close per
+    // direct follow-up feedback even after the first increase. Same
+    // reasoning holds even more strongly at this distance: the shared
+    // background covers however far the camera travels, so there is
+    // still no gap risk to weigh against going further.
+    const distance = 1600 + rand() * 1000;
     const prev = positions[i - 1];
     positions.push({
       x: Math.round(prev.x + Math.cos(angle) * distance),
