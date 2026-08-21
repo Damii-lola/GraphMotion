@@ -637,6 +637,18 @@ TEXTLAYERDEF - one entry in "layers"
       // ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')} -
       // these are the ONLY fonts actually bundled and registered with
       // this engine (real .ttf files, loaded at startup on every host).
+      // This is a closed set of exactly four strings, full stop - not
+      // just "avoid the wrong Poppins weight." A real, confirmed-live
+      // mistake reaching well beyond Poppins: naming a totally different
+      // real commercial typeface by name ("Frutiger LT 65 Bold",
+      // "Frutiger LT 55 Roman") because it felt like the right premium/
+      // editorial look for the content - Helvetica, Futura, Arial,
+      // Montserrat, Frutiger, or literally any other real font name is
+      // EQUALLY not bundled here and fails EXACTLY the same silent way
+      // as a wrong Poppins weight (falls back to a generic, unstyled
+      // default). There is no "pick whatever font fits the mood" step
+      // in this schema at all - the only decision is which of the four
+      // exact strings above best serves the moment, never a fifth name.
       // Real, repeatedly-recurring mistake: Poppins is a well-known
       // real font family with MANY real weights (Thin, Light, Regular,
       // Medium, SemiBold, Bold, ExtraBold, Black), and the natural

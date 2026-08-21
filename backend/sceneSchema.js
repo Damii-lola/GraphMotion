@@ -583,19 +583,28 @@ const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
  * intent every time this has been seen live: it's using keyframes to
  * express an entrance from an offset extreme down to neutral, which a
  * flat delta already encodes automatically via the selector's own
- * strength sweep. Leaves any other shape untouched (already-flat,
- * undefined, or something genuinely unsalvageable) - validateAnimator
- * still catches anything that reaches it in neither form.
+ * strength sweep. Handles both the common {"keyframes":[...]} wrapper
+ * AND a bare array of keyframe-shaped objects (a live-confirmed second
+ * variant of the exact same underlying mistake - the model dropping
+ * the wrapper but keeping the [{time,value},...] shape inside it).
+ * Leaves any other shape untouched (already-flat, undefined, or
+ * something genuinely unsalvageable, e.g. an {"expression":...}) - the
+ * autoRepairBeat call site deletes the property outright if it's still
+ * not a valid flat value after this, rather than let it reach
+ * validateAnimator and cost a full retry over one decorative property.
  */
 function salvageAnimatorDelta(value, neutral) {
-  if (!isPlainObject(value) || !Array.isArray(value.keyframes) || value.keyframes.length === 0) return value;
+  const keyframes = (isPlainObject(value) && Array.isArray(value.keyframes) && value.keyframes)
+    || (Array.isArray(value) && value.every((kf) => isPlainObject(kf) && 'value' in kf) && value)
+    || null;
+  if (!keyframes || keyframes.length === 0) return value;
   const isVec = Array.isArray(neutral);
   const magnitude = (v) => {
     if (isVec) return isNumberArray(v, 2) ? Math.abs(v[0] - neutral[0]) + Math.abs(v[1] - neutral[1]) : -Infinity;
     return typeof v === 'number' ? Math.abs(v - neutral) : -Infinity;
   };
   let best = null; let bestMag = -Infinity;
-  for (const kf of value.keyframes) {
+  for (const kf of keyframes) {
     if (!isPlainObject(kf)) continue;
     const mag = magnitude(kf.value);
     if (mag > bestMag) { bestMag = mag; best = kf.value; }
@@ -1270,6 +1279,26 @@ function autoRepairBeat(beat) {
         layer.text = layer.text.replace(/\s{2,}/g, ' ');
       }
 
+      // Real, repeatedly-recurring mistake across MULTIPLE separate live
+      // generations - not just wrong Poppins weights ("Poppins
+      // SemiBold") but reaching for a totally different real commercial
+      // typeface by name ("Frutiger LT 65 Bold", "Frutiger LT 55 Roman")
+      // because it felt right for the content's tone. A full retry over
+      // one font name is wasteful given how consistently this recurs
+      // and how mechanically safe the fix is: map the INVALID name's own
+      // weight-ish keywords onto the closest bundled equivalent (the
+      // same instinct - "this needs to look heavy/bold/light" - just
+      // pointed at a name that actually exists here), falling back to
+      // "Poppins Medium" as the safest default when no weight hint is
+      // present at all.
+      if (layer.type === 'text' && typeof layer.fontFamily === 'string' && !AVAILABLE_FONT_FAMILIES.includes(layer.fontFamily)) {
+        const f = layer.fontFamily.toLowerCase();
+        if (/italic|oblique/.test(f)) layer.fontFamily = 'Poppins Italic';
+        else if (/black|heavy|900|ultra|extra.?bold/.test(f)) layer.fontFamily = 'Poppins Black';
+        else if (/bold|semi.?bold|600|65|70|75|80/.test(f)) layer.fontFamily = 'Poppins Bold';
+        else layer.fontFamily = 'Poppins Medium';
+      }
+
       // Real, confirmed-live bug: an icon layer with no width/height
       // renders at its raw rasterized pixel size (can be far larger
       // than intended) and is invisible to overlap detection - see
@@ -1348,10 +1377,32 @@ function autoRepairBeat(beat) {
       if (Array.isArray(layer.animators)) {
         for (const a of layer.animators) {
           if (!isPlainObject(a) || !isPlainObject(a.properties)) continue;
-          if (a.properties.position !== undefined) a.properties.position = salvageAnimatorDelta(a.properties.position, [0, 0]);
-          if (a.properties.scale !== undefined) a.properties.scale = salvageAnimatorDelta(a.properties.scale, 1);
-          if (a.properties.rotation !== undefined) a.properties.rotation = salvageAnimatorDelta(a.properties.rotation, 0);
-          if (a.properties.opacity !== undefined) a.properties.opacity = salvageAnimatorDelta(a.properties.opacity, 0);
+          if (a.properties.position !== undefined) {
+            a.properties.position = salvageAnimatorDelta(a.properties.position, [0, 0]);
+            // A live run confirmed the model invents OTHER malformed
+            // shapes beyond the two salvageAnimatorDelta recognizes
+            // (e.g. {"expression":...}, or something too garbled to be
+            // either) - rather than try to enumerate every variant,
+            // anything still not a valid flat value after the salvage
+            // attempt is simply dropped (loses one decorative
+            // per-character effect on one layer), matching this same
+            // function's own established philosophy for a malformed
+            // layer-level transform just above. Guarantees this whole
+            // category of mistake can never cost a retry again.
+            if (!isNumberArray(a.properties.position, 2)) delete a.properties.position;
+          }
+          if (a.properties.scale !== undefined) {
+            a.properties.scale = salvageAnimatorDelta(a.properties.scale, 1);
+            if (typeof a.properties.scale !== 'number') delete a.properties.scale;
+          }
+          if (a.properties.rotation !== undefined) {
+            a.properties.rotation = salvageAnimatorDelta(a.properties.rotation, 0);
+            if (typeof a.properties.rotation !== 'number') delete a.properties.rotation;
+          }
+          if (a.properties.opacity !== undefined) {
+            a.properties.opacity = salvageAnimatorDelta(a.properties.opacity, 0);
+            if (typeof a.properties.opacity !== 'number') delete a.properties.opacity;
+          }
         }
       }
 
