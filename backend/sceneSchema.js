@@ -890,6 +890,36 @@ function validateBeatVisual(visual, path, errors, knownIds) {
     errors.push(`${path}.layers: must contain at least one layer - a beat with zero foreground layers renders as an empty/dead frame with nothing happening for its entire duration.`);
   }
   visual.layers.forEach((layer, i) => validateLayer(layer, `${path}.layers[${i}]`, errors, knownIds));
+
+  // Real, systematic bug found across MULTIPLE beats of the SAME
+  // generated video, not a one-off: a supporting-text layer got
+  // duplicated verbatim into two separate, otherwise-independent
+  // layers with the IDENTICAL "text" string (e.g. two entire layers
+  // both reading "20 MILLION TONS dissolved in seawater") - almost
+  // certainly the model reaching for a "one plain copy + one
+  // accented copy" pattern (a real technique in other tools, e.g. a
+  // duplicated-layer drop-shadow trick), which this schema has no use
+  // for since "highlights"/an animator "color" already let ONE layer
+  // carry both a plain base look AND an accent. Two text layers
+  // sharing the exact same string in the same beat is never a
+  // legitimate design choice here - it always renders as visibly
+  // doubled/overlapping text. Exact string match (case/whitespace
+  // normalized), not fuzzy - a deliberately conservative check with
+  // effectively no legitimate false-positive case to guard against.
+  const textLayersByContent = new Map();
+  visual.layers.forEach((layer, i) => {
+    if (!isPlainObject(layer) || layer.type !== 'text' || typeof layer.text !== 'string') return;
+    const key = layer.text.trim().toLowerCase();
+    if (!key) return;
+    if (!textLayersByContent.has(key)) textLayersByContent.set(key, []);
+    textLayersByContent.get(key).push(i);
+  });
+  for (const [text, indices] of textLayersByContent.entries()) {
+    if (indices.length > 1) {
+      errors.push(`${path}.layers: layers at indices [${indices.join(', ')}] all have the IDENTICAL text "${text}" - two separate text layers must never share the same literal content, it always renders as visibly doubled/overlapping text. If the intent was a plain version plus an accented/highlighted version of the same words, that's ONE layer with a "highlights" entry and/or an animator "color" property targeting the specific word(s) to accent - not two layers. Merge these into one layer.`);
+    }
+  }
+
   // Real bug found via direct JSON inspection of a live-generated beat:
   // two "cell" precomps meant to sit side-by-side both independently
   // left "position" at the schema's default [0,0] - they don't share a

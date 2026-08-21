@@ -695,6 +695,20 @@ TEXTLAYERDEF - one entry in "layers", the ONLY layer shape right now
       // already has real words - it is never a reason to add another
       // layer, and never a reason for a layer's own "text" to be
       // omitted or empty.
+      //
+      // GENERAL RULE (the "3 FACTS" case above is one specific example
+      // of this, not the only one): NEVER put the exact same "text"
+      // string on two different layers in the same beat, for ANY
+      // reason - this was ALSO seen live as a "plain copy + accented
+      // copy" pattern (e.g. two entire separate layers both reading
+      // "20 MILLION TONS dissolved in seawater", one presumably meant
+      // to be the base and one meant to carry a highlight/color), which
+      // is just as wrong and renders as visibly doubled, overlapping
+      // text either way. This is hard-enforced by validation, not just
+      // advisory - every distinct piece of text content in a beat gets
+      // exactly ONE layer, and any emphasis on part of it is a
+      // "highlights"/"color" addition to THAT one layer, never a
+      // reason to duplicate it into a second.
 }
 
 Colors are always full 6-digit hex ("#rrggbb" or "#rrggbbaa") - 3-digit
