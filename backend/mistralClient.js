@@ -770,10 +770,44 @@ SHAPELAYERDEF - real vector shapes: backgrounds, reveals, doodles, rings
 {
   "id": string, "type": "shape",
   "position", "rotation", "scale", "anchor", "opacity": AnimatableValue (same as TEXTLAYERDEF),
-  "width": number, "height": number,  // REQUIRED - this layer's own bounding size
+  "width": number, "height": number,  // REQUIRED, ALWAYS a DIRECT SIBLING
+      // of "position"/"contents" on the LAYER itself - never nested
+      // inside a content item, never omitted. Real, repeatedly-
+      // recurring mistake: writing the shape's size ONLY inside
+      // contents[0].shape.params (see below) and leaving the LAYER's
+      // own top-level width/height out entirely - these are TWO
+      // SEPARATE fields that must BOTH be set, usually to the same
+      // numbers.
   "contents": [ ShapeContentItem, ... ]  // REQUIRED, stacks top-to-bottom
 }
-ShapeContentItem (each one appends to or transforms a running path list):
+
+CRITICAL, the single most common mistake with shapes: ShapeContentItem's
+"type" is ONLY EVER one of these SIX literal strings:
+${SHAPE_CONTENT_TYPES.map((s) => `"${s}"`).join(', ')} - it is NEVER
+"rectangle"/"ellipse"/"customPath"/"polygon"/"star" directly, and NEVER
+a layer type like "text"/"image"/"shape" either. Those shape KIND names
+are real, but they belong ONE LEVEL DEEPER, inside a "path" item's own
+"shape.kind" field - "rectangle" is a value of "shape.kind", never a
+value of "type" itself. Concrete WRONG vs RIGHT for the exact same
+100x100 rounded rectangle:
+  WRONG: { "type": "rectangle", "width": 100, "height": 100 }
+  RIGHT: { "type": "path", "shape": { "kind": "rectangle",
+            "params": { "width": 100, "height": 100, "roundness": 8 } } }
+Full worked example - a complete shape layer (a 100x100 rounded
+rectangle, red fill, no stroke):
+{
+  "type": "shape", "width": 100, "height": 100, "position": [270, 480],
+  "contents": [
+    { "type": "path", "shape": { "kind": "rectangle",
+        "params": { "width": 100, "height": 100, "roundness": 8 } } },
+    { "type": "fill", "color": "#ff3366" }
+  ]
+}
+Note the size (100, 100) appears TWICE, once as the layer's own top-
+level "width"/"height", once inside the path's own "shape.params" -
+both are required and should normally match.
+
+Each ShapeContentItem shape:
   { "type":"path", "shape": { "kind": ${SHAPE_KINDS.map((s) => `"${s}"`).join(' | ')},
       "params": {...} } }
     // rectangle: {width,height,roundness?}  ellipse: {width,height}
@@ -783,7 +817,7 @@ ShapeContentItem (each one appends to or transforms a running path list):
     //   [x,y] pairs. This is how you hand-draw a line/squiggle/curve
     //   (the tutorial's "Pen tool" equivalent) - a handful of anchor
     //   points with small outTangent/inTangent offsets for curve, or
-    //   omit both for straight segments.
+    //   omit both for straight segments. Needs at least 2 anchors.
   { "type":"fill", "color":"#rrggbb", "opacity": 0-1 }
   { "type":"stroke", "color":"#rrggbb", "width": number,
       "cap": "butt"|"round"|"square", "join": "miter"|"round"|"bevel",
