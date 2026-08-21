@@ -773,6 +773,17 @@ optional, it directly determines whether your response fits before
 being cut off.`;
 }
 
+// Only used to COUNT how many beats the treatment itself planned (a
+// structural sanity check on the whole-scene encoding step below) -
+// NOT to split/parse the treatment into pieces the way the removed
+// per-beat architecture used to. A plain occurrence count of the
+// treatment's own "===BEAT n===" headers, unrelated to that deleted
+// mechanism.
+const BEAT_HEADER_RE = /===\s*BEAT\s+\d+\s*===/gi;
+function countTreatmentBeats(treatment) {
+  return (treatment.match(BEAT_HEADER_RE) || []).length;
+}
+
 /**
  * THE generation path - one single call encodes the ENTIRE
  * {scenes:[...]} document from the treatment at once, with real
@@ -802,12 +813,31 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
   const result = await callMistralForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: nextRetriesLeft, priorErrors }));
 
   const { valid, errors } = validateSceneJSON(result);
-  if (!valid) {
+  // Real, confirmed-live gap: structural validation alone doesn't
+  // catch a response that's simply too SHORT - a real generation
+  // produced a fully valid, error-free 1-2 scene, 2-4 second video
+  // when the treatment itself planned 5 beats summing to ~12s. Nothing
+  // about that is a SCHEMA violation, so validateSceneJSON alone would
+  // never flag it - it's a completeness problem, not a correctness
+  // one, and needs its own check against what the treatment actually
+  // asked for. A real "you asked for 5, only 2 arrived" retry message
+  // is far more likely to fix this than hoping the prose instruction
+  // ("encode this EXACTLY and FAITHFULLY") gets followed reliably on
+  // its own.
+  const expectedBeats = countTreatmentBeats(treatment);
+  const actualBeats = valid && Array.isArray(result.scenes) ? result.scenes.length : 0;
+  const isTooShort = valid && expectedBeats > 0 && actualBeats < expectedBeats * 0.7;
+
+  if (!valid || isTooShort) {
+    const completenessError = isTooShort
+      ? [`scenes: the treatment planned ${expectedBeats} beat(s) ("===BEAT n===" headers), but only ${actualBeats} scene(s) were encoded - EVERY beat in the treatment must become its own entry in "scenes", none skipped, merged, or summarized away. Output all ${expectedBeats}.`]
+      : [];
+    const allErrors = [...errors, ...completenessError];
     if (retriesLeft > 0) {
-      console.warn(`[mistralClient] generated scene JSON failed validation (${errors.length} error(s)), retrying: ${errors.slice(0, 3).join('; ')}`);
-      return generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: retriesLeft - 1, priorErrors: errors });
+      console.warn(`[mistralClient] generated scene JSON ${!valid ? 'failed validation' : 'was too short'} (${allErrors.length} error(s)), retrying: ${allErrors.slice(0, 3).join('; ')}`);
+      return generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: retriesLeft - 1, priorErrors: allErrors });
     }
-    throw new Error(`Mistral-generated scene JSON failed schema validation after retries: ${errors.join('; ')}`);
+    throw new Error(`Mistral-generated scene JSON failed schema validation after retries: ${allErrors.join('; ')}`);
   }
   return result;
 }
