@@ -937,6 +937,33 @@ is not using this engine's real range; reach for these often.
    short supporting text label near it - a real, common motion-
    graphics pattern (a stat with its own icon, a feature with its own
    icon) that reads far more designed than a bare text-only stat.
+6. TEXT DEPTH via drop shadow: give a primary headline layer an
+   "effects": [{"type":"dropShadow","params":{"color":"#000000",
+   "blur":6-10,"offsetX":0,"offsetY":4-8,"opacity":0.3-0.5}}] - real,
+   confirmed-live comparison against professional reference work showed
+   this is a large part of what makes flat text read as "designed" vs.
+   "static/lifeless" - a headline with NO depth at all looks pasted-on.
+   Use on the dominant headline of a title-card-style beat at minimum.
+7. TRAVELING ACCENT (not just revealing IN PLACE): a small decorative
+   shape (a short dash/line, a small ring/circle) that starts at ONE
+   position, near but not touching the text, then ANIMATES ITS OWN
+   "position" (not just opacity/scale) to travel a real, visible
+   distance (40-100px) to a final resting spot relative to the text
+   (e.g. becoming an underline swoosh beneath a headline, or landing
+   just after the last character) - arriving a beat AFTER the main
+   text has already settled, per the separately-timed-arrival rule.
+   This reads as a genuinely composed, lively flourish; a decorative
+   shape that only fades/scales in without ever traveling reads as
+   scattered set-dressing instead. Real, confirmed-live reference
+   comparison: exactly this technique (a small dash + ring drifting
+   into a final underline-and-accent position beneath a title) is what
+   separates a professional title card from a flatter one.
+8. TIGHT COMPOSITION: cluster a beat's elements (headline, accents,
+   icon) around ONE shared focal point/region with real breathing room
+   around the whole group, rather than spreading them to fill the
+   entire frame independently - a professional title card reads as one
+   deliberate, compact composition, not several unrelated elements each
+   claiming their own patch of the frame.
 
 =====================================================================
 SELECTORS (per-character text animator drivers)

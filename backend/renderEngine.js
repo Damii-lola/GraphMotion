@@ -175,7 +175,20 @@ function adjustLightness(hex, factor) {
   const mix = (c) => (factor >= 0 ? c + (255 - c) * factor : c + c * factor);
   return rgbToHexLocal([mix(r), mix(g), mix(b)]);
 }
-const BOARD_BACKGROUND_HUES = ['#0A2435', '#1A1035', '#2A0A1F', '#0A2A1A', '#241A0A', '#1A2A24'];
+// Real, directly-measured fix for a repeatedly-reported "background
+// looks dull/muted/lifeless" complaint: the OLD palette here
+// (#0A2435, #1A1035, etc) measured out to real HSL lightness of only
+// 9-14% each - genuinely near-black regardless of their saturation
+// (54-68%, not actually low). Very low LIGHTNESS reads as muddy/dull
+// to the eye no matter how saturated the hue technically is - a
+// direct side-by-side comparison against a real professional motion-
+// graphics reference (a vivid saturated-orange title card, L~45%) made
+// this obvious. Replaced with the same hue families at real jewel-tone
+// lightness (L~28-38%, S~68-85%) - rich royal blue/violet/magenta/
+// emerald/amber/teal instead of near-black navy/maroon/forest, still
+// dark enough for white/light text to stay legible, but genuinely
+// vivid instead of muddy.
+const BOARD_BACKGROUND_HUES = ['#13529A', '#50198F', '#9C165E', '#158450', '#B35B0F', '#177875'];
 
 /**
  * Explicit product direction: ONE continuous background for the whole
