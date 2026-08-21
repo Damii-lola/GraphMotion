@@ -245,7 +245,13 @@ function buildBoardLayoutAndBackground(sceneJSON, beatRanges) {
   const lighten = rand() < 0.5;
   const otherColor = adjustLightness(baseColor, (lighten ? 1 : -1) * (0.28 + rand() * 0.14));
   const [startColor, endColor] = lighten ? [otherColor, baseColor] : [baseColor, otherColor];
-  const shape = rand() < 0.5 ? 'linear' : 'radial';
+  // Biased toward radial (was an even 50/50 coin flip) - real,
+  // confirmed-live reference comparison showed radial's own bright-
+  // center-fading-to-edges vignette is consistently what the reference
+  // material uses and a real part of why it reads as "designed" rather
+  // than flat; linear still gets picked sometimes for real variety
+  // across a batch of videos, just less often now.
+  const shape = rand() < 0.25 ? 'linear' : 'radial';
 
   return { positions, background: { startColor, endColor, shape } };
 }
@@ -322,10 +328,39 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   // genuinely distinct start/end points (identical points collapse the
   // radius to a 1px dot, the exact degenerate-gradient bug already
   // fixed once in sceneSchema.js's own background validation).
+  //
+  // A radial gradient's own visible "vignette" - bright center fading
+  // to darker edges - was investigated as a candidate fix for output
+  // reading as flat/lifeless against reference footage. Direct numeric
+  // probes of gradientRamp's own per-pixel RGB output (not just
+  // eyeballing rendered PNGs) across a real board's actual beat
+  // positions found a genuine tension baked into the "ONE shared
+  // background, camera pans across regions of it" design (see this
+  // function's own doc comment): a SMALL radius gives strong internal
+  // variation within whichever one beat happens to sit near the
+  // center, but every other beat saturates to a flat, undifferentiated
+  // color (t>=1 across its whole viewport); a LARGE radius keeps every
+  // beat non-flat, but the internal variation within any ONE beat's
+  // own small 540x960 slice becomes too subtle (single-digit RGB
+  // deltas) to read as a real vignette. Empirically, this radius (the
+  // centroid-to-corner distance, coincidentally close to what the
+  // original code already computed by extending the gradient axis to
+  // the board's far corner) is the best available balance point - a
+  // meaningfully large fraction of beats show real, visible internal
+  // falloff, though not the dramatic center-to-edge contrast reference
+  // material shows within a single frame. Getting genuinely reference-
+  // grade vignette on every beat would need the gradient's own hot
+  // center to track near wherever the camera currently is, which is a
+  // materially different design than "one fixed background the camera
+  // pans across" - a real product decision, not a bug, so left alone
+  // here rather than silently overridden.
+  const boardCenterX = boardMinX + boardW / 2;
+  const boardCenterY = boardMinY + boardH / 2;
+  const RADIAL_BG_RADIUS = Math.hypot(boardW / 2, boardH / 2);
   const boardBgStartPoint = boardBackgroundDef.shape === 'radial'
-    ? [boardMinX + boardW / 2, boardMinY + boardH / 2] : [boardMinX, boardMinY];
+    ? [boardCenterX, boardCenterY] : [boardMinX, boardMinY];
   const boardBgEndPoint = boardBackgroundDef.shape === 'radial'
-    ? [boardMinX + boardW, boardMinY + boardH] : [boardMinX, boardMinY + boardH];
+    ? [boardCenterX + RADIAL_BG_RADIUS, boardCenterY] : [boardMinX, boardMinY + boardH];
 
   // Every beat overlapping this chunk's own [timeStart,timeEnd) range
   // needs its own frames rendered here - chunking forks a fresh OS

@@ -990,7 +990,12 @@ is not using this engine's real range; reach for these often.
    confirmed-live comparison against professional reference work showed
    this is a large part of what makes flat text read as "designed" vs.
    "static/lifeless" - a headline with NO depth at all looks pasted-on.
-   Use on the dominant headline of a title-card-style beat at minimum.
+   NOT OPTIONAL: every beat's single largest/dominant text layer gets
+   this - a real brutal side-by-side against reference footage showed
+   video after video with zero drop shadow anywhere, and flat text
+   next to the reference's consistently-shadowed text is exactly what
+   reads as "lifeless" vs "designed." Skip it only on a small
+   secondary/supporting label, never on the beat's main headline.
 7. TRAVELING ACCENT (not just revealing IN PLACE): a small decorative
    shape (a short dash/line, a small ring/circle) that starts at ONE
    position, near but not touching the text, then ANIMATES ITS OWN
@@ -1011,6 +1016,20 @@ is not using this engine's real range; reach for these often.
    entire frame independently - a professional title card reads as one
    deliberate, compact composition, not several unrelated elements each
    claiming their own patch of the frame.
+9. TWO-TIER TYPOGRAPHY LOCKUP for a title-card-style beat (a name, a
+   topic reveal, a CTA card - anywhere ONE headline IS the beat, not a
+   fact building alongside other copy): a SMALL label line directly
+   above/below a MUCH LARGER, heavier headline word/phrase, with
+   NEAR-ZERO vertical gap between them (the small line's own descender
+   almost touching the big line's cap-height) so they read as ONE
+   cohesive lockup, not two independent floating text layers. Real
+   confirmed-live reference comparison: this tight two-size pairing
+   (e.g. a 32-40px "Poppins Medium" label sitting right above a
+   90-140px "Poppins Black" headline) is a large part of what makes a
+   reference title card read as one deliberate unit instead of loose,
+   randomly-spaced lines - achieve the tight gap with each layer's own
+   "position" y-values close together (roughly the small line's own
+   fontSize*1.1 apart, not the usual generous beat-wide spacing).
 
 =====================================================================
 SELECTORS (per-character text animator drivers)
@@ -1233,7 +1252,17 @@ frame-for-frame:
 2. PALETTE & MOOD: 2-4 specific colors (precise enough to pick real hex
    values from) used consistently across TEXT, shape fills/strokes, and
    icon colors alike - one coherent palette for the whole video, not a
-   text-only concern anymore.
+   text-only concern anymore. Real, confirmed-live reference comparison:
+   professional reference work is far more RESTRAINED than this
+   consistently lands on - typically ONE dominant color plus white/black
+   text plus at most ONE accent color used sparingly (a single small
+   highlight, never competing for attention), not 3+ different
+   saturated hues all active in the same beat. Within any ONE beat,
+   pick ONE accent color and reuse that SAME one for every accent in
+   that beat (a highlight chip, a decorative shape, an icon) rather
+   than a different color for each - a beat mixing red AND lime-green
+   AND teal all at once reads as busier and less "branded" than
+   confidently committing to one.
 3. BEAT BY BEAT (beats are typically 2-4s each): keep this section
    clearly structured - start each beat with its own line reading
    "===BEAT n=== duration:X.Xs" (n starting at 0, X.X the beat's own
