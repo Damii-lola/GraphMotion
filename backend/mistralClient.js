@@ -610,6 +610,24 @@ TEXTLAYERDEF - one entry in "layers", the ONLY layer shape right now
       // reveal animator but as its own separate, later-timed motion - not
       // simultaneous with the text reveal, and never simply "on" the
       // whole time. NOT supported together with "onPath".
+      //
+      // CRITICAL: a highlight (or a "color" accent animator) ALWAYS
+      // lives on the SAME layer as the text it's decorating, targeting
+      // one word of THAT layer's own "text" string via the selector -
+      // it is NEVER a second, separate layer that repeats the same
+      // word next to the original. Real, confirmed-live mistake: a
+      // headline layer with text "3 FACTS" (wrapping to two lines,
+      // "3" then "FACTS") got a SECOND, entirely separate text layer
+      // containing just "3" with a highlight on it, hand-positioned to
+      // try to sit on top of the headline's own "3" - since no author
+      // can know exactly where a wrapped multi-line headline's
+      // individual words land in pixels ahead of render time, the
+      // guessed position landed wrong and the two literal "3"s
+      // rendered overlapping each other, illegible. The correct way to
+      // highlight the "3" in "3 FACTS" is a "highlights" entry ON THAT
+      // SAME "3 FACTS" layer, with a selector scoped to just its first
+      // character/word (e.g. basedOn:"characters", start:0,end:X% to
+      // cover only "3") - never a duplicate sibling layer.
 }
 
 Colors are always full 6-digit hex ("#rrggbb" or "#rrggbbaa") - 3-digit

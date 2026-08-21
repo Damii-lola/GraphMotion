@@ -252,7 +252,41 @@ function estimateTextEffectiveSize(layer) {
   // this stays the same "never undercount" side of the estimate for
   // the actual font now in use rather than the one this was tuned for.
   const estCharWidth = fontSize * 0.62;
-  const estLines = text.length > 0 ? Math.max(1, Math.round((text.length * estCharWidth) / width)) : 1;
+  // Real, confirmed-live regression this exact averaging approach let
+  // through: "3 FACTS" (fontSize:120, maxWidth:450) actually wraps to
+  // 2 real Canvas-measured lines ("3" / "FACTS"), but the old flat
+  // `text.length * estCharWidth / width` average (7 chars * 74.4 / 450
+  // = 1.16, rounds to 1) told every caller it was ONE line - a short,
+  // few-word headline at a large fontSize is exactly where a simple
+  // average breaks down (wrapping is a per-WORD greedy decision, not a
+  // smooth function of total character count), and this specific
+  // under-estimate is what let a genuinely overlapping duplicate "3"
+  // highlight layer slip past the overlap-detection check entirely
+  // undetected (confirmed directly via a real generated beat). Fixed
+  // by mirroring textAnimator.js's OWN real per-word greedy-wrap
+  // algorithm here (word-by-word, wrap when the running line would
+  // exceed "width"), just substituting this same estCharWidth-per-
+  // character estimate for each word's width instead of an actual
+  // ctx.measureText() call (unavailable at validation time, no canvas
+  // to measure with) - a per-word simulation tracks real wrap
+  // boundaries far more faithfully than any single whole-string
+  // average ever can, especially for short multi-word strings.
+  const words = text.split(' ').filter((w) => w.length > 0);
+  let lines = 0;
+  let lineWidth = 0;
+  let lineHasWord = false;
+  for (const word of words) {
+    const wordWidth = (word.length + 1) * estCharWidth; // +1 approximates the trailing space, same convention as the real layoutText's `ctx.measureText(word + ' ')`
+    if (lineWidth + wordWidth > width && lineHasWord) {
+      lines += 1;
+      lineWidth = 0;
+      lineHasWord = false;
+    }
+    lineWidth += wordWidth;
+    lineHasWord = true;
+  }
+  if (lineHasWord) lines += 1;
+  const estLines = Math.max(1, lines);
   return { width, height: lineHeight * estLines };
 }
 
