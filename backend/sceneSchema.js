@@ -217,6 +217,42 @@ function isValidAnimatableShape(v, vectorLen) {
 }
 
 /**
+ * Drops any keyframe missing a real "value" from an AnimatableValue's
+ * "keyframes" array (real, confirmed-live mistake - a keyframe with a
+ * genuine "time" but no "value" at all). If NO keyframes remain valid
+ * afterward, returns undefined (deletes the property, falling back to
+ * the engine's own default) rather than leave a broken empty array -
+ * the same "safe fallback beats a full retry" tradeoff as every other
+ * malformed-transform repair in this function. Passes through
+ * anything that isn't a {keyframes:[...]} shape untouched (a plain
+ * number, an {expression}, undefined) - isValidAnimatableShape still
+ * catches anything genuinely unrecognizable afterward.
+ */
+function repairKeyframesMissingValue(value) {
+  if (!isPlainObject(value) || !Array.isArray(value.keyframes)) return value;
+  value.keyframes = value.keyframes.filter((kf) => isPlainObject(kf) && kf.value !== undefined);
+  if (value.keyframes.length === 0) return undefined;
+  return value;
+}
+
+/**
+ * Repairs a SelectorDef's "start"/"end"/"offset"/"amount" fields in
+ * place - each must be a number or a real AnimatableValue ({keyframes}
+ * or {expression}), never anything else (a bare string, boolean, or
+ * other malformed shape - real, confirmed-live mistake). Falls back to
+ * a sane literal default for that SPECIFIC field (0/100/0/1 - these
+ * four mean very different things, not interchangeable) rather than
+ * rejecting the whole selector outright.
+ */
+function repairSelectorFields(selector) {
+  const defaults = { start: 0, end: 100, offset: 0, amount: 1 };
+  for (const [field, fallback] of Object.entries(defaults)) {
+    const v = selector[field];
+    if (v !== undefined && !isValidAnimatableShape(v)) selector[field] = fallback;
+  }
+}
+
+/**
  * A "text" layer has no literal width/height field (unlike "shape"), but
  * follows the IDENTICAL local-origin-centered drawing convention -
  * buildTextDraw always renders with centerX/centerY at the layer's own
@@ -1460,6 +1496,18 @@ function autoRepairBeat(beat) {
         delete layer.opacity;
       }
 
+      // Real, confirmed-live mistake: a keyframe with a real "time" but
+      // no "value" at all (e.g. "rotation.keyframes[2].value" simply
+      // absent). Rather than reject the WHOLE property over one
+      // incomplete keyframe, drop just that keyframe and keep the rest
+      // - only if NONE remain does the property fall through to the
+      // "drop the whole field" repair immediately below.
+      layer.position = repairKeyframesMissingValue(layer.position);
+      layer.scale = repairKeyframesMissingValue(layer.scale);
+      layer.anchor = repairKeyframesMissingValue(layer.anchor);
+      layer.opacity = repairKeyframesMissingValue(layer.opacity);
+      layer.rotation = repairKeyframesMissingValue(layer.rotation);
+
       // Real, repeatedly-recurring mistake: "position"/"scale"/"anchor"/
       // "opacity"/"rotation" sent as something matching NONE of the
       // real AnimatableValue shapes (not a number, not the right-size
@@ -1474,6 +1522,23 @@ function autoRepairBeat(beat) {
       if (!isValidAnimatableShape(layer.anchor, 2)) delete layer.anchor;
       if (!isValidAnimatableShape(layer.opacity)) delete layer.opacity;
       if (!isValidAnimatableShape(layer.rotation)) delete layer.rotation;
+
+      // Real, confirmed-live mistake: a selector's "start"/"end"/
+      // "offset"/"amount" sent as something matching none of the real
+      // AnimatableValue shapes (a bare string, a malformed object,
+      // etc) - same "safe fallback beats a retry" treatment, with each
+      // field's own sane literal default (0/100/0/1) rather than a
+      // shared one, since these four mean very different things.
+      if (Array.isArray(layer.animators)) {
+        for (const a of layer.animators) {
+          if (isPlainObject(a) && isPlainObject(a.selector)) repairSelectorFields(a.selector);
+        }
+      }
+      if (Array.isArray(layer.highlights)) {
+        for (const h of layer.highlights) {
+          if (isPlainObject(h) && isPlainObject(h.selector)) repairSelectorFields(h.selector);
+        }
+      }
 
       // Real, repeatedly-recurring mistake: an animator's "color" sent
       // as an object instead of a hex string (e.g. a stray gradient-
@@ -1795,11 +1860,14 @@ function autoRepairBeat(beat) {
     beat.visual.layers = beat.visual.layers.filter((l) => isPlainObject(l) && LAYER_TYPES.includes(l.type)
       && !(l.type === 'text' && (typeof l.text !== 'string' || l.text.trim().length === 0))
       // A shape layer whose contents sanitizeShapeContents just
-      // reduced to nothing (every item was unsalvageable) renders as a
-      // genuinely empty/invisible shape - better dropped outright than
-      // left as a dead layer that draws nothing for its whole time on
-      // screen.
-      && !(l.type === 'shape' && Array.isArray(l.contents) && l.contents.length === 0));
+      // reduced to nothing (every item was unsalvageable), OR that
+      // never had a real "contents" array at all (a genuinely
+      // different mistake, confirmed live - "contents" simply missing/
+      // not-an-array, nothing to sanitize) - either way there's no
+      // real content left to draw, so the layer is dropped outright
+      // rather than left as a dead one that draws nothing for its
+      // whole time on screen.
+      && !(l.type === 'shape' && (!Array.isArray(l.contents) || l.contents.length === 0)));
 
     const firstByText = new Map();
     const toRemove = new Set();
