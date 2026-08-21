@@ -1421,7 +1421,18 @@ function validateBeatVisual(visual, path, errors, knownIds) {
  * never even reaches validation as an error, let alone a retry.
  */
 function autoRepairBeat(beat) {
-  if (!isPlainObject(beat) || !isPlainObject(beat.visual)) return;
+  if (!isPlainObject(beat)) return;
+
+  // Real, confirmed-live mistake: "params.duration" missing or
+  // malformed entirely (not present, not a number, zero/negative) -
+  // rather than force a full retry over one field, defaults to a
+  // typical beat length (1.5s, the middle of the 1-2.5s range real
+  // beats in this schema actually use) so a real beat with genuinely
+  // good content isn't discarded over a single missing number.
+  if (!isPlainObject(beat.params)) beat.params = {};
+  if (typeof beat.params.duration !== 'number' || beat.params.duration <= 0) beat.params.duration = 1.5;
+
+  if (!isPlainObject(beat.visual)) return;
 
   const walkLayers = (layers) => {
     if (!Array.isArray(layers)) return;
@@ -1637,6 +1648,21 @@ function autoRepairBeat(beat) {
             // layer-level transform just above. Guarantees this whole
             // category of mistake can never cost a retry again.
             if (!isNumberArray(a.properties.position, 2)) delete a.properties.position;
+          }
+          // Real, recurring mistake, distinct from the malformed-shape
+          // one above: a genuinely flat [dx,dy] delta whose MAGNITUDE
+          // is just too large (e.g. [-180,0] against the 150px cap -
+          // see MAX_TEXT_ANIMATOR_POSITION_DELTA's own doc comment for
+          // why that ceiling exists). Clamping each axis to the cap
+          // preserves the model's own intended DIRECTION of travel
+          // (still the same "reveal sweeps in from this side" effect,
+          // just at a magnitude that won't garble still-transitioning
+          // characters) rather than rejecting a value that's correct
+          // in every way except size.
+          if (Array.isArray(a.properties.position)) {
+            a.properties.position = a.properties.position.map(
+              (v) => Math.max(-MAX_TEXT_ANIMATOR_POSITION_DELTA, Math.min(MAX_TEXT_ANIMATOR_POSITION_DELTA, v)),
+            );
           }
           if (a.properties.scale !== undefined) {
             a.properties.scale = salvageAnimatorDelta(a.properties.scale, 1);
