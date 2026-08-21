@@ -1117,7 +1117,19 @@ function validateBeatVisual(visual, path, errors, knownIds) {
     const size = sizeForSpreadCheck(layer);
     if (!size) return null;
     const hasExplicitSize = typeof layer.width === 'number' && typeof layer.height === 'number';
-    if (hasExplicitSize && size.width >= maxW && size.height >= maxH) return null;
+    // Real, confirmed-live gap: "tied for largest" trivially exempts a
+    // SMALL decorative shape whenever it's the ONLY explicitly-sized
+    // layer in the beat (it's automatically its own max, tied with
+    // itself) - a 90x90 accent ring next to a headline was never
+    // eligible for overlap detection at all because of this, even
+    // though 90x90 is nowhere near a real background/overlay size on a
+    // ${CANVAS_WIDTH}x${CANVAS_HEIGHT} canvas. Now ALSO requires the
+    // layer to be absolutely large (spans most of the canvas in at
+    // least one dimension), not just relatively largest among however
+    // many explicitly-sized siblings happen to exist - a genuine
+    // full-frame overlay/lower-third band still qualifies either way.
+    const isBackgroundScale = size.width >= CANVAS_WIDTH * 0.6 || size.height >= CANVAS_HEIGHT * 0.6;
+    if (hasExplicitSize && isBackgroundScale && size.width >= maxW && size.height >= maxH) return null;
     return {
       index: i, x: pos[0], y: pos[1], width: size.width, height: size.height,
     };
@@ -1246,6 +1258,17 @@ function autoRepairBeat(beat) {
     if (!Array.isArray(layers)) return;
     for (const layer of layers) {
       if (!isPlainObject(layer)) continue;
+
+      // Real, confirmed-live bug: the model padded a headline with
+      // multiple literal spaces ("3    mind-blowing facts", 4 spaces)
+      // presumably trying to visually separate a leading number from
+      // the rest of the phrase - renders as an ugly, unintended gap
+      // instead. There's no legitimate reason for 2+ consecutive spaces
+      // in short-form text content, so this is collapsed unconditionally
+      // rather than forcing a retry over whitespace.
+      if (layer.type === 'text' && typeof layer.text === 'string' && /\s{2,}/.test(layer.text)) {
+        layer.text = layer.text.replace(/\s{2,}/g, ' ');
+      }
 
       // Real, confirmed-live bug: an icon layer with no width/height
       // renders at its raw rasterized pixel size (can be far larger
@@ -1708,7 +1731,12 @@ function runOverlapSpreadPass(visual) {
     const size = sizeForSpreadCheck(layer);
     if (!size) return null;
     const hasExplicitSize = typeof layer.width === 'number' && typeof layer.height === 'number';
-    if (hasExplicitSize && size.width >= maxW && size.height >= maxH) return null;
+    // Same absolute-scale requirement as the matching check in
+    // validateBeatVisual above - see that one's doc comment for the
+    // full story (a small decorative shape trivially exempting itself
+    // when it's the only explicitly-sized layer in the beat).
+    const isBackgroundScale = size.width >= CANVAS_WIDTH * 0.6 || size.height >= CANVAS_HEIGHT * 0.6;
+    if (hasExplicitSize && isBackgroundScale && size.width >= maxW && size.height >= maxH) return null;
     return {
       index: i, x: pos[0], y: pos[1], width: size.width, height: size.height, isText: layer.type === 'text',
     };
