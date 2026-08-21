@@ -1274,12 +1274,26 @@ function validateBeatVisual(visual, path, errors, knownIds) {
         if (isPlainObject(last) && isNumberArray(last.value, 2)) last.value = [clampedX, last.value[1]];
       }
     }
-    const top = pos[1] - size.height / 2;
-    const bottom = pos[1] + size.height / 2;
+    // Re-reads pos[1] fresh in case the horizontal branch above already
+    // mutated layer.position (it never touches [1], but pos itself was
+    // captured before that mutation) - same self-healing treatment as
+    // the horizontal check, same reasoning (see that one's own doc
+    // comment for the full synchronization-gap story this replaced).
+    const currentPos = representativePosition(layer.position) || pos;
+    const top = currentPos[1] - size.height / 2;
+    const bottom = currentPos[1] + size.height / 2;
     const offTop = Math.max(0, -top);
     const offBottom = Math.max(0, bottom - CANVAS_HEIGHT);
     if (offTop > size.height * 0.25 || offBottom > size.height * 0.25) {
-      errors.push(`${path}.layers[${i}].position: this text's own box (position ${JSON.stringify(pos)}, +/- half of its own ${Math.round(size.height)}px effective height) sits mostly off the top/bottom edge of the ${CANVAS_HEIGHT}px-tall canvas - it will render clipped/unreadable for the whole beat.`);
+      const clampedY = size.height >= CANVAS_HEIGHT
+        ? CANVAS_HEIGHT / 2
+        : Math.max(size.height / 2, Math.min(CANVAS_HEIGHT - size.height / 2, currentPos[1]));
+      if (isNumberArray(layer.position, 2)) {
+        layer.position = [layer.position[0], clampedY];
+      } else if (isPlainObject(layer.position) && Array.isArray(layer.position.keyframes) && layer.position.keyframes.length > 0) {
+        const last = layer.position.keyframes[layer.position.keyframes.length - 1];
+        if (isPlainObject(last) && isNumberArray(last.value, 2)) last.value = [last.value[0], clampedY];
+      }
     }
   });
 
