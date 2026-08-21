@@ -525,6 +525,14 @@ TEXTLAYERDEF - one entry in "layers", the ONLY layer shape right now
       // (comp width minus margin), but for a large headline set it
       // explicitly to control exactly where it wraps, e.g. ${Math.round(COMP_WIDTH * 0.85)}
       // for most single-column text on this ${COMP_WIDTH}px-wide canvas.
+      // "lineHeight" is an ABSOLUTE PIXEL value, NOT a CSS-style
+      // unitless multiplier - confirmed as a real, live bug: writing
+      // "lineHeight":1.2 (meaning "1.2x the font size", a common web/
+      // CSS convention) made every wrapped line render almost exactly
+      // on top of the next, since 1.2 is used AS PIXELS directly. For
+      // a fontSize:60 headline, use lineHeight around 66-75 (roughly
+      // 1.1-1.25x the font size) - omit it entirely to get a sane
+      // default (fontSize*1.15) rather than guess at a multiplier.
   "animators": [ { "selector": SelectorDef, "properties": { "opacity": number,
       "position": [dx,dy], "scale": number, "rotation": number } }, ... ],
       // real per-character animation - see SELECTORS below. properties are

@@ -207,7 +207,20 @@ function estimateTextEffectiveSize(layer) {
   const fontSize = typeof layer.fontSize === 'number' ? layer.fontSize : 48;
   const lineHeight = typeof layer.lineHeight === 'number' ? layer.lineHeight : fontSize * 1.15;
   const text = typeof layer.text === 'string' ? layer.text : '';
-  const estCharWidth = fontSize * 0.55;
+  // 0.55 -> 0.6: real, confirmed-live undercount. "THE OCEAN HAS
+  // RIVERS." (21 chars) at fontSize 60/maxWidth 480, "Arial Black"
+  // weight 900, actually wraps to 2 real Canvas-measured lines - the
+  // 0.55 estimate put it at 1.44 (rounds to 1), silently telling every
+  // caller of this function (both the anchor-backwards check and the
+  // duplicate-position overlap check) the layer was half its real
+  // height, which let a genuinely overlapping pair of these exact
+  // layers slip through overlap detection entirely undetected. A
+  // heavy/bold font (a common, encouraged choice for headline text)
+  // runs measurably wider than a lighter one at the same size, so
+  // erring conservative (slightly OVER-estimating typical text, never
+  // under) is the safer direction for an estimate that only ever
+  // feeds tolerance checks, not literal pixel placement.
+  const estCharWidth = fontSize * 0.6;
   const estLines = text.length > 0 ? Math.max(1, Math.round((text.length * estCharWidth) / width)) : 1;
   return { width, height: lineHeight * estLines };
 }
@@ -992,6 +1005,28 @@ function autoRepairBeat(beat) {
         // too rather than trusting every generation to pick a sane one.
         if (typeof layer.maxWidth !== 'number' || layer.maxWidth > DEFAULT_TEXT_MAX_WIDTH) {
           layer.maxWidth = DEFAULT_TEXT_MAX_WIDTH;
+        }
+        // Real, confirmed-live bug: "lineHeight" is documented and
+        // consumed EVERYWHERE (sceneBuilder.js, textAnimator.js) as an
+        // ABSOLUTE PIXEL value, but the AI sometimes writes a CSS-style
+        // unitless multiplier instead (e.g. "lineHeight":1.2, clearly
+        // meaning "1.2x the font size"). Since a truthy lineHeight is
+        // always used AS-IS (never multiplied by fontSize), this makes
+        // every wrapped line render almost exactly on top of the next,
+        // AND (found via direct investigation of a real duplicate-text
+        // bug this was silently causing) makes estimateTextEffectiveSize
+        // think a whole line is ~1px tall instead of ~70px - shrinking
+        // the overlap-detection threshold to nearly zero and letting a
+        // genuinely overlapping pair of text layers slip through
+        // undetected entirely. A real per-line pixel height is
+        // essentially always >= the font size itself (typically
+        // 1.0-1.6x it); anything under half the font size is
+        // unambiguously a stray multiplier, not pixels, so it's
+        // rescaled by fontSize here rather than just discarded -
+        // preserving the AI's actual intended spacing ratio.
+        if (typeof layer.lineHeight === 'number' && typeof layer.fontSize === 'number'
+            && layer.lineHeight > 0 && layer.lineHeight < layer.fontSize * 0.5) {
+          layer.lineHeight *= layer.fontSize;
         }
       }
 
