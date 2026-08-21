@@ -675,6 +675,22 @@ TEXTLAYERDEF - one entry in "layers"
       // (comp width minus margin), but for a large headline set it
       // explicitly to control exactly where it wraps, e.g. ${Math.round(COMP_WIDTH * 0.85)}
       // for most single-column text on this ${COMP_WIDTH}px-wide canvas.
+      // CRITICAL, real confirmed-live bug: "position"'s x is ALWAYS the
+      // text box's own CENTER, regardless of "textAlign" ("left"/"right"
+      // just change how each line sits WITHIN that same centered box,
+      // not where the box itself is) - it is NEVER a left-margin/indent
+      // value. A real broken example: "position":[71,...] with
+      // "maxWidth":459 - that reads like "start near the left edge with
+      // a bit of margin," but it actually centers a 459px-wide box on
+      // x=71, so the box spans roughly -158 to 300 and nearly a third of
+      // it renders off the left edge of this ${COMP_WIDTH}px canvas for
+      // the whole beat. For text anywhere near "maxWidth" wide, keep
+      // position.x within roughly maxWidth/2 of ${Math.round(COMP_WIDTH / 2)}
+      // (the canvas center) so the box stays fully on-screen - to get a
+      // true left-margin look, use "textAlign":"left" together with a
+      // SMALLER "maxWidth" (the space actually available from that
+      // margin to the right edge), keeping position.x at the CENTER of
+      // that smaller box, not its left edge.
       // "lineHeight" is an ABSOLUTE PIXEL value, NOT a CSS-style
       // unitless multiplier - confirmed as a real, live bug: writing
       // "lineHeight":1.2 (meaning "1.2x the font size", a common web/
@@ -687,7 +703,26 @@ TEXTLAYERDEF - one entry in "layers"
       "position": [dx,dy], "scale": number, "rotation": number, "color": "#rrggbb" } }, ... ],
       // real per-character animation - see SELECTORS below. opacity/position/
       // scale/rotation are DELTAS applied at full selector strength (e.g.
-      // position:[0,40] moves a character 40px down when "selected"). "color"
+      // position:[0,40] moves a character 40px down when "selected").
+      // CRITICAL: these four are PLAIN VALUES, never a keyframed object,
+      // even though a keyframed {"keyframes":[...]} shape is legal almost
+      // everywhere else in this schema (a layer's own top-level "position",
+      // effect params, etc) - do NOT reuse that pattern here.
+      //   WRONG: "properties": { "position": { "keyframes": [
+      //            { "time": 0.2, "value": [270,180] },
+      //            { "time": 0.4, "value": [270,220] } ] } }
+      //   RIGHT: "properties": { "position": [0,40] }
+      // The wrong form silently breaks the entire reveal at render time
+      // (confirmed live) - the character never moves and stays wherever
+      // its base layout/layer position put it, which is a real, common
+      // bug when that base position was deliberately off-canvas so the
+      // reveal could fly it in. If you want a layer to slide from an
+      // off-screen spot to a final on-screen spot, do NOT use "animators"
+      // for that at all - keyframe the LAYER'S OWN top-level "position"
+      // field instead (that one DOES take {"keyframes":[...]}). Reserve
+      // "animators"/"properties" strictly for PER-CHARACTER stagger
+      // effects (each character offset by the same small fixed delta,
+      // revealed one after another via the selector's sweep). "color"
       // is DIFFERENT - not a delta, a per-character fill-color OVERRIDE: at
       // full selector strength that character renders in this hex color
       // instead of the layer's own "fillStyle", blending smoothly at partial
@@ -1277,6 +1312,18 @@ generation are the ones most likely to slip by the last beat):
 - No two layers in the same beat ever share identical "text".
 - Every keyframe object has both a real "time" (number) and "value" -
   never omit either.
+- A text layer's "animators[].properties" (opacity/position/scale/
+  rotation) are ALWAYS plain values ("position":[dx,dy], the rest plain
+  numbers) - NEVER a {"keyframes":[...]} object there, even though that
+  shape is legal for a layer's own top-level "position". Putting
+  keyframes inside "animators.properties" silently breaks the reveal at
+  render time - the text stays frozen wherever its base position put
+  it, which is a real, confirmed, common failure when that base
+  position was deliberately off-canvas for a fly-in effect.
+- A text layer's "position" x is ALWAYS the box's own CENTER, never a
+  left-margin value - for anything near "maxWidth" wide, keep it within
+  roughly maxWidth/2 of ${Math.round(COMP_WIDTH / 2)} or it renders
+  clipped off one edge of the canvas for the whole beat.
 - Encode EVERY beat the treatment planned, none skipped or merged.
 
 Generate a complete, valid scene JSON for a short-form vertical video

@@ -235,6 +235,11 @@ function isValidAnimatableShape(v, vectorLen) {
 // module validates JSON structurally and has no beatContext/comp size
 // of its own, and the engine only ever renders at this one fixed size.
 const DEFAULT_TEXT_MAX_WIDTH = 480;
+// Matches renderEngine.js's own fixed WIDTH/HEIGHT (a 9:16 short-form
+// canvas, never anything else) - kept as literals here for the same
+// reason as DEFAULT_TEXT_MAX_WIDTH above.
+const CANVAS_WIDTH = 540;
+const CANVAS_HEIGHT = 960;
 
 function estimateTextEffectiveSize(layer) {
   const width = typeof layer.maxWidth === 'number' ? layer.maxWidth : DEFAULT_TEXT_MAX_WIDTH;
@@ -282,23 +287,33 @@ function estimateTextEffectiveSize(layer) {
   // to measure with) - a per-word simulation tracks real wrap
   // boundaries far more faithfully than any single whole-string
   // average ever can, especially for short multi-word strings.
+  const { lines, maxLineWidth } = simulateWrap(text, width, estCharWidth);
+  const estLines = Math.max(1, lines);
+  return {
+    width, height: lineHeight * estLines, actualWidth: Math.min(width, maxLineWidth),
+  };
+}
+
+/** Shared per-word greedy-wrap simulation (mirrors textAnimator.js's real layoutText, substituting an estCharWidth-per-character estimate for an actual ctx.measureText call - see estimateTextEffectiveSize's own doc comment for why per-word beats a whole-string average). Returns both the line COUNT (used for the height estimate, deliberately capped at "maxWidth" itself elsewhere for a conservative overlap check) and the WIDEST actual simulated line (used by the off-canvas check below, where assuming every line is exactly "maxWidth" wide would false-positive on any short text that never fills its own box). */
+function simulateWrap(text, maxWidth, estCharWidth) {
   const words = text.split(' ').filter((w) => w.length > 0);
   let lines = 0;
   let lineWidth = 0;
   let lineHasWord = false;
+  let maxLineWidth = 0;
   for (const word of words) {
     const wordWidth = (word.length + 1) * estCharWidth; // +1 approximates the trailing space, same convention as the real layoutText's `ctx.measureText(word + ' ')`
-    if (lineWidth + wordWidth > width && lineHasWord) {
+    if (lineWidth + wordWidth > maxWidth && lineHasWord) {
       lines += 1;
+      maxLineWidth = Math.max(maxLineWidth, lineWidth);
       lineWidth = 0;
       lineHasWord = false;
     }
     lineWidth += wordWidth;
     lineHasWord = true;
   }
-  if (lineHasWord) lines += 1;
-  const estLines = Math.max(1, lines);
-  return { width, height: lineHeight * estLines };
+  if (lineHasWord) { lines += 1; maxLineWidth = Math.max(maxLineWidth, lineWidth); }
+  return { lines, maxLineWidth };
 }
 
 // ---------------------------------------------------------------------
@@ -564,20 +579,54 @@ function validateAnimator(a, path, errors) {
   if (isPlainObject(props) && props.color !== undefined && !HEX_COLOR_RE.test(props.color)) {
     errors.push(`${path}.properties.color: "${props.color}" must be a 6-digit hex string like "#ff3366" (no shorthand 3-digit form, no rgb()/named colors).`);
   }
-  if (isPlainObject(props) && Array.isArray(props.position)) {
-    const [dx = 0, dy = 0] = props.position;
-    if (Math.abs(dx) > MAX_TEXT_ANIMATOR_POSITION_DELTA || Math.abs(dy) > MAX_TEXT_ANIMATOR_POSITION_DELTA) {
-      errors.push(`${path}.properties.position: [${dx},${dy}] is too large (keep each axis under ${MAX_TEXT_ANIMATOR_POSITION_DELTA}px, and typically 15-40px) - a per-character reveal sweeps characters into place individually, so a large delta makes still-transitioning characters visually overlap already-landed neighbors, rendering as garbled/scrambled text during the reveal.`);
+  // Real, render-silent-failure bug found live across MULTIPLE beats of
+  // the same generated video: the model submitted a full keyframed
+  // {"keyframes":[...]} AnimatableValue for "properties.position" - the
+  // SAME shape a layer's own top-level "position" transform correctly
+  // takes - instead of the flat [dx,dy] NUMBER delta this per-character
+  // engine actually reads (see textAnimator.js's renderAnimatedText:
+  // `dx += p.position[0] * strength`). Because the old check here only
+  // fired `if (Array.isArray(props.position))`, an object value skipped
+  // it ENTIRELY - no error, straight through to the renderer, where
+  // `p.position[0]` on an object is undefined, the delta silently
+  // becomes NaN/0, and the character never moves from its raw base
+  // layout position for the whole beat. Confirmed directly: multiple
+  // real generated beats rendered with headline text frozen at a
+  // strongly off-canvas base position (e.g. x=-222 or x=533 on a 540px
+  // canvas, deliberately off-screen so the reveal could fly it in),
+  // permanently clipped/unreadable because the "flying in" animator
+  // never actually applied. opacity/scale/rotation share the exact same
+  // exposure (textAnimator.js does `dRotation += p.rotation * strength`
+  // etc, same plain-number contract), so all four are checked here.
+  if (isPlainObject(props)) {
+    if (props.position !== undefined) {
+      if (!isNumberArray(props.position, 2)) {
+        errors.push(`${path}.properties.position: must be a flat [dx,dy] NUMBER array - a fixed per-character offset magnitude applied at full selector strength (e.g. [0,40] moves a selected character 40px down as it lands) - NOT a keyframed {"keyframes":[...]} object like a layer's own top-level "position" transform. Got ${JSON.stringify(props.position)}.`);
+      } else {
+        const [dx = 0, dy = 0] = props.position;
+        if (Math.abs(dx) > MAX_TEXT_ANIMATOR_POSITION_DELTA || Math.abs(dy) > MAX_TEXT_ANIMATOR_POSITION_DELTA) {
+          errors.push(`${path}.properties.position: [${dx},${dy}] is too large (keep each axis under ${MAX_TEXT_ANIMATOR_POSITION_DELTA}px, and typically 15-40px) - a per-character reveal sweeps characters into place individually, so a large delta makes still-transitioning characters visually overlap already-landed neighbors, rendering as garbled/scrambled text during the reveal.`);
+        }
+        // A "wiggly" selector never settles - every character is
+        // perpetually offset by some amount, forever - so pairing it with
+        // a position delta makes text look permanently scrambled for its
+        // WHOLE time on screen, not just during an entrance (confirmed
+        // directly: a badge's text stayed garbled across the entire beat,
+        // never resolving to a readable state, unlike a one-time "range"
+        // sweep which lands and stays).
+        if (a.selector.type === 'wiggly') {
+          errors.push(`${path}: a "wiggly" selector combined with a "position" property never settles - text using this will look permanently scrambled for its entire time on screen. Use "wiggly" only with "opacity"/"scale" (small ranges), or use a one-time "range" selector for any position-based text reveal.`);
+        }
+      }
     }
-    // A "wiggly" selector never settles - every character is
-    // perpetually offset by some amount, forever - so pairing it with
-    // a position delta makes text look permanently scrambled for its
-    // WHOLE time on screen, not just during an entrance (confirmed
-    // directly: a badge's text stayed garbled across the entire beat,
-    // never resolving to a readable state, unlike a one-time "range"
-    // sweep which lands and stays).
-    if (a.selector.type === 'wiggly') {
-      errors.push(`${path}: a "wiggly" selector combined with a "position" property never settles - text using this will look permanently scrambled for its entire time on screen. Use "wiggly" only with "opacity"/"scale" (small ranges), or use a one-time "range" selector for any position-based text reveal.`);
+    if (props.opacity !== undefined && typeof props.opacity !== 'number') {
+      errors.push(`${path}.properties.opacity: must be a plain NUMBER delta (e.g. -1 to fade in from fully hidden), not a keyframed {"keyframes":[...]} object - this is a per-character strength-scaled delta, not a layer-level animated transform.`);
+    }
+    if (props.scale !== undefined && typeof props.scale !== 'number') {
+      errors.push(`${path}.properties.scale: must be a plain NUMBER multiplier (e.g. 0.5 to grow from half-size), not a keyframed {"keyframes":[...]} object.`);
+    }
+    if (props.rotation !== undefined && typeof props.rotation !== 'number') {
+      errors.push(`${path}.properties.rotation: must be a plain NUMBER of degrees, not a keyframed {"keyframes":[...]} object.`);
     }
   }
 }
@@ -1063,6 +1112,56 @@ function validateBeatVisual(visual, path, errors, knownIds) {
       errors.push(`${path}.layers: layers at indices [${indices.join(', ')}] render visually overlapped (identical, near-identical, or merely close-enough positions given their own size) - sibling elements need distinct "position" values or they'll render stacked/overlapping instead of spread out (e.g. as a row, grid, or scattered composition). Give each one its own real position.`);
     }
   }
+
+  // Real, confirmed-live bug found across MULTIPLE beats of the same
+  // generated video: a text layer's bounding box - centered on its own
+  // "position", symmetric +/- maxWidth/2 regardless of "textAlign" (see
+  // layoutText's own doc comment in textAnimator.js for exactly why
+  // that symmetry holds even for "left"/"right") - placed so far off
+  // one edge of the ${CANVAS_WIDTH}x${CANVAS_HEIGHT} canvas that most
+  // of the text renders permanently clipped/unreadable for the beat's
+  // whole duration. Real example: "position":[71,...] with
+  // "maxWidth":459 and "textAlign":"center" - that box spans roughly
+  // -158 to 300, nearly a third of a 540px-wide canvas' worth of it off
+  // the left edge. This is independent of the animator position-delta
+  // bug validateAnimator catches above - even a text layer with NO
+  // "animators" at all can still have a base "position" placed this
+  // badly. Reuses the exact same representativePosition (resolves a
+  // keyframed position to its settled/final value) machinery as the
+  // overlap check above for a consistent notion of a layer's own box.
+  // Threshold: over a quarter of the box's own size must be off-frame
+  // before this fires, so a small, deliberate edge-bleed never trips
+  // it - calibrated against the real failing beat that motivated this
+  // check (a 459px box on position.x:71, ~34.5% of it off the left
+  // edge, which rendered as multiple whole words missing from the
+  // start of every line) rather than an arbitrary round number.
+  visual.layers.forEach((layer, i) => {
+    if (!isPlainObject(layer) || layer.type !== 'text' || layer.parent) return;
+    const pos = representativePosition(layer.position);
+    if (!pos) return;
+    const size = estimateTextEffectiveSize(layer);
+    // Horizontal check uses the WIDEST-simulated-line width, not the
+    // full "maxWidth" box estimateTextEffectiveSize conservatively
+    // reports (that ceiling is right for overlap risk, but would
+    // false-positive here on any short text that never fills its own
+    // box - e.g. a short side label near an edge is a completely
+    // legitimate layout, not a bug).
+    const effWidth = Math.max(1, size.actualWidth || size.width);
+    const left = pos[0] - effWidth / 2;
+    const right = pos[0] + effWidth / 2;
+    const top = pos[1] - size.height / 2;
+    const bottom = pos[1] + size.height / 2;
+    const offLeft = Math.max(0, -left);
+    const offRight = Math.max(0, right - CANVAS_WIDTH);
+    const offTop = Math.max(0, -top);
+    const offBottom = Math.max(0, bottom - CANVAS_HEIGHT);
+    if (offLeft > effWidth * 0.25 || offRight > effWidth * 0.25) {
+      errors.push(`${path}.layers[${i}].position: this text's own box (position ${JSON.stringify(pos)}, +/- half of its own ~${Math.round(effWidth)}px estimated rendered width) sits mostly off the left/right edge of the ${CANVAS_WIDTH}px-wide canvas - it will render clipped/unreadable for the whole beat. For "textAlign":"center" (the default), "position"'s x is the text's VISUAL CENTER and needs to land near ${CANVAS_WIDTH / 2} for anything wide - it is NOT a left-margin value. If this position is meant to be an off-screen fly-in START point, don't leave it there: keyframe the LAYER'S OWN top-level "position" (which does take {"keyframes":[...]}, unlike "animators.properties") so it actually reaches an on-canvas resting spot before the beat ends.`);
+    }
+    if (offTop > size.height * 0.25 || offBottom > size.height * 0.25) {
+      errors.push(`${path}.layers[${i}].position: this text's own box (position ${JSON.stringify(pos)}, +/- half of its own ${Math.round(size.height)}px effective height) sits mostly off the top/bottom edge of the ${CANVAS_HEIGHT}px-tall canvas - it will render clipped/unreadable for the whole beat.`);
+    }
+  });
 
   if (visual.transitionIn) validateTransition(visual.transitionIn, `${path}.transitionIn`, errors);
 
