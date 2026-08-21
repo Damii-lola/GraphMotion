@@ -319,6 +319,24 @@ async function callMistralRaw(systemPrompt, userMessage, { jsonMode = true, maxT
       await sleep(backoffMs);
       return callMistralRaw(systemPrompt, userMessage, { jsonMode, maxTokens, temperature }, rateLimitRetriesLeft - 1);
     }
+    // Real, confirmed-live gap: a 429 (rate limit) and a transient
+    // network error (ECONNRESET etc, above) both already retry with
+    // backoff, but a genuine Mistral-side 5xx ("Service unavailable",
+    // a real internal_server_error observed live, not hypothetical)
+    // fell straight through to the generic throw below and killed the
+    // WHOLE generation immediately - the exact kind of routine,
+    // recoverable API-side blip the other two paths already treat as
+    // retryable, just missing this one status-code range. Retried the
+    // same way (shared backoff/attempt budget), not treated as a hard
+    // failure.
+    if (response.status >= 500 && response.status < 600 && rateLimitRetriesLeft > 0) {
+      recordRateLimitHit(usedKeyState);
+      const attempt = MAX_RATE_LIMIT_RETRIES - rateLimitRetriesLeft;
+      const backoffMs = Math.min(2000 * 2 ** attempt, 30000) + Math.random() * 1000;
+      console.warn(`[mistralClient] Mistral server error (${response.status}), waiting ${Math.round(backoffMs)}ms before retry (${rateLimitRetriesLeft} left)`);
+      await sleep(backoffMs);
+      return callMistralRaw(systemPrompt, userMessage, { jsonMode, maxTokens, temperature }, rateLimitRetriesLeft - 1);
+    }
     throw new Error(`Mistral API error ${response.status}: ${errText}`);
   }
 
