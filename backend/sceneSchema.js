@@ -1279,6 +1279,41 @@ function autoRepairBeat(beat) {
         layer.text = layer.text.replace(/\s{2,}/g, ' ');
       }
 
+      // Real, repeatedly-recurring mistake (multiple separate live
+      // generations, same shape every time) - converted to auto-repair
+      // rather than left as a pure retry-forcing validation error, same
+      // reasoning as the font/animator-delta repairs above: this is
+      // mechanically safe and unambiguous to fix, so there's no reason
+      // to spend a full retry round-trip on it. Clamps the SETTLED x
+      // (the plain "position", or the LAST keyframe's value if animated
+      // - the actual on-screen landing spot) so the text's own box fits
+      // within the canvas, using the same effective-width estimate and
+      // 25%-off threshold as validateBeatVisual's own matching check
+      // (see its doc comment for the full detection story). Only
+      // touches x when the box is genuinely mostly off-frame - a small,
+      // deliberate edge position is left completely alone. An earlier
+      // keyframe (a legitimate off-screen fly-in START point) is never
+      // touched - only a bad LANDING spot gets fixed.
+      if (layer.type === 'text' && typeof layer.text === 'string') {
+        const size = estimateTextEffectiveSize(layer);
+        const effWidth = Math.max(1, size.actualWidth || size.width);
+        const clampX = (x) => {
+          if (effWidth >= CANVAS_WIDTH) return CANVAS_WIDTH / 2;
+          const left = x - effWidth / 2;
+          const right = x + effWidth / 2;
+          const offLeft = Math.max(0, -left);
+          const offRight = Math.max(0, right - CANVAS_WIDTH);
+          if (offLeft <= effWidth * 0.25 && offRight <= effWidth * 0.25) return x;
+          return Math.max(effWidth / 2, Math.min(CANVAS_WIDTH - effWidth / 2, x));
+        };
+        if (isNumberArray(layer.position, 2)) {
+          layer.position = [clampX(layer.position[0]), layer.position[1]];
+        } else if (isPlainObject(layer.position) && Array.isArray(layer.position.keyframes) && layer.position.keyframes.length > 0) {
+          const last = layer.position.keyframes[layer.position.keyframes.length - 1];
+          if (isPlainObject(last) && isNumberArray(last.value, 2)) last.value = [clampX(last.value[0]), last.value[1]];
+        }
+      }
+
       // Real, repeatedly-recurring mistake across MULTIPLE separate live
       // generations - not just wrong Poppins weights ("Poppins
       // SemiBold") but reaching for a totally different real commercial
