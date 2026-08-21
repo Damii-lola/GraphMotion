@@ -87,7 +87,15 @@ function extractJson(text) {
 // quality, not generation speed, is the explicit priority here, so
 // giving Mistral real room to finish a richer response is the correct
 // tradeoff, not a regression.
-const MISTRAL_TIMEOUT_MS = 180000;
+// Raised again (180s -> 240s) after adding per-character color accents,
+// highlight chips, and a "everything has its own separately-timed
+// animation" requirement (all real additional JSON content every beat
+// now needs) - three separate live local runs on the SAME day measured
+// individual JSON-encoding calls at 142s/166s/180s, several right at or
+// past the old 180s ceiling, killing otherwise-legitimate in-progress
+// responses rather than a genuine hang. Same reasoning as the prior
+// raise: this is real work taking real time, not a stuck request.
+const MISTRAL_TIMEOUT_MS = 240000;
 
 /**
  * The shared transport - one real HTTP call, one real timeout/abort,
@@ -1028,8 +1036,18 @@ async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targe
  * before the frontend's own 15-minute threshold - the difference
  * between "the job failed, try again" appearing at minute 6 versus a
  * dead spinner for 15 minutes with no real information either way.
+ *
+ * Raised again (6min -> 8min) alongside MISTRAL_TIMEOUT_MS's own raise
+ * above, same day, same real cause: per-character color accents,
+ * highlight chips, and mandatory separately-timed animations make
+ * every beat's own JSON genuinely bigger, and a single retry at the
+ * new, still-legitimate ~200s per-call cost can now eat well over half
+ * the old 360s budget on its own, before a SECOND retry even starts.
+ * 8 minutes stays well clear of the 15-minute frontend threshold this
+ * was always bounded against, so there's real room to give without
+ * losing the "fail fast and cleanly" guarantee this exists for.
  */
-const GENERATION_HARD_TIMEOUT_MS = 6 * 60 * 1000;
+const GENERATION_HARD_TIMEOUT_MS = 8 * 60 * 1000;
 
 function withHardTimeout(promiseFactory, label) {
   return async (...args) => {
