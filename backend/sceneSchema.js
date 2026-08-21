@@ -572,6 +572,37 @@ const MAX_TEXT_ANIMATOR_POSITION_DELTA = 150;
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
+/**
+ * Salvages a flat animator-property delta from a value shaped like a
+ * full keyframed AnimatableValue (real, extremely common AI mistake -
+ * see the autoRepairBeat call site's own doc comment for the full
+ * story and live-confirmed frequency). Picks whichever keyframe's
+ * value deviates MOST from "neutral" (the settled/landed value each
+ * of these properties has at selector strength 0 - [0,0] for position,
+ * 1 for scale, 0 for rotation/opacity), matching the model's obvious
+ * intent every time this has been seen live: it's using keyframes to
+ * express an entrance from an offset extreme down to neutral, which a
+ * flat delta already encodes automatically via the selector's own
+ * strength sweep. Leaves any other shape untouched (already-flat,
+ * undefined, or something genuinely unsalvageable) - validateAnimator
+ * still catches anything that reaches it in neither form.
+ */
+function salvageAnimatorDelta(value, neutral) {
+  if (!isPlainObject(value) || !Array.isArray(value.keyframes) || value.keyframes.length === 0) return value;
+  const isVec = Array.isArray(neutral);
+  const magnitude = (v) => {
+    if (isVec) return isNumberArray(v, 2) ? Math.abs(v[0] - neutral[0]) + Math.abs(v[1] - neutral[1]) : -Infinity;
+    return typeof v === 'number' ? Math.abs(v - neutral) : -Infinity;
+  };
+  let best = null; let bestMag = -Infinity;
+  for (const kf of value.keyframes) {
+    if (!isPlainObject(kf)) continue;
+    const mag = magnitude(kf.value);
+    if (mag > bestMag) { bestMag = mag; best = kf.value; }
+  }
+  return best !== null ? best : value;
+}
+
 function validateAnimator(a, path, errors) {
   if (!a.selector) { errors.push(`${path}.selector: is required`); return; }
   validateSelector(a.selector, `${path}.selector`, errors);
@@ -1270,6 +1301,34 @@ function autoRepairBeat(beat) {
             if (salvaged) a.properties.color = salvaged;
             else delete a.properties.color;
           }
+        }
+      }
+
+      // Real, EXTREMELY common mistake (confirmed across near-every
+      // retry of a live run, on position AND scale AND opacity alike):
+      // "properties.position/scale/rotation/opacity" sent as a full
+      // keyframed {"keyframes":[...]} AnimatableValue - the shape
+      // that's correct for a LAYER's own top-level transform, but wrong
+      // here (see validateAnimator's own doc comment for the exact
+      // render-breaking result: the delta silently becomes 0/undefined
+      // and the character never moves). The model's intent is
+      // unambiguous every time this has been seen live: it's using
+      // keyframes to express "starts offset by X, settles at neutral" -
+      // exactly what a flat delta plus the selector's own strength
+      // sweep already does automatically. Rejecting outright forces a
+      // full retry over a mistake this consistent and this mechanically
+      // cheap to fix, and a live run confirmed the model does NOT
+      // reliably self-correct even after seeing the validation error
+      // message repeatedly - so this salvages the KEYFRAME FARTHEST
+      // FROM NEUTRAL (the "still hidden/offset" extreme, which is
+      // always the non-settled one) as the flat delta instead.
+      if (Array.isArray(layer.animators)) {
+        for (const a of layer.animators) {
+          if (!isPlainObject(a) || !isPlainObject(a.properties)) continue;
+          if (a.properties.position !== undefined) a.properties.position = salvageAnimatorDelta(a.properties.position, [0, 0]);
+          if (a.properties.scale !== undefined) a.properties.scale = salvageAnimatorDelta(a.properties.scale, 1);
+          if (a.properties.rotation !== undefined) a.properties.rotation = salvageAnimatorDelta(a.properties.rotation, 0);
+          if (a.properties.opacity !== undefined) a.properties.opacity = salvageAnimatorDelta(a.properties.opacity, 0);
         }
       }
 
