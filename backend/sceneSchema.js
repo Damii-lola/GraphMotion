@@ -1362,13 +1362,39 @@ function runOverlapSpreadPass(visual) {
     groups.get(root).push(e);
   });
 
-  let changed = false;
+  // Real, confirmed-live gap (reported directly via a live run's own
+  // validation output): a beat with TWO SEPARATE overlap clusters
+  // (e.g. layers [0,1] overlapping each other, and UNRELATEDLY layers
+  // [3,4,5] overlapping each other) used to have each cluster spread
+  // out independently around its OWN pre-existing centroid - which
+  // fixes the overlap WITHIN each cluster but does nothing to check
+  // whether the two now-tidied clusters still collide with EACH OTHER,
+  // since their centroids were often already close together to begin
+  // with (a common cause of multiple originally-overlapping clusters
+  // in the same beat: several elements all defaulting toward the
+  // frame's center). The independent "backstop" validation check
+  // AFTER repair then correctly still flags this as unresolved,
+  // forcing a full retry for something repair should have handled.
+  // Fixed by treating ALL qualifying text-only clusters in the SAME
+  // beat as ONE combined stack when there's more than one of them,
+  // rather than repairing each in isolation - guarantees no two
+  // clusters can still collide post-repair, since there's only ever
+  // one resulting stack for all of a beat's colliding text.
+  const textGroups = [];
+  const otherGroups = [];
   for (const groupEntries of groups.values()) {
     if (groupEntries.length < 2) continue;
+    if (groupEntries.every((e) => e.isText)) textGroups.push(groupEntries);
+    else otherGroups.push(groupEntries);
+  }
+
+  let changed = false;
+
+  if (textGroups.length > 0) {
     changed = true;
-    const cx = groupEntries.reduce((sum, e) => sum + e.x, 0) / groupEntries.length;
-    const cy = groupEntries.reduce((sum, e) => sum + e.y, 0) / groupEntries.length;
-    const allText = groupEntries.every((e) => e.isText);
+    const combined = textGroups.length === 1 ? textGroups[0] : textGroups.flat();
+    const cx = combined.reduce((sum, e) => sum + e.x, 0) / combined.length;
+    const cy = combined.reduce((sum, e) => sum + e.y, 0) / combined.length;
     // A text-only group is stacked VERTICALLY (one per line) instead
     // of spread into a horizontal row - confirmed necessary live: 3-4
     // separate text layers meant to read as sequential words of one
@@ -1391,22 +1417,27 @@ function runOverlapSpreadPass(visual) {
     // total spacing is exactly what THAT group needs, not an estimate.
     // Original top-to-bottom order (by pre-repair y, not array index)
     // is preserved so a genuine reading sequence isn't scrambled.
-    if (allText) {
-      const ordered = [...groupEntries].sort((a, b) => a.y - b.y);
-      const gap = 12;
-      const totalHeight = ordered.reduce((sum, e) => sum + (e.height || 60), 0) + gap * (ordered.length - 1);
-      let cursorY = cy - totalHeight / 2;
-      ordered.forEach((e) => {
-        const h = e.height || 60;
-        const targetY = cursorY + h / 2;
-        shiftLayerPosition(visual.layers[e.index], cx - e.x, targetY - e.y);
-        cursorY += h + gap;
-      });
-      continue;
-    }
-    // Shape/image groups keep the original horizontal-row behavior
-    // (a row of icons/badges/cards, the case it was built for, has no
-    // such width problem).
+    const ordered = [...combined].sort((a, b) => a.y - b.y);
+    const gap = 12;
+    const totalHeight = ordered.reduce((sum, e) => sum + (e.height || 60), 0) + gap * (ordered.length - 1);
+    let cursorY = cy - totalHeight / 2;
+    ordered.forEach((e) => {
+      const h = e.height || 60;
+      const targetY = cursorY + h / 2;
+      shiftLayerPosition(visual.layers[e.index], cx - e.x, targetY - e.y);
+      cursorY += h + gap;
+    });
+  }
+
+  // Shape/image groups keep the original horizontal-row behavior (a
+  // row of icons/badges/cards, the case it was built for, has no such
+  // width problem) - handled per-cluster still, since two SEPARATE
+  // rows of icons legitimately can sit in different parts of the frame
+  // without needing to merge into one row the way text always does.
+  for (const groupEntries of otherGroups) {
+    changed = true;
+    const cx = groupEntries.reduce((sum, e) => sum + e.x, 0) / groupEntries.length;
+    const cy = groupEntries.reduce((sum, e) => sum + e.y, 0) / groupEntries.length;
     const avgSpan = groupEntries.reduce((sum, e) => sum + (e.width || 120), 0) / groupEntries.length;
     const spacing = Math.max(80, avgSpan * 1.15);
     const totalSpan = spacing * (groupEntries.length - 1);
