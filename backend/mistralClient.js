@@ -46,19 +46,21 @@ function loadKeys() {
 }
 const KEYS = loadKeys();
 
-// Switched default large -> small after repeated live timeouts: several
-// consecutive real runs measured individual JSON-encoding calls at
-// 140-240s on mistral-large-latest for this schema's now-larger
-// per-beat payload (color accents, highlights, cubic-only easing,
-// separately-timed everything), several hitting the per-request
-// timeout outright. mistral-small-latest is Mistral's own faster,
-// lower-latency tier - real risk/reward tradeoff (a smaller model may
-// need more validation retries to get details like the word-percentage
-// math exactly right), but a call that reliably lands under the
-// timeout beats one that reliably risks hitting it, and the retry-
-// with-errors-fed-back loop already exists specifically to correct
-// exactly this class of mistake regardless of which model produces it.
-const MODEL = process.env.MISTRAL_MODEL || 'mistral-small-latest';
+// Tried switching large -> small for latency (several real runs on
+// large measured 140-240s per JSON-encoding call), but reverted after
+// direct measurement showed it was a net loss, not a win: small's
+// individual calls WERE dramatically faster (11-56s live), but it
+// never once produced valid, complete JSON across two full test runs
+// even with the retry budget raised to 16 - the failures weren't
+// occasional detail mistakes (the kind the retry-with-errors loop
+// exists to correct), they were structural chaos: malformed JSON
+// syntax, the wrong root key, whole missing scenes, all recurring
+// across many different retries in the SAME run. Large, despite being
+// slower per call, has a real track record of actually converging on
+// this schema's complexity (multiple confirmed full successes this
+// session) - reliability that a faster-but-non-convergent model can't
+// substitute for no matter how many retries it's given.
+const MODEL = process.env.MISTRAL_MODEL || 'mistral-large-latest';
 
 if (KEYS.length === 0) {
   console.warn('[mistralClient] No MISTRAL_API_KEYS/MISTRAL_API_KEY_N configured');
