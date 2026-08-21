@@ -164,7 +164,17 @@ function buildBoardLayoutAndBackground(sceneJSON, beatRanges) {
   const positions = [{ x: 0, y: 0 }];
   for (let i = 1; i < beatRanges.length; i++) {
     const angle = rand() * Math.PI * 2;
-    const distance = 200 + rand() * 250;
+    // Explicit product direction: pan noticeably further than this
+    // originally shipped with (200-450px, kept deliberately tight back
+    // when the ONLY thing filling space between two beats' own canvases
+    // was each other - a wider gap would have shown a bare gap through
+    // to nothing). That constraint no longer applies now that ONE
+    // shared background covers the board's full extent underneath
+    // everything (see this function's own doc comment) - a longer pan
+    // just glides across more of that same continuous backdrop, no
+    // gap risk at all, so distance is free to be a real, dramatic
+    // sweep instead of a cautious short hop.
+    const distance = 700 + rand() * 600;
     const prev = positions[i - 1];
     positions.push({
       x: Math.round(prev.x + Math.cos(angle) * distance),
