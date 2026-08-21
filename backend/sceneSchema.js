@@ -1594,9 +1594,31 @@ function validateSceneJSON(sceneJSON) {
   // certainly exactly this failure, so it's flagged explicitly rather
   // than silently ignored.
   const ROOT_KEYS = new Set(['scenes']);
-  const strayRootKeys = Object.keys(sceneJSON).filter((k) => !ROOT_KEYS.has(k));
-  if (strayRootKeys.length > 0) {
-    errors.push(`root: unexpected top-level key(s) [${strayRootKeys.join(', ')}] - "scenes" is the ONLY valid root key. This usually means a beat's content (params/visual/etc) was accidentally placed as a SIBLING of "scenes" instead of nested INSIDE the "scenes" array as its next element - move it into "scenes" as its own {params,visual} object.`);
+  // Auto-repaired here (array-level surgery, so it belongs at the
+  // whole-document level rather than autoRepairBeat's per-beat scope),
+  // not just flagged - two distinct real live patterns behind the
+  // SAME underlying mistake (the model losing track of its own bracket
+  // nesting near the end of a long response):
+  // 1. A WHOLE beat's own content ("params" AND "visual" both present)
+  //    sitting as stray root siblings instead of nested inside "scenes"
+  //    - reconstructed into a real {params,visual,transitionIn} beat
+  //    object and appended to "scenes" (its content is fully real and
+  //    recoverable, just misplaced one level up).
+  // 2. A smaller ORPHANED fragment (e.g. just "highlights" alone, no
+  //    accompanying params/visual) that isn't beat-shaped at all and
+  //    has no safe destination to reconstruct - these are dropped
+  //    outright rather than guessed at, same tradeoff as every other
+  //    unrecoverable-fragment repair in this file.
+  if (isPlainObject(sceneJSON.params) && isPlainObject(sceneJSON.visual)) {
+    const recovered = { params: sceneJSON.params, visual: sceneJSON.visual };
+    if (sceneJSON.transitionIn !== undefined) recovered.transitionIn = sceneJSON.transitionIn;
+    sceneJSON.scenes.push(recovered);
+    delete sceneJSON.params;
+    delete sceneJSON.visual;
+    delete sceneJSON.transitionIn;
+  }
+  for (const k of Object.keys(sceneJSON)) {
+    if (!ROOT_KEYS.has(k)) delete sceneJSON[k];
   }
 
   sceneJSON.scenes.forEach((beat, i) => {
