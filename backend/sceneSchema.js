@@ -318,6 +318,18 @@ const DEFAULT_TEXT_MAX_WIDTH = 480;
 // reason as DEFAULT_TEXT_MAX_WIDTH above.
 const CANVAS_WIDTH = 540;
 const CANVAS_HEIGHT = 960;
+// EDGE_SAFETY_PX: float-precision slop only, not a deliberate
+// tolerance - the off-canvas self-heal fires on essentially any
+// estimated overflow now that it's a free in-place clamp rather than a
+// costly reject-and-retry (see its own call site's doc comment for the
+// full story on why a real live gap between this file's char-width
+// ESTIMATE and the renderer's actual measured glyph widths made the
+// old, much looser 25%-of-box threshold let real clipping through).
+// EDGE_MARGIN_PX: the clamp lands a box inset by this much from each
+// canvas edge, not flush against it, to absorb exactly that estimate-
+// vs-real-render gap instead of landing right back on the boundary.
+const EDGE_SAFETY_PX = 2;
+const EDGE_MARGIN_PX = 16;
 
 function estimateTextEffectiveSize(layer) {
   const width = typeof layer.maxWidth === 'number' ? layer.maxWidth : DEFAULT_TEXT_MAX_WIDTH;
@@ -1315,13 +1327,24 @@ function validateBeatVisual(visual, path, errors, knownIds) {
     const pos = representativePosition(layer.position);
     if (!pos) return;
     const size = estimateTextEffectiveSize(layer);
-    // Horizontal check uses the WIDEST-simulated-line width, not the
-    // full "maxWidth" box estimateTextEffectiveSize conservatively
-    // reports (that ceiling is right for overlap risk, but would
-    // false-positive here on any short text that never fills its own
-    // box - e.g. a short side label near an edge is a completely
-    // legitimate layout, not a bug).
-    const effWidth = Math.max(1, size.actualWidth || size.width);
+    // Real, confirmed-live gap: this used to prefer the WIDEST-
+    // simulated-line width (size.actualWidth) over the full "maxWidth"
+    // box, specifically to avoid false-flagging short text that never
+    // fills its own box. But a live case ("Check this out", maxWidth
+    // 200) proved that narrower per-word simulation can UNDERESTIMATE
+    // the real wrap - it predicted a 3-line wrap ("Check"/"this"/
+    // "out", widest line ~156px) while the real ctx.measureText-based
+    // renderer produced a 2-line wrap ("Check"/"this out", the real
+    // "this out" together measuring wider than this estimate's
+    // per-word sum) - so the "smarter" narrower estimate reported ZERO
+    // overflow for a box that, in the real render, was visibly clipped
+    // on the left edge. Reverted to "maxWidth" (size.width) - the same
+    // "never undercount" conservative ceiling this file already uses
+    // for the overlap check, and for the identical reasoning: now that
+    // this is a free in-place clamp rather than a costly reject-and-
+    // retry, a false positive costs an imperceptible nudge, while a
+    // false negative is confirmed-real visible clipping.
+    const effWidth = Math.max(1, size.width);
     const left = pos[0] - effWidth / 2;
     const right = pos[0] + effWidth / 2;
     const offLeft = Math.max(0, -left);
@@ -1341,10 +1364,28 @@ function validateBeatVisual(visual, path, errors, knownIds) {
     // value, for an animated position - an earlier keyframe, a
     // legitimate off-screen fly-in START point, is left untouched)
     // and does NOT push an error, since the beat is now valid.
-    if (offLeft > effWidth * 0.25 || offRight > effWidth * 0.25) {
-      const clampedX = effWidth >= CANVAS_WIDTH
+    //
+    // Threshold/margin, both tightened live after the original 25%-of-
+    // box threshold (calibrated back when this only produced an ERROR,
+    // where a false-positive genuinely cost a wasted retry) let real
+    // clipping through: several confirmed-live cases sat at 0-17% by
+    // this file's own char-width ESTIMATE - clean by that threshold -
+    // yet the real renderer's actual ctx.measureText glyph widths ran
+    // measurably wider, clipping a character or two in the rendered
+    // frame anyway. Once this became a free, in-place clamp instead of
+    // a costly reject-and-retry, that tradeoff flipped entirely: a
+    // false-positive clamp on genuinely fine text is an imperceptible
+    // few-pixel nudge, while a false negative is visible clipping - so
+    // this now fires on ANY estimated overflow at all (EDGE_SAFETY_PX
+    // is just float-precision slop, not a deliberate tolerance), and
+    // clamps to a box inset by EDGE_MARGIN_PX from each edge rather
+    // than flush against it, to absorb exactly this kind of estimate-
+    // vs-real-render gap instead of landing back on the edge itself.
+    if (offLeft > EDGE_SAFETY_PX || offRight > EDGE_SAFETY_PX) {
+      const halfW = Math.min(effWidth / 2, (CANVAS_WIDTH - EDGE_MARGIN_PX * 2) / 2);
+      const clampedX = effWidth + EDGE_MARGIN_PX * 2 >= CANVAS_WIDTH
         ? CANVAS_WIDTH / 2
-        : Math.max(effWidth / 2, Math.min(CANVAS_WIDTH - effWidth / 2, pos[0]));
+        : Math.max(EDGE_MARGIN_PX + halfW, Math.min(CANVAS_WIDTH - EDGE_MARGIN_PX - halfW, pos[0]));
       if (isNumberArray(layer.position, 2)) {
         layer.position = [clampedX, layer.position[1]];
       } else if (isPlainObject(layer.position) && Array.isArray(layer.position.keyframes) && layer.position.keyframes.length > 0) {
@@ -1362,10 +1403,11 @@ function validateBeatVisual(visual, path, errors, knownIds) {
     const bottom = currentPos[1] + size.height / 2;
     const offTop = Math.max(0, -top);
     const offBottom = Math.max(0, bottom - CANVAS_HEIGHT);
-    if (offTop > size.height * 0.25 || offBottom > size.height * 0.25) {
-      const clampedY = size.height >= CANVAS_HEIGHT
+    if (offTop > EDGE_SAFETY_PX || offBottom > EDGE_SAFETY_PX) {
+      const halfH = Math.min(size.height / 2, (CANVAS_HEIGHT - EDGE_MARGIN_PX * 2) / 2);
+      const clampedY = size.height + EDGE_MARGIN_PX * 2 >= CANVAS_HEIGHT
         ? CANVAS_HEIGHT / 2
-        : Math.max(size.height / 2, Math.min(CANVAS_HEIGHT - size.height / 2, currentPos[1]));
+        : Math.max(EDGE_MARGIN_PX + halfH, Math.min(CANVAS_HEIGHT - EDGE_MARGIN_PX - halfH, currentPos[1]));
       if (isNumberArray(layer.position, 2)) {
         layer.position = [layer.position[0], clampedY];
       } else if (isPlainObject(layer.position) && Array.isArray(layer.position.keyframes) && layer.position.keyframes.length > 0) {
@@ -1467,15 +1509,22 @@ function autoRepairBeat(beat) {
       // touched - only a bad LANDING spot gets fixed.
       if (layer.type === 'text' && typeof layer.text === 'string') {
         const size = estimateTextEffectiveSize(layer);
-        const effWidth = Math.max(1, size.actualWidth || size.width);
+        // Uses the conservative "maxWidth" ceiling, not the narrower
+        // per-line actualWidth estimate - see validateBeatVisual's own
+        // matching check for the full live-confirmed reason.
+        const effWidth = Math.max(1, size.width);
         const clampX = (x) => {
-          if (effWidth >= CANVAS_WIDTH) return CANVAS_WIDTH / 2;
+          // Same tightened threshold/margin as validateBeatVisual's own
+          // matching check (this is defense-in-depth for the same
+          // problem, see that one's doc comment for the full story).
+          if (effWidth + EDGE_MARGIN_PX * 2 >= CANVAS_WIDTH) return CANVAS_WIDTH / 2;
           const left = x - effWidth / 2;
           const right = x + effWidth / 2;
           const offLeft = Math.max(0, -left);
           const offRight = Math.max(0, right - CANVAS_WIDTH);
-          if (offLeft <= effWidth * 0.25 && offRight <= effWidth * 0.25) return x;
-          return Math.max(effWidth / 2, Math.min(CANVAS_WIDTH - effWidth / 2, x));
+          if (offLeft <= EDGE_SAFETY_PX && offRight <= EDGE_SAFETY_PX) return x;
+          const halfW = Math.min(effWidth / 2, (CANVAS_WIDTH - EDGE_MARGIN_PX * 2) / 2);
+          return Math.max(EDGE_MARGIN_PX + halfW, Math.min(CANVAS_WIDTH - EDGE_MARGIN_PX - halfW, x));
         };
         if (isNumberArray(layer.position, 2)) {
           layer.position = [clampX(layer.position[0]), layer.position[1]];
