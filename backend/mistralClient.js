@@ -1065,7 +1065,20 @@ function countTreatmentBeats(treatment) {
  * said, and validation/retry now covers the whole video as one
  * coherent unit rather than N independent ones.
  */
-async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft = 6, priorErrors = null } = {}) {
+// Raised 6 -> 16 after switching MODEL to mistral-small-latest: real,
+// directly measured tradeoff - the smaller model's individual calls
+// are dramatically faster (11-56s observed live, vs 100-240s on
+// mistral-large-latest for the same schema) but it needs meaningfully
+// MORE correction passes to converge on this schema's complexity - a
+// live run burned through all 6 retries and still ended on genuinely
+// broken structural output (missing scenes, wrong root shape), never
+// once reaching valid JSON. Since each retry is now so much cheaper in
+// wall-clock terms, affording more of them is the correct lever: 16
+// retries at ~15-20s average lands around 240-320s, still comfortably
+// inside GENERATION_HARD_TIMEOUT_MS - likely FASTER overall than the
+// old 6-retry budget on the slower model, while giving real room to
+// actually converge instead of exhausting attempts on a hard schema.
+async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft = 16, priorErrors = null } = {}) {
   const systemPrompt = buildGenerationSystemPrompt(targetDurationSeconds);
   let userMessage = `CREATIVE TREATMENT (already planned by a senior director - encode this EXACTLY and FAITHFULLY, missing nothing; every decision below must become real text layers/animators from the schema above, never simplified or dropped to something generic. The treatment may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead (a hard hit, a flash, a snap into place) rather than inventing a nonexistent field. Only use real fields from the schema above - never invent new ones.):\n${treatment}\n\nOriginal request: ${userPrompt}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON - still encoding the treatment above.`;
