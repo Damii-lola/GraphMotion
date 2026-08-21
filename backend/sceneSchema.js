@@ -1215,6 +1215,44 @@ function autoRepairBeat(beat) {
         });
       }
 
+      // Real, repeatedly-recurring mistake across many live runs: a
+      // "wiggly" selector paired with a "position" property delta never
+      // settles (every character stays perpetually jittered), which
+      // validateAnimator already hard-rejects - but rejecting it forces
+      // a full retry for something mechanically fixable in place: strip
+      // just the "position" delta (keep any opacity/scale delta on the
+      // same animator untouched), converting an invalid animator into a
+      // valid, still-decorative one instead of failing the whole beat.
+      if (Array.isArray(layer.animators)) {
+        for (const a of layer.animators) {
+          if (isPlainObject(a) && isPlainObject(a.selector) && a.selector.type === 'wiggly'
+              && isPlainObject(a.properties) && a.properties.position !== undefined) {
+            delete a.properties.position;
+          }
+        }
+      }
+
+      // Real, repeatedly-recurring mistake: a "highlights" entry's
+      // "gradient" missing "from"/"to" or using a non-hex value -
+      // rejecting outright forces a full retry over one cosmetic field.
+      // Falls back to a flat solid color instead (the gradient's own
+      // "from" if it's a real hex, else the layer's own fillStyle, else
+      // a safe default) - loses only the gradient effect, not the
+      // whole highlight or the whole beat.
+      if (Array.isArray(layer.highlights)) {
+        for (const h of layer.highlights) {
+          if (!isPlainObject(h)) continue;
+          const gradOk = isPlainObject(h.gradient) && HEX_COLOR_RE.test(h.gradient.from) && HEX_COLOR_RE.test(h.gradient.to);
+          if (h.gradient !== undefined && !gradOk && !HEX_COLOR_RE.test(h.color)) {
+            const salvaged = (isPlainObject(h.gradient) && HEX_COLOR_RE.test(h.gradient.from) && h.gradient.from)
+              || (typeof layer.fillStyle === 'string' && HEX_COLOR_RE.test(layer.fillStyle) && layer.fillStyle)
+              || '#ffe066';
+            delete h.gradient;
+            h.color = salvaged;
+          }
+        }
+      }
+
       if (layer.type === 'precomp') walkLayers(layer.layers);
     }
   };
@@ -1224,6 +1262,49 @@ function autoRepairBeat(beat) {
     walkLayers([beat.visual.background]);
   }
   walkLayers(beat.visual.layers);
+
+  // Real, repeatedly-recurring mistake needing array-level (not per-
+  // layer) surgery, so handled here rather than inside walkLayers:
+  //
+  // 1. A layer entry that isn't even a real object, or has no real
+  //    "type" - confirmed live as `null`/`{}`-shaped stray entries,
+  //    almost certainly a truncated or malformed generation artifact.
+  //    Nothing about a single uninterpretable layer is worth failing
+  //    the WHOLE beat's retry over - dropped outright, same tradeoff
+  //    philosophy as every other auto-repair here (a beat with one
+  //    fewer decorative element beats a full regeneration).
+  // 2. Two or more text layers sharing the EXACT SAME "text" string -
+  //    confirmed live, repeatedly, as a "plain copy + accented copy"
+  //    pattern (see the matching hard-validation check's own doc
+  //    comment for the real incident) with no legitimate use in this
+  //    schema. Rather than reject-and-retry, merged automatically: the
+  //    first occurrence is kept and absorbs every later duplicate's
+  //    own "animators"/"highlights" entries (so an intended accent
+  //    isn't silently lost, just correctly consolidated onto the one
+  //    real layer), the duplicates are removed entirely.
+  if (Array.isArray(beat.visual.layers)) {
+    beat.visual.layers = beat.visual.layers.filter((l) => isPlainObject(l) && LAYER_TYPES.includes(l.type));
+
+    const firstByText = new Map();
+    const toRemove = new Set();
+    beat.visual.layers.forEach((layer, i) => {
+      if (layer.type !== 'text' || typeof layer.text !== 'string') return;
+      const key = layer.text.trim().toLowerCase();
+      if (!key) return;
+      if (!firstByText.has(key)) { firstByText.set(key, layer); return; }
+      const original = firstByText.get(key);
+      if (Array.isArray(layer.animators) && layer.animators.length > 0) {
+        original.animators = [...(Array.isArray(original.animators) ? original.animators : []), ...layer.animators];
+      }
+      if (Array.isArray(layer.highlights) && layer.highlights.length > 0) {
+        original.highlights = [...(Array.isArray(original.highlights) ? original.highlights : []), ...layer.highlights];
+      }
+      toRemove.add(i);
+    });
+    if (toRemove.size > 0) {
+      beat.visual.layers = beat.visual.layers.filter((_, i) => !toRemove.has(i));
+    }
+  }
 
   autoSpreadDuplicatePositions(beat.visual);
 }
