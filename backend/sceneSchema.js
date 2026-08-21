@@ -791,6 +791,51 @@ function validateShapeContentItem(item, path, errors) {
   }
 }
 
+/**
+ * Repairs a shape layer's "contents" array in place-ish (returns a new
+ * array; call sites reassign) - see the autoRepairBeat call site's own
+ * doc comment for the full story on why each of these specific fixups
+ * exists. After attempting them, re-validates every item with the REAL
+ * validateShapeContentItem and drops anything still invalid, so this
+ * never has to enumerate every possible malformed shape by hand - only
+ * the recognized, mechanically-safe patterns get actively fixed, and
+ * everything else just gets dropped rather than failing the beat.
+ */
+function sanitizeShapeContents(contents) {
+  if (!Array.isArray(contents)) return contents;
+  const cleaned = [];
+  for (const item of contents) {
+    if (!isPlainObject(item)) continue;
+    if (item.type === 'path' && isPlainObject(item.shape)) {
+      // "circle" is a real, intuitive name that just isn't one of this
+      // schema's five SHAPE_KINDS - "ellipse" (equal width/height) is
+      // the exact equivalent. A circle is naturally described by a
+      // radius; ellipse takes width/height, so radius->diameter here.
+      if (item.shape.kind === 'circle') {
+        const p = isPlainObject(item.shape.params) ? item.shape.params : {};
+        const width = typeof p.width === 'number' ? p.width : (typeof p.radius === 'number' ? p.radius * 2 : 100);
+        const height = typeof p.height === 'number' ? p.height : (typeof p.radius === 'number' ? p.radius * 2 : width);
+        item.shape = { kind: 'ellipse', params: { ...p, width, height } };
+        delete item.shape.params.radius;
+      }
+      if (item.shape.kind === 'polygon' && isPlainObject(item.shape.params) && typeof item.shape.params.radius !== 'number') {
+        item.shape.params.radius = 50;
+      }
+      if (item.shape.kind === 'star' && isPlainObject(item.shape.params)) {
+        if (typeof item.shape.params.outerRadius !== 'number') item.shape.params.outerRadius = 50;
+        if (typeof item.shape.params.innerRadius !== 'number') item.shape.params.innerRadius = 25;
+      }
+    }
+    if (item.type === 'group' && Array.isArray(item.contents)) {
+      item.contents = sanitizeShapeContents(item.contents);
+    }
+    const throwaway = [];
+    validateShapeContentItem(item, 'x', throwaway);
+    if (throwaway.length === 0) cleaned.push(item);
+  }
+  return cleaned;
+}
+
 function validateEffect(effect, path, errors) {
   if (!isPlainObject(effect) || !EFFECT_TYPES.includes(effect.type)) {
     const val = effect && effect.type;
@@ -1369,6 +1414,29 @@ function autoRepairBeat(beat) {
         if (typeof layer.height !== 'number') layer.height = 100;
       }
 
+      // Real, repeatedly-recurring family of shape-contents mistakes,
+      // all converted to auto-repair rather than left to force a
+      // retry: "circle" used as a shape.kind (a real, intuitive name
+      // that just isn't one of this schema's five - "ellipse" is the
+      // equivalent, remapped here with radius->width/height converted
+      // automatically); a "polygon"/"star" missing its required
+      // radius/outerRadius/innerRadius (same shape as the existing
+      // "points" validation, just given a sane default instead of
+      // rejected); and, as a general backstop for anything else this
+      // doesn't specifically recognize (an unsalvageable customPath
+      // with too few real anchors, an unknown content "type", garbled
+      // JSON-corruption artifacts) - sanitizeShapeContents re-runs the
+      // REAL validator on each item after attempting the fixups above
+      // and drops any item still invalid, rather than trying to
+      // enumerate every possible malformed shape by hand. Losing one
+      // decorative content item (or, in the worst case, ending up with
+      // an empty shape that the layer-list filter below then drops
+      // entirely) is a far better outcome than failing the whole beat's
+      // generation over it.
+      if (layer.type === 'shape' && Array.isArray(layer.contents)) {
+        layer.contents = sanitizeShapeContents(layer.contents);
+      }
+
       // Static layer-level opacity:0 alongside a reveal animator -
       // see validateLayer's matching check for the full story. Not
       // scoped to any one layer type since any layer (shape/text/
@@ -1711,7 +1779,13 @@ function autoRepairBeat(beat) {
   //    failing the whole beat over one missing piece of text.
   if (Array.isArray(beat.visual.layers)) {
     beat.visual.layers = beat.visual.layers.filter((l) => isPlainObject(l) && LAYER_TYPES.includes(l.type)
-      && !(l.type === 'text' && (typeof l.text !== 'string' || l.text.trim().length === 0)));
+      && !(l.type === 'text' && (typeof l.text !== 'string' || l.text.trim().length === 0))
+      // A shape layer whose contents sanitizeShapeContents just
+      // reduced to nothing (every item was unsalvageable) renders as a
+      // genuinely empty/invisible shape - better dropped outright than
+      // left as a dead layer that draws nothing for its whole time on
+      // screen.
+      && !(l.type === 'shape' && Array.isArray(l.contents) && l.contents.length === 0));
 
     const firstByText = new Map();
     const toRemove = new Set();
