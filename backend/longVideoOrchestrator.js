@@ -121,23 +121,27 @@ async function renderLongFormVideo(jobId, sceneJSON, onProgress) {
 
 // V8's default old-space ceiling scales with total system memory, which
 // on a capped container is a lie the process believes until it's too
-// late. A cap here is meant as a distant safety net against a genuine
-// runaway leak, not an operational ceiling - set too tight (220 was
-// tried and made things WORSE: production started timing out on
-// chunk 0, the very first and smallest slice of work, which a
-// cross-chunk memory-accumulation theory can't explain since every
-// chunk is a fresh process with nothing carried over). The likely
-// mechanism: V8 doesn't crash the instant old-space fills, it fights
-// for headroom with increasingly aggressive/frequent GC passes first -
-// under real per-frame allocation churn (canvas paths, gradients,
-// composite ops), a too-tight cap can make a process spend most of its
-// time GC-thrashing instead of crashing OR progressing, which is
-// indistinguishable from a hang to the outer fork-level timeout. This
-// bounds the JS heap only - it never addressed native Skia memory
-// anyway (the actual dominant cost per the original dev's comments) -
-// so raised well above where it could plausibly constrain a healthy
-// render, keeping only the "catch a truly runaway leak" purpose.
-const CHUNK_WORKER_MAX_OLD_SPACE_MB = 400;
+// late. History here: 220 was tried and looked like it made things
+// WORSE (chunk 0, the very first and smallest slice of work, started
+// timing out) - the working theory was V8 GC-thrashing under a too-
+// tight JS-heap cap (fighting for headroom instead of crashing or
+// progressing, indistinguishable from a hang to the outer fork-level
+// timeout) rather than an actual overrun, so the cap was raised to 400
+// on that theory. But chunk 0 STILL times out at 400 (see server.js's
+// real /api/generate failure this was found from), which that theory
+// alone doesn't explain, AND this flag was always the wrong lever for
+// the actual dominant cost anyway - renderEngine.js's own measured gc()
+// -cadence numbers put real peak RSS at ~245-589MB from native Skia
+// pixel buffers alone, entirely outside what --max-old-space-size ever
+// bounds (JS heap only). Pulled down to 100 as an explicit hard product
+// requirement on real per-process memory budget (the actual host has
+// far less headroom than 400MB once the parent process, OS, and ffmpeg
+// share the same instance) - NOT a claim that this alone makes real RSS
+// fit under 100MB, since the JS-heap cap was never what real RSS lived
+// in. Getting real peak RSS down to match this requires the OTHER real
+// levers (CHUNK_SIZE_SECONDS, gc() cadence, WIDTH/HEIGHT) verified
+// against actual measured numbers, not this flag in isolation.
+const CHUNK_WORKER_MAX_OLD_SPACE_MB = 100;
 
 function renderSingleChunk(jobId, sceneJSON, timeStart, timeEnd, outputPath, chunkIndex, onProgress) {
   return new Promise((resolve, reject) => {

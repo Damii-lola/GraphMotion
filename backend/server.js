@@ -204,16 +204,22 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
   scheduleRender(job.id, prompt.trim(), duration, parentSceneJSON);
 });
 
-// Explicit V8 heap ceiling for the render worker - kept as a distant
-// safety net against a genuine runaway leak, not an operational
-// ceiling. A tighter cap (previously 260, and 220 on the chunk worker
-// in longVideoOrchestrator.js) is the likely cause of a worse
-// regression: production started timing out on chunk 0, the smallest
-// possible slice of work, which points at V8 GC-thrashing under a too-
-// tight cap (fighting for headroom instead of crashing or progressing)
-// rather than an actual memory overrun. See the longer explanation on
-// CHUNK_WORKER_MAX_OLD_SPACE_MB in longVideoOrchestrator.js.
-const RENDER_WORKER_MAX_OLD_SPACE_MB = 400;
+// Explicit V8 heap ceiling for the render worker. Previously raised to
+// 400 after 220/260 were found to make "Chunk N timed out" WORSE
+// (theory: V8 GC-thrashing under a too-tight JS-heap cap, fighting for
+// headroom instead of crashing or progressing) - but that theory
+// doesn't explain chunk 0 STILL timing out at 400 either, and the
+// dominant real memory cost here (native Skia pixel buffers, per
+// renderEngine.js's own gc()-cadence measurements: ~245-589MB peak
+// RSS depending on cadence) was never something this flag bounds in
+// the first place - it only caps the JS heap. Pulled down to 100 as an
+// explicit hard product requirement (the actual Render host has far
+// less headroom available per-process than 400MB once the parent
+// process, OS, and ffmpeg are all sharing the same instance) - see
+// CHUNK_WORKER_MAX_OLD_SPACE_MB in longVideoOrchestrator.js for the
+// matching change and the real RSS numbers this needs to be verified
+// against going forward.
+const RENDER_WORKER_MAX_OLD_SPACE_MB = 100;
 
 function startRenderWorker(jobId, prompt, targetDurationSeconds, parentSceneJSON, onSettled) {
   const child = fork(path.join(__dirname, 'renderWorker.js'), {

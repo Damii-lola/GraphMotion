@@ -240,31 +240,38 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   const { beatRanges } = buildTimeline(sceneJSON);
   const { positions: boardPositions, background: boardBackgroundDef } = buildBoardLayoutAndBackground(sceneJSON, beatRanges);
 
-  // The ONE shared background, sized to cover every position the
+  // The ONE shared background, logically covering every position the
   // camera can ever be parked at (each beat's own WIDTHxHEIGHT
-  // footprint on the board) - built ONCE per chunk (not per frame,
-  // not per beat) since it's a single flat gradient with no per-frame
-  // variation at all, just panned under via translation like every
-  // other board-space element.
+  // footprint on the board) - but NOT pre-built as one giant canvas
+  // that size. Real, measured incident: with pan distances raised to
+  // 1600-2600px (this session's own repeated "pan further" requests) a
+  // typical 4-beat board bounding box already reaches ~1978x5798 =
+  // 11.5Mpx - nearly 22x a single video frame's 540x960 = 0.52Mpx - and
+  // building that ONE canvas up front measured at ~93MB of RSS by
+  // itself (isolated A/B: 54MB before, 147MB after, on identical
+  // content), the single largest identifiable contributor to a real
+  // ~240MB per-chunk-process floor found while chasing a 100MB target.
+  // Fixed by keeping the background a WORLD-SPACE gradient definition
+  // only (below) and rendering just the current WIDTHxHEIGHT viewport
+  // of it fresh each frame (drawBoardBackground, in the frame loop) -
+  // same per-frame cost as any other 540x960 canvas already in the
+  // budget, regardless of how far the board's bounding box spans.
   const boardMinX = Math.min(...boardPositions.map((p) => p.x));
   const boardMinY = Math.min(...boardPositions.map((p) => p.y));
   const boardMaxX = Math.max(...boardPositions.map((p) => p.x)) + WIDTH;
   const boardMaxY = Math.max(...boardPositions.map((p) => p.y)) + HEIGHT;
   const boardW = boardMaxX - boardMinX;
   const boardH = boardMaxY - boardMinY;
-  // Radial needs genuinely distinct start/end points - identical points
-  // collapse the radius to a 1px dot (gradientRamp's own `|| 1`
-  // fallback), rendering almost the entire board as flat endColor -
-  // the exact degenerate-gradient bug already fixed once in
-  // sceneSchema.js's own background validation, avoided here by
-  // construction instead of needing a check.
-  const boardBackgroundCanvas = gradientRamp(boardW, boardH, {
-    startPoint: boardBackgroundDef.shape === 'radial' ? [boardW / 2, boardH / 2] : [0, 0],
-    endPoint: boardBackgroundDef.shape === 'radial' ? [boardW, boardH] : [0, boardH],
-    startColor: boardBackgroundDef.startColor,
-    endColor: boardBackgroundDef.endColor,
-    shape: boardBackgroundDef.shape,
-  });
+  console.log(`[renderEngine] board bounding box: ${boardW}x${boardH} = ${((boardW * boardH) / 1e6).toFixed(1)}Mpx (${beatRanges.length} beat(s)) - background rendered per-viewport, not pre-built at this size`);
+  // World-space anchor points for the gradient axis, in the SAME
+  // coordinate space as boardPositions/camX/camY - radial needs
+  // genuinely distinct start/end points (identical points collapse the
+  // radius to a 1px dot, the exact degenerate-gradient bug already
+  // fixed once in sceneSchema.js's own background validation).
+  const boardBgStartPoint = boardBackgroundDef.shape === 'radial'
+    ? [boardMinX + boardW / 2, boardMinY + boardH / 2] : [boardMinX, boardMinY];
+  const boardBgEndPoint = boardBackgroundDef.shape === 'radial'
+    ? [boardMinX + boardW, boardMinY + boardH] : [boardMinX, boardMinY + boardH];
 
   // Every beat overlapping this chunk's own [timeStart,timeEnd) range
   // needs its own frames rendered here - chunking forks a fresh OS
@@ -366,7 +373,25 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       // themselves render with a transparent backdrop now (no more
       // per-beat "visual.background"), so this shows through everywhere
       // there's no text, both while parked on a beat and mid-pan.
-      ctx.drawImage(boardBackgroundCanvas, boardMinX - camX, boardMinY - camY);
+      // Rendered fresh each frame at just this WIDTHxHEIGHT viewport
+      // (see the setup comment above for why - avoids ever allocating a
+      // canvas sized to the whole, potentially huge, board bounding
+      // box). "dither:false" is deliberate here, not an oversight: the
+      // dithered version's noise is anchored to ITS OWN canvas's local
+      // pixel grid, not world space - regenerating a dithered canvas
+      // fresh each frame at a shifting world-space offset would make
+      // the dither noise visibly "swim" in place instead of panning
+      // smoothly with the content, a worse artifact than the mild
+      // banding risk a flat gradient this large might otherwise show.
+      const viewportBg = gradientRamp(WIDTH, HEIGHT, {
+        startPoint: [boardBgStartPoint[0] - camX, boardBgStartPoint[1] - camY],
+        endPoint: [boardBgEndPoint[0] - camX, boardBgEndPoint[1] - camY],
+        startColor: boardBackgroundDef.startColor,
+        endColor: boardBackgroundDef.endColor,
+        shape: boardBackgroundDef.shape,
+        dither: false,
+      });
+      ctx.drawImage(viewportBg, 0, 0);
 
       if (inPan) {
         const prevBeat = built.get(beatIndex - 1);
@@ -472,7 +497,17 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         onProgress(Math.round((frameIndex / totalFrames) * 90));
       }
       if (frameIndex % 30 === 0) {
-        console.log(`[renderEngine] frame ${frameIndex}/${totalFrames}, +${((Date.now() - renderStartedAt) / 1000).toFixed(1)}s`);
+        // RSS (not heapUsed) deliberately - the dominant real cost here
+        // is native Skia pixel memory (see the gc() cadence comment
+        // above), which never shows up in heapUsed at all. Kept as a
+        // permanent, cheap log line (not a one-off debug print) since
+        // "Chunk N timed out" has a real, documented history of only
+        // ever showing up on the actual Render host and never
+        // reproducing locally - this is what actually lets a NEXT
+        // occurrence show real numbers from production instead of
+        // another blind guess.
+        const rssMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
+        console.log(`[renderEngine] frame ${frameIndex}/${totalFrames}, +${((Date.now() - renderStartedAt) / 1000).toFixed(1)}s, rss=${rssMB}MB`);
       }
     }
 

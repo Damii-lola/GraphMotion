@@ -38,7 +38,8 @@ process.on('message', async ({ jobId, sceneJSON, timeStart, timeEnd, outputPath,
     await renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, (pct) => {
       if (process.send) process.send({ type: 'chunk_progress', jobId, chunkIndex, progress: pct });
     });
-    console.log(`[chunkWorker ${chunkIndex}] done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
+    const rssMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
+    console.log(`[chunkWorker ${chunkIndex}] done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s, final rss=${rssMB}MB`);
     await sendAndFlush({ type: 'chunk_complete', jobId, chunkIndex, outputPath });
   } catch (err) {
     console.error(`[chunkWorker ${chunkIndex}] failed after ${((Date.now() - startedAt) / 1000).toFixed(1)}s: ${err.message}`);
