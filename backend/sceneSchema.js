@@ -935,6 +935,38 @@ function sanitizeShapeContents(contents) {
     validateShapeContentItem(item, 'x', throwaway);
     if (throwaway.length === 0) cleaned.push(item);
   }
+  // Real, confirmed-live bug found via direct isolated render test (not
+  // a live generation yet, but a genuinely dormant landmine): AE's real
+  // stacking rule is that Trim Paths operates on whatever path data is
+  // ABOVE it in the SAME contents list, and Fill/Stroke consume
+  // whatever's currently accumulated WITHOUT modifying it - so a
+  // "path, stroke, trim" order (stroke drawn BEFORE trim ever runs)
+  // draws the FULL, untrimmed shape, and the trim item after it has
+  // nothing left to affect. The result isn't an error or a crash - it's
+  // a "self-drawing line" that's simply fully drawn from frame one,
+  // with zero indication anything is wrong; confirmed directly by
+  // swapping the two items in an otherwise-identical test and watching
+  // the exact same reveal that should have taken 1.5s instead appear
+  // instantly. This is a one-way, purely mechanical AE convention (no
+  // legitimate reason to ever want trim evaluated AFTER the paint that
+  // should be limited by it), so it's auto-repaired here rather than
+  // left to force a retry: any "trim" item found after the first
+  // "fill"/"stroke" is moved to sit immediately before that first
+  // fill/stroke, preserving every other item's relative order.
+  const firstPaintIndex = cleaned.findIndex((item) => item.type === 'fill' || item.type === 'stroke');
+  if (firstPaintIndex !== -1) {
+    const misplacedTrims = [];
+    const rest = [];
+    cleaned.forEach((item, i) => {
+      if (item.type === 'trim' && i > firstPaintIndex) misplacedTrims.push(item);
+      else rest.push(item);
+    });
+    if (misplacedTrims.length > 0) {
+      const newFirstPaintIndex = rest.findIndex((item) => item.type === 'fill' || item.type === 'stroke');
+      rest.splice(newFirstPaintIndex, 0, ...misplacedTrims);
+      return rest;
+    }
+  }
   return cleaned;
 }
 
