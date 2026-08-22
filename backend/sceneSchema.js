@@ -1653,6 +1653,25 @@ function autoRepairBeat(beat) {
       if (!isValidAnimatableShape(layer.opacity)) delete layer.opacity;
       if (!isValidAnimatableShape(layer.rotation)) delete layer.rotation;
 
+      // Real, confirmed-live bug found via direct frame inspection of a
+      // live generated video: a text layer's STATIC (non-keyframed)
+      // "scale" was [3,3] - a permanent 300% zoom applied for the
+      // layer's whole time on screen, no animation, from the very
+      // first frame. At fontSize 64 that renders at an effective ~192,
+      // guaranteed to overflow badly regardless of position - and
+      // undetectable by the off-canvas checks above, which estimate
+      // effective size from raw fontSize alone with no notion of a
+      // scale multiplier on top of it. A KEYFRAMED scale (an
+      // intentional pop-in/out animation, e.g. 0.7->1) is completely
+      // legitimate and left alone here - only a STATIC value far from
+      // neutral is nonsensical, since there's no animation reason for
+      // text to sit permanently 3x its own declared size. Reset to
+      // neutral [1,1] rather than guessing at what magnitude was
+      // actually intended.
+      const staticScaleOutOfRange = (v) => (typeof v === 'number' && (v < 0.5 || v > 1.5))
+        || (isNumberArray(v, 2) && (v[0] < 0.5 || v[0] > 1.5 || v[1] < 0.5 || v[1] > 1.5));
+      if (staticScaleOutOfRange(layer.scale)) delete layer.scale;
+
       // Real, confirmed-live bug found via direct JSON audit of a live
       // generated video (not a style guess): a text layer with NO
       // animated property whatsoever - no "animators" (per-character
