@@ -596,6 +596,20 @@ That backdrop is the FLOOR, not the ceiling - real motion graphics
 real After Effects composition builds up from a base color into a full
 scene with foreground elements, not text floating alone on a gradient.
 
+CRITICAL for color choices: you don't control WHICH exact backdrop hue
+gets picked, but you DO know the real family it always comes from - a
+rich, fairly dark, vivid jewel tone: royal blue, violet, magenta/berry,
+emerald, amber/orange, or teal (never pastel, never near-black, never
+near-white). Real, confirmed-live mistake: a pale/light tint of one of
+these same hue families ("#C3D8FF", a soft periwinkle) as a text
+"fillStyle" - it read as barely-legible low-contrast text no matter
+which of these backdrops it landed on, since it's close in hue and
+lightness to several of them. Pure white ("#FFFFFF") or near-white is
+ALWAYS safe for primary text/body copy regardless of which exact
+backdrop hue gets picked - default to it unless you have a specific,
+deliberate reason (a bold accent color chosen for contrast/emphasis,
+not a pastel of the backdrop's own hue family) to do otherwise.
+
 =====================================================================
 TEXTLAYERDEF - one entry in "layers"
 =====================================================================

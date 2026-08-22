@@ -2054,18 +2054,26 @@ function autoRepairBeat(beat) {
     // alone isn't reliable here, the same story as every other rule
     // this session that ended up needing a mechanical backstop. Rather
     // than just document it harder again, inject it directly: find
-    // each beat's own DOMINANT text layer (the largest "fontSize"
-    // among its own top-level text layers - nested precomp text isn't
-    // "the beat's own" headline in the same sense, so this only looks
-    // at beat.visual.layers directly) and give it a real dropShadow if
-    // it doesn't already have one, using the exact params already
-    // documented as the right defaults. Skips a beat with no text at
-    // all (a pure icon/shape moment) and never touches a layer that
-    // already has its own dropShadow (an explicit small/secondary
-    // opacity or blur choice from the model is left alone).
+    // each beat's own DOMINANT text layer(s) - every top-level text
+    // layer whose "fontSize" is at least 95% of the beat's own largest
+    // (not just a single strict-max pick) - and give each a real
+    // dropShadow if it doesn't already have one. The 95% tie-tolerance
+    // matters: a real generation split one headline across two same-
+    // size lines as separate layers ("facts about" / "the", both
+    // fontSize 42, likely for staggered per-line reveal timing) and a
+    // strict single-max pick left the second line completely flat
+    // while its own sibling line right above it had real depth -
+    // visibly inconsistent within what reads as ONE headline. Nested
+    // precomp text isn't "the beat's own" headline in the same sense,
+    // so this only looks at beat.visual.layers directly. Skips a beat
+    // with no text at all (a pure icon/shape moment) and never touches
+    // a layer that already has its own dropShadow (an explicit small/
+    // secondary opacity or blur choice from the model is left alone).
     const beatTextLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && typeof l.fontSize === 'number');
     if (beatTextLayers.length > 0) {
-      const dominant = beatTextLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+      const maxFontSize = Math.max(...beatTextLayers.map((l) => l.fontSize));
+      const dominantLayers = beatTextLayers.filter((l) => l.fontSize >= maxFontSize * 0.95);
+      dominantLayers.forEach((dominant) => {
       const hasShadow = Array.isArray(dominant.effects) && dominant.effects.some((e) => isPlainObject(e) && e.type === 'dropShadow');
       if (!hasShadow) {
         if (!Array.isArray(dominant.effects)) dominant.effects = [];
@@ -2075,6 +2083,7 @@ function autoRepairBeat(beat) {
           },
         });
       }
+      });
     }
   }
 
