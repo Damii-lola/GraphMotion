@@ -1747,11 +1747,45 @@ function autoRepairBeat(beat) {
       // finish reading it, which is the same root cause behind the
       // separate "scenes moving too fast" complaint.
       const MIN_SEC_PER_CHAR = 0.035;
+      const MIN_SEC_PER_WORD = 0.18;
       const POST_REVEAL_READ_BUFFER = 1.0;
       if (Array.isArray(layer.animators) && typeof layer.text === 'string' && layer.text.length > 0) {
+        const wordCount = Math.max(1, layer.text.split(/\s+/).filter(Boolean).length);
+        const requiredSpan = layer.text.length * MIN_SEC_PER_CHAR;
+        const requiredSpanByBasis = { characters: requiredSpan, words: wordCount * MIN_SEC_PER_WORD };
         for (const a of layer.animators) {
-          if (!isPlainObject(a) || !isPlainObject(a.selector) || a.selector.basedOn !== 'characters') continue;
+          if (!isPlainObject(a) || !isPlainObject(a.selector)) continue;
+          const basis = a.selector.basedOn;
+          if (basis !== 'characters' && basis !== 'words') continue;
+          const need = requiredSpanByBasis[basis];
           const end = a.selector.end;
+          // Real, confirmed-live bug distinct from "too fast": a
+          // selector's own "start"/"end" were BOTH plain static
+          // numbers (e.g. start:0, end:100), never animated over time
+          // at all - with this engine's own strength math (a character
+          // is "selected" whenever it falls within [start,end], and
+          // the default invert flips that into strength = 1 - selected
+          // for a reveal), a CONSTANT [0,100] range means every
+          // character is ALWAYS fully selected, so the inverted
+          // strength is a permanent 0 - the whole animator becomes
+          // completely inert dead code, contributing zero motion ever,
+          // confirmed directly in a real generated layer (its only
+          // visible entrance came from the LAYER's own opacity/scale/
+          // position keyframes, not this animator at all). Converts a
+          // static "end" into a real 0->100 sweep at the same real
+          // per-unit pace used below, rather than leaving a per-
+          // character/word reveal that silently never happens.
+          if (typeof end === 'number') {
+            a.selector.end = {
+              keyframes: [
+                { time: 0, value: 0 },
+                { time: need, value: 100, interpolation: 'easing', easing: 'easeOutCubic' },
+              ],
+            };
+            const neededDuration = need + POST_REVEAL_READ_BUFFER;
+            if (beat.params.duration < neededDuration) beat.params.duration = neededDuration;
+            continue;
+          }
           if (!isPlainObject(end) || !Array.isArray(end.keyframes) || end.keyframes.length < 2) continue;
           const kfs = end.keyframes;
           const first = kfs[0];
@@ -1760,13 +1794,12 @@ function autoRepairBeat(beat) {
           if (typeof last.value !== 'number' || last.value < 90) continue;
           const currentSpan = last.time - first.time;
           if (currentSpan <= 0) continue;
-          const requiredSpan = layer.text.length * MIN_SEC_PER_CHAR;
-          if (currentSpan >= requiredSpan) continue;
-          const scale = requiredSpan / currentSpan;
+          if (currentSpan >= need) continue;
+          const scale = need / currentSpan;
           for (const kf of kfs) {
             if (isPlainObject(kf) && typeof kf.time === 'number') kf.time = first.time + (kf.time - first.time) * scale;
           }
-          const neededDuration = first.time + requiredSpan + POST_REVEAL_READ_BUFFER;
+          const neededDuration = first.time + need + POST_REVEAL_READ_BUFFER;
           if (beat.params.duration < neededDuration) beat.params.duration = neededDuration;
         }
       }
