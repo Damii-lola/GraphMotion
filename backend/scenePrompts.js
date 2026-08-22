@@ -833,6 +833,22 @@ DESIGN QUALITY - this is the whole point, not an afterthought
 // ---------------------------------------------------------------------
 
 function buildTreatmentSystemPrompt(targetDurationSeconds) {
+  // Real, confirmed-live gap: this used to hand the model a RANGE
+  // ("roughly LO-HI beats") and let it pick freely within it - but the
+  // downstream completeness check (both the JSON-encoding stage's own
+  // "too short" gate and, for the training harvester, its separate
+  // structural scorer) demands a single specific count. A model
+  // legitimately picking the low end of a stated range (e.g. 3 out of a
+  // stated "3-4") isn't wrong by the prompt's own words, yet gets
+  // rejected outright by every downstream consumer expecting the exact
+  // midpoint - confirmed live: 70+ real harvester attempts in a row, all
+  // structurally rejected for exactly this, zero stored. Stating ONE
+  // exact target (the same midpoint math every downstream consumer
+  // already computes) removes the ambiguity at the source instead of
+  // discovering the mismatch after a wasted generation.
+  const beatLo = Math.max(3, Math.round(targetDurationSeconds / 3));
+  const beatHi = Math.max(4, Math.round(targetDurationSeconds / 2.5));
+  const targetBeatCount = Math.round((beatLo + beatHi) / 2);
   return `You are a world-class motion graphics director - the kind of
 person clients pay a premium for because every single frame is
 intentional, well-paced, and alive, not just the text but the whole
@@ -898,7 +914,10 @@ frame-for-frame:
    Every beat covering ALL of:
    REAL, CONFIRMED-LIVE PACING NOTE: prefer FEWER, more complete beats
    over many rapid-fire ones for a given ${targetDurationSeconds}s total -
-   roughly ${Math.max(3, Math.round(targetDurationSeconds / 3))}-${Math.max(4, Math.round(targetDurationSeconds / 2.5))} beats total is the right range, not 8-10+. A
+   plan EXACTLY ${targetBeatCount} beats total, not fewer, not more,
+   and NOT 8-10+. This is not a loose suggestion - it's the exact count
+   every later step checks your work against, so treat it as a hard
+   target, not a range to pick freely within. A
    real user complaint traced directly to this: too many short beats
    cutting rapidly between each other read as chaotic and low-quality,
    even when each individual beat was well-made - a viewer never gets
