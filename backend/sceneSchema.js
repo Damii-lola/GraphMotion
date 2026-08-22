@@ -918,6 +918,17 @@ function validateShapeContentItem(item, path, errors) {
  * the recognized, mechanically-safe patterns get actively fixed, and
  * everything else just gets dropped rather than failing the beat.
  */
+/** True if a shape's "contents" (recursively, through any "group" items) has at least one real "path" entry - the only content type that originates real vector data; trim/repeater/pathOp all operate on whatever's already accumulated above them, so a stack without a real "path" anywhere renders nothing at all. */
+function hasRealShapePath(contents) {
+  if (!Array.isArray(contents)) return false;
+  return contents.some((item) => {
+    if (!isPlainObject(item)) return false;
+    if (item.type === 'path') return true;
+    if (item.type === 'group') return hasRealShapePath(item.contents);
+    return false;
+  });
+}
+
 function sanitizeShapeContents(contents) {
   if (!Array.isArray(contents)) return contents;
   const cleaned = [];
@@ -2451,6 +2462,28 @@ function autoRepairBeat(beat) {
           t = t.replace(/\s+/g, ' ').trim();
           if (t !== layer.text) layer.text = t;
         }
+        // Real, confirmed-live bug found via direct frame inspection: a
+        // real generated layer used "fillStyle":"#374151" (a dark slate
+        // gray - a common "dashboard UI text on a white card" color) on
+        // this app's shared board background, which is ALWAYS a
+        // mid-to-dark gradient hue (see BOARD_BACKGROUND_HUES/the
+        // prompt's own "never pastel" palette disclosure) - the result
+        // was barely-legible dark-on-dark text. The actual background
+        // is chosen by the render engine per-video, entirely OUTSIDE
+        // this JSON (no per-beat "background" field exists to check a
+        // real contrast ratio against), so this can't verify the EXACT
+        // pairing - but every real background this app ever produces is
+        // dark/mid-toned, never light, so a text color with LOW
+        // luminance is unsafe against effectively all of them. Relative
+        // luminance (the standard WCAG formula) below a fairly generous
+        // threshold gets forced to a safe near-white default rather
+        // than risking another dark-on-dark beat.
+        if (typeof layer.fillStyle === 'string' && HEX_COLOR_RE.test(layer.fillStyle)) {
+          const [r, g, b] = hexToRgbLocal(layer.fillStyle);
+          const toLinear = (c) => { const s = c / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+          const luminance = 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+          if (luminance < 0.45) layer.fillStyle = '#FFFFFF';
+        }
         // Missing/oversized "maxWidth" - the renderer's own fallback is
         // now comp-width-safe (see sceneBuilder.js's buildTextDraw), but
         // an EXPLICIT value the AI sets itself (e.g. copying a stray
@@ -2599,6 +2632,22 @@ function autoRepairBeat(beat) {
       // rather than left as a dead one that draws nothing for its
       // whole time on screen.
       && !(l.type === 'shape' && (!Array.isArray(l.contents) || l.contents.length === 0))
+      // Real, confirmed-live bug found via direct frame inspection of a
+      // "top-scored" training example: a shape layer's "contents" was
+      // [trim, stroke] with NO "path" item anywhere - trim has nothing
+      // above it to trim, stroke has nothing to draw. Nothing before
+      // this checked for a real path-ORIGINATING item specifically
+      // (only that "contents" isn't literally empty), so this passed
+      // every check and rendered as a totally invisible, functionless
+      // layer - confirmed directly as the reason a headline beat looked
+      // like a lone word floating in an empty frame, with a decorative
+      // frame/underline meant to support it silently doing nothing. A
+      // "path" item (the only content type that originates real vector
+      // data from nothing - trim/repeater/pathOp all operate on
+      // whatever's ALREADY accumulated above them) is required
+      // somewhere in the stack, checked recursively since a "group"
+      // can nest its own real path items inside it.
+      && !(l.type === 'shape' && Array.isArray(l.contents) && !hasRealShapePath(l.contents))
       // An "image" layer with neither "icon" nor a real "src" has
       // nothing to draw at all - same real-live pattern as #1/#3 above,
       // just for image layers specifically. There's no safe way to
