@@ -688,6 +688,26 @@ TEXTLAYERDEF - one entry in "layers"
       // for Bold, "500" for Medium) - the GLYPHS themselves are already
       // that weight; "fontWeight" here is bookkeeping, not synthetic
       // bolding.
+      // "fontSize" - real, confirmed-live mistake: 90-110px on this
+      // ${COMP_WIDTH}px-wide canvas for a multi-word phrase leaves NO
+      // margin at all, so the text box always ends up needing to be
+      // dead-center just to avoid clipping - which then makes every
+      // single beat look identical (same size, same spot), the exact
+      // "repetitive/boring" failure a real brutal comparison flagged.
+      // For a 2+ word headline, keep fontSize in the 44-72px range so
+      // the box has real room to sit off-center sometimes (see
+      // "position" below); reserve 80px+ for a genuinely SHORT
+      // standalone moment (one word, a single number/stat) where
+      // filling more of the frame is the actual intent, not an
+      // accident of picking too large a size for a longer phrase.
+      // "position" - do NOT default every beat to the frame's exact
+      // center ([${COMP_WIDTH / 2},${COMP_HEIGHT / 2}]) out of habit.
+      // Once fontSize leaves real margin (per the note above), vary
+      // where headlines actually sit beat to beat - left-of-center,
+      // right-of-center, upper-third, lower-third - the same way a
+      // real edit doesn't lock every single card to one fixed spot.
+      // Center is still fine for a genuine title-card moment; it just
+      // shouldn't be the ONLY position ever used across a whole video.
       // "textAlign": "left" | "center" | "right", default "center".
       // Real kinetic-typography edits overwhelmingly stack MULTI-WORD
       // phrases LEFT-aligned (every line starts at the same left edge,
@@ -1169,17 +1189,34 @@ DESIGN QUALITY - this is the whole point, not an afterthought
   or icon is under-using this engine's real range - aim for most beats
   having at least one non-text element, not as decoration bolted on
   but as a real part of the composition.
-- NOTHING IS STATIC. This is not just about the text reveal - EVERY
-  element that has its own timing (the headline's entrance, a
+- NOTHING IS STATIC. Every single text layer needs a REAL entrance -
+  either a per-character "animators" reveal, or a keyframed "opacity"/
+  "scale"/"position"/"rotation" that actually moves it from an
+  offset/hidden state to its landed one. A layer with none of these at
+  all appears with an instant hard cut and never moves again - a real,
+  confirmed-live failure found via direct JSON audit of a generated
+  video, not a style guess. This is not just about the text reveal -
+  EVERY element that has its own timing (the headline's entrance, a
   supporting label's entrance, a "color" accent switching on, a
   "highlights" chip drawing in) needs its OWN separately-timed
-  animation, not all bundled into one simultaneous moment. Build beats
-  the way a real kinetic-typography edit is cut: short phrases
-  building up word-by-word or line-by-line, each new piece of text
-  landing roughly every 0.3-1s rather than one full sentence appearing
-  and sitting there - and once text HAS landed, a color accent or
-  highlight chip on it should still arrive its own beat later (a
-  distinctly separate, later-timed animation), never baked in from
+  animation, not all bundled into one simultaneous moment.
+  IMPORTANT DISTINCTION, a real confirmed-live mistake: "landing
+  roughly every 0.3-1s" below describes the STAGGER TIMING BETWEEN
+  successive words/lines WITHIN a longer, multi-part beat - it is NOT
+  a target for how short the WHOLE BEAT's own "duration" should be. A
+  real generation read it that way for a short single-phrase beat and
+  produced a 0.5s beat - barely enough time for its own entrance to
+  finish settling, let alone be read, and it made the whole video feel
+  like it was cutting too fast to follow. Every beat's own "duration"
+  needs real room regardless of how few words it has - roughly 1.2-2.5s
+  at minimum, even for a single short phrase, so its entrance can
+  finish AND the words stay readable before the next beat replaces it.
+  Build beats the way a real kinetic-typography edit is cut: short
+  phrases building up word-by-word or line-by-line, each new piece of
+  text landing roughly every 0.3-1s rather than one full sentence
+  appearing and sitting there - and once text HAS landed, a color
+  accent or highlight chip on it should still arrive its own beat later
+  (a distinctly separate, later-timed animation), never baked in from
   that text's very first frame. A beat where everything animates in
   at once and then nothing moves again is exactly the "static" failure
   this rule exists to prevent, even if the initial reveal itself was

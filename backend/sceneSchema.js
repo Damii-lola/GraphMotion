@@ -1487,6 +1487,20 @@ function autoRepairBeat(beat) {
   // good content isn't discarded over a single missing number.
   if (!isPlainObject(beat.params)) beat.params = {};
   if (typeof beat.params.duration !== 'number' || beat.params.duration <= 0) beat.params.duration = 1.5;
+  // Real, confirmed-live pacing complaint traced to a genuine root
+  // cause, not a style preference: the prompt's own "each new piece of
+  // TEXT lands roughly every 0.3-1s" stagger-timing guidance (about
+  // when successive WORDS/LINES appear within a longer beat) was
+  // getting read by the model as "make the WHOLE BEAT 0.3-1s long" for
+  // a short, single-phrase beat - confirmed directly: a real video's
+  // opening beat was 0.5s, barely enough time for its own entrance
+  // animation to finish settling, let alone be read. Floors any beat
+  // under MIN_BEAT_DURATION up to it - the prompt's own stagger-timing
+  // wording is being reworded separately, this is the mechanical
+  // backstop so a too-fast beat can't ship even if that doesn't fully
+  // land on its own.
+  const MIN_BEAT_DURATION = 1.0;
+  if (beat.params.duration < MIN_BEAT_DURATION) beat.params.duration = MIN_BEAT_DURATION;
 
   if (!isPlainObject(beat.visual)) return;
 
@@ -1638,6 +1652,45 @@ function autoRepairBeat(beat) {
       if (!isValidAnimatableShape(layer.anchor, 2)) delete layer.anchor;
       if (!isValidAnimatableShape(layer.opacity)) delete layer.opacity;
       if (!isValidAnimatableShape(layer.rotation)) delete layer.rotation;
+
+      // Real, confirmed-live bug found via direct JSON audit of a live
+      // generated video (not a style guess): a text layer with NO
+      // animated property whatsoever - no "animators" (per-character
+      // reveal), no keyframed "opacity"/"scale"/"position"/"rotation" -
+      // appears with a hard, instant cut and never moves again for its
+      // whole time on screen. The prompt already says "NOTHING IS
+      // STATIC" in as many words, but that alone didn't hold - two
+      // layers in the same real video ("VOLUME 1", "1 in 5 ocean
+      // species") had zero animated properties, confirmed directly in
+      // their own JSON. Rather than argue with the model harder about
+      // it, inject a real default entrance mechanically: a scale
+      // pop-in (0.7->1, easeOutCubic) plus an opacity fade (0->1) over
+      // the first ~0.3s of the layer's own life - matches the already-
+      // documented SCALE POP-IN pattern, so this is the same motion the
+      // model is told to reach for anyway, just guaranteed instead of
+      // hoped for. Only fires when truly nothing animated exists at
+      // all; any real entrance the model DID author (any one of these
+      // four fields, or a real animators array) is left completely
+      // alone.
+      if (layer.type === 'text') {
+        const hasAnimators = Array.isArray(layer.animators) && layer.animators.length > 0;
+        const hasKeyframedTransform = ['position', 'scale', 'opacity', 'rotation']
+          .some((f) => isPlainObject(layer[f]) && Array.isArray(layer[f].keyframes) && layer[f].keyframes.length > 0);
+        if (!hasAnimators && !hasKeyframedTransform) {
+          layer.scale = {
+            keyframes: [
+              { time: 0, value: [0.7, 0.7] },
+              { time: 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' },
+            ],
+          };
+          layer.opacity = {
+            keyframes: [
+              { time: 0, value: 0 },
+              { time: 0.2, value: 1, interpolation: 'easing', easing: 'easeOutCubic' },
+            ],
+          };
+        }
+      }
 
       // Real, confirmed-live mistake: a selector's "start"/"end"/
       // "offset"/"amount" sent as something matching none of the real
