@@ -1441,7 +1441,19 @@ generation are the ones most likely to slip by the last beat):
   left-margin value - for anything near "maxWidth" wide, keep it within
   roughly maxWidth/2 of ${Math.round(COMP_WIDTH / 2)} or it renders
   clipped off one edge of the canvas for the whole beat.
-- Encode EVERY beat the treatment planned, none skipped or merged.
+- MANDATORY, every single beat, no exceptions: at least one "text" layer
+  with real, non-empty words. A beat with only shapes/icons and no text
+  conveys nothing and is REJECTED outright - this is not a style
+  preference, it is a hard requirement checked on every beat you write.
+- MANDATORY, every "image" layer: a real "icon" (Iconify "prefix:name")
+  or "src":"beatImage" - one of the two, always. An image layer with
+  neither has nothing to draw and is REJECTED outright.
+- MANDATORY: encode EVERY beat the treatment planned, none skipped,
+  merged, or summarized away - if the treatment planned N beats, your
+  "scenes" array has EXACTLY N entries. Stopping after fewer is the
+  single most common mistake on long generations; count your own
+  "scenes" entries against the treatment's own beat headers before you
+  consider the response finished.
 
 Generate a complete, valid scene JSON for a short-form vertical video
 matching the user's request below. Target roughly ${targetDurationSeconds}

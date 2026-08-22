@@ -2536,7 +2536,14 @@ function autoRepairBeat(beat) {
       // real content left to draw, so the layer is dropped outright
       // rather than left as a dead one that draws nothing for its
       // whole time on screen.
-      && !(l.type === 'shape' && (!Array.isArray(l.contents) || l.contents.length === 0)));
+      && !(l.type === 'shape' && (!Array.isArray(l.contents) || l.contents.length === 0))
+      // An "image" layer with neither "icon" nor a real "src" has
+      // nothing to draw at all - same real-live pattern as #1/#3 above,
+      // just for image layers specifically. There's no safe way to
+      // invent WHICH icon was meant, so - same tradeoff as everywhere
+      // else in this filter - dropped outright rather than forcing a
+      // full beat retry over one blank layer.
+      && !(l.type === 'image' && typeof l.icon !== 'string' && (typeof l.src !== 'string' || l.src.trim().length === 0)));
 
     const firstByText = new Map();
     const toRemove = new Set();
