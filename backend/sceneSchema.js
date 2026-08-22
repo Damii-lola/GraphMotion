@@ -2605,8 +2605,22 @@ function varyHeadlinePositions(sceneJSON) {
     const pos = representativePosition(dominant.position);
     if (!pos) return;
     if (Math.abs(pos[0] - CANVAS_WIDTH / 2) > CENTER_THRESHOLD) return;
+    // Uses a padded ACTUAL-width estimate here, not the conservative
+    // "maxWidth" ceiling the off-canvas clamp itself relies on - real,
+    // confirmed-live gap: size.width falls back to the full
+    // DEFAULT_TEXT_MAX_WIDTH (480, most of this canvas) whenever no
+    // explicit "maxWidth" is set, REGARDLESS of how short the actual
+    // text is - a 4-character word like "FACT" was being treated as
+    // though it might need 480px of margin, collapsing its own safe
+    // zone down to a ~28px sliver and defeating this whole pass (a
+    // nudge with nowhere real to go). The off-canvas clamp needs that
+    // conservative ceiling because a false negative there is visible
+    // clipping; this pass carries a much smaller downside if slightly
+    // imprecise (worst case, a beat lands a bit closer to an edge than
+    // ideal, not broken), so a real per-line estimate plus a 30%
+    // safety pad is the right tradeoff here, not the full ceiling.
     const size = estimateTextEffectiveSize(dominant);
-    const effWidth = Math.max(1, size.width);
+    const effWidth = Math.max(1, Math.min(size.width, (size.actualWidth || size.width) * 1.3));
     const halfW = Math.min(effWidth / 2, (CANVAS_WIDTH - EDGE_MARGIN_PX * 2) / 2);
     const safeLeftX = EDGE_MARGIN_PX + halfW;
     const safeRightX = CANVAS_WIDTH - EDGE_MARGIN_PX - halfW;
@@ -2620,6 +2634,19 @@ function varyHeadlinePositions(sceneJSON) {
       const last = dominant.position.keyframes[dominant.position.keyframes.length - 1];
       if (isPlainObject(last) && isNumberArray(last.value, 2)) last.value = [target, last.value[1]];
     }
+    // Safety net, but NOT the off-canvas check's own full "maxWidth"
+    // ceiling - re-clamping with that (confirmed by direct testing)
+    // fell all the way back to treating a 4-character word as though
+    // it might need 480px, erasing the nudge above almost entirely.
+    // A second, more generous safety multiplier over the real per-line
+    // estimate (1.6x, vs this pass's own 1.3x above) still catches a
+    // genuine underestimate without reintroducing that problem - the
+    // off-canvas check's stricter ceiling exists because a false
+    // negative THERE is uncaught visible clipping; a slightly-too-
+    // generous nudge here just means a beat sits a little closer to an
+    // edge than ideal, a real but much smaller downside.
+    const safetyWidth = Math.max(1, (size.actualWidth || size.width) * 1.6);
+    clampSettledPositionToCanvas(dominant, safetyWidth, size.height);
   });
 }
 
