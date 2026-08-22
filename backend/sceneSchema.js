@@ -1819,6 +1819,42 @@ function autoRepairBeat(beat) {
       // pointless if the beat cuts away before a viewer could actually
       // finish reading it, which is the same root cause behind the
       // separate "scenes moving too fast" complaint.
+      // Real, confirmed-live bug found via direct pixel-level testing (a
+      // real generated beat rendered to ZERO visible text pixels across
+      // its entire duration, not just a slow reveal): a text layer with
+      // MULTIPLE opacity-reveal animators (a staggered per-word cascade
+      // - three separate range-selector animators, each meant to reveal
+      // one word) where animators after the first ALSO animated their
+      // own "start" (not just "end"). Once BOTH start and end finish
+      // sweeping to their own final values, that animator's own
+      // [start,end] window collapses to a single degenerate point
+      // (e.g. both settling at 100) - and at that point EVERY character
+      // reads as "outside the selected range" for THIS animator (raw
+      // selector value 0), which the engine's default invert flips into
+      // "fully hidden" (strength 1) for literally every character, not
+      // just the one word this animator was meant to target. That
+      // negative opacityDelta then permanently overrides whatever the
+      // FIRST (correctly-behaving) animator did, re-hiding text that had
+      // already finished revealing. Confirmed directly: a word measured
+      // opacity 1.0 (fully visible) for one instant mid-sweep, then
+      // opacity 0.0 for the entire rest of the beat. The one animator
+      // that behaves correctly throughout (start:0, static, never
+      // sweeps) never hits this - its own settled [0,100] range covers
+      // every character permanently, contributing zero forever after.
+      // Rather than try to preserve the FANCIER (broken) moving-window
+      // stagger, every opacity-reveal animator's own selector.start is
+      // forced back to static 0 here - each animator still keeps its
+      // OWN independent "end" sweep timing (already staggered per word/
+      // character elsewhere in the treatment), just without the
+      // degenerate-collapse failure mode a moving start introduces.
+      if (Array.isArray(layer.animators)) {
+        for (const a of layer.animators) {
+          if (!isPlainObject(a) || !isPlainObject(a.properties) || typeof a.properties.opacity !== 'number') continue;
+          if (!isPlainObject(a.selector)) continue;
+          if (typeof a.selector.start !== 'number') a.selector.start = 0;
+        }
+      }
+
       const MIN_SEC_PER_CHAR = 0.035;
       const MIN_SEC_PER_WORD = 0.18;
       const POST_REVEAL_READ_BUFFER = 1.0;
