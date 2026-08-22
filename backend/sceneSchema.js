@@ -1196,6 +1196,18 @@ function validateBeatVisual(visual, path, errors, knownIds) {
   if (visual.layers.length === 0) {
     errors.push(`${path}.layers: must contain at least one layer - a beat with zero foreground layers renders as an empty/dead frame with nothing happening for its entire duration.`);
   }
+  // Same reasoning as the zero-layer check above, one level more
+  // specific: real, confirmed-live gap where a beat cleared THAT check
+  // (it had shape/image layers) but had ZERO text layers - a full 3s
+  // beat (a third of the whole video) with nothing but a decorative
+  // squiggle line on a plain gradient, no headline/stat/label
+  // whatsoever. This app's whole purpose is short-form INFORMATIONAL
+  // content - a beat conveying no actual words is never a deliberate
+  // "visual breather" here, it's a generation gap same as the zero-
+  // layer case, just one this narrower check didn't catch.
+  if (visual.layers.length > 0 && !visual.layers.some((l) => isPlainObject(l) && l.type === 'text')) {
+    errors.push(`${path}.layers: must contain at least one text layer - a beat with only shapes/icons and no text conveys no actual information for its entire duration.`);
+  }
   visual.layers.forEach((layer, i) => validateLayer(layer, `${path}.layers[${i}]`, errors, knownIds));
 
   // Real, systematic bug found across MULTIPLE beats of the SAME
