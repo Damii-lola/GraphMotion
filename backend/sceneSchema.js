@@ -2031,6 +2031,37 @@ function autoRepairBeat(beat) {
     if (toRemove.size > 0) {
       beat.visual.layers = beat.visual.layers.filter((_, i) => !toRemove.has(i));
     }
+
+    // Real, confirmed-live gap: the prompt documents a drop shadow on
+    // every beat's dominant headline as effectively required (a large
+    // part of what makes text read as "designed" rather than "pasted-
+    // on" per direct reference comparison), but a live generation
+    // audit found it landing on only 1 of 8 beats - prompt instruction
+    // alone isn't reliable here, the same story as every other rule
+    // this session that ended up needing a mechanical backstop. Rather
+    // than just document it harder again, inject it directly: find
+    // each beat's own DOMINANT text layer (the largest "fontSize"
+    // among its own top-level text layers - nested precomp text isn't
+    // "the beat's own" headline in the same sense, so this only looks
+    // at beat.visual.layers directly) and give it a real dropShadow if
+    // it doesn't already have one, using the exact params already
+    // documented as the right defaults. Skips a beat with no text at
+    // all (a pure icon/shape moment) and never touches a layer that
+    // already has its own dropShadow (an explicit small/secondary
+    // opacity or blur choice from the model is left alone).
+    const beatTextLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && typeof l.fontSize === 'number');
+    if (beatTextLayers.length > 0) {
+      const dominant = beatTextLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+      const hasShadow = Array.isArray(dominant.effects) && dominant.effects.some((e) => isPlainObject(e) && e.type === 'dropShadow');
+      if (!hasShadow) {
+        if (!Array.isArray(dominant.effects)) dominant.effects = [];
+        dominant.effects.push({
+          type: 'dropShadow', params: {
+            color: '#000000', blur: 8, offsetX: 0, offsetY: 6, opacity: 0.4,
+          },
+        });
+      }
+    }
   }
 
   autoSpreadDuplicatePositions(beat.visual);
