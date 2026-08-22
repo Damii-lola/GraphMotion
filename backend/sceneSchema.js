@@ -1728,6 +1728,49 @@ function autoRepairBeat(beat) {
         }
       }
 
+      // Real, confirmed-live complaint traced to a concrete cause: a
+      // per-character reveal's "end" sweep took a roughly-constant
+      // ~0.4-0.5s regardless of how much text it was revealing - a
+      // 57-character sentence swept in the same half-second as a
+      // 12-character one (9ms/character vs 33ms/character), finishing
+      // almost instantly relative to how long a real typewriter effect
+      // actually takes. It reads as an imperceptible "pop", not a
+      // visible animation - directly what "I'm not seeing a single
+      // animation" traced back to. Stretches the sweep's own keyframe
+      // TIMES (never which characters get selected) so its total
+      // duration scales with the text's real character count at a real
+      // typewriter pace, preserving when the reveal STARTS and only
+      // extending how long it takes to finish. Also pushes the beat's
+      // own duration out far enough to cover the now-longer reveal PLUS
+      // real reading time afterward - animating text in slowly is
+      // pointless if the beat cuts away before a viewer could actually
+      // finish reading it, which is the same root cause behind the
+      // separate "scenes moving too fast" complaint.
+      const MIN_SEC_PER_CHAR = 0.035;
+      const POST_REVEAL_READ_BUFFER = 1.0;
+      if (Array.isArray(layer.animators) && typeof layer.text === 'string' && layer.text.length > 0) {
+        for (const a of layer.animators) {
+          if (!isPlainObject(a) || !isPlainObject(a.selector) || a.selector.basedOn !== 'characters') continue;
+          const end = a.selector.end;
+          if (!isPlainObject(end) || !Array.isArray(end.keyframes) || end.keyframes.length < 2) continue;
+          const kfs = end.keyframes;
+          const first = kfs[0];
+          const last = kfs[kfs.length - 1];
+          if (!isPlainObject(first) || !isPlainObject(last) || typeof first.time !== 'number' || typeof last.time !== 'number') continue;
+          if (typeof last.value !== 'number' || last.value < 90) continue;
+          const currentSpan = last.time - first.time;
+          if (currentSpan <= 0) continue;
+          const requiredSpan = layer.text.length * MIN_SEC_PER_CHAR;
+          if (currentSpan >= requiredSpan) continue;
+          const scale = requiredSpan / currentSpan;
+          for (const kf of kfs) {
+            if (isPlainObject(kf) && typeof kf.time === 'number') kf.time = first.time + (kf.time - first.time) * scale;
+          }
+          const neededDuration = first.time + requiredSpan + POST_REVEAL_READ_BUFFER;
+          if (beat.params.duration < neededDuration) beat.params.duration = neededDuration;
+        }
+      }
+
       // Real, repeatedly-recurring mistake: an animator's "color" sent
       // as an object instead of a hex string (e.g. a stray gradient-
       // shaped {from,to}, or some other nested value) - salvages a real
@@ -2582,15 +2625,26 @@ function validateSceneJSON(sceneJSON) {
  * failure the guidance was meant to fix. Prompt wording alone didn't
  * move this, the same story as nearly every other rule this session -
  * so this runs as its own whole-scene pass AFTER all per-beat repair,
- * nudging a beat's dominant text layer off-center when it's still
+ * shifting a beat's headline group off-center when it's still
  * suspiciously close to it, alternating left/right by beat index for a
  * real, deterministic (not random/jittery) spread across the video.
+ *
+ * Shifts EVERY top-level text layer in the beat by the SAME delta,
+ * not just the single dominant one - a real live regression from the
+ * first version of this pass, confirmed via direct user feedback: only
+ * moving the dominant layer left its own sibling lines behind at their
+ * original position, breaking what should read as one coherent
+ * headline group into visually disconnected fragments ("scattered",
+ * "goblin"-made). Moving the whole group together is what actually
+ * reads as a deliberate compositional choice instead of misalignment.
+ *
  * Skips the FIRST and LAST beat (a genuine title-card bookend is a
  * legitimate reason to stay centered) and only ever nudges WITHIN the
  * same safe on-canvas bounds the off-canvas clamp already established
- * - it can widen how far off-center a layer sits, never reintroduce an
- * overflow, and naturally does nothing for a headline too wide to have
- * real margin to begin with (its own safe zone collapses to center).
+ * for EACH layer individually after the shared shift - it can widen
+ * how far off-center a layer sits, never reintroduce an overflow, and
+ * naturally does less for a headline too wide to have real margin to
+ * begin with (its own safe zone collapses toward center).
  */
 function varyHeadlinePositions(sceneJSON) {
   const scenes = sceneJSON.scenes;
@@ -2610,43 +2664,57 @@ function varyHeadlinePositions(sceneJSON) {
     // confirmed-live gap: size.width falls back to the full
     // DEFAULT_TEXT_MAX_WIDTH (480, most of this canvas) whenever no
     // explicit "maxWidth" is set, REGARDLESS of how short the actual
-    // text is - a 4-character word like "FACT" was being treated as
-    // though it might need 480px of margin, collapsing its own safe
-    // zone down to a ~28px sliver and defeating this whole pass (a
-    // nudge with nowhere real to go). The off-canvas clamp needs that
-    // conservative ceiling because a false negative there is visible
-    // clipping; this pass carries a much smaller downside if slightly
-    // imprecise (worst case, a beat lands a bit closer to an edge than
-    // ideal, not broken), so a real per-line estimate plus a 30%
-    // safety pad is the right tradeoff here, not the full ceiling.
+    // text is. A first attempt still capped this estimate at
+    // `Math.min(size.width, actualWidth*1.3)` as an extra guard - but
+    // direct testing found that ALSO self-defeating: for anything past
+    // roughly 10-12 characters at a normal fontSize, actualWidth*1.3
+    // already exceeds 480 on its own, so the min just fell back to the
+    // full conservative ceiling anyway ("3 mind-blowing" - a completely
+    // ordinary short headline - didn't move at all). The off-canvas
+    // clamp needs that conservative ceiling because a false negative
+    // there is visible clipping; this pass carries a much smaller
+    // downside if slightly imprecise (worst case, a beat lands a bit
+    // closer to an edge than ideal, not broken), and the separate
+    // safety-net re-clamp below already provides real protection - so
+    // this uses the padded actual-width estimate directly, uncapped.
     const size = estimateTextEffectiveSize(dominant);
-    const effWidth = Math.max(1, Math.min(size.width, (size.actualWidth || size.width) * 1.3));
+    const effWidth = Math.max(1, (size.actualWidth || size.width) * 1.3);
     const halfW = Math.min(effWidth / 2, (CANVAS_WIDTH - EDGE_MARGIN_PX * 2) / 2);
     const safeLeftX = EDGE_MARGIN_PX + halfW;
     const safeRightX = CANVAS_WIDTH - EDGE_MARGIN_PX - halfW;
     const center = CANVAS_WIDTH / 2;
     const leaningLeft = i % 2 === 0;
     const target = leaningLeft ? center - (center - safeLeftX) * 0.6 : center + (safeRightX - center) * 0.6;
-    if (Math.abs(target - pos[0]) < 1) return;
-    if (isNumberArray(dominant.position, 2)) {
-      dominant.position = [target, dominant.position[1]];
-    } else if (isPlainObject(dominant.position) && Array.isArray(dominant.position.keyframes) && dominant.position.keyframes.length > 0) {
-      const last = dominant.position.keyframes[dominant.position.keyframes.length - 1];
-      if (isPlainObject(last) && isNumberArray(last.value, 2)) last.value = [target, last.value[1]];
-    }
-    // Safety net, but NOT the off-canvas check's own full "maxWidth"
-    // ceiling - re-clamping with that (confirmed by direct testing)
-    // fell all the way back to treating a 4-character word as though
-    // it might need 480px, erasing the nudge above almost entirely.
-    // A second, more generous safety multiplier over the real per-line
-    // estimate (1.6x, vs this pass's own 1.3x above) still catches a
-    // genuine underestimate without reintroducing that problem - the
-    // off-canvas check's stricter ceiling exists because a false
-    // negative THERE is uncaught visible clipping; a slightly-too-
-    // generous nudge here just means a beat sits a little closer to an
-    // edge than ideal, a real but much smaller downside.
-    const safetyWidth = Math.max(1, (size.actualWidth || size.width) * 1.6);
-    clampSettledPositionToCanvas(dominant, safetyWidth, size.height);
+    const dx = target - pos[0];
+    if (Math.abs(dx) < 1) return;
+    textLayers.forEach((layer) => {
+      const layerPos = representativePosition(layer.position);
+      if (!layerPos) return;
+      const newX = layerPos[0] + dx;
+      if (isNumberArray(layer.position, 2)) {
+        layer.position = [newX, layer.position[1]];
+      } else if (isPlainObject(layer.position) && Array.isArray(layer.position.keyframes) && layer.position.keyframes.length > 0) {
+        const last = layer.position.keyframes[layer.position.keyframes.length - 1];
+        if (isPlainObject(last) && isNumberArray(last.value, 2)) last.value = [newX, last.value[1]];
+      }
+      // Safety net, but NOT the off-canvas check's own full "maxWidth"
+      // ceiling - re-clamping with that (confirmed by direct testing)
+      // fell all the way back to treating a 4-character word as though
+      // it might need 480px, erasing the nudge above almost entirely.
+      // A second, more generous safety multiplier over the real
+      // per-line estimate (1.6x, vs this pass's own 1.3x above) still
+      // catches a genuine underestimate without reintroducing that
+      // problem - the off-canvas check's stricter ceiling exists
+      // because a false negative THERE is uncaught visible clipping; a
+      // slightly-too-generous nudge here just means a beat sits a
+      // little closer to an edge than ideal, a real but much smaller
+      // downside. Applied per-layer (not just the dominant one) since
+      // a shorter sibling line shifted by the same dx as a wider
+      // headline could still individually run out of real margin.
+      const layerSize = estimateTextEffectiveSize(layer);
+      const safetyWidth = Math.max(1, (layerSize.actualWidth || layerSize.width) * 1.6);
+      clampSettledPositionToCanvas(layer, safetyWidth, layerSize.height);
+    });
   });
 }
 

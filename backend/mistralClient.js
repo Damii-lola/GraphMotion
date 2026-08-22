@@ -1314,7 +1314,9 @@ frame-for-frame:
    than a different color for each - a beat mixing red AND lime-green
    AND teal all at once reads as busier and less "branded" than
    confidently committing to one.
-3. BEAT BY BEAT (beats are typically 2-4s each): keep this section
+3. BEAT BY BEAT (beats are typically 2.5-4s each - see the real,
+   confirmed-live pacing note right below before planning how MANY):
+   keep this section
    clearly structured - start each beat with its own line reading
    "===BEAT n=== duration:X.Xs" (n starting at 0, X.X the beat's own
    length in seconds, all beats summing to approximately
@@ -1324,6 +1326,20 @@ frame-for-frame:
    YOU will encode into the final "scenes" JSON array yourself in the
    next step, so a clear, well-separated breakdown here directly makes
    that easier to get right, every beat covering ALL of:
+   REAL, CONFIRMED-LIVE PACING NOTE: prefer FEWER, more complete beats
+   over many rapid-fire ones for a given ${targetDurationSeconds}s total -
+   roughly ${Math.max(3, Math.round(targetDurationSeconds / 3))}-${Math.max(4, Math.round(targetDurationSeconds / 2.5))} beats total is the right range, not 8-10+. A
+   real user complaint traced directly to this: too many short beats
+   cutting rapidly between each other read as chaotic and low-quality,
+   even when each individual beat was well-made - a viewer never gets
+   time to actually register one idea before the next replaces it.
+   Every beat also needs enough of its own duration to let its text
+   ACTUALLY finish revealing (a real per-character reveal takes real
+   time - roughly 35ms per character at minimum for it to read as a
+   genuine typewriter effect, not an instant pop) AND still sit fully
+   visible for a moment afterward so it can be read, not just glimpsed
+   mid-animation. A short phrase still needs real seconds, not a
+   fraction of one.
    - The exact text/words on screen (a headline, a stat, a short
      label) - be specific about the actual copy, not just its topic.
      Favor SHORT phrases landing one after another (roughly every 0.3-
