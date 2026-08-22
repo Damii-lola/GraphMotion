@@ -490,7 +490,7 @@
         </div>
         <div id="progressPct">0%</div>
       </div>`;
-    codeOutput.textContent = "// Waiting for Mistral to write scene JSON...";
+    codeOutput.textContent = "// Waiting for Gemini to write scene JSON...";
     statusLine.textContent = "";
     generateBtn.disabled = true;
     generateBtn.textContent = "Generating...";
@@ -516,7 +516,7 @@
         pct = 2;
         break;
       case "writing_scenes":
-        label = "Mistral is writing the scene JSON...";
+        label = "Gemini is writing the scene JSON...";
         pct = 8;
         break;
       case "rendering":

@@ -50,7 +50,7 @@ function identityLUT() {
  * Values outside the given control-point range clamp to the nearest
  * endpoint's y (matching how a real curves tool's flat curve ends behave).
  *
- * Control points are `[x, y]` TUPLES - matching mistralClient.js's own
+ * Control points are `[x, y]` TUPLES - matching scenePrompts.js's own
  * schema docs ("master, r, g, b: [[x,y], ...] control points") and
  * every real AI-generated "curves" effect, which always sends this
  * exact array-of-arrays shape. This function used to assume `{x, y}`

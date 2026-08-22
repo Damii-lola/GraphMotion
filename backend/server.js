@@ -90,10 +90,10 @@ app.get('/health', async (req, res) => {
   // outside, and this tells you exactly which one is missing.
   let editFeatureCodePresent = false;
   try {
-    const mistralSource = fs.readFileSync(path.join(__dirname, 'mistralClient.js'), 'utf8');
+    const geminiSource = fs.readFileSync(path.join(__dirname, 'geminiClient.js'), 'utf8');
     const supabaseSource = fs.readFileSync(path.join(__dirname, 'supabaseClient.js'), 'utf8');
     editFeatureCodePresent =
-      mistralSource.includes('generateEditedSceneJSON') &&
+      geminiSource.includes('generateEditedSceneJSON') &&
       supabaseSource.includes('parent_job_id');
   } catch (err) {
     editFeatureCodePresent = null;

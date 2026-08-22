@@ -33,7 +33,7 @@ function fetchOnce(prompt, { width, height }) {
 
 /**
  * Generates one image, with a single retry - mirrors the retry shape
- * mistralClient.js already uses for its own external-API call, for
+ * geminiClient.js already uses for its own external-API call, for
  * consistency. Throws on total failure; imagePrefetch.js is the layer
  * that turns that into a silent per-beat fallback, not this one.
  */

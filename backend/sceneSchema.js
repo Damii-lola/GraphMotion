@@ -630,7 +630,7 @@ function validateAnimatable(value, path, errors, vectorLen) {
         // for the same reason every other "advisory" rule in this file
         // graduated to a hard check - prompt instructions alone don't
         // reliably hold, a validation error is what actually guarantees
-        // mistralClient.js's retry-with-errors-fed-back loop corrects it.
+        // geminiClient.js's retry-with-errors-fed-back loop corrects it.
         errors.push(`${path}.keyframes[${i}].easing: "${kf.easing}" - "easing" interpolation must use one of ${CUBIC_EASING_NAMES.join(', ')} (a hard product requirement, not a suggestion). Use "easeOutCubic" for a settling entrance, "easeInCubic" for an accelerating exit, "easeInOutCubic" for motion that both starts and ends at rest.`);
       }
     });
@@ -669,7 +669,7 @@ function validateAnimatable(value, path, errors, vectorLen) {
 // rendered as overlapping fragments mid-reveal with a delta this rule
 // would catch). Caught here, not just via prompt guidance, because
 // prompt instructions are advisory - a hard validation error is what
-// actually guarantees mistralClient.js's retry-with-errors-fed-back
+// actually guarantees geminiClient.js's retry-with-errors-fed-back
 // loop corrects it before the JSON ever reaches the renderer.
 const MAX_TEXT_ANIMATOR_POSITION_DELTA = 150;
 
@@ -1231,7 +1231,7 @@ function validateLayer(layer, path, errors, knownIds) {
       layer.layers.forEach((l, i) => validateLayer(l, `${path}.layers[${i}]`, errors, knownIds));
       // Real, confirmed-live bug: a precomp's own declared width/height
       // is the FULL EXTENT of its children's local coordinate space
-      // (see mistralClient.js's precomp doc for the full story) - a
+      // (see scenePrompts.js's precomp doc for the full story) - a
       // child positioned using coordinates sized for the OUTER frame
       // (typically much bigger than a small precomp) renders outside
       // the precomp's own private buffer and is silently clipped.
@@ -3193,7 +3193,7 @@ function autoSpreadDuplicatePositions(visual) {
 /**
  * Validates ONE beat ({params, visual}) in isolation - the same check
  * validateSceneJSON runs per-beat inside its own loop, pulled out as
- * its own function so mistralClient.js's per-beat generation (each beat
+ * its own function so geminiClient.js's per-beat generation (each beat
  * generated and validated/retried independently, rather than the whole
  * multi-beat scene in one call - see the architecture note above
  * generateBeatJSON there for why) can validate a single beat without
@@ -3214,7 +3214,7 @@ function validateBeat(beat, path = 'beat') {
 /**
  * The real, top-level validator - checks the whole sceneJSON structure
  * and returns { valid, errors }. Never throws; callers decide what to
- * do with a non-empty errors list (mistralClient.js retries generation
+ * do with a non-empty errors list (geminiClient.js retries generation
  * with the errors fed back as context; a test fixture just asserts on it).
  */
 function validateSceneJSON(sceneJSON) {
@@ -3270,7 +3270,7 @@ function validateSceneJSON(sceneJSON) {
   // as a confusing cascade of per-field errors (".params.duration is
   // required", ".visual is required") on something that was never a
   // real beat to begin with. Dropped here instead, so the ONE real,
-  // actionable signal (mistralClient.js's own "too short" completeness
+  // actionable signal (geminiClient.js's own "too short" completeness
   // check, comparing actual vs the treatment's planned beat count)
   // fires cleanly instead of being buried under noise about a beat
   // that was already known to be missing.

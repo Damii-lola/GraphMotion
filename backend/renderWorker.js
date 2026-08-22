@@ -6,7 +6,7 @@
 
 const os = require('os');
 const path = require('path');
-const { generateSceneJSON, generateEditedSceneJSON } = require('./mistralClient');
+const { generateSceneJSON, generateEditedSceneJSON } = require('./geminiClient');
 const { renderLongFormVideo } = require('./longVideoOrchestrator');
 const { prefetchBeatImages, cleanupBeatImages } = require('./imagePrefetch');
 const { prefetchIcons, cleanupIcons } = require('./iconFetch');

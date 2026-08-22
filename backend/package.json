@@ -1,7 +1,7 @@
 {
   "name": "shortform-ai-backend",
   "version": "2.0.0",
-  "description": "AI shortform video generator v2 - prompt -> Mistral (scene JSON) -> native Skia canvas rendering -> ffmpeg -> Supabase. No browser/Chrome involved anywhere.",
+  "description": "AI shortform video generator v2 - prompt -> Gemini (scene JSON) -> native Skia canvas rendering -> ffmpeg -> Supabase. No browser/Chrome involved anywhere.",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
