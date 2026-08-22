@@ -1694,4 +1694,13 @@ function withHardTimeout(promiseFactory, label) {
 module.exports = {
   generateSceneJSON: withHardTimeout(generateSceneJSON, 'generateSceneJSON'),
   generateEditedSceneJSON: withHardTimeout(generateEditedSceneJSON, 'generateEditedSceneJSON'),
+  // Exposed purely so an alternate model provider can be tried against
+  // the EXACT same schema/prompt engineering this file already has -
+  // reusing these directly (not hand-copying them elsewhere) is what
+  // keeps a cross-model comparison honest, since any prompt drift would
+  // confound "the model is better" with "the prompt is different."
+  // Zero behavior change to the real app - purely additive exports.
+  buildTreatmentSystemPrompt,
+  buildGenerationSystemPrompt,
+  listTreatmentBeatHeaders,
 };
