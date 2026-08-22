@@ -2000,6 +2000,38 @@ function autoRepairBeat(beat) {
         }
       }
 
+      // Real, confirmed-live bug found via direct frame inspection of a
+      // live generated video: "Ocean holds 99% of Earth's living space"
+      // (8 words) at fontSize ~100 wrapped to SIX lines, filling nearly
+      // the entire vertical canvas edge to edge - a wall of text, not
+      // the one-short-confident-phrase-per-beat look every reference
+      // comparison actually calls for. The prompt already says "44-72px
+      // for a 2+ word headline, reserve 80px+ for a genuinely SHORT
+      // standalone moment" - this is that same rule enforced
+      // mechanically rather than hoped for, since it was confirmed live
+      // to not always be followed. Shrinks fontSize ITERATIVELY (word-
+      // wrap line breaks shift in discrete steps as width changes, not
+      // smoothly, so a single analytic scale factor like the width-
+      // overflow fix above can't be computed directly) until the text
+      // fits within a reasonable line count for a large headline size,
+      // floored well above unreadable.
+      if (layer.type === 'text' && typeof layer.fontSize === 'number' && layer.fontSize >= 80 && typeof layer.text === 'string') {
+        const maxWidth = typeof layer.maxWidth === 'number' ? layer.maxWidth : DEFAULT_TEXT_MAX_WIDTH;
+        const MAX_LINES_AT_LARGE_SIZE = 2;
+        let guard = 0;
+        while (guard < 15) {
+          const estCharWidth = layer.fontSize * 0.62;
+          const { lines } = simulateWrap(layer.text, maxWidth, estCharWidth);
+          if (lines <= MAX_LINES_AT_LARGE_SIZE || layer.fontSize <= 40) break;
+          const oldFontSize = layer.fontSize;
+          layer.fontSize = Math.max(40, Math.floor(layer.fontSize * 0.9));
+          if (typeof layer.lineHeight === 'number') {
+            layer.lineHeight = Math.round(layer.lineHeight * (layer.fontSize / oldFontSize));
+          }
+          guard += 1;
+        }
+      }
+
       // Real, confirmed-live bug found via direct JSON audit of a live
       // generated video (not a style guess): a text layer with NO
       // animated property whatsoever - no "animators" (per-character
