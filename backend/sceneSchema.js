@@ -862,6 +862,20 @@ function validateShapeContentItem(item, path, errors) {
     }
   } else if (item.type === 'pathOp') {
     if (!PATH_OP_MODES.includes(item.mode)) errors.push(`${path}.mode: "${item.mode}" is not a real path operation mode (expected one of ${PATH_OP_MODES.join(', ')})`);
+  } else if (item.type === 'trim') {
+    // Real, confirmed-live gap: this branch didn't exist at all, so
+    // start/end/offset were NEVER structurally checked - a live
+    // generation sent "end" wrapped in a stray single-element array
+    // ("end":[{"keyframes":[...]}]) and it passed straight through
+    // with zero error, leaving a line-reveal effect silently broken.
+    // sanitizeShapeContents (autoRepairBeat) already unwraps that exact
+    // mistake before this ever runs; this is the backstop for whatever
+    // it couldn't fix.
+    for (const field of ['start', 'end', 'offset']) {
+      if (item[field] !== undefined && !isValidAnimatableShape(item[field])) {
+        errors.push(`${path}.${field}: must be a plain number (0-100), or {"keyframes":[...]} for an animated sweep - got ${JSON.stringify(item[field])}.`);
+      }
+    }
   } else if (item.type === 'group') {
     if (!Array.isArray(item.contents)) errors.push(`${path}.contents: a group requires a contents array`);
     else item.contents.forEach((sub, i) => validateShapeContentItem(sub, `${path}.contents[${i}]`, errors));
@@ -927,6 +941,29 @@ function sanitizeShapeContents(contents) {
       if (item.shape.kind === 'star' && isPlainObject(item.shape.params)) {
         if (typeof item.shape.params.outerRadius !== 'number') item.shape.params.outerRadius = 50;
         if (typeof item.shape.params.innerRadius !== 'number') item.shape.params.innerRadius = 25;
+      }
+    }
+    if (item.type === 'trim') {
+      // Real, confirmed-live bug found via a live generation:
+      // "end" sent as a single-element ARRAY wrapping the real
+      // AnimatableValue object - "end":[{"keyframes":[...]}] instead of
+      // "end":{"keyframes":[...]} directly. validateShapeContentItem
+      // had NO branch for "trim" at all until now - start/end/offset
+      // were never structurally checked here - so this passed
+      // validation completely silently, leaving the line-reveal this
+      // was meant to drive either frozen at whatever default the
+      // renderer falls back to, or misbehaving with zero error
+      // anywhere to explain why. Unwraps the common single-element-
+      // array mistake; anything still malformed after that falls back
+      // to a safe neutral default per field (0 for start/offset, 100
+      // for end - "fully drawn," the least broken-looking failure mode
+      // for a reveal effect) rather than being silently accepted by a
+      // check that was never actually looking at it.
+      for (const field of ['start', 'end', 'offset']) {
+        let val = item[field];
+        if (Array.isArray(val) && val.length === 1) val = val[0];
+        if (val !== undefined && !isValidAnimatableShape(val)) val = field === 'end' ? 100 : 0;
+        if (val !== undefined) item[field] = val;
       }
     }
     if (item.type === 'group' && Array.isArray(item.contents)) {
