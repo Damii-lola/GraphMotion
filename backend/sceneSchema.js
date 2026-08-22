@@ -1417,6 +1417,20 @@ function validateBeatVisual(visual, path, errors, knownIds) {
     }
   });
 
+  // Same self-healing off-canvas clamp as the text check above, for
+  // shape/image layers - a real generation showed a decorative shape
+  // clipping up to 173px off the right edge, the identical failure
+  // mode text was fixed for earlier this session but never extended to
+  // non-text layers. Uses the layer's own literal width/height
+  // directly (no wrapping/char-width estimation needed, unlike text),
+  // via the shared clampSettledPositionToCanvas helper.
+  visual.layers.forEach((layer) => {
+    if (!isPlainObject(layer) || layer.parent) return;
+    if (layer.type !== 'shape' && layer.type !== 'image') return;
+    if (typeof layer.width !== 'number' || typeof layer.height !== 'number') return;
+    clampSettledPositionToCanvas(layer, layer.width, layer.height);
+  });
+
   if (visual.transitionIn) validateTransition(visual.transitionIn, `${path}.transitionIn`, errors);
 
   // Cross-reference parent/trackMatte ids against ids actually declared
@@ -2113,6 +2127,57 @@ function representativePosition(position) {
     if (isPlainObject(last) && isNumberArray(last.value, 2)) return last.value;
   }
   return null;
+}
+
+/**
+ * Self-healing off-canvas clamp, shared by the text AND shape/image
+ * off-canvas checks in validateBeatVisual (originally written once for
+ * text, then found to apply equally to shape/image layers once a live
+ * generation showed decorative shapes clipping off the right edge just
+ * as badly as text ever did - factored out here rather than copied a
+ * third time). Mutates layer.position in place - the plain value, or
+ * the LAST keyframe's value for an animated position (an earlier
+ * keyframe, a legitimate off-screen fly-in START point, is left
+ * untouched) - clamping the SETTLED [x,y] so a box of `effWidth` x
+ * `effHeight` centered on it stays inset by EDGE_MARGIN_PX from every
+ * canvas edge. Fires on essentially any overflow (EDGE_SAFETY_PX is
+ * pure float-precision slop, not a deliberate tolerance) since this is
+ * a free in-place nudge, not a costly reject-and-retry - see the
+ * original text-only version's own doc comment (still on the text
+ * check below) for the full story on why that threshold is this tight.
+ */
+function clampSettledPositionToCanvas(layer, effWidth, effHeight) {
+  const pos = representativePosition(layer.position);
+  if (!pos) return;
+  const left = pos[0] - effWidth / 2;
+  const right = pos[0] + effWidth / 2;
+  const offLeft = Math.max(0, -left);
+  const offRight = Math.max(0, right - CANVAS_WIDTH);
+  let x = pos[0];
+  if (offLeft > EDGE_SAFETY_PX || offRight > EDGE_SAFETY_PX) {
+    const halfW = Math.min(effWidth / 2, (CANVAS_WIDTH - EDGE_MARGIN_PX * 2) / 2);
+    x = effWidth + EDGE_MARGIN_PX * 2 >= CANVAS_WIDTH
+      ? CANVAS_WIDTH / 2
+      : Math.max(EDGE_MARGIN_PX + halfW, Math.min(CANVAS_WIDTH - EDGE_MARGIN_PX - halfW, pos[0]));
+  }
+  const top = pos[1] - effHeight / 2;
+  const bottom = pos[1] + effHeight / 2;
+  const offTop = Math.max(0, -top);
+  const offBottom = Math.max(0, bottom - CANVAS_HEIGHT);
+  let y = pos[1];
+  if (offTop > EDGE_SAFETY_PX || offBottom > EDGE_SAFETY_PX) {
+    const halfH = Math.min(effHeight / 2, (CANVAS_HEIGHT - EDGE_MARGIN_PX * 2) / 2);
+    y = effHeight + EDGE_MARGIN_PX * 2 >= CANVAS_HEIGHT
+      ? CANVAS_HEIGHT / 2
+      : Math.max(EDGE_MARGIN_PX + halfH, Math.min(CANVAS_HEIGHT - EDGE_MARGIN_PX - halfH, pos[1]));
+  }
+  if (x === pos[0] && y === pos[1]) return;
+  if (isNumberArray(layer.position, 2)) {
+    layer.position = [x, y];
+  } else if (isPlainObject(layer.position) && Array.isArray(layer.position.keyframes) && layer.position.keyframes.length > 0) {
+    const last = layer.position.keyframes[layer.position.keyframes.length - 1];
+    if (isPlainObject(last) && isNumberArray(last.value, 2)) last.value = [x, y];
+  }
 }
 
 /** Shifts a layer's own position by [dx,dy] - every keyframe's value for an animated position (preserving the animation's own shape/timing, just moving the whole path to a new resting spot), or the value directly for a static one. */
