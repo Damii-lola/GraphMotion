@@ -2421,6 +2421,36 @@ function autoRepairBeat(beat) {
       }
 
       if (layer.type === 'text') {
+        // Real, confirmed-live bug found via direct frame inspection: a
+        // real generated layer wrote "$10 a day → $100,000" - a literal
+        // Unicode arrow character. The bundled Poppins font files don't
+        // include an arrow glyph, so @napi-rs/canvas renders it as a
+        // hollow "tofu" missing-glyph box right in the middle of the
+        // headline - confirmed directly with an isolated render test
+        // reproducing the exact same box. Common arrow/symbol
+        // characters a model reaches for are replaced with real words
+        // that read the same way and are guaranteed to be in the font;
+        // anything else outside a safe, broad allowlist (ASCII
+        // printable + Latin-1 accented letters, for other-language
+        // names/words + a short list of punctuation Poppins is
+        // confirmed to render) is stripped outright rather than risking
+        // an unknown tofu box for a character this file can't verify
+        // ahead of time.
+        if (typeof layer.text === 'string') {
+          let t = layer.text;
+          const ARROW_REPLACEMENTS = [
+            [/\s*(→|➜|➔|⇒|⇾|»)\s*/g, ' to '],
+            [/\s*(←|⇐|⇽|«)\s*/g, ' from '],
+            [/\s*(↑|⇑)\s*/g, ' up '],
+            [/\s*(↓|⇓)\s*/g, ' down '],
+          ];
+          for (const [re, replacement] of ARROW_REPLACEMENTS) t = t.replace(re, replacement);
+          // eslint-disable-next-line no-control-regex
+          const SAFE_CHAR_RE = /[ -~ -ÿ‘’“”–—…°]/;
+          t = Array.from(t).filter((ch) => SAFE_CHAR_RE.test(ch)).join('');
+          t = t.replace(/\s+/g, ' ').trim();
+          if (t !== layer.text) layer.text = t;
+        }
         // Missing/oversized "maxWidth" - the renderer's own fallback is
         // now comp-width-safe (see sceneBuilder.js's buildTextDraw), but
         // an EXPLICIT value the AI sets itself (e.g. copying a stray
