@@ -222,7 +222,18 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
   const { valid, errors } = validateSceneJSON(result);
   const expectedBeats = beatHeaders.length;
   const actualBeats = valid && Array.isArray(result.scenes) ? result.scenes.length : 0;
-  const isTooShort = valid && expectedBeats > 0 && actualBeats < expectedBeats * 0.7;
+  // Was a 70%-tolerant "close enough" threshold (ported from the old
+  // Mistral pipeline), but live harvester testing against Gemini showed
+  // this let a real, systemic 1-beat-short pattern through as
+  // "acceptable" every single time (3/3 real attempts, all landing at
+  // exactly 3-of-4 beats) - which then failed the harvester's own much
+  // stricter structural gate (qualityScore.js's beatMismatchPenalty
+  // treats ANY shortfall as a hard penalty) 100% of the time, wasting
+  // the entire generation on an output that could never be stored.
+  // Requiring an exact match here spends the ALREADY-budgeted retries
+  // actually reaching the count the downstream gate demands, instead of
+  // accepting "close" and letting it fail later for free.
+  const isTooShort = valid && expectedBeats > 0 && actualBeats < expectedBeats;
 
   if (!valid || isTooShort) {
     const completenessError = isTooShort
