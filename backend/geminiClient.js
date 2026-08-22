@@ -28,7 +28,17 @@ function loadKeys() {
   return [...new Set([...fromCsv, ...fromNumbered])];
 }
 const KEYS = loadKeys();
-const MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+// gemini-3.6-flash's free tier caps at a hard 20 requests/DAY (confirmed
+// live: RESOURCE_EXHAUSTED, quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier,
+// quotaValue 20) - not an ordinary rate limit backoff can work around,
+// and would break the LIVE deployed app after ~20 real video generations
+// each day. gemini-3.1-flash-lite has its own separate per-model quota
+// bucket (confirmed live, still had headroom when 3.6-flash's was
+// already exhausted) and - as a bonus - doesn't appear to spend part of
+// its token budget on internal "thinking" tokens the way 3.6-flash does
+// (no thoughtsTokenCount in its usageMetadata), so it's also cheaper per
+// call.
+const MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
 
 if (KEYS.length === 0) {
   console.warn('[geminiClient] No GEMINI_API_KEYS/GEMINI_API_KEY_N configured');
