@@ -84,8 +84,24 @@ function multiply(m1, m2) {
  * instead of patching each call site separately.
  */
 function fromTRS({ position = [0, 0], rotation = 0, scale: s = [1, 1], anchor = [0, 0] }) {
+  // A bare number (uniform scale, e.g. "scale": 1 instead of [1,1]) is
+  // an explicitly, intentionally accepted shape one level up - see
+  // sceneSchema.js's own isValidAnimatableShape, which treats ANY
+  // AnimatableValue field (scale included) as valid the moment it's a
+  // plain number, on the assumption "the engine's own default" handles
+  // a scalar as uniform scale. It didn't: `s[0]`/`s[1]` on a raw number
+  // are both `undefined` (numbers have no indexed properties), feeding
+  // NaN straight into this matrix and out through ctx.setTransform -
+  // which then makes the canvas silently refuse to draw ANYTHING under
+  // that transform for the rest of this call, with no error anywhere.
+  // Real, confirmed-live bug found via direct frame inspection: two
+  // real generated text layers with "scale":1 rendered as completely
+  // invisible - not clipped, not low-contrast, just entirely absent
+  // from the frame, the worst-case version of every other visibility
+  // bug fixed so far this session.
+  const [sx, sy] = typeof s === 'number' ? [s, s] : s;
   let m = translate(-anchor[0], -anchor[1]);
-  m = multiply(scale(s[0], s[1]), m);
+  m = multiply(scale(sx, sy), m);
   m = multiply(rotate((rotation * Math.PI) / 180), m);
   m = multiply(translate(position[0], position[1]), m);
   return m;

@@ -1369,7 +1369,16 @@ frame-for-frame:
 4. Fill the frame with intent every beat - real font size, shapes/icons
    where they earn their place, multiple elements (a headline plus a
    supporting stat/label/icon) - avoid one small line lost in a big
-   empty frame.
+   empty frame. BUT cap it at roughly 4-5 total elements (text + shapes
+   + icons combined) in any single beat - real, confirmed-live failure:
+   beats crammed with 8-10 elements at once routinely came out with
+   several of them visually overlapping, no matter how carefully
+   they're positioned, simply because there isn't enough of a
+   ${COMP_WIDTH}x${COMP_HEIGHT} frame to cleanly separate that many
+   things at once. A clean beat with 3-4 well-placed elements always
+   reads better than a busy one with 9 fighting for the same space -
+   if you need more elements than that to land an idea, that idea
+   deserves its own beat instead of being crammed into one.
 
 Example of the beat-header format:
 ===BEAT 0=== duration:2.5s
@@ -1461,15 +1470,34 @@ optional, it directly determines whether your response fits before
 being cut off.`;
 }
 
-// Only used to COUNT how many beats the treatment itself planned (a
-// structural sanity check on the whole-scene encoding step below) -
-// NOT to split/parse the treatment into pieces the way the removed
-// per-beat architecture used to. A plain occurrence count of the
-// treatment's own "===BEAT n===" headers, unrelated to that deleted
-// mechanism.
-const BEAT_HEADER_RE = /===\s*BEAT\s+\d+\s*===/gi;
-function countTreatmentBeats(treatment) {
-  return (treatment.match(BEAT_HEADER_RE) || []).length;
+// Matches the treatment's own "===BEAT n===" header lines - used below
+// to list (not to split/parse the treatment into pieces the way the
+// removed per-beat architecture used to) how many beats it planned and
+// what each one is, as a structural sanity check on the whole-scene
+// encoding step. Captures the WHOLE line, not just the "===...==="
+// delimiter itself - the duration that follows on the same line
+// ("===BEAT 0=== duration:2.5s") is real, useful identifying context
+// for the model to check itself against, not just the bare number.
+const BEAT_HEADER_RE = /===\s*BEAT\s+\d+\s*===[^\n]*/gi;
+
+// Real, confirmed-live gap: "too short" was the single most common
+// failure by far across a live run's own retries (roughly half of all
+// attempts) - the model routinely wrote a full, well-formed BEAT 4 or
+// BEAT 5 in its own treatment, then simply stopped encoding after 1-3
+// scenes anyway, with no truncation error (it wasn't hitting
+// max_tokens - it was choosing to stop early). A single generic
+// "encode every beat" line among many other checklist items, and a
+// retry message reporting only a bare COUNT ("only 2 of 5 encoded"),
+// both give the model nothing concrete to act on - it has to somehow
+// infer WHICH beats it dropped with no list to check itself against.
+// Extracts each beat's own header line (its exact duration too) so
+// both the fresh-attempt prompt and every retry can spell out a real,
+// checkable list - "here are the N beats by name, your scenes array
+// must have exactly N entries in this order" - rather than a single
+// buried instruction and a bare number.
+function listTreatmentBeatHeaders(treatment) {
+  const matches = treatment.match(BEAT_HEADER_RE) || [];
+  return matches.map((header, i) => `${i}. ${header.replace(/=+/g, ' ').replace(/\s+/g, ' ').trim()}`);
 }
 
 /**
@@ -1508,8 +1536,23 @@ function countTreatmentBeats(treatment) {
 // actually converge instead of exhausting attempts on a hard schema.
 async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft = 16, priorErrors = null } = {}) {
   const systemPrompt = buildGenerationSystemPrompt(targetDurationSeconds);
+  const beatHeaders = listTreatmentBeatHeaders(treatment);
   let userMessage = `CREATIVE TREATMENT (already planned by a senior director - encode this EXACTLY and FAITHFULLY, missing nothing; every decision below must become real text layers/animators from the schema above, never simplified or dropped to something generic. The treatment may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead (a hard hit, a flash, a snap into place) rather than inventing a nonexistent field. Only use real fields from the schema above - never invent new ones.):\n${treatment}\n\nOriginal request: ${userPrompt}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON - still encoding the treatment above.`;
+  // Stated again here, concretely, as the LAST thing before generation
+  // starts (not just once as a generic bullet buried in the system
+  // prompt's own checklist) - "too short" (fewer scenes than the
+  // treatment planned) was by far the single most common failure in
+  // real live runs, often over half of all retries on one generation,
+  // with no truncation error involved (the model wasn't hit by
+  // max_tokens, it simply stopped early). A bare instruction to
+  // "encode every beat" gives it nothing to actually check itself
+  // against; a real, numbered list of the exact beats it must produce,
+  // read right before it starts writing, is a mechanical thing it can
+  // literally count off one at a time.
+  if (beatHeaders.length > 0) {
+    userMessage += `\n\nThe treatment above contains EXACTLY ${beatHeaders.length} beats:\n${beatHeaders.join('\n')}\n\nYour "scenes" array MUST contain EXACTLY ${beatHeaders.length} entries, one per beat above, in this same order - not fewer, not merged, not summarized. Before you finish, go down this list one at a time and confirm each has its own real entry in "scenes".`;
+  }
 
   const result = await callMistralForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: nextRetriesLeft, priorErrors }));
 
@@ -1525,13 +1568,17 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
   // is far more likely to fix this than hoping the prose instruction
   // ("encode this EXACTLY and FAITHFULLY") gets followed reliably on
   // its own.
-  const expectedBeats = countTreatmentBeats(treatment);
+  const expectedBeats = beatHeaders.length;
   const actualBeats = valid && Array.isArray(result.scenes) ? result.scenes.length : 0;
   const isTooShort = valid && expectedBeats > 0 && actualBeats < expectedBeats * 0.7;
 
   if (!valid || isTooShort) {
+    // Lists the exact beats by name/duration again here, not just a
+    // bare count - same reasoning as the fresh-attempt instruction
+    // above (see its own doc comment), just re-stated as a concrete
+    // retry instruction instead of a pre-emptive one.
     const completenessError = isTooShort
-      ? [`scenes: the treatment planned ${expectedBeats} beat(s) ("===BEAT n===" headers), but only ${actualBeats} scene(s) were encoded - EVERY beat in the treatment must become its own entry in "scenes", none skipped, merged, or summarized away. Output all ${expectedBeats}.`]
+      ? [`scenes: the treatment planned ${expectedBeats} beat(s), but only ${actualBeats} scene(s) were encoded. The treatment's exact beats are:\n${beatHeaders.join('\n')}\n\nEVERY one of these must become its own entry in "scenes", in order, none skipped, merged, or summarized away. Output all ${expectedBeats}.`]
       : [];
     const allErrors = [...errors, ...completenessError];
     if (retriesLeft > 0) {
