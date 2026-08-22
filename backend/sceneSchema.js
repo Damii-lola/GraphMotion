@@ -379,8 +379,20 @@ function estimateTextEffectiveSize(layer) {
   // average ever can, especially for short multi-word strings.
   const { lines, maxLineWidth } = simulateWrap(text, width, estCharWidth);
   const estLines = Math.max(1, lines);
+  // actualWidth is intentionally UNCAPPED (no `Math.min(width, ...)`
+  // here) - real layout never force-breaks a single word to fit
+  // "width", so a short word at a large fontSize can render WIDER
+  // than its own declared maxWidth (confirmed live: "crazy" at
+  // fontSize 200/maxWidth 480 simulates to ~744px wide on its own
+  // line). Capping this at width silently hid that overflow from
+  // every caller, including the off-canvas safety check, which let
+  // the word clip both canvas edges with nothing ever flagging it.
+  // Callers that want the OLD "never below maxWidth" conservative
+  // floor (short text that never fills its box) should take
+  // Math.max(width, actualWidth) themselves, not rely on this
+  // function silently ceiling it.
   return {
-    width, height: lineHeight * estLines, actualWidth: Math.min(width, maxLineWidth),
+    width, height: lineHeight * estLines, actualWidth: maxLineWidth,
   };
 }
 
@@ -1275,7 +1287,7 @@ function validateBeatVisual(visual, path, errors, knownIds) {
     const isBackgroundScale = size.width >= CANVAS_WIDTH * 0.6 || size.height >= CANVAS_HEIGHT * 0.6;
     if (hasExplicitSize && isBackgroundScale && size.width >= maxW && size.height >= maxH) return null;
     return {
-      index: i, x: pos[0], y: pos[1], width: size.width, height: size.height,
+      index: i, x: pos[0], y: pos[1], width: size.width, height: size.height, isText: layer.type === 'text',
     };
   }).filter(Boolean);
   const parent = overlapEntries.map((_, i) => i);
@@ -1295,9 +1307,38 @@ function validateBeatVisual(visual, path, errors, knownIds) {
     positionGroups.get(root).push(e.index);
   });
   for (const indices of positionGroups.values()) {
-    if (indices.length > 1) {
-      errors.push(`${path}.layers: layers at indices [${indices.join(', ')}] render visually overlapped (identical, near-identical, or merely close-enough positions given their own size) - sibling elements need distinct "position" values or they'll render stacked/overlapping instead of spread out (e.g. as a row, grid, or scattered composition). Give each one its own real position.`);
+    if (indices.length <= 1) continue;
+    // Real, confirmed-live false positive: a text layer plus its own
+    // backdrop card (a shape sized to contain it, sitting at the text's
+    // EXACT same position - the common, encouraged "card behind text"
+    // pattern) reported an overlap error on its own, with nothing
+    // actually wrong on screen. The repair pass above (runOverlapSpreadPass,
+    // called via autoRepairBeat before this function ever runs) already
+    // recognizes this exact pattern as legitimate and deliberately
+    // leaves it untouched - but this independent backstop check had no
+    // matching exemption, so it kept hard-failing beats the repair pass
+    // had already correctly accepted, forcing a wasted retry with
+    // nothing for the model to actually fix (retrying just produces
+    // ANOTHER card wide enough to describe its text, which still isn't
+    // "background-scale" by this check's own >=60%-of-canvas threshold).
+    // Mirrors that same "co-located non-text member(s) are a legitimate
+    // backdrop, not a collision" reasoning: a group is only a REAL
+    // error if it has 2+ text members (never a legitimate reason for
+    // text to sit on text), or if any non-text member sits somewhere
+    // OTHER than essentially the exact same spot as the text (a
+    // genuinely separate decorative element that happens to collide,
+    // not a deliberate pairing).
+    const members = indices.map((idx) => overlapEntries.find((e) => e.index === idx));
+    const textMembers = members.filter((m) => m.isText);
+    const otherMembers = members.filter((m) => !m.isText);
+    if (textMembers.length === 1) {
+      const t = textMembers[0];
+      const genuineOthers = otherMembers.filter((o) => !(
+        Math.abs(o.x - t.x) < 5 && Math.abs(o.y - t.y) < 5
+      ));
+      if (genuineOthers.length === 0) continue;
     }
+    errors.push(`${path}.layers: layers at indices [${indices.join(', ')}] render visually overlapped (identical, near-identical, or merely close-enough positions given their own size) - sibling elements need distinct "position" values or they'll render stacked/overlapping instead of spread out (e.g. as a row, grid, or scattered composition). Give each one its own real position.`);
   }
 
   // Real, confirmed-live bug found across MULTIPLE beats of the same
@@ -1344,7 +1385,15 @@ function validateBeatVisual(visual, path, errors, knownIds) {
     // this is a free in-place clamp rather than a costly reject-and-
     // retry, a false positive costs an imperceptible nudge, while a
     // false negative is confirmed-real visible clipping.
-    const effWidth = Math.max(1, size.width);
+    // Math.max with actualWidth (not size.width alone): actualWidth is
+    // now uncapped (see estimateTextEffectiveSize) and can legitimately
+    // exceed "width" when a single word is wider than its own maxWidth
+    // at a large fontSize - taking the max keeps BOTH known-live
+    // failure directions covered (maxWidth alone undercounts a real
+    // multi-word wrap that merges onto fewer/wider lines than
+    // predicted; actualWidth alone undercounts a single oversized word
+    // that was being silently capped at maxWidth until now).
+    const effWidth = Math.max(1, size.width, size.actualWidth || 0);
     const left = pos[0] - effWidth / 2;
     const right = pos[0] + effWidth / 2;
     const offLeft = Math.max(0, -left);
@@ -1537,10 +1586,10 @@ function autoRepairBeat(beat) {
       // touched - only a bad LANDING spot gets fixed.
       if (layer.type === 'text' && typeof layer.text === 'string') {
         const size = estimateTextEffectiveSize(layer);
-        // Uses the conservative "maxWidth" ceiling, not the narrower
-        // per-line actualWidth estimate - see validateBeatVisual's own
-        // matching check for the full live-confirmed reason.
-        const effWidth = Math.max(1, size.width);
+        // Math.max(width, actualWidth) - see validateBeatVisual's own
+        // matching check for the full live-confirmed reason this takes
+        // the larger of the two rather than either alone.
+        const effWidth = Math.max(1, size.width, size.actualWidth || 0);
         const clampX = (x) => {
           // Same tightened threshold/margin as validateBeatVisual's own
           // matching check (this is defense-in-depth for the same
@@ -1671,6 +1720,30 @@ function autoRepairBeat(beat) {
       const staticScaleOutOfRange = (v) => (typeof v === 'number' && (v < 0.5 || v > 1.5))
         || (isNumberArray(v, 2) && (v[0] < 0.5 || v[0] > 1.5 || v[1] < 0.5 || v[1] > 1.5));
       if (staticScaleOutOfRange(layer.scale)) delete layer.scale;
+
+      // Real, confirmed-live bug found via direct frame inspection of a
+      // live generated video: "crazy" at fontSize 200/maxWidth 480
+      // rendered with BOTH edges clipped off the 540px canvas. Real
+      // text layout never force-breaks a single word to fit maxWidth,
+      // so a short word at a large enough fontSize can end up wider
+      // than the canvas itself - and no amount of REPOSITIONING (the
+      // off-canvas checks elsewhere in this file) can fix that; even
+      // dead-centering a too-wide box still clips both edges equally.
+      // Only a real fontSize reduction fixes this at the root, so it's
+      // done here, before those checks run, using the same per-word
+      // wrap simulation they rely on for detection.
+      if (layer.type === 'text' && typeof layer.fontSize === 'number' && layer.fontSize > 0) {
+        const maxSafeWidth = CANVAS_WIDTH - EDGE_MARGIN_PX * 2;
+        const size = estimateTextEffectiveSize(layer);
+        if (size.actualWidth > maxSafeWidth) {
+          const shrinkScale = maxSafeWidth / size.actualWidth;
+          const oldFontSize = layer.fontSize;
+          layer.fontSize = Math.max(12, Math.floor(layer.fontSize * shrinkScale));
+          if (typeof layer.lineHeight === 'number') {
+            layer.lineHeight = Math.round(layer.lineHeight * (layer.fontSize / oldFontSize));
+          }
+        }
+      }
 
       // Real, confirmed-live bug found via direct JSON audit of a live
       // generated video (not a style guess): a text layer with NO
@@ -2491,19 +2564,47 @@ function runOverlapSpreadPass(visual) {
       // exactly like a pure non-text cluster would.
       if (otherMembers.length === 1) strandedSingles.push(otherMembers[0]);
       else if (otherMembers.length >= 2) otherGroups.push(otherMembers);
+    } else if (textMembers.length === 1) {
+      // Real, confirmed-live bug found via direct frame inspection: a
+      // thin decorative divider line, positioned to visually extend
+      // outward from a text card, sat at the card's exact vertical
+      // CENTER - which is fine for a single short line of text, but
+      // this card's text wrapped to 3 lines, so that centerline landed
+      // squarely on the MIDDLE line of real text ("average depth is"),
+      // reading as an accidental strikethrough. This one-text-member
+      // case used to fall straight into the generic mixed row-spread
+      // fallback below with everything else in the cluster, which
+      // never separately re-checks a shape against the ACTUAL text
+      // content it's crossing - only clusters with 2+ text members got
+      // that finer-grained treatment. Splits this cluster's non-text
+      // members the same way: a shape sitting at essentially the exact
+      // SAME position as the text (within a few px) is a deliberate
+      // backdrop/card sized to contain it - the same common, legitimate
+      // pattern already left alone elsewhere in this file - and is
+      // never touched. Anything else is a genuinely separate decorative
+      // element that only collides with the text by coincidence, and
+      // gets the same stranded-single re-check (pushed clear only if it
+      // would still truly overlap real text) already proven for the
+      // 2+-text-member case above.
+      const textMember = textMembers[0];
+      const genuineOthers = otherMembers.filter((other) => !(
+        Math.abs(other.x - textMember.x) < 5 && Math.abs(other.y - textMember.y) < 5
+      ));
+      if (genuineOthers.length === 1) strandedSingles.push(genuineOthers[0]);
+      else if (genuineOthers.length >= 2) otherGroups.push(genuineOthers);
     } else {
-      // Fewer than 2 text members - real, confirmed-live regression
-      // from an earlier version of this split: routing a 1-text+1-shape
-      // (or any other combination that isn't "2+ of the same kind")
-      // group through neither bucket left it completely unhandled,
-      // silently reverting a previously-working case (a single ring
-      // shape left directly overlapping a single text label, both at
-      // their original untouched positions). This exactly restores the
+      // Zero text members - real, confirmed-live regression from an
+      // earlier version of this split: routing a 1-text+1-shape (or any
+      // other combination that isn't "2+ of the same kind") group
+      // through neither bucket left it completely unhandled, silently
+      // reverting a previously-working case (a single ring shape left
+      // directly overlapping a single text label, both at their
+      // original untouched positions). This exactly restores the
       // ORIGINAL "treat the whole mixed cluster as one row-spread"
-      // behavior for every case that doesn't have 2+ of one kind to
-      // stack/spread against each other - it's not "the fix", it's the
-      // proven-working fallback for a group shape this fix doesn't
-      // specifically target.
+      // behavior for every case that doesn't have 2+ of one kind (or,
+      // per the branch above, exactly 1 text member) to stack/spread
+      // against - it's not "the fix", it's the proven-working fallback
+      // for a group shape neither fix specifically targets.
       otherGroups.push(groupEntries);
     }
   }
@@ -2566,8 +2667,27 @@ function runOverlapSpreadPass(visual) {
       const tPos = representativePosition(textLayer.position);
       if (!tPos) continue;
       const tSize = estimateTextEffectiveSize(textLayer);
+      // A co-located backdrop (a shape/image sitting at essentially the
+      // exact same position as this text - e.g. a card explicitly
+      // sized to contain it) is the REAL visual boundary a stranded
+      // single needs to clear, not just the text's own tighter
+      // ESTIMATED box. Confirmed live: a divider line pushed clear of
+      // only the text's estimate (114px tall) still landed inside a
+      // taller 180px explicit backdrop card behind that same text,
+      // since the card's real height was never factored in here.
+      let effHeight = tSize.height;
+      for (const sib of visual.layers) {
+        if (!isPlainObject(sib) || sib === textLayer || sib.parent) continue;
+        if (sib.type !== 'shape' && sib.type !== 'image') continue;
+        if (typeof sib.width !== 'number' || typeof sib.height !== 'number') continue;
+        const sPos = representativePosition(sib.position);
+        if (!sPos) continue;
+        if (Math.abs(sPos[0] - tPos[0]) < 5 && Math.abs(sPos[1] - tPos[1]) < 5) {
+          effHeight = Math.max(effHeight, sib.height);
+        }
+      }
       const overlapsX = Math.abs(pos[0] - tPos[0]) < ((single.width + tSize.width) / 2) * 0.9;
-      const overlapsY = Math.abs(pos[1] - tPos[1]) < ((single.height + tSize.height) / 2) * 0.9;
+      const overlapsY = Math.abs(pos[1] - tPos[1]) < ((single.height + effHeight) / 2) * 0.9;
       if (overlapsX && overlapsY) stillOverlapping = true;
       // Tracks the LOWEST bottom edge across every text layer roughly
       // sharing this single's own horizontal space, not just the one
@@ -2578,7 +2698,7 @@ function runOverlapSpreadPass(visual) {
       // clear of every line at once, not just the one it started
       // overlapping.
       if (Math.abs(pos[0] - tPos[0]) < ((single.width + tSize.width) / 2) * 1.5) {
-        stackBottom = Math.max(stackBottom, tPos[1] + tSize.height / 2);
+        stackBottom = Math.max(stackBottom, tPos[1] + effHeight / 2);
       }
     }
     if (stillOverlapping && stackBottom > -Infinity) {
