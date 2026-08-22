@@ -2446,12 +2446,66 @@ function runOverlapSpreadPass(visual) {
   // rather than repairing each in isolation - guarantees no two
   // clusters can still collide post-repair, since there's only ever
   // one resulting stack for all of a beat's colliding text.
+  // Real, confirmed-live bug found via direct frame inspection of a
+  // real generated video: two text lines sat at the LITERAL identical
+  // position, fully overlapping and unreadable, despite this whole
+  // pass existing specifically to catch exactly that. Root cause: the
+  // OLD `groupEntries.every((e) => e.isText)` check required the
+  // WHOLE connected component to be text-only before the vertical-
+  // stack treatment applied at all - a single decorative shape (a
+  // thin accent line) happened to spatially overlap both text layers
+  // by this file's own size ESTIMATE, pulling all three into ONE
+  // union-find cluster. Because that mixed cluster wasn't "every
+  // member isText", it fell through to the horizontal ROW-spread
+  // logic instead, which only varies X and shares one common Y
+  // centroid - so the two text lines, which both already sat at the
+  // same Y, were left at that same shared Y forever, still fully
+  // overlapping. Now splits EACH cluster into its own text subset and
+  // non-text subset: 2+ text members get the vertical stack among
+  // THEMSELVES regardless of what else got pulled into the same
+  // cluster, and 2+ non-text members separately get the row-spread. A
+  // lone non-text member alongside a resolved text stack is left
+  // alone - nothing else in its own subset to spread against, and a
+  // single decorative element sharing rough space with a headline is
+  // a common, legitimate pattern this file already treats as fine
+  // elsewhere; the text-on-text overlap this exists to prevent is the
+  // one case with no legitimate excuse, and is what this guarantees
+  // gets fixed regardless of whatever else is nearby.
   const textGroups = [];
   const otherGroups = [];
+  const strandedSingles = [];
   for (const groupEntries of groups.values()) {
     if (groupEntries.length < 2) continue;
-    if (groupEntries.every((e) => e.isText)) textGroups.push(groupEntries);
-    else otherGroups.push(groupEntries);
+    const textMembers = groupEntries.filter((e) => e.isText);
+    const otherMembers = groupEntries.filter((e) => !e.isText);
+    if (textMembers.length >= 2) {
+      // 2+ text members always get their own vertical stack, regardless
+      // of whatever non-text members got pulled into the same cluster -
+      // this is the actual fix for the text-on-text overlap bug.
+      textGroups.push(textMembers);
+      // A lone non-text member is left in place for now (a decorative
+      // element sharing rough space with a headline is often fine
+      // as-is), tracked here to be re-checked once the text stack has
+      // its real final position and nudged only if it would still
+      // genuinely overlap. 2+ non-text members get their own row-spread
+      // exactly like a pure non-text cluster would.
+      if (otherMembers.length === 1) strandedSingles.push(otherMembers[0]);
+      else if (otherMembers.length >= 2) otherGroups.push(otherMembers);
+    } else {
+      // Fewer than 2 text members - real, confirmed-live regression
+      // from an earlier version of this split: routing a 1-text+1-shape
+      // (or any other combination that isn't "2+ of the same kind")
+      // group through neither bucket left it completely unhandled,
+      // silently reverting a previously-working case (a single ring
+      // shape left directly overlapping a single text label, both at
+      // their original untouched positions). This exactly restores the
+      // ORIGINAL "treat the whole mixed cluster as one row-spread"
+      // behavior for every case that doesn't have 2+ of one kind to
+      // stack/spread against each other - it's not "the fix", it's the
+      // proven-working fallback for a group shape this fix doesn't
+      // specifically target.
+      otherGroups.push(groupEntries);
+    }
   }
 
   let changed = false;
@@ -2493,6 +2547,45 @@ function runOverlapSpreadPass(visual) {
       shiftLayerPosition(visual.layers[e.index], cx - e.x, targetY - e.y);
       cursorY += h + gap;
     });
+  }
+
+  // Re-checks each lone non-text member tracked above against the text
+  // stack's REAL final position (not its pre-move one) and nudges it
+  // clear only if it would still genuinely overlap - most of the time
+  // the text stack has already moved well away and this is a no-op,
+  // but it closes the gap left by deliberately not row-spreading a
+  // single decorative element earlier.
+  for (const single of strandedSingles) {
+    const layer = visual.layers[single.index];
+    const pos = representativePosition(layer.position);
+    if (!pos) continue;
+    let stillOverlapping = false;
+    let stackBottom = -Infinity;
+    for (const textLayer of visual.layers) {
+      if (!isPlainObject(textLayer) || textLayer.type !== 'text' || textLayer.parent) continue;
+      const tPos = representativePosition(textLayer.position);
+      if (!tPos) continue;
+      const tSize = estimateTextEffectiveSize(textLayer);
+      const overlapsX = Math.abs(pos[0] - tPos[0]) < ((single.width + tSize.width) / 2) * 0.9;
+      const overlapsY = Math.abs(pos[1] - tPos[1]) < ((single.height + tSize.height) / 2) * 0.9;
+      if (overlapsX && overlapsY) stillOverlapping = true;
+      // Tracks the LOWEST bottom edge across every text layer roughly
+      // sharing this single's own horizontal space, not just the one
+      // it happens to overlap - a fixed "own height + margin" push
+      // (tried first) landed it on top of a DIFFERENT line in the same
+      // stack instead of clearing all of them; pushing below the
+      // stack's real full extent is what actually guarantees it lands
+      // clear of every line at once, not just the one it started
+      // overlapping.
+      if (Math.abs(pos[0] - tPos[0]) < ((single.width + tSize.width) / 2) * 1.5) {
+        stackBottom = Math.max(stackBottom, tPos[1] + tSize.height / 2);
+      }
+    }
+    if (stillOverlapping && stackBottom > -Infinity) {
+      changed = true;
+      const targetY = stackBottom + single.height / 2 + 20;
+      shiftLayerPosition(layer, 0, targetY - pos[1]);
+    }
   }
 
   // Shape/image groups keep the original horizontal-row behavior (a
