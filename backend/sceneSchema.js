@@ -1,5 +1,6 @@
 const { EASING_REGISTRY } = require('./engine/easingCurves');
 const { BLEND_MODE_MAP } = require('./engine/layerStack');
+const { Property } = require('./engine/keyframes');
 
 /**
  * The scene JSON schema: what Mistral generates, what sceneBuilder.js
@@ -1569,6 +1570,146 @@ function validateBeatVisual(visual, path, errors, knownIds) {
  * Called BEFORE validateBeat, so anything this successfully repairs
  * never even reaches validation as an error, let alone a retry.
  */
+/** Absolute cubic bezier control points for one anchor segment - EXACT same convention as engine/path.js's segmentControlPoints (P1 = anchor.point + outTangent if present else anchor.point, P2 = next.point + next.inTangent if present else next.point), duplicated here rather than imported since that lives one level into rendering internals this file otherwise stays clear of - this is pure, tiny, side-effect-free geometry, safe to keep in sync by hand. */
+function bezierSegmentControlPoints(a, b) {
+  const p0 = a.point;
+  const p1 = a.outTangent ? [a.point[0] + a.outTangent[0], a.point[1] + a.outTangent[1]] : a.point;
+  const p2 = b.inTangent ? [b.point[0] + b.inTangent[0], b.point[1] + b.inTangent[1]] : b.point;
+  const p3 = b.point;
+  return [p0, p1, p2, p3];
+}
+function cubicBezierPointAt(p0, p1, p2, p3, u) {
+  const mt = 1 - u;
+  const a = mt * mt * mt; const b = 3 * mt * mt * u; const c = 3 * mt * u * u; const d = u * u * u;
+  return [a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0], a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1]];
+}
+/** Dense-samples a full open customPath (anchors, 2+) into a cumulative arc-length lookup table, for mapping a "% of the path drawn" fraction to the REAL (x,y) point there - not the naive straight-line distance between anchors, which a curved bezier segment can deviate from substantially. */
+function buildBezierArcLengthTable(anchors) {
+  const SAMPLES_PER_SEGMENT = 40;
+  const segCount = anchors.length - 1;
+  const table = [];
+  let cum = 0;
+  let prev = null;
+  for (let seg = 0; seg < segCount; seg++) {
+    const [p0, p1, p2, p3] = bezierSegmentControlPoints(anchors[seg], anchors[seg + 1]);
+    for (let i = 0; i <= SAMPLES_PER_SEGMENT; i++) {
+      if (seg > 0 && i === 0) continue;
+      const u = i / SAMPLES_PER_SEGMENT;
+      const pt = cubicBezierPointAt(p0, p1, p2, p3, u);
+      if (prev) cum += Math.hypot(pt[0] - prev[0], pt[1] - prev[1]);
+      table.push({ point: pt, cumLength: cum });
+      prev = pt;
+    }
+  }
+  return { table, totalLength: cum };
+}
+function pointAtArcFraction(table, totalLength, frac) {
+  const target = Math.max(0, Math.min(1, frac)) * totalLength;
+  let lo = 0; let hi = table.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (table[mid].cumLength < target) lo = mid + 1; else hi = mid;
+  }
+  return table[lo].point;
+}
+
+/**
+ * Auto-attaches a precisely curve-tracking "leading spark" companion
+ * layer to any hand-drawn line-reveal shape (a stroke-only, unfilled
+ * customPath with a genuinely ANIMATED Trim Paths "end" sweep) that
+ * doesn't already have one. Real, confirmed-live gap: hand-authoring a
+ * handful of waypoint keyframes to approximate "a dot chasing the
+ * line's tip" was tested directly and visibly DRIFTS off the real
+ * curve - a straight-line "connect the dots" approximation between a
+ * few points never actually traces a bezier's true curved path, and
+ * this is real bezier arc-length math (needs dense sampling and a
+ * cumulative-length lookup) the model generating this JSON has no way
+ * to compute itself. Doing it here, deterministically, in code -
+ * reusing the SAME Property/valueAt evaluation the real renderer uses
+ * for the trim's own "end", so the spark's pacing exactly matches
+ * whatever easing the trim actually uses, not an assumed one -
+ * guarantees the spark always sits exactly on the line's own current
+ * tip, every time this technique is used, regardless of how well the
+ * model itself could ever approximate that by hand.
+ */
+function attachLineRevealSparks(beat) {
+  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  const layers = beat.visual.layers;
+  const additions = [];
+  layers.forEach((layer, i) => {
+    if (!isPlainObject(layer) || layer.type !== 'shape' || !Array.isArray(layer.contents)) return;
+    const nextLayer = layers[i + 1];
+    if (isPlainObject(nextLayer) && typeof nextLayer.id === 'string' && typeof layer.id === 'string' && nextLayer.id === `${layer.id}__spark`) return;
+
+    const pathItem = layer.contents.find((c) => isPlainObject(c) && c.type === 'path' && isPlainObject(c.shape) && c.shape.kind === 'customPath');
+    const trimItem = layer.contents.find((c) => isPlainObject(c) && c.type === 'trim');
+    const strokeItem = layer.contents.find((c) => isPlainObject(c) && c.type === 'stroke');
+    const hasFill = layer.contents.some((c) => isPlainObject(c) && c.type === 'fill');
+    if (!pathItem || !trimItem || !strokeItem || hasFill) return;
+
+    const anchors = pathItem.shape.params && Array.isArray(pathItem.shape.params.anchors) ? pathItem.shape.params.anchors : null;
+    if (!anchors || anchors.length < 2 || anchors.some((a) => !isPlainObject(a) || !isNumberArray(a.point, 2))) return;
+
+    const endVal = trimItem.end;
+    if (!isPlainObject(endVal) || !Array.isArray(endVal.keyframes)) return;
+    const validKfs = endVal.keyframes.filter((kf) => isPlainObject(kf) && typeof kf.time === 'number' && typeof kf.value === 'number');
+    if (validKfs.length < 2) return;
+
+    const pos = representativePosition(layer.position);
+    if (!pos) return;
+
+    let endProp;
+    try { endProp = new Property(validKfs); } catch (e) { return; }
+    const startTime = validKfs[0].time;
+    const endTime = validKfs[validKfs.length - 1].time;
+    if (endTime <= startTime) return;
+
+    const { table, totalLength } = buildBezierArcLengthTable(anchors);
+    if (!(totalLength > 0)) return;
+
+    const N = 20;
+    const sparkKeyframes = [];
+    for (let k = 0; k <= N; k++) {
+      const time = startTime + (k / N) * (endTime - startTime);
+      const pctValue = endProp.valueAt(time);
+      const frac = typeof pctValue === 'number' ? pctValue / 100 : 0;
+      const [lx, ly] = pointAtArcFraction(table, totalLength, frac);
+      sparkKeyframes.push({ time: +time.toFixed(4), value: [+(lx + pos[0]).toFixed(2), +(ly + pos[1]).toFixed(2)], interpolation: 'linear' });
+    }
+
+    const dotSize = Math.max(10, Math.min(28, (typeof strokeItem.width === 'number' ? strokeItem.width : 6) * 3.2));
+    const glowColor = typeof strokeItem.color === 'string' ? strokeItem.color : '#7DF9FF';
+    const fadeStart = endTime - (endTime - startTime) * 0.08;
+
+    const sparkLayer = {
+      type: 'shape',
+      width: dotSize,
+      height: dotSize,
+      position: { keyframes: sparkKeyframes },
+      opacity: {
+        keyframes: [
+          { time: startTime, value: 1 },
+          { time: fadeStart, value: 1 },
+          { time: endTime, value: 0, interpolation: 'easing', easing: 'easeInCubic' },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: dotSize, height: dotSize } } },
+        { type: 'fill', color: '#FFFFFF' },
+      ],
+      effects: [
+        { type: 'outerGlow', params: { color: glowColor, opacity: 1, blur: dotSize * 1.3, blendMode: 'screen' } },
+      ],
+    };
+    if (typeof layer.id === 'string') sparkLayer.id = `${layer.id}__spark`;
+    additions.push({ afterIndex: i, layer: sparkLayer });
+  });
+
+  for (let k = additions.length - 1; k >= 0; k--) {
+    layers.splice(additions[k].afterIndex + 1, 0, additions[k].layer);
+  }
+}
+
 function autoRepairBeat(beat) {
   if (!isPlainObject(beat)) return;
 
@@ -2389,6 +2530,7 @@ function autoRepairBeat(beat) {
   }
 
   autoSpreadDuplicatePositions(beat.visual);
+  attachLineRevealSparks(beat);
 }
 
 /**
