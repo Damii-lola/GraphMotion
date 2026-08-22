@@ -1897,6 +1897,39 @@ function autoRepairBeat(beat) {
         delete layer.opacity;
       }
 
+      // Real, confirmed-live bug: "stroke" in a layer's "effects" array
+      // - the shape-content stroke fix a few lines up (relocating a
+      // SHAPE_CONTENT_TYPES item from "effects" into "contents") only
+      // ever applies to shape layers, which HAVE a "contents" array to
+      // move it into. A text or image layer wanting an outline/stroke
+      // around it has no such array - there's nothing to relocate it
+      // TO - so this recurred unfixed specifically for those layer
+      // types. But "stroke" IS a real, legitimate INTENT here (an
+      // AE-style Stroke layer style, outlining the whole layer) - it's
+      // just the wrong NAME for it; the real effect is "layerStroke",
+      // which takes the same "color"/"width" params a shape-content
+      // stroke item already provides (an extra "cap"/"join"/"dash" from
+      // that shape-content shape is simply unused by it, not harmful).
+      // Renamed in place rather than dropped, on any layer type that
+      // doesn't have "contents" to relocate it into instead. EffectDef
+      // params live NESTED under "params" (unlike a shape-content
+      // item's own flat shape) - confirmed live this matters, not just
+      // a style nit: applyEffectToCanvas reads ONLY effectDef.params,
+      // so leaving color/width flat on the effect object (matching the
+      // shape-content stroke's own shape) would still PASS validation
+      // (only "type" is checked) but silently render with every
+      // layerStroke param defaulted, discarding whatever color/width
+      // was actually specified.
+      if (!Array.isArray(layer.contents) && Array.isArray(layer.effects)) {
+        layer.effects = layer.effects.map((e) => {
+          if (!isPlainObject(e) || e.type !== 'stroke') return e;
+          const params = isPlainObject(e.params) ? { ...e.params } : {};
+          if (params.color === undefined && e.color !== undefined) params.color = e.color;
+          if (params.width === undefined && e.width !== undefined) params.width = e.width;
+          return { type: 'layerStroke', params };
+        });
+      }
+
       // Real, confirmed-live mistake: a keyframe with a real "time" but
       // no "value" at all (e.g. "rotation.keyframes[2].value" simply
       // absent). Rather than reject the WHOLE property over one
