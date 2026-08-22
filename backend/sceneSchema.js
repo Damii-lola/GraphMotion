@@ -2850,7 +2850,25 @@ function runOverlapSpreadPass(visual) {
         Math.abs(other.x - textMember.x) < 5 && Math.abs(other.y - textMember.y) < 5
       ));
       if (genuineOthers.length === 1) strandedSingles.push(genuineOthers[0]);
-      else if (genuineOthers.length >= 2) otherGroups.push(genuineOthers);
+      else if (genuineOthers.length >= 2) {
+        // Real, confirmed-live bug found via direct reproduction: 2+
+        // genuinely-separate decorative shapes alongside a text+backdrop
+        // pair used to go ONLY into otherGroups, which spreads them
+        // apart from EACH OTHER but never re-checks whether the result
+        // still overlaps the text/backdrop they started clustered with
+        // - confirmed directly, a small accent dot and a decorative
+        // line both got separated from each other but left sitting
+        // squarely on top of the text's own backdrop circle, still
+        // failing validation after "repair." Also pushing each into
+        // strandedSingles (which runs its OWN real-text-overlap recheck
+        // BEFORE the otherGroups spread below) fixes this in two
+        // coherent steps: first clear them from the text/backdrop
+        // (using their still-original, still-overlapping positions),
+        // THEN spread them apart from each other at that new, already-
+        // clear position - so neither step can undo the other.
+        otherGroups.push(genuineOthers);
+        genuineOthers.forEach((o) => strandedSingles.push(o));
+      }
     } else {
       // Zero text members - real, confirmed-live regression from an
       // earlier version of this split: routing a 1-text+1-shape (or any
