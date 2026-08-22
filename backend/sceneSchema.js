@@ -2545,7 +2545,63 @@ function validateSceneJSON(sceneJSON) {
     errors.push(...beatErrors);
   });
 
+  varyHeadlinePositions(sceneJSON);
+
   return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Real, confirmed-live composition complaint, distinct from anything
+ * autoRepairBeat can fix on its own: it only ever sees ONE beat at a
+ * time, with no notion of "beat index within the whole video", so it
+ * has no way to alternate composition across beats even though that's
+ * exactly what's needed here. A direct audit of a real generated video
+ * (after prompt guidance alone was added encouraging off-center
+ * placement) found every single headline still landing within ~40px
+ * of dead-center - technically not identical, but visually
+ * indistinguishable from "always centered," the same repetitive/boring
+ * failure the guidance was meant to fix. Prompt wording alone didn't
+ * move this, the same story as nearly every other rule this session -
+ * so this runs as its own whole-scene pass AFTER all per-beat repair,
+ * nudging a beat's dominant text layer off-center when it's still
+ * suspiciously close to it, alternating left/right by beat index for a
+ * real, deterministic (not random/jittery) spread across the video.
+ * Skips the FIRST and LAST beat (a genuine title-card bookend is a
+ * legitimate reason to stay centered) and only ever nudges WITHIN the
+ * same safe on-canvas bounds the off-canvas clamp already established
+ * - it can widen how far off-center a layer sits, never reintroduce an
+ * overflow, and naturally does nothing for a headline too wide to have
+ * real margin to begin with (its own safe zone collapses to center).
+ */
+function varyHeadlinePositions(sceneJSON) {
+  const scenes = sceneJSON.scenes;
+  if (!Array.isArray(scenes) || scenes.length < 3) return;
+  const CENTER_THRESHOLD = CANVAS_WIDTH * 0.05;
+  scenes.forEach((beat, i) => {
+    if (i === 0 || i === scenes.length - 1) return;
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number');
+    if (textLayers.length === 0) return;
+    const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+    const pos = representativePosition(dominant.position);
+    if (!pos) return;
+    if (Math.abs(pos[0] - CANVAS_WIDTH / 2) > CENTER_THRESHOLD) return;
+    const size = estimateTextEffectiveSize(dominant);
+    const effWidth = Math.max(1, size.width);
+    const halfW = Math.min(effWidth / 2, (CANVAS_WIDTH - EDGE_MARGIN_PX * 2) / 2);
+    const safeLeftX = EDGE_MARGIN_PX + halfW;
+    const safeRightX = CANVAS_WIDTH - EDGE_MARGIN_PX - halfW;
+    const center = CANVAS_WIDTH / 2;
+    const leaningLeft = i % 2 === 0;
+    const target = leaningLeft ? center - (center - safeLeftX) * 0.6 : center + (safeRightX - center) * 0.6;
+    if (Math.abs(target - pos[0]) < 1) return;
+    if (isNumberArray(dominant.position, 2)) {
+      dominant.position = [target, dominant.position[1]];
+    } else if (isPlainObject(dominant.position) && Array.isArray(dominant.position.keyframes) && dominant.position.keyframes.length > 0) {
+      const last = dominant.position.keyframes[dominant.position.keyframes.length - 1];
+      if (isPlainObject(last) && isNumberArray(last.value, 2)) last.value = [target, last.value[1]];
+    }
+  });
 }
 
 module.exports = {
