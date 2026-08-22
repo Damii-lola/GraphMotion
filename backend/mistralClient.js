@@ -1325,7 +1325,17 @@ frame-for-frame:
    is that beat's own full description - this is YOUR OWN plan, which
    YOU will encode into the final "scenes" JSON array yourself in the
    next step, so a clear, well-separated breakdown here directly makes
-   that easier to get right, every beat covering ALL of:
+   that easier to get right.
+   MANDATORY, every single beat, no exceptions: real, specific words on
+   screen. An icon/logo/shape can be part of a beat's composition, but
+   is NEVER the whole beat by itself - the next step's schema hard-
+   rejects any beat without at least one real text layer, so a beat you
+   plan here as "just an icon reveal" or "just the logo" with no actual
+   words CANNOT be encoded and will burn every retry failing to do the
+   impossible. If a beat's whole idea is visual (a logo appearing, an
+   icon popping in), pair it with real accompanying text - a name, a
+   label, a short line - never leave it wordless.
+   Every beat covering ALL of:
    REAL, CONFIRMED-LIVE PACING NOTE: prefer FEWER, more complete beats
    over many rapid-fire ones for a given ${targetDurationSeconds}s total -
    roughly ${Math.max(3, Math.round(targetDurationSeconds / 3))}-${Math.max(4, Math.round(targetDurationSeconds / 2.5))} beats total is the right range, not 8-10+. A
