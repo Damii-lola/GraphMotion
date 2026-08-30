@@ -1,3 +1,5 @@
+const { createCanvas } = require('@napi-rs/canvas');
+require('./engine/fonts');
 const { EASING_REGISTRY } = require('./engine/easingCurves');
 const { BLEND_MODE_MAP } = require('./engine/layerStack');
 const { Property } = require('./engine/keyframes');
@@ -3318,12 +3320,115 @@ function autoRepairBeat(beat) {
 
   autoSpreadDuplicatePositions(beat.visual);
   fixBackdropZOrder(beat.visual);
+  fixFramingBoxSize(beat.visual);
   // Runs AFTER the overlap/position repairs above, not before - it
   // needs the dominant text layer's FINAL, settled position (where
   // autoSpreadDuplicatePositions may have just moved it to resolve a
   // collision), not whatever it started at.
   ensureDecorativeAccent(beat);
   attachLineRevealSparks(beat);
+}
+
+/**
+ * Replicates textAnimator.js's own layoutText word-wrap EXACTLY (same
+ * greedy "does this word still fit under maxWidth" loop) purely to
+ * predict line COUNT and the widest line's width ahead of the real
+ * render - see fixFramingBoxSize below for why this prediction is
+ * needed. Measured against the same registered Poppins files
+ * (./engine/fonts.js, required at the top of this file) the real
+ * renderer draws with, so the wrap decision this produces matches the
+ * real one, not an approximation against some host default font.
+ */
+function measureTextWrap(text, {
+  fontFamily, fontWeight, fontSize, maxWidth,
+}) {
+  const ctx = createCanvas(10, 10).getContext('2d');
+  ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+  const words = text.split(' ').filter((w) => w.length > 0);
+  const lineWidths = [];
+  let current = 0;
+  let currentWidth = 0;
+  words.forEach((word) => {
+    const wordWidth = ctx.measureText(`${word} `).width;
+    if (currentWidth + wordWidth > maxWidth && current > 0) {
+      lineWidths.push(currentWidth);
+      current = 0; currentWidth = 0;
+    }
+    current += 1;
+    currentWidth += wordWidth;
+  });
+  if (current > 0) lineWidths.push(currentWidth);
+  return { lineCount: Math.max(1, lineWidths.length), maxLineWidth: Math.max(0, ...lineWidths) };
+}
+
+/**
+ * Real, confirmed-live bug found via direct visual inspection of a real
+ * rendered video: a "framing" shape - a stroke-only rectangle outline,
+ * no fill, drawn AROUND a headline rather than as a solid backdrop
+ * chip behind it - sized for a single line of that headline, sitting
+ * at the exact same center position as the text (the same co-located-
+ * position pattern fixBackdropZOrder above already treats as
+ * intentional). The text itself wraps to two lines under its own
+ * "maxWidth", but the box's fixed, author-guessed height was never
+ * updated for that - so the box's top/bottom edges land mid-way
+ * through the actual two-line block, slicing straight across the
+ * first line instead of framing the whole headline. Confirmed live:
+ * a 300x100 box around "3 INTERVIEW RED FLAGS" (which wraps to 2 lines
+ * at fontSize 48) sliced its stroke rectangle right through the
+ * middle of "3 INTERVIEW RED", leaving only "FLAGS" actually framed.
+ *
+ * Fixed by recomputing the box's height from the SAME wrap the text
+ * will really render with (measureTextWrap above), centered on its
+ * original position - only ever touches a genuine outline "frame"
+ * (stroke, no fill), never a filled backdrop chip/pill, since those
+ * are deliberately sized independent of the text's own line count
+ * (e.g. a small pill sitting only under part of a headline).
+ */
+function fixFramingBoxSize(visual) {
+  if (!Array.isArray(visual.layers)) return;
+  const layers = visual.layers;
+  for (const textLayer of layers) {
+    if (!isPlainObject(textLayer) || textLayer.type !== 'text' || textLayer.parent) continue;
+    if (typeof textLayer.text !== 'string' || !textLayer.text) continue;
+    const tPos = representativePosition(textLayer.position);
+    if (!tPos) continue;
+    const fontSize = typeof textLayer.fontSize === 'number' ? textLayer.fontSize : 48;
+    const maxWidth = typeof textLayer.maxWidth === 'number' ? textLayer.maxWidth : 480;
+    const lineHeight = typeof textLayer.lineHeight === 'number' ? textLayer.lineHeight : fontSize * 1.15;
+    let wrap;
+    try {
+      wrap = measureTextWrap(textLayer.text, {
+        fontFamily: textLayer.fontFamily || 'Poppins Bold',
+        fontWeight: textLayer.fontWeight || '700',
+        fontSize,
+        maxWidth,
+      });
+    } catch {
+      continue;
+    }
+
+    for (const sib of layers) {
+      if (sib === textLayer || !isPlainObject(sib) || sib.type !== 'shape' || sib.parent) continue;
+      if (!Array.isArray(sib.contents)) continue;
+      const hasFill = sib.contents.some((c) => isPlainObject(c) && c.type === 'fill');
+      const hasStroke = sib.contents.some((c) => isPlainObject(c) && c.type === 'stroke');
+      if (hasFill || !hasStroke) continue;
+      const pathContent = sib.contents.find((c) => isPlainObject(c) && c.type === 'path'
+        && isPlainObject(c.shape) && c.shape.kind === 'rectangle' && isPlainObject(c.shape.params));
+      if (!pathContent) continue;
+      const sPos = representativePosition(sib.position);
+      if (!sPos || Math.abs(sPos[0] - tPos[0]) >= 5 || Math.abs(sPos[1] - tPos[1]) >= 5) continue;
+
+      const neededHeight = wrap.lineCount * lineHeight + fontSize * 0.6;
+      const declaredHeight = typeof sib.height === 'number' ? sib.height : pathContent.shape.params.height;
+      if (typeof declaredHeight === 'number' && declaredHeight > 0
+          && Math.abs(declaredHeight - neededHeight) > lineHeight * 0.4) {
+        const rounded = Math.round(neededHeight);
+        sib.height = rounded;
+        pathContent.shape.params.height = rounded;
+      }
+    }
+  }
 }
 
 /**

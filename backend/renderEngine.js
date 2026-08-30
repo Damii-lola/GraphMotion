@@ -1,4 +1,4 @@
-const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
+const { createCanvas } = require('@napi-rs/canvas');
 const ffmpegPath = require('ffmpeg-static');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -28,26 +28,16 @@ const { renderWithMotionBlur } = require('./engine/motionBlur');
 // honored anywhere.
 //
 // Fixed by bundling real, redistributable (SIL Open Font License)
-// Poppins weight files directly in the repo and registering them here
-// with explicit family aliases, so "Poppins Black"/"Poppins Bold"/
-// "Poppins Medium"/"Poppins Italic" resolve to the ACTUAL requested
-// glyphs identically on every host, dev machine or Render container,
-// regardless of what's otherwise installed there.
-const FONTS_DIR = path.join(__dirname, 'assets', 'fonts');
-const FONT_REGISTRATIONS = [
-  ['Poppins-Black.ttf', 'Poppins Black'],
-  ['Poppins-Bold.ttf', 'Poppins Bold'],
-  ['Poppins-Medium.ttf', 'Poppins Medium'],
-  ['Poppins-Italic.ttf', 'Poppins Italic'],
-];
-for (const [file, alias] of FONT_REGISTRATIONS) {
-  const fontPath = path.join(FONTS_DIR, file);
-  if (fs.existsSync(fontPath)) {
-    GlobalFonts.registerFromPath(fontPath, alias);
-  } else {
-    console.warn(`[renderEngine] font file missing, "${alias}" will fall back to a host default: ${fontPath}`);
-  }
-}
+// Poppins weight files directly in the repo and registering them with
+// explicit family aliases, so "Poppins Black"/"Poppins Bold"/"Poppins
+// Medium"/"Poppins Italic" resolve to the ACTUAL requested glyphs
+// identically on every host, dev machine or Render container,
+// regardless of what's otherwise installed there. The registration
+// itself now lives in ./engine/fonts.js (a process-wide, load-once
+// side effect either file can trigger) - sceneSchema.js needs the same
+// real metrics to predict text wrapping during validation/repair, not
+// just this file at actual draw time.
+require('./engine/fonts');
 
 /**
  * The rendering agent: turns validated scene JSON (sceneSchema.js) into
