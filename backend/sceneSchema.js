@@ -1661,6 +1661,39 @@ function validateBeatVisual(visual, path, errors, knownIds) {
     }
   }
 
+  // Real, confirmed-live gap in the EXACT-match check above, found via
+  // direct frame inspection of real rendered output: the model doesn't
+  // always duplicate the WHOLE string - here it wrote a full headline
+  // ("OR THEY'RE JUST COZY") plus a second, entirely separate layer
+  // containing ONLY "COZY" (with a "highlights" entry on that second
+  // layer, clearly its own attempt at "highlight the last word") -
+  // rendering as the word "COZY" doubled directly under the real
+  // headline. Not an EXACT string match (so the check above never
+  // caught it), but the SAME root mistake this file already documents
+  // and rejects in its exact form. Word-boundary matched (never a raw
+  // substring - "CAT" would not fire against "CATASTROPHE") and
+  // restricted to a whole PREFIX or SUFFIX specifically, since that's
+  // how this mistake actually manifests (highlighting the FIRST or LAST
+  // word(s) of a longer line), not some incidental shared phrase.
+  const namedTextLayers = visual.layers
+    .map((layer, i) => ({ layer, i }))
+    .filter(({ layer }) => isPlainObject(layer) && layer.type === 'text' && typeof layer.text === 'string' && layer.text.trim());
+  for (const { layer: shortLayer, i: shortIdx } of namedTextLayers) {
+    const shortText = shortLayer.text.trim().toLowerCase();
+    for (const { layer: longLayer, i: longIdx } of namedTextLayers) {
+      if (shortIdx === longIdx) continue;
+      const longText = longLayer.text.trim().toLowerCase();
+      if (shortText.length >= longText.length) continue;
+      const escaped = shortText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const isPrefix = new RegExp(`^${escaped}(\\s|$)`).test(longText);
+      const isSuffix = new RegExp(`(^|\\s)${escaped}$`).test(longText);
+      if (isPrefix || isSuffix) {
+        errors.push(`${path}.layers[${shortIdx}].text: "${shortLayer.text}" exactly duplicates the ${isPrefix ? 'FIRST' : 'LAST'} word(s) of layers[${longIdx}]'s own text ("${longLayer.text}") as a second, separate layer - a real, confirmed-live mistake (the model reaching for a "highlight the ${isPrefix ? 'first' : 'last'} word" effect the WRONG way). The correct way is a "highlights" entry (or an animator "color" property) on layers[${longIdx}] itself, targeting just that word via its own selector - never a second layer repeating it. Remove layers[${shortIdx}] and move its accent onto layers[${longIdx}] instead.`);
+        break;
+      }
+    }
+  }
+
   // Real bug found via direct JSON inspection of a live-generated beat:
   // two "cell" precomps meant to sit side-by-side both independently
   // left "position" at the schema's default [0,0] - they don't share a
