@@ -934,12 +934,28 @@ function enrichBackgroundDepth(beat) {
   // "normal" alpha compositing has no such luminance dependence - it
   // mixes in the same fixed proportion of noise everywhere, so the
   // texture reads as genuinely uniform regardless of what's underneath.
+  // Real, confirmed-live bug found via a many-steps-deep visual
+  // investigation (not theorized): a "generate" kind layer is
+  // positioned by its TOP-LEFT corner, not centered like shape/text
+  // layers - build2DLayer (sceneBuilder.js) passes withEffects a
+  // `centered` flag of true for shape/text, but NOT for generate/image,
+  // so "position" places the layer's own local (0,0) directly in world
+  // space rather than its center. This grain layer used
+  // [CANVAS_WIDTH/2, CANVAS_HEIGHT/2] (correct for a CENTERED layer,
+  // which this isn't), which shifted the whole 540x960 canvas by half
+  // its own width/height - the result: only the bottom-right QUARTER of
+  // the frame ever showed any grain at all, a sharp rectangular seam
+  // between "textured" and "smooth" exactly at the canvas's own
+  // midpoint. Traced by rendering the gradient alone (clean), the grain
+  // alone (clean), then the real layer through the actual Node/
+  // Composition pipeline (reproduced the exact seam) - confirmed it was
+  // a positioning bug, not a blend-mode or generation-math issue.
   const grainLayer = {
     id: '__bg_grain__',
     type: 'generate',
     width: CANVAS_WIDTH,
     height: CANVAS_HEIGHT,
-    position: [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2],
+    position: [0, 0],
     opacity: 0.05,
     generate: {
       kind: 'fractalNoise',
