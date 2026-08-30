@@ -2329,6 +2329,20 @@ function autoRepairBeat(beat) {
         layer.text = layer.text.replace(/([a-zA-Z]{2,})([.?!])([A-Z][a-zA-Z])/g, '$1$2 $3');
       }
 
+      // Real, confirmed-live variant of the SAME mistake, found in a
+      // LATER real generation: an inline numbered list written as one
+      // string glues each item's own trailing period directly onto the
+      // NEXT item's leading DIGIT, not a letter - "1. Micro-tasks.2. The
+      // 5-min rule.3. Forgive yourself." (twice in one string: ".2" and
+      // ".3"). The fix above only ever looked for a letter after the
+      // punctuation ([A-Z][a-zA-Z]), so a digit never matched at all.
+      // Same 2+ letter guard on the word BEFORE the punctuation (still
+      // never touches "U.S.A" or similar), extended to accept a digit
+      // as well as a real word on the other side.
+      if (layer.type === 'text' && typeof layer.text === 'string' && /[a-zA-Z]{2,}[.?!]\d/.test(layer.text)) {
+        layer.text = layer.text.replace(/([a-zA-Z]{2,})([.?!])(\d)/g, '$1$2 $3');
+      }
+
       // Real, repeatedly-recurring mistake (multiple separate live
       // generations, same shape every time) - converted to auto-repair
       // rather than left as a pure retry-forcing validation error, same
