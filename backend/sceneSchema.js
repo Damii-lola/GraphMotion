@@ -537,6 +537,118 @@ function enforceGradientBackground(background) {
   };
 }
 
+// Cheap, deterministic string hash so the same background hex always
+// picks the same enrichment variant/corner within one beat (not truly
+// random - two runs of the SAME already-repaired JSON should look the
+// same) while different beats (almost always different base hues after
+// enforceGradientBackground's own hue rotation) land on different
+// variants for real across-video variety.
+function hashString(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) { h = (h * 31 + str.charCodeAt(i)) | 0; }
+  return Math.abs(h);
+}
+
+const GLOW_CORNERS = [
+  [90, 160], [450, 160], [90, 800], [450, 800], [270, 130], [270, 830],
+];
+
+/**
+ * Real, confirmed-live gap found via a brutal vision-judge pass on real
+ * rendered output: a plain 2-stop gradient (enforceGradientBackground's
+ * own guarantee) still reads as "lazy", "boring", "a low-effort
+ * PowerPoint slide" - a smooth, textureless color wash alone isn't
+ * enough real visual depth to stop a TikTok scroll, independent of
+ * whether anything is actually BROKEN. This mirrors that same fix's own
+ * philosophy one layer further: rather than hoping the model reaches
+ * for genuine visual richness on its own (advisory prompt language
+ * already existed and evidently doesn't reliably hold, the same reason
+ * every other "advisory" rule in this file graduated to a mechanical
+ * guarantee), every beat's background gets REAL depth added in code -
+ * a soft, blurred glow accent (a sense of a light source, not a flat
+ * wash) plus a very subtle grain texture (breaks up perfect digital
+ * smoothness) - using the engine's own already-implemented, already-
+ * working fractalNoise/gaussianBlur primitives, which existed but were
+ * sitting almost entirely unused by real generations. Skipped entirely
+ * if the beat already has its own generate-kind or blurred decorative
+ * layer - this only fills a genuinely EMPTY gap, never fights a
+ * deliberate real composition the model already built.
+ */
+function enrichBackgroundDepth(beat) {
+  if (!isPlainObject(beat.visual) || !isPlainObject(beat.visual.background) || !Array.isArray(beat.visual.layers)) return;
+  const bg = beat.visual.background;
+  if (!isPlainObject(bg.generate) || !isPlainObject(bg.generate.params)) return;
+  const alreadyEnriched = beat.visual.layers.some((l) => isPlainObject(l)
+    && (l.type === 'generate' || (Array.isArray(l.effects) && l.effects.some((e) => isPlainObject(e) && e.type === 'gaussianBlur'))));
+  if (alreadyEnriched) return;
+
+  const baseColor = typeof bg.generate.params.startColor === 'string' ? bg.generate.params.startColor : '#0A2435';
+  const seed = hashString(baseColor);
+  const glowColor = adjustLightness(baseColor, 0.35 + (seed % 20) / 100);
+  const [gx, gy] = GLOW_CORNERS[seed % GLOW_CORNERS.length];
+  const glowSize = 420 + (seed % 5) * 30;
+
+  // Two earlier approaches were tried and reverted here, both confirmed
+  // live, not theorized:
+  // 1. A real gaussianBlur effect on a shape layer - withEffects (see
+  //    its own doc comment in sceneBuilder.js) reruns the ENTIRE draw+
+  //    effects pipeline from scratch on EVERY SINGLE FRAME with no
+  //    caching (only a "generate" kind layer's canvas is cached, via
+  //    buildGenerateDraw's own `if (!cached)` guard - an ordinary
+  //    shape's effects are NOT), so a ~170px-radius blur, 50x/beat, made
+  //    a 2-beat/100-frame test render hang past 3 real minutes without
+  //    finishing (normal: ~20-25s) - killed before it finished.
+  // 2. Three unblurred concentric circles at falling opacity as a "poor
+  //    man's blur" - fast, but rendered as a genuinely ugly hard-edged
+  //    grey blob with visible banding between opacity tiers (confirmed
+  //    via direct frame inspection - looked like a cartoon ink blot, not
+  //    a soft glow, actively worse than no accent at all).
+  // A radial "gradientRamp" solves both problems at once: it's a
+  // "generate" kind, so buildGenerateDraw caches its canvas once per
+  // beat (same free performance the grain texture layer already gets);
+  // and a gradient is BY DEFINITION a smooth per-pixel falloff, so there
+  // is no hard edge or banding to fake in the first place. It has no
+  // native alpha, so the outer stop is set to the SAME base color the
+  // gradient background itself uses (not a different "fade to
+  // transparent" trick) - at the gradient's own outer radius it already
+  // matches its surroundings, and the layer's own low opacity keeps the
+  // accent subtle rather than a competing bright shape.
+  const glowLayer = {
+    id: '__bg_glow__',
+    type: 'generate',
+    width: glowSize,
+    height: glowSize,
+    position: [gx, gy],
+    opacity: 0.5,
+    generate: {
+      kind: 'gradientRamp',
+      params: {
+        shape: 'radial',
+        startPoint: [glowSize / 2, glowSize / 2],
+        endPoint: [glowSize, glowSize / 2],
+        startColor: glowColor,
+        endColor: baseColor,
+      },
+    },
+  };
+  const grainLayer = {
+    id: '__bg_grain__',
+    type: 'generate',
+    width: CANVAS_WIDTH,
+    height: CANVAS_HEIGHT,
+    position: [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2],
+    opacity: 0.05,
+    blendMode: 'softLight',
+    generate: {
+      kind: 'fractalNoise',
+      params: {
+        seed: seed % 1000, octaves: 3, scale: 0.08, colorA: '#000000', colorB: '#FFFFFF',
+      },
+    },
+  };
+  beat.visual.layers.unshift(grainLayer, glowLayer);
+}
+
 // ---------------------------------------------------------------------
 // Real, repeated finding across MULTIPLE live generations (not a
 // one-off): the model consistently invents/misplaces type names across
@@ -2651,6 +2763,19 @@ function autoRepairBeat(beat) {
     walkLayers([beat.visual.background]);
   }
   walkLayers(beat.visual.layers);
+  // NOT enabled yet - enrichBackgroundDepth(beat) - see its own doc
+  // comment for the real, unresolved problem: two visual approaches
+  // were tried and rejected via direct frame inspection (unblurred
+  // concentric circles rendered as an ugly hard-edged grey blob with
+  // visible banding; a radial gradientRamp glow looked genuinely good
+  // on its own but left a visible rectangular halo around it, since
+  // gradientRamp has no native alpha and the fallback "fade to the
+  // background's own base color" doesn't match the real background's
+  // actual color at every y-position). Left implemented but disabled
+  // rather than ship a visible new regression - re-enable once a real
+  // fix exists (a genuinely alpha-aware soft falloff, or blur made
+  // cheap enough to use safely - see the function's own doc comment for
+  // the full story of what was tried).
 
   // Real, repeatedly-recurring mistake needing array-level (not per-
   // layer) surgery, so handled here rather than inside walkLayers:
