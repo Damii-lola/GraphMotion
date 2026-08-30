@@ -3142,6 +3142,42 @@ function autoRepairBeat(beat) {
         }
       }
 
+      // Real, confirmed-live mistake: a "highlights" entry's "range"
+      // selector with basedOn:"characters" uses start/end as a PERCENT
+      // of the string (selectors.js's rangeSelector, not literal char
+      // indices) - a model picking a percentage meant to land on "the
+      // last word" (e.g. start:88,end:100) has no way to know where
+      // word boundaries actually fall in percentage space, so it
+      // routinely lands mid-word instead: confirmed live as a highlight
+      // chip rendered slicing across just the final letter+punctuation
+      // ("G." of "LYING.") while the rest of that word sat unhighlighted
+      // outside the chip. Snapped outward to the nearest whole-word
+      // edges (in the same percentage space) rather than rejected -
+      // this preserves the evident intent (emphasize the tail of the
+      // sentence) while guaranteeing the chip always wraps a complete
+      // word, never a fragment of one.
+      if (Array.isArray(layer.highlights) && typeof layer.text === 'string' && layer.text.length > 0) {
+        const text = layer.text;
+        const len = text.length;
+        for (const h of layer.highlights) {
+          if (!isPlainObject(h) || !isPlainObject(h.selector)) continue;
+          const sel = h.selector;
+          if (sel.type !== 'range' || sel.basedOn !== 'characters'
+              || typeof sel.start !== 'number' || typeof sel.end !== 'number') continue;
+          const startIdx = Math.max(0, Math.min(len, Math.round((sel.start / 100) * len)));
+          const endIdx = Math.max(0, Math.min(len, Math.round((sel.end / 100) * len)));
+          const lo = Math.min(startIdx, endIdx), hi = Math.max(startIdx, endIdx);
+          if (hi <= lo) continue;
+          let snappedLo = lo, snappedHi = hi;
+          while (snappedLo > 0 && !/\s/.test(text[snappedLo - 1])) snappedLo--;
+          while (snappedHi < len && !/\s/.test(text[snappedHi])) snappedHi++;
+          if (snappedLo !== lo || snappedHi !== hi) {
+            sel.start = (snappedLo / len) * 100;
+            sel.end = (snappedHi / len) * 100;
+          }
+        }
+      }
+
       if (layer.type === 'precomp') walkLayers(layer.layers);
     }
   };
