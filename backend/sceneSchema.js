@@ -602,6 +602,83 @@ const ACCENT_OFFSETS = [0.28, 0.35, 0.42, 0.5, 0.58, 0.65];
  * earlier attempt - this part was never the problem) adds tactile
  * texture on top the same way.
  */
+const ACCENT_PALETTE = ['#FF4D6D', '#FFD166', '#4CC9F0', '#7BE495', '#B98CFF', '#FF8C42'];
+
+/**
+ * Real, confirmed-live gap found via the SAME brutal vision-judge pass
+ * that motivated enrichBackgroundDepth above - even after that fix
+ * shipped (a genuinely richer, seamless background, verified via direct
+ * pixel inspection), two fresh test frames STILL scored 20/100, both
+ * reasons naming the same thing: "lazy", "zero visual value" - not
+ * broken, just nothing to look at besides plain text. A richer
+ * BACKGROUND texture doesn't touch that complaint at all; the real gap
+ * is compositional - a frame with literally nothing on it but a
+ * headline and a gradient reads as empty no matter how nice the
+ * gradient is. Mirrors the dropShadow-enforcement pattern a few
+ * functions below (same "prompt language already asked for this and a
+ * live audit found it landing on only ~1 in 8 beats" story): rather
+ * than hope the model reaches for a real decorative element on its own,
+ * a beat with NO shape/image/generate content of its own at all (pure
+ * bare text-on-gradient) gets one added mechanically - a small colored
+ * accent bar under its own dominant headline, animated in rather than
+ * static. Skips outright the moment the beat already has ANY real
+ * decorative layer of its own (an icon, a shape, a card) - this only
+ * fills a genuinely bare frame, never competes with a real composition
+ * the model already built.
+ */
+function ensureDecorativeAccent(beat) {
+  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  const layers = beat.visual.layers;
+  const hasDecoration = layers.some((l) => isPlainObject(l) && l.id !== '__bg_grain__'
+    && (l.type === 'shape' || l.type === 'image' || l.type === 'generate'));
+  if (hasDecoration) return;
+
+  const textLayers = layers.filter((l) => isPlainObject(l) && l.type === 'text' && typeof l.fontSize === 'number');
+  if (textLayers.length === 0) return;
+  const maxFontSize = Math.max(...textLayers.map((l) => l.fontSize));
+  const dominant = textLayers.find((l) => l.fontSize >= maxFontSize * 0.95);
+  if (!dominant) return;
+  const pos = representativePosition(dominant.position);
+  if (!pos) return;
+
+  const size = estimateTextEffectiveSize(dominant);
+  const barHeight = 6;
+  const barY = pos[1] + size.height / 2 + 18;
+  // Skip rather than clamp if the dominant headline already sits low
+  // enough that a bar underneath it would land off-canvas - a beat
+  // whose text is already near the bottom edge has no real room for
+  // this, and forcing it on-screen would just overlap the text instead.
+  if (barY + barHeight / 2 + EDGE_MARGIN_PX > CANVAS_HEIGHT) return;
+
+  const seed = hashString((dominant.text || '') + pos[0] + pos[1]);
+  const accentColor = ACCENT_PALETTE[seed % ACCENT_PALETTE.length];
+  const barWidth = Math.max(70, Math.min(size.actualWidth * 0.45, 170));
+
+  layers.push({
+    id: '__accent_bar__',
+    type: 'shape',
+    width: barWidth,
+    height: barHeight,
+    position: [pos[0], barY],
+    opacity: {
+      keyframes: [
+        { time: 0.15, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: 0.4, value: 1, interpolation: 'easing', easing: 'easeOutCubic' },
+      ],
+    },
+    scale: {
+      keyframes: [
+        { time: 0.15, value: [0, 1], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: 0.45, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: barWidth, height: barHeight, roundness: barHeight / 2 } } },
+      { type: 'fill', color: accentColor },
+    ],
+  });
+}
+
 function enrichBackgroundDepth(beat) {
   if (!isPlainObject(beat.visual) || !isPlainObject(beat.visual.background) || !Array.isArray(beat.visual.layers)) return;
   const bg = beat.visual.background;
@@ -2898,6 +2975,11 @@ function autoRepairBeat(beat) {
 
   autoSpreadDuplicatePositions(beat.visual);
   fixBackdropZOrder(beat.visual);
+  // Runs AFTER the overlap/position repairs above, not before - it
+  // needs the dominant text layer's FINAL, settled position (where
+  // autoSpreadDuplicatePositions may have just moved it to resolve a
+  // collision), not whatever it started at.
+  ensureDecorativeAccent(beat);
   attachLineRevealSparks(beat);
 }
 
