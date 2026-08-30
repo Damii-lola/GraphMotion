@@ -28,17 +28,37 @@ function clampByte(v) { return Math.min(255, Math.max(0, v)); }
  * rounding breaks that up - a real, standard technique (ordered/random
  * dithering), not a cosmetic afterthought.
  */
+/**
+ * `colorStops` (optional) generalizes the original hard-coded 2-stop
+ * startColor/endColor ramp to N stops - added specifically to give a
+ * background real per-pixel depth (a bright accent point fading through
+ * a midtone into a dark edge, all in ONE seamless full-frame canvas)
+ * without the edge-mismatch problem a SEPARATE smaller overlay shape
+ * always has against its surroundings (two real attempts at exactly
+ * that - an unblurred shape and a small radial-gradient patch - both
+ * confirmed live to leave a visible seam/blob; see sceneSchema.js's
+ * enrichBackgroundDepth doc comment for the full story). Completely
+ * backward compatible: omitting colorStops keeps the original 2-color
+ * startColor/endColor behavior byte-for-byte (colorStops, when absent,
+ * is synthesized from them below), so no existing caller needs to
+ * change. Stops are `{offset: 0-1, color: '#rrggbb'}`, sorted by
+ * offset; a pixel's `t` is located between its bracketing pair and
+ * interpolated the same way the original 2-stop math always did.
+ */
 function gradientRamp(width, height, {
   startPoint = [0, 0], endPoint = [width, 0], startColor = '#000000', endColor = '#ffffff',
-  shape = 'linear', dither = true,
+  colorStops, shape = 'linear', dither = true,
 } = {}) {
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
   const imgData = ctx.createImageData(width, height);
   const data = imgData.data;
 
-  const [sr, sg, sb] = hexToRgb(startColor);
-  const [er, eg, eb] = hexToRgb(endColor);
+  const stops = (Array.isArray(colorStops) && colorStops.length >= 2
+    ? colorStops
+    : [{ offset: 0, color: startColor }, { offset: 1, color: endColor }]
+  ).map((s) => ({ offset: s.offset, rgb: hexToRgb(s.color) })).sort((a, b) => a.offset - b.offset);
+
   const dx = endPoint[0] - startPoint[0], dy = endPoint[1] - startPoint[1];
   const lenSq = dx * dx + dy * dy || 1;
   const radius = Math.hypot(dx, dy) || 1;
@@ -54,11 +74,20 @@ function gradientRamp(width, height, {
       }
       t = Math.min(1, Math.max(0, t));
 
+      // Locate the bracketing stop pair for this pixel's t (stops.length
+      // is always small - 2 to ~4 - so a linear scan is plenty cheap).
+      let a = stops[0]; let b = stops[stops.length - 1];
+      for (let s = 0; s < stops.length - 1; s++) {
+        if (t >= stops[s].offset && t <= stops[s + 1].offset) { a = stops[s]; b = stops[s + 1]; break; }
+      }
+      const span = b.offset - a.offset;
+      const segT = span > 0 ? (t - a.offset) / span : 0;
+
       const noise = dither ? hash01(x * 12.9898 + y * 78.233 * 3.7) - 0.5 : 0;
       const i = (y * width + x) * 4;
-      data[i] = clampByte(Math.round(sr + (er - sr) * t + noise));
-      data[i + 1] = clampByte(Math.round(sg + (eg - sg) * t + noise));
-      data[i + 2] = clampByte(Math.round(sb + (eb - sb) * t + noise));
+      data[i] = clampByte(Math.round(a.rgb[0] + (b.rgb[0] - a.rgb[0]) * segT + noise));
+      data[i + 1] = clampByte(Math.round(a.rgb[1] + (b.rgb[1] - a.rgb[1]) * segT + noise));
+      data[i + 2] = clampByte(Math.round(a.rgb[2] + (b.rgb[2] - a.rgb[2]) * segT + noise));
       data[i + 3] = 255;
     }
   }

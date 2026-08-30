@@ -464,6 +464,15 @@ function isValidGradientBackground(bg) {
   if (!isPlainObject(bg) || bg.type !== 'generate' || !isPlainObject(bg.generate)
       || bg.generate.kind !== 'gradientRamp' || !isPlainObject(bg.generate.params)) return false;
   const p = bg.generate.params;
+  // A colorStops-enriched background (enrichBackgroundDepth's own real
+  // 3-stop depth upgrade, applied AFTER this check normally already
+  // passed once) has no startColor/endColor of its own anymore - the
+  // outer two stops carry that role instead. Treated as already valid
+  // outright (skipping the distance/geometry checks below, which
+  // enforceGradientBackground's OWN prior pass already satisfied before
+  // enrichment ever ran) so a later validation pass never flattens a
+  // genuinely enriched background back down to 2 stops.
+  if (Array.isArray(p.colorStops)) return p.colorStops.length >= 2;
   if (typeof p.startColor !== 'string' || typeof p.endColor !== 'string') return false;
   if (colorDistance(p.startColor, p.endColor) < MIN_GRADIENT_COLOR_DISTANCE) return false;
   // Degenerate geometry: startPoint===endPoint collapses ANY gradient
@@ -549,9 +558,10 @@ function hashString(str) {
   return Math.abs(h);
 }
 
-const GLOW_CORNERS = [
-  [90, 160], [450, 160], [90, 800], [450, 800], [270, 130], [270, 830],
-];
+// Where the bright accent stop sits along the gradient's own axis -
+// varied per beat (via the hash below) so several beats in one video
+// don't all glow from the identical spot.
+const ACCENT_OFFSETS = [0.28, 0.35, 0.42, 0.5, 0.58, 0.65];
 
 /**
  * Real, confirmed-live gap found via a brutal vision-judge pass on real
@@ -559,78 +569,63 @@ const GLOW_CORNERS = [
  * own guarantee) still reads as "lazy", "boring", "a low-effort
  * PowerPoint slide" - a smooth, textureless color wash alone isn't
  * enough real visual depth to stop a TikTok scroll, independent of
- * whether anything is actually BROKEN. This mirrors that same fix's own
- * philosophy one layer further: rather than hoping the model reaches
- * for genuine visual richness on its own (advisory prompt language
- * already existed and evidently doesn't reliably hold, the same reason
- * every other "advisory" rule in this file graduated to a mechanical
- * guarantee), every beat's background gets REAL depth added in code -
- * a soft, blurred glow accent (a sense of a light source, not a flat
- * wash) plus a very subtle grain texture (breaks up perfect digital
- * smoothness) - using the engine's own already-implemented, already-
- * working fractalNoise/gaussianBlur primitives, which existed but were
- * sitting almost entirely unused by real generations. Skipped entirely
- * if the beat already has its own generate-kind or blurred decorative
- * layer - this only fills a genuinely EMPTY gap, never fights a
- * deliberate real composition the model already built.
+ * whether anything is actually BROKEN.
+ *
+ * TWO separate overlay-shape approaches were tried here first and both
+ * REJECTED via direct frame inspection, not theorized:
+ * 1. A real gaussianBlur effect on a small decorative shape - not
+ *    cached the way a "generate" layer's canvas is (withEffects reruns
+ *    the whole draw+effects pipeline every single frame), made a 2-beat
+ *    test render hang past 3 real minutes before being killed.
+ * 2. Unblurred concentric circles (fast, no effects pipeline) as a
+ *    "poor man's blur" - rendered as a genuinely ugly hard-edged grey
+ *    blob with visible banding, worse than no accent at all.
+ * 3. A separate small radial-gradient "glow" shape (fast AND smooth,
+ *    since a generate-kind gradient is cached and gradients have no
+ *    hard edges by construction) - the glow itself finally looked
+ *    right, but gradientRamp has no native alpha, so the square canvas
+ *    it was drawn on left a visibly different-shaded rectangle behind
+ *    it wherever its own edge didn't perfectly match the real
+ *    background color at that exact position.
+ *
+ * All three failed for the SAME underlying reason: a SEPARATE overlay
+ * layer, sized smaller than the frame, always has an edge that can
+ * mismatch its surroundings. The fix here sidesteps that entirely by
+ * never adding a separate shape at all - it enriches the BACKGROUND'S
+ * OWN gradient in place, upgrading generateEffects.js's gradientRamp
+ * (extended - see its own doc comment - to accept N color stops, not
+ * just 2) from a flat start->end wash into a real 3-stop ramp with a
+ * genuine bright accent in the middle. Since it's the exact same full-
+ * frame canvas the background always was, there is no second layer, no
+ * edge, and nothing that can ever visibly mismatch itself. A separate,
+ * very subtle full-frame grain texture (fractalNoise, kept from the
+ * earlier attempt - this part was never the problem) adds tactile
+ * texture on top the same way.
  */
 function enrichBackgroundDepth(beat) {
   if (!isPlainObject(beat.visual) || !isPlainObject(beat.visual.background) || !Array.isArray(beat.visual.layers)) return;
   const bg = beat.visual.background;
-  if (!isPlainObject(bg.generate) || !isPlainObject(bg.generate.params)) return;
-  const alreadyEnriched = beat.visual.layers.some((l) => isPlainObject(l)
-    && (l.type === 'generate' || (Array.isArray(l.effects) && l.effects.some((e) => isPlainObject(e) && e.type === 'gaussianBlur'))));
+  if (!isPlainObject(bg.generate) || !isPlainObject(bg.generate.params) || bg.generate.kind !== 'gradientRamp') return;
+  const p = bg.generate.params;
+  if (typeof p.startColor !== 'string' || typeof p.endColor !== 'string' || Array.isArray(p.colorStops)) return; // already enriched or malformed
+  const alreadyEnriched = beat.visual.layers.some((l) => isPlainObject(l) && l.type === 'generate');
   if (alreadyEnriched) return;
 
-  const baseColor = typeof bg.generate.params.startColor === 'string' ? bg.generate.params.startColor : '#0A2435';
-  const seed = hashString(baseColor);
-  const glowColor = adjustLightness(baseColor, 0.35 + (seed % 20) / 100);
-  const [gx, gy] = GLOW_CORNERS[seed % GLOW_CORNERS.length];
-  const glowSize = 420 + (seed % 5) * 30;
+  const seed = hashString(p.startColor + p.endColor);
+  const accentColor = adjustLightness(p.startColor, 0.3 + (seed % 20) / 100);
+  const accentOffset = ACCENT_OFFSETS[seed % ACCENT_OFFSETS.length];
 
-  // Two earlier approaches were tried and reverted here, both confirmed
-  // live, not theorized:
-  // 1. A real gaussianBlur effect on a shape layer - withEffects (see
-  //    its own doc comment in sceneBuilder.js) reruns the ENTIRE draw+
-  //    effects pipeline from scratch on EVERY SINGLE FRAME with no
-  //    caching (only a "generate" kind layer's canvas is cached, via
-  //    buildGenerateDraw's own `if (!cached)` guard - an ordinary
-  //    shape's effects are NOT), so a ~170px-radius blur, 50x/beat, made
-  //    a 2-beat/100-frame test render hang past 3 real minutes without
-  //    finishing (normal: ~20-25s) - killed before it finished.
-  // 2. Three unblurred concentric circles at falling opacity as a "poor
-  //    man's blur" - fast, but rendered as a genuinely ugly hard-edged
-  //    grey blob with visible banding between opacity tiers (confirmed
-  //    via direct frame inspection - looked like a cartoon ink blot, not
-  //    a soft glow, actively worse than no accent at all).
-  // A radial "gradientRamp" solves both problems at once: it's a
-  // "generate" kind, so buildGenerateDraw caches its canvas once per
-  // beat (same free performance the grain texture layer already gets);
-  // and a gradient is BY DEFINITION a smooth per-pixel falloff, so there
-  // is no hard edge or banding to fake in the first place. It has no
-  // native alpha, so the outer stop is set to the SAME base color the
-  // gradient background itself uses (not a different "fade to
-  // transparent" trick) - at the gradient's own outer radius it already
-  // matches its surroundings, and the layer's own low opacity keeps the
-  // accent subtle rather than a competing bright shape.
-  const glowLayer = {
-    id: '__bg_glow__',
-    type: 'generate',
-    width: glowSize,
-    height: glowSize,
-    position: [gx, gy],
-    opacity: 0.5,
-    generate: {
-      kind: 'gradientRamp',
-      params: {
-        shape: 'radial',
-        startPoint: [glowSize / 2, glowSize / 2],
-        endPoint: [glowSize, glowSize / 2],
-        startColor: glowColor,
-        endColor: baseColor,
-      },
-    },
+  bg.generate.params = {
+    ...p,
+    colorStops: [
+      { offset: 0, color: p.startColor },
+      { offset: accentOffset, color: accentColor },
+      { offset: 1, color: p.endColor },
+    ],
   };
+  delete bg.generate.params.startColor;
+  delete bg.generate.params.endColor;
+
   const grainLayer = {
     id: '__bg_grain__',
     type: 'generate',
@@ -646,7 +641,7 @@ function enrichBackgroundDepth(beat) {
       },
     },
   };
-  beat.visual.layers.unshift(grainLayer, glowLayer);
+  beat.visual.layers.unshift(grainLayer);
 }
 
 // ---------------------------------------------------------------------
@@ -2772,19 +2767,12 @@ function autoRepairBeat(beat) {
     walkLayers([beat.visual.background]);
   }
   walkLayers(beat.visual.layers);
-  // NOT enabled yet - enrichBackgroundDepth(beat) - see its own doc
-  // comment for the real, unresolved problem: two visual approaches
-  // were tried and rejected via direct frame inspection (unblurred
-  // concentric circles rendered as an ugly hard-edged grey blob with
-  // visible banding; a radial gradientRamp glow looked genuinely good
-  // on its own but left a visible rectangular halo around it, since
-  // gradientRamp has no native alpha and the fallback "fade to the
-  // background's own base color" doesn't match the real background's
-  // actual color at every y-position). Left implemented but disabled
-  // rather than ship a visible new regression - re-enable once a real
-  // fix exists (a genuinely alpha-aware soft falloff, or blur made
-  // cheap enough to use safely - see the function's own doc comment for
-  // the full story of what was tried).
+  // Re-enabled - see enrichBackgroundDepth's own doc comment for the
+  // full story of the two overlay-shape approaches that were tried and
+  // rejected first, and why enriching the background's OWN gradient in
+  // place (no separate layer, so no possible edge mismatch) fixes the
+  // root cause rather than working around it again.
+  enrichBackgroundDepth(beat);
 
   // Real, repeatedly-recurring mistake needing array-level (not per-
   // layer) surgery, so handled here rather than inside walkLayers:
