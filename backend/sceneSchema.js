@@ -604,6 +604,62 @@ const ACCENT_OFFSETS = [0.28, 0.35, 0.42, 0.5, 0.58, 0.65];
  */
 const ACCENT_PALETTE = ['#FF4D6D', '#FFD166', '#4CC9F0', '#7BE495', '#B98CFF', '#FF8C42'];
 
+// Real, confirmed-live finding driving this table's existence: a fresh
+// brutal vision-judge pass on real (bug-free) output scored no higher
+// than one riddled with bugs, and named the SAME accent-bar fallback
+// below as an actual NEGATIVE - "that random orange line at the bottom
+// adds nothing but confusion" - while, in the SAME video, beats where
+// the model had supplied a real, content-relevant icon on its own (a
+// fries icon for "FRIES + MILKSHAKE", a fork/spoon for a food beat) got
+// no such complaint. The gap was never "beats need SOME decoration",
+// it's "an abstract shape reads as filler; a real icon that means
+// something doesn't." Real semantic icon-matching for arbitrary text is
+// a language-understanding task this file can't do in general (no LLM
+// call available inside a synchronous JSON repair pass) - but a
+// curated keyword table can cover the common short-form themes that
+// actually recur (money, food, health, space, tech, fear, time...)
+// directly, deterministically, no AI cooperation required. Icon names
+// are all common, long-established Material Design Icons entries,
+// chosen conservatively to avoid the 404-on-render risk a guessed/rare
+// name would carry (iconFetch.js has no fallback for a name that
+// doesn't resolve).
+const TOPIC_ICON_KEYWORDS = [
+  { keywords: ['money', 'cash', 'dollar', 'wealth', 'rich', 'invest', 'stock', 'market', 'crash', 'save', 'saving', 'budget', 'finance', 'debt', 'loan', 'bank', 'price', 'cost', 'expensive', 'cheap'], icon: 'mdi:cash-multiple' },
+  { keywords: ['food', 'eat', 'eating', 'taste', 'recipe', 'cook', 'cooking', 'meal', 'snack', 'dish', 'flavor', 'kitchen'], icon: 'mdi:silverware-fork-knife' },
+  { keywords: ['plant', 'leaf', 'leaves', 'garden', 'grow', 'growing', 'flower', 'tree', 'soil', 'root'], icon: 'mdi:sprout' },
+  { keywords: ['brain', 'mind', 'psychology', 'think', 'thinking', 'thought', 'memory', 'remember', 'mental'], icon: 'mdi:brain' },
+  { keywords: ['space', 'star', 'universe', 'planet', 'galaxy', 'cosmic', 'astronaut', 'nasa', 'orbit'], icon: 'mdi:rocket-launch' },
+  { keywords: ['health', 'body', 'doctor', 'medicine', 'sick', 'disease', 'symptom', 'heal', 'medical'], icon: 'mdi:heart-pulse' },
+  { keywords: ['sleep', 'tired', 'exhausted', 'rest', 'bed', 'night', 'insomnia'], icon: 'mdi:sleep' },
+  { keywords: ['time', 'clock', 'hour', 'minute', 'schedule', 'deadline', 'late', 'early'], icon: 'mdi:clock-outline' },
+  { keywords: ['history', 'ancient', 'century', 'war', 'empire', 'historical'], icon: 'mdi:book-open-page-variant' },
+  { keywords: ['science', 'experiment', 'lab', 'chemistry', 'physics', 'scientist', 'research'], icon: 'mdi:flask' },
+  { keywords: ['tech', 'technology', 'computer', 'robot', 'software', 'app', 'phone', 'digital', 'internet', 'online'], icon: 'mdi:chip' },
+  { keywords: ['fitness', 'workout', 'gym', 'exercise', 'muscle', 'run', 'running', 'training'], icon: 'mdi:dumbbell' },
+  { keywords: ['travel', 'trip', 'vacation', 'flight', 'country', 'world', 'abroad', 'destination'], icon: 'mdi:airplane' },
+  { keywords: ['love', 'relationship', 'dating', 'couple', 'romance', 'partner'], icon: 'mdi:heart' },
+  { keywords: ['fear', 'scary', 'danger', 'dangerous', 'warning', 'risk', 'threat', 'toxic', 'poison'], icon: 'mdi:alert' },
+  { keywords: ['secret', 'mystery', 'hidden', 'unknown', 'truth', 'reveal'], icon: 'mdi:help-circle' },
+  { keywords: ['success', 'win', 'winning', 'achieve', 'goal', 'champion'], icon: 'mdi:trophy' },
+  { keywords: ['mistake', 'wrong', 'error', 'fail', 'failure'], icon: 'mdi:close-circle' },
+  { keywords: ['water', 'ocean', 'sea', 'rain', 'liquid', 'drink'], icon: 'mdi:water' },
+  { keywords: ['fire', 'hot', 'burn', 'heat', 'flame'], icon: 'mdi:fire' },
+  { keywords: ['idea', 'bulb', 'creative', 'innovation', 'invent'], icon: 'mdi:lightbulb-on' },
+  { keywords: ['grow', 'growth', 'increase', 'rise', 'boost'], icon: 'mdi:trending-up' },
+  { keywords: ['drop', 'decline', 'decrease', 'fall', 'shrink'], icon: 'mdi:trending-down' },
+];
+
+/** Scans a beat's own combined text content for a topical keyword match, case-insensitive, whole-word only (so "cost" doesn't fire on "costume") - returns a real Iconify icon name, or null if nothing in the table matches. */
+function pickTopicIcon(allText) {
+  const lower = allText.toLowerCase();
+  for (const entry of TOPIC_ICON_KEYWORDS) {
+    for (const kw of entry.keywords) {
+      if (new RegExp(`\\b${kw}\\b`).test(lower)) return entry.icon;
+    }
+  }
+  return null;
+}
+
 /**
  * Real, confirmed-live gap found via the SAME brutal vision-judge pass
  * that motivated enrichBackgroundDepth above - even after that fix
@@ -619,12 +675,16 @@ const ACCENT_PALETTE = ['#FF4D6D', '#FFD166', '#4CC9F0', '#7BE495', '#B98CFF', '
  * live audit found it landing on only ~1 in 8 beats" story): rather
  * than hope the model reaches for a real decorative element on its own,
  * a beat with NO shape/image/generate content of its own at all (pure
- * bare text-on-gradient) gets one added mechanically - a small colored
- * accent bar under its own dominant headline, animated in rather than
- * static. Skips outright the moment the beat already has ANY real
- * decorative layer of its own (an icon, a shape, a card) - this only
- * fills a genuinely bare frame, never competes with a real composition
- * the model already built.
+ * bare text-on-gradient) gets one added mechanically. Tries a REAL,
+ * content-matched icon first (via pickTopicIcon, above) - added after
+ * live evidence that the abstract accent-bar fallback alone actively
+ * hurt, not helped, the vision judge's score ("adds nothing but
+ * confusion") - and only falls back to the plain accent bar when
+ * nothing in the topic table matches this beat's own text. Skips
+ * outright the moment the beat already has ANY real decorative layer of
+ * its own (an icon, a shape, a card) - this only fills a genuinely bare
+ * frame, never competes with a real composition the model already
+ * built.
  */
 function ensureDecorativeAccent(beat) {
   if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
@@ -642,6 +702,51 @@ function ensureDecorativeAccent(beat) {
   if (!pos) return;
 
   const size = estimateTextEffectiveSize(dominant);
+  const seed = hashString((dominant.text || '') + pos[0] + pos[1]);
+  const accentColor = ACCENT_PALETTE[seed % ACCENT_PALETTE.length];
+
+  const allText = layers.filter((l) => isPlainObject(l) && l.type === 'text' && typeof l.text === 'string').map((l) => l.text).join(' ');
+  const topicIcon = pickTopicIcon(allText);
+  if (topicIcon) {
+    const iconSize = 64;
+    const gap = 50;
+    const aboveY = pos[1] - size.height / 2 - gap - iconSize / 2;
+    const belowY = pos[1] + size.height / 2 + gap + iconSize / 2;
+    const fitsAbove = aboveY - iconSize / 2 - EDGE_MARGIN_PX > 0;
+    const fitsBelow = belowY + iconSize / 2 + EDGE_MARGIN_PX < CANVAS_HEIGHT;
+    // Prefers ABOVE (matches the real, judge-approved examples this fix
+    // is modeled on - a fries icon sitting above "FRIES + MILKSHAKE"),
+    // falls back to BELOW only if there's genuinely no room above -
+    // never forces it on-canvas by overlapping the text itself.
+    if (fitsAbove || fitsBelow) {
+      const iconY = fitsAbove ? aboveY : belowY;
+      layers.push({
+        id: '__topic_icon__',
+        type: 'image',
+        icon: topicIcon,
+        iconColor: accentColor,
+        width: iconSize,
+        height: iconSize,
+        position: [pos[0], iconY],
+        opacity: {
+          keyframes: [
+            { time: 0.1, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+            { time: 0.35, value: 1, interpolation: 'easing', easing: 'easeOutCubic' },
+          ],
+        },
+        scale: {
+          keyframes: [
+            { time: 0.1, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+            { time: 0.4, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' },
+          ],
+        },
+      });
+      return;
+    }
+    // No room for a real icon either side - fall through to the plain
+    // bar below, which is thin enough to still usually fit.
+  }
+
   const barHeight = 6;
   const barY = pos[1] + size.height / 2 + 18;
   // Skip rather than clamp if the dominant headline already sits low
@@ -650,8 +755,6 @@ function ensureDecorativeAccent(beat) {
   // this, and forcing it on-screen would just overlap the text instead.
   if (barY + barHeight / 2 + EDGE_MARGIN_PX > CANVAS_HEIGHT) return;
 
-  const seed = hashString((dominant.text || '') + pos[0] + pos[1]);
-  const accentColor = ACCENT_PALETTE[seed % ACCENT_PALETTE.length];
   const barWidth = Math.max(70, Math.min(size.actualWidth * 0.45, 170));
 
   layers.push({
