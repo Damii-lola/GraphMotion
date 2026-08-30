@@ -580,15 +580,14 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       // fully unresponsive, discovered via CORS errors that were
       // actually a symptom of the whole container getting OOM-killed).
       // Measured directly, not assumed: every real frame render (via
-      // sceneBuilder.js -> layerStack.js) allocates several fresh
-      // full-frame canvases (the layer-stack accumulator, one per
-      // layer, one more per track-matte source) - each one a small JS
-      // wrapper object with several MB of NATIVE Skia pixel memory
-      // attached via napi-rs. V8's own GC decides when to collect based
-      // on JS HEAP size, which stays tiny here (a canvas wrapper is
-      // small) regardless of how much native memory is actually piling
-      // up - so V8 never feels "pressured" to collect, and native RSS
-      // grows essentially unbounded.
+      // sceneBuilder.js -> layerStack.js) allocates full-frame canvases
+      // - each one a small JS wrapper object with several MB of NATIVE
+      // Skia pixel memory attached via napi-rs. V8's own GC decides
+      // when to collect based on JS HEAP size, which stays tiny here (a
+      // canvas wrapper is small) regardless of how much native memory
+      // is actually piling up - so V8 never feels "pressured" to
+      // collect, and native RSS grows essentially unbounded without
+      // help.
       //
       // A SINGLE synchronous global.gc() call does NOT fix this -
       // measured directly, not assumed: calling global.gc() alone left
@@ -600,43 +599,30 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       // direct A/B measurement on identical content: gc() -> yield to
       // the event loop -> gc() AGAIN.
       //
-      // Cadence: a REAL production incident, not a hypothetical one,
-      // forced a second round of tuning here. Running this EVERY frame
-      // kept memory excellent (~245MB peak) but was measured to make
-      // frame generation ~4x slower locally - and on Render's actual
-      // (meaningfully slower/shared) CPU, that pushed a single 8s chunk
-      // (192 frames) well past its 3-minute timeout mid-render, taking
-      // the whole site down a second time. Swept several cadences on
-      // identical real content: every-frame = ~140s/~245MB; every-2nd-
-      // frame = ~38s/~316MB; every-3rd = ~38s/~431MB; every-5th =
-      // ~39s/~589MB. The cliff is specifically between "every frame"
-      // and "every other frame" - cadence 2 gets nearly all of the
-      // speed of looser cadences while keeping memory closest to the
-      // every-frame result, so that's what's used: real evidence, not a
-      // guess at a "reasonable" number. --max-old-space-size (already
-      // set on the render worker forks) never covered any of this - it
-      // only bounds the JS heap, which was never where this memory
-      // actually lived. Requires --expose-gc on the forked render
-      // process (server.js/longVideoOrchestrator.js); guarded so this
-      // is a silent no-op (not a crash) if that flag is ever missing,
-      // though production must always pass it for this fix to actually
-      // take effect.
-      // inPan frames render TWO full beats' worth of content (the
-      // frozen outgoing canvas plus the live incoming one) instead of
-      // one - a real, concentrated burst of native memory churn the
-      // every-2nd-frame cadence above wasn't tuned for (that cadence
-      // was benchmarked on ordinary, single-beat frames). Forcing
-      // every-frame gc() ONLY for this short, bounded window (pans are
-      // well under a second) buys back most of the peak-memory cost of
-      // that churn without paying the ~4x slowdown of every-frame gc()
-      // across the WHOLE video - the cheaper cadence still applies
-      // everywhere else.
-      if ((inPan || frameIndex % 2 === 0) && global.gc) {
+      // Cadence: this USED to be every-2nd-frame (looser cadences were
+      // even worse) specifically because every-frame gc() measured ~4x
+      // slower - back when layerStack.js/motionBlur.js/withEffects each
+      // allocated a FRESH canvas per layer per motion-blur sample
+      // (samples=4), so a single frame could momentarily hold dozens of
+      // native buffers alive, making every gc() pass expensive. Those
+      // three call sites now POOL their canvases (allocate once, clear
+      // and reuse) instead of allocating fresh ones - see their own doc
+      // comments - which shrank per-frame garbage enough that every-
+      // frame gc() re-measured at essentially the SAME speed as every-
+      // 2nd-frame (72.8s vs 71.6s on identical real content) while
+      // keeping RSS consistently lower throughout the render, so this
+      // now always runs, not conditionally. --max-old-space-size
+      // (already set on the render worker forks) never covered any of
+      // this - it only bounds the JS heap, which was never where this
+      // memory actually lived. Requires --expose-gc on the forked
+      // render process (server.js/longVideoOrchestrator.js); guarded so
+      // this is a silent no-op (not a crash) if that flag is ever
+      // missing, though production must always pass it for this fix to
+      // actually take effect.
+      if (global.gc) {
         global.gc();
         await new Promise((resolve) => setImmediate(resolve));
         global.gc();
-      } else if (frameIndex % 10 === 0) {
-        await new Promise((resolve) => setImmediate(resolve));
       }
       if (onProgress && frameIndex % 5 === 0) {
         onProgress(Math.round((frameIndex / totalFrames) * 90));

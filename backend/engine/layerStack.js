@@ -111,6 +111,22 @@ function applyMask(targetCanvas, maskCanvas) {
  * than hardcoded so callers can wrap it - e.g. with motion blur - per
  * layer without this module needing to know about that).
  */
+// Real, confirmed-live memory finding (not a classic leak - correctly
+// freed, just far too much of it alive at once): this loop used to
+// `createCanvas(width, height)` fresh for EVERY node, every single
+// call - and this function is itself called up to `samples` times
+// (motionBlur.js, currently 4) for ONE output frame. A beat with L
+// decorative layers (content card, kicker pill/text, icon, accent bar,
+// grain, headline - 6+ is now common since the dense-composition and
+// content-matched-icon work) was allocating roughly samples*(L+1) full
+// 540x960 native Skia buffers (~2MB each) for a SINGLE frame - the
+// direct, measured reason peak RSS sat far above a <75MB target despite
+// no single buffer ever being orphaned. Fixed by pooling: ONE
+// `layerCanvas` and ONE `matteCanvas`, allocated once per
+// renderLayerStack call (not per node) and cleared+reused for every
+// node that needs one - correctness is unaffected (each node still
+// gets a properly cleared, isolated buffer before it draws), only the
+// allocation COUNT drops from O(layers) to O(1) per call.
 function renderLayerStack(ctx, width, height, nodes, t, nodeRenderFn = (node, c, tt) => node.render(c, tt)) {
   const accumulator = createCanvas(width, height);
   const accCtx = accumulator.getContext('2d');
@@ -120,6 +136,9 @@ function renderLayerStack(ctx, width, height, nodes, t, nodeRenderFn = (node, c,
   // stack, matching AE auto-hiding a layer's own visibility the moment
   // it's picked as another layer's track matte.
   const matteSourceNodes = new Set(nodes.filter((n) => n.trackMatte).map((n) => n.trackMatte.source));
+
+  let layerCanvas = null;
+  let matteCanvas = null;
 
   for (const node of nodes) {
     if (matteSourceNodes.has(node)) continue;
@@ -137,12 +156,20 @@ function renderLayerStack(ctx, width, height, nodes, t, nodeRenderFn = (node, c,
       continue;
     }
 
-    const layerCanvas = createCanvas(width, height);
-    nodeRenderFn(node, layerCanvas.getContext('2d'), t);
+    if (!layerCanvas) layerCanvas = createCanvas(width, height);
+    const layerCtx = layerCanvas.getContext('2d');
+    layerCtx.clearRect(0, 0, width, height);
+    nodeRenderFn(node, layerCtx, t);
+    // A track matte replaces layerCanvas's own alpha (applyMask below),
+    // so a lingering mask from a PREVIOUS node sharing this pooled
+    // canvas can never bleed through - every node either gets its own
+    // fresh matte applied or none at all, same as the un-pooled version.
 
     if (node.trackMatte) {
-      const matteCanvas = createCanvas(width, height);
-      nodeRenderFn(node.trackMatte.source, matteCanvas.getContext('2d'), t);
+      if (!matteCanvas) matteCanvas = createCanvas(width, height);
+      const matteCtx = matteCanvas.getContext('2d');
+      matteCtx.clearRect(0, 0, width, height);
+      nodeRenderFn(node.trackMatte.source, matteCtx, t);
       const type = node.trackMatte.type;
       let mask;
       if (type === 'luma' || type === 'lumaInverted') {

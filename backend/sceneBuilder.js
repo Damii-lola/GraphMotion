@@ -422,21 +422,39 @@ async function loadBeatImages(visual, beatContext) {
  * range, so centering them would incorrectly shift their content by
  * half their own size - `centered` must stay false there.
  */
+// Memory note: this closure runs once per motion-blur SAMPLE (4, by
+// default) for every single output frame that layer appears in - with
+// dropShadow now attached to essentially every dominant headline
+// (autoRepairBeat's own dropShadow-on-dominant-text rule), a fresh
+// `createCanvas` here on every call was another real multiplier
+// against the same <75MB target layerStack.js's own pooling fix
+// targets. The buffer is instead created ONCE when withEffects itself
+// is called (build time, once per layer - see buildOneBeat's own "once
+// per beat, not per frame" note) and reused across every later call to
+// this same closure; safe because rendering is single-threaded and
+// strictly sequential (never two overlapping calls to the same
+// closure), and `resetTransform` before each use means a leftover
+// translate from a PRIOR call can never bleed into the next one.
 function withEffects(rawDraw, layerDef, contentWidth, contentHeight, centered = false) {
   if (!layerDef.effects || layerDef.effects.length === 0) return rawDraw;
   if (!centered) {
+    const buffer = createCanvas(contentWidth, contentHeight);
+    const bufferCtx = buffer.getContext('2d');
     return (ctx, t) => {
-      const buffer = createCanvas(contentWidth, contentHeight);
-      rawDraw(buffer.getContext('2d'), t);
+      bufferCtx.resetTransform();
+      bufferCtx.clearRect(0, 0, contentWidth, contentHeight);
+      rawDraw(bufferCtx, t);
       const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t);
       ctx.drawImage(finalCanvas, 0, 0);
     };
   }
   const offsetX = contentWidth / 2;
   const offsetY = contentHeight / 2;
+  const buffer = createCanvas(contentWidth, contentHeight);
+  const bufferCtx = buffer.getContext('2d');
   return (ctx, t) => {
-    const buffer = createCanvas(contentWidth, contentHeight);
-    const bufferCtx = buffer.getContext('2d');
+    bufferCtx.resetTransform();
+    bufferCtx.clearRect(0, 0, contentWidth, contentHeight);
     bufferCtx.translate(offsetX, offsetY);
     rawDraw(bufferCtx, t);
     const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t);

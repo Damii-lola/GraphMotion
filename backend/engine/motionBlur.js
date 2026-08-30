@@ -32,6 +32,15 @@ const { clamp01 } = require('./mathUtils');
  * newAvg = sample_k/k + oldAvg*(k-1)/k, which IS the running-mean
  * update formula).
  */
+/**
+ * Memory note: `drawFn` here is a beat's entire layer stack
+ * (renderLayerStack), and this loop calls it once per sample (4, by
+ * this engine's own config) for ONE output frame - see layerStack.js's
+ * own doc comment on renderLayerStack for the full multiplication this
+ * created. `sampleCanvas` is pooled the same way (allocated once,
+ * cleared and reused per sample) rather than createCanvas()'d fresh
+ * each iteration, for the identical reason.
+ */
 function renderWithMotionBlur(ctx, width, height, t, frameDuration, drawFn, config = {}) {
   const { enabled = true, shutterAngle = 180, shutterPhase = -90, samples = 8 } = config;
 
@@ -45,6 +54,9 @@ function renderWithMotionBlur(ctx, width, height, t, frameDuration, drawFn, conf
   const windowStart = t + phaseFraction * frameDuration;
   const windowDuration = shutterFraction * frameDuration;
 
+  const sampleCanvas = createCanvas(width, height);
+  const sampleCtx = sampleCanvas.getContext('2d');
+
   for (let k = 1; k <= samples; k++) {
     // Sample times centered within each of `samples` equal sub-slices
     // of the shutter window, not just evenly spaced points touching
@@ -52,8 +64,7 @@ function renderWithMotionBlur(ctx, width, height, t, frameDuration, drawFn, conf
     // distribute samples for the least biased average.
     const sampleT = windowStart + ((k - 0.5) / samples) * windowDuration;
 
-    const sampleCanvas = createCanvas(width, height);
-    const sampleCtx = sampleCanvas.getContext('2d');
+    sampleCtx.clearRect(0, 0, width, height);
     drawFn(sampleCtx, sampleT);
 
     ctx.save();
