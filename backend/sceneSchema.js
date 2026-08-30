@@ -1840,6 +1840,25 @@ function autoRepairBeat(beat) {
         layer.text = layer.text.replace(/\s{2,}/g, ' ');
       }
 
+      // Real, confirmed-live bug via direct visual inspection of a real
+      // rendered video (not theorized): the model writes a headline and
+      // a follow-on clause as ONE "text" string, joined by a period with
+      // NO space after it - "EVERYONE WAS BUYING.Margin Trading",
+      // "THEN, THE PANIC.October 29", "BILLIONS VANISHED.Total Loss" -
+      // three separate occurrences across five beats of one real
+      // generation, so a real, systemic pattern, not a fluke. Reads as a
+      // visibly broken run-on word on screen ("BUYING.Margin") and was
+      // independently flagged by the vision judge every time it
+      // appeared. Restricted to a 2+ letter word before the period and
+      // an uppercase-then-lowercase word start after it (not just any
+      // uppercase letter) specifically so this does NOT touch a real
+      // multi-letter-abbreviation pattern like "U.S.A" (single letters
+      // between periods) - only a genuine missing sentence-boundary
+      // space between two real words.
+      if (layer.type === 'text' && typeof layer.text === 'string' && /[a-zA-Z]{2,}\.[A-Z][a-z]/.test(layer.text)) {
+        layer.text = layer.text.replace(/([a-zA-Z]{2,})\.([A-Z][a-z])/g, '$1. $2');
+      }
+
       // Real, repeatedly-recurring mistake (multiple separate live
       // generations, same shape every time) - converted to auto-repair
       // rather than left as a pure retry-forcing validation error, same
@@ -2756,7 +2775,58 @@ function autoRepairBeat(beat) {
   }
 
   autoSpreadDuplicatePositions(beat.visual);
+  fixBackdropZOrder(beat.visual);
   attachLineRevealSparks(beat);
+}
+
+/**
+ * Real, confirmed-live bug found via direct visual inspection of a real
+ * rendered video: a shape layer explicitly meant as a text's own
+ * backdrop card (same co-located-position pattern this file already
+ * treats as legitimate everywhere else - see the "co-located backdrop"
+ * exemptions above) rendered ON TOP of its text instead of behind it -
+ * a solid, opaque 300x80 black rounded rectangle sitting dead center on
+ * a headline, completely blotting out the middle of the words. The
+ * model wrote the shape AFTER the text in the layers array (layers draw
+ * in array order, each one on top of the last), with nothing anywhere
+ * checking that a backdrop's draw order actually puts it BEHIND the
+ * text it's meant to back - only the co-located POSITION was ever
+ * treated as intentional, never the ORDER. Fixed here, mechanically:
+ * any non-text layer sitting at essentially the exact same position as
+ * a text layer (same 5px tolerance the other co-located-backdrop checks
+ * in this file already use) but listed AFTER it gets moved to sit
+ * immediately BEFORE that text layer instead - a backdrop can only ever
+ * be legitimate if it's actually behind its text.
+ */
+function fixBackdropZOrder(visual) {
+  if (!Array.isArray(visual.layers)) return;
+  const layers = visual.layers;
+  let moved = true;
+  let guard = 0;
+  while (moved && guard < layers.length * 2) {
+    moved = false;
+    guard += 1;
+    for (let ti = 0; ti < layers.length; ti++) {
+      const textLayer = layers[ti];
+      if (!isPlainObject(textLayer) || textLayer.type !== 'text' || textLayer.parent) continue;
+      const tPos = representativePosition(textLayer.position);
+      if (!tPos) continue;
+      for (let si = ti + 1; si < layers.length; si++) {
+        const sib = layers[si];
+        if (!isPlainObject(sib) || sib.parent) continue;
+        if (sib.type !== 'shape' && sib.type !== 'image') continue;
+        const sPos = representativePosition(sib.position);
+        if (!sPos) continue;
+        if (Math.abs(sPos[0] - tPos[0]) < 5 && Math.abs(sPos[1] - tPos[1]) < 5) {
+          layers.splice(si, 1);
+          layers.splice(ti, 0, sib);
+          moved = true;
+          break;
+        }
+      }
+      if (moved) break;
+    }
+  }
 }
 
 /**
