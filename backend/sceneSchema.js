@@ -1954,21 +1954,30 @@ function autoRepairBeat(beat) {
 
       // Real, confirmed-live bug via direct visual inspection of a real
       // rendered video (not theorized): the model writes a headline and
-      // a follow-on clause as ONE "text" string, joined by a period with
-      // NO space after it - "EVERYONE WAS BUYING.Margin Trading",
-      // "THEN, THE PANIC.October 29", "BILLIONS VANISHED.Total Loss" -
-      // three separate occurrences across five beats of one real
-      // generation, so a real, systemic pattern, not a fluke. Reads as a
-      // visibly broken run-on word on screen ("BUYING.Margin") and was
-      // independently flagged by the vision judge every time it
-      // appeared. Restricted to a 2+ letter word before the period and
-      // an uppercase-then-lowercase word start after it (not just any
-      // uppercase letter) specifically so this does NOT touch a real
-      // multi-letter-abbreviation pattern like "U.S.A" (single letters
-      // between periods) - only a genuine missing sentence-boundary
-      // space between two real words.
-      if (layer.type === 'text' && typeof layer.text === 'string' && /[a-zA-Z]{2,}\.[A-Z][a-z]/.test(layer.text)) {
-        layer.text = layer.text.replace(/([a-zA-Z]{2,})\.([A-Z][a-z])/g, '$1. $2');
+      // a follow-on clause as ONE "text" string, joined by sentence
+      // punctuation with NO space after it - "EVERYONE WAS BUYING.Margin
+      // Trading", "THEN, THE PANIC.October 29", "BILLIONS VANISHED.Total
+      // Loss" (periods, Title-Case follow-on word), then independently
+      // "YELLOW LEAVES?BROWN EDGES?" (a question mark, ALL-CAPS follow-
+      // on word - the first fix's own [A-Z][a-z] check required a
+      // lowercase second letter, which a Title-Case word like "Margin"
+      // has but an all-caps one like "BROWN" never does, so this exact
+      // real case slipped through the first version of this fix
+      // entirely) surfaced in a LATER real generation. Extended to catch
+      // BOTH capitalization styles ([A-Z][a-zA-Z], not just [A-Z][a-z])
+      // and to "?"/"!" as well as ".", on the same real evidence that
+      // this happens across whatever punctuation/casing the model
+      // happens to reach for, not just the one specific combination
+      // caught first. Reads as a visibly broken run-on word on screen
+      // ("BUYING.Margin", "LEAVES?BROWN") and was independently flagged
+      // by the vision judge both times it appeared. Still restricted to
+      // a 2+ letter word before the punctuation and a REAL 2+ letter
+      // word start after it (not just any single uppercase letter) so
+      // this does NOT touch a real multi-letter-abbreviation pattern
+      // like "U.S.A" (single letters between periods) - only a genuine
+      // missing sentence-boundary space between two real words.
+      if (layer.type === 'text' && typeof layer.text === 'string' && /[a-zA-Z]{2,}[.?!][A-Z][a-zA-Z]/.test(layer.text)) {
+        layer.text = layer.text.replace(/([a-zA-Z]{2,})([.?!])([A-Z][a-zA-Z])/g, '$1$2 $3');
       }
 
       // Real, repeatedly-recurring mistake (multiple separate live
