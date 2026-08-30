@@ -1,9 +1,10 @@
 const { EASING_REGISTRY } = require('./engine/easingCurves');
 const { BLEND_MODE_MAP } = require('./engine/layerStack');
 const { Property } = require('./engine/keyframes');
+const { TEXT_IN_PRESETS, TEXT_OUT_PRESETS, TEXT_ANIMATION_DIRECTIONS } = require('./engine/textAnimationPresets');
 
 /**
- * The scene JSON schema: what Mistral generates, what sceneBuilder.js
+ * The scene JSON schema: what Gemini generates, what sceneBuilder.js
  * interprets into real calls against the batch 1-11 engine. This
  * REPLACES the deleted sceneTemplates.js's fixed ~21-template
  * vocabulary with a real, general scene-graph description - the whole
@@ -817,6 +818,42 @@ function validateHighlight(h, path, errors) {
   }
 }
 
+/**
+ * Deliberately lenient by design, not an oversight: `textAnimation` is
+ * expanded into real keyframes by textAnimationPresets.js at RENDER
+ * time (sceneBuilder.js's buildBeatVisual), well AFTER this validation
+ * pass - a malformed preset name here doesn't corrupt anything or crash
+ * the renderer (the expansion code just skips a preset name it doesn't
+ * recognize), so this exists purely to give a clear, correctable retry
+ * message for genuinely wrong usage rather than to gate acceptance the
+ * way most of this file's other checks do.
+ */
+function validateTextAnimation(ta, path, errors) {
+  if (!isPlainObject(ta)) { errors.push(`${path}: must be an object shaped {"in":{...}, "out":{...}} - both optional, but at least one should be present`); return; }
+  const checkSide = (side, sideName, presetList) => {
+    if (side === undefined) return;
+    const spec = typeof side === 'string' ? { preset: side } : side;
+    if (!isPlainObject(spec) || typeof spec.preset !== 'string') {
+      errors.push(`${path}.${sideName}: must be a preset name string, or an object like {"preset":"...", "direction":"left|right|up|down", "duration":0.4, "startAt":0.2}`);
+      return;
+    }
+    if (!presetList.includes(spec.preset)) {
+      errors.push(`${path}.${sideName}.preset: "${spec.preset}" is not a real ${sideName} preset (expected one of ${presetList.join(', ')}).${suggestFix(spec.preset, presetList, `a text ${sideName} preset`)}`);
+    }
+    if (spec.direction !== undefined && !TEXT_ANIMATION_DIRECTIONS.includes(spec.direction)) {
+      errors.push(`${path}.${sideName}.direction: "${spec.direction}" is not real (expected one of ${TEXT_ANIMATION_DIRECTIONS.join(', ')})`);
+    }
+    if (spec.duration !== undefined && (typeof spec.duration !== 'number' || spec.duration <= 0)) {
+      errors.push(`${path}.${sideName}.duration: must be a positive number of seconds`);
+    }
+    if (spec.startAt !== undefined && typeof spec.startAt !== 'number') {
+      errors.push(`${path}.${sideName}.startAt: must be a number (seconds into the beat this animation begins)`);
+    }
+  };
+  checkSide(ta.in, 'in', TEXT_IN_PRESETS);
+  checkSide(ta.out, 'out', TEXT_OUT_PRESETS);
+}
+
 function validateShapeContentItem(item, path, errors) {
   if (!isPlainObject(item) || !SHAPE_CONTENT_TYPES.includes(item.type)) {
     const val = item && item.type;
@@ -1164,6 +1201,7 @@ function validateLayer(layer, path, errors, knownIds) {
       }
       layer.highlights.forEach((h, i) => validateHighlight(h, `${path}.highlights[${i}]`, errors));
     }
+    if (layer.textAnimation !== undefined) validateTextAnimation(layer.textAnimation, `${path}.textAnimation`, errors);
   } else if (layer.type === 'generate') {
     if (!layer.generate || !GENERATE_KINDS.includes(layer.generate.kind)) {
       const val = layer.generate && layer.generate.kind;

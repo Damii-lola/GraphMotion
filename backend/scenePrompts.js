@@ -4,6 +4,7 @@ const {
   BLEND_MODE_NAMES, EASING_NAMES, EFFECT_TYPES, TRANSITION_TYPES, CUBIC_EASING_NAMES,
   TEXT_ALIGN_VALUES, AVAILABLE_FONT_FAMILIES,
 } = require('./sceneSchema');
+const { TEXT_IN_PRESETS, TEXT_OUT_PRESETS, TEXT_ANIMATION_DIRECTIONS } = require('./engine/textAnimationPresets');
 
 /**
  * Model-agnostic prompt engineering for scene-JSON generation - the
@@ -421,6 +422,45 @@ TEXTLAYERDEF - one entry in "layers"
       // exactly ONE layer, and any emphasis on part of it is a
       // "highlights"/"color" addition to THAT one layer, never a
       // reason to duplicate it into a second.
+  "textAnimation": { "in": InOutSpec, "out": InOutSpec },  // OPTIONAL -
+      // real ENGINE-level entrance/exit motion for the WHOLE text block
+      // (or, for the character/word/line presets, the reveal of its own
+      // content) - not something you hand-keyframe yourself. Every
+      // named preset below is fully implemented in code (real position/
+      // scale/opacity/rotation/blur math, tuned easing, tested) - you
+      // only ever choose a NAME (plus optional direction/duration/
+      // startAt), never author the underlying motion by hand.
+      // InOutSpec is either a bare preset name string, or an object:
+      // { "preset": string, "direction"?: ${TEXT_ANIMATION_DIRECTIONS.map((d) => `"${d}"`).join('|')},
+      //   "duration"?: number (seconds), "startAt"?: number (seconds
+      //   into the BEAT this animation begins - use this to stagger
+      //   several text layers' entrances across a beat instead of every
+      //   layer landing at the exact same instant) }.
+      // "in" preset choices (pick ONE per layer, deliberately, for real
+      // variety across a video - do not default to the same one every
+      // beat): ${TEXT_IN_PRESETS.join(', ')}.
+      // "out" preset choices (OPTIONAL - most text can simply persist
+      // until the beat ends and disappear with the beat cut; only add
+      // an explicit "out" when a layer needs to leave the frame BEFORE
+      // the beat itself ends): ${TEXT_OUT_PRESETS.join(', ')}.
+      // MANDATORY: every text layer needs a real "in" entrance - a text
+      // layer with no "textAnimation" at all and no other motion of its
+      // own (no "animators", no keyframed position/scale/opacity) will
+      // still get a safe default automatically, but a DELIBERATE choice
+      // here almost always reads better and is how you create real
+      // variety - do not lean on the automatic default as your plan.
+      // ${TEXT_IN_PRESETS.slice(0, 4).join('/')} etc are whole-BLOCK
+      // motion (the text moves/fades/scales in as one rigid unit);
+      // "typewriter"/"wordCascade"/"lineCascade"/"splitIn" instead
+      // reveal the text's own CONTENT progressively (character-by-
+      // character or word-by-word) - these populate the layer's real
+      // "animators" array for you, so do NOT also hand-author a
+      // separate per-character animator on a layer that already uses
+      // one of these four as its "in" preset (the two would double up).
+      // Example - a headline that pops in with overshoot, sits, then
+      // exits by sliding right shortly before the beat ends:
+      //   "textAnimation": { "in": { "preset": "popIn" },
+      //     "out": { "preset": "slideOut", "direction": "right", "startAt": 1.9 } }
 }
 
 Colors are always full 6-digit hex ("#rrggbb" or "#rrggbbaa") - 3-digit
@@ -1026,6 +1066,15 @@ generation are the ones most likely to slip by the last beat):
 - MANDATORY, every "image" layer: a real "icon" (Iconify "prefix:name")
   or "src":"beatImage" - one of the two, always. An image layer with
   neither has nothing to draw and is REJECTED outright.
+- Every "type":"text" layer should carry its own deliberate
+  "textAnimation.in" choice (see TEXTLAYERDEF above for the full preset
+  list) - text should never simply BE there from the first frame with
+  no arrival of its own. A layer that omits this still gets a safe
+  automatic default rather than being rejected, but relying on that
+  default for every layer produces flat, repetitive-feeling video -
+  pick presets deliberately, and vary them across layers/beats the same
+  way a real editor would reach for different CapCut/Canva/After
+  Effects entrance styles rather than using the same one throughout.
 - MANDATORY: encode EVERY beat the treatment planned, none skipped,
   merged, or summarized away - if the treatment planned N beats, your
   "scenes" array has EXACTLY N entries. Stopping after fewer is the

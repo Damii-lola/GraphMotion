@@ -10,6 +10,7 @@ const {
 const { renderAnimatedText } = require('./engine/textAnimator');
 const { renderAnimatedTextOnPath } = require('./engine/textPath');
 const { rangeSelector, wigglySelector } = require('./engine/selectors');
+const { applyTextAnimationPresets } = require('./engine/textAnimationPresets');
 const {
   gradientRamp, checkerboard, grid, lensFlare,
 } = require('./engine/generateEffects');
@@ -547,6 +548,14 @@ function wireTrackMattesAndParents(layerDefs, idMap) {
 function buildBeatVisual(visual, beatContext) {
   const { width, height, duration } = beatContext;
   const idMap = new Map();
+
+  // Mutates visual.layers in place, expanding any layer.textAnimation
+  // preset spec into real keyframes/animators (and auto-assigning a
+  // default entrance to any text layer with no motion of its own at
+  // all) BEFORE layers are built into Nodes/Properties below - see
+  // textAnimationPresets.js's own doc comment for why this runs here,
+  // at render time, rather than during generation-validation.
+  applyTextAnimationPresets(visual, duration);
 
   const rootChildren = [];
   if (visual.background) rootChildren.push(build2DLayer({ ...visual.background, id: visual.background.id || '__background__' }, { ...beatContext, duration }, idMap));
