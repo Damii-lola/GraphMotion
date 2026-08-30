@@ -3321,12 +3321,152 @@ function autoRepairBeat(beat) {
   autoSpreadDuplicatePositions(beat.visual);
   fixBackdropZOrder(beat.visual);
   fixFramingBoxSize(beat.visual);
+  recenterSparseContent(beat);
   // Runs AFTER the overlap/position repairs above, not before - it
   // needs the dominant text layer's FINAL, settled position (where
-  // autoSpreadDuplicatePositions may have just moved it to resolve a
-  // collision), not whatever it started at.
+  // autoSpreadDuplicatePositions/recenterSparseContent may have just
+  // moved it to resolve a collision or re-center a sparse beat), not
+  // whatever it started at.
   ensureDecorativeAccent(beat);
   attachLineRevealSparks(beat);
+}
+
+const RECENTER_MARGIN_PX = 100;
+
+/**
+ * A layer's own vertical [top, bottom] extent for content-density
+ * purposes - shape/text layers are CENTER-anchored (sceneBuilder.js's
+ * build2DLayer passes centered=true for these), image/generate layers
+ * are TOP-LEFT anchored (centered=false/absent) - see this file's own
+ * repeated notes elsewhere on that exact split. Returns null for
+ * anything with no resolvable position or size (an expression-driven
+ * position, or a shape with neither an explicit height nor - since
+ * it's not text - any way to estimate one).
+ */
+function layerVerticalExtent(layer) {
+  const pos = representativePosition(layer.position);
+  if (!pos) return null;
+  const size = sizeForSpreadCheck(layer);
+  if (!size || typeof size.height !== 'number') return null;
+  if (layer.type === 'image' || layer.type === 'generate') return [pos[1], pos[1] + size.height];
+  return [pos[1] - size.height / 2, pos[1] + size.height / 2];
+}
+
+/** Shifts a layer's Y position by `delta` in place - handles both a plain [x,y] position and an animated one (every keyframe's value shifted equally, so an entrance fly-in's relative motion is preserved, just re-based at the new resting spot). Leaves anything else (an expression-driven position) untouched. */
+function shiftLayerY(layer, delta) {
+  if (isNumberArray(layer.position, 2)) {
+    layer.position = [layer.position[0], layer.position[1] + delta];
+    return;
+  }
+  if (isPlainObject(layer.position) && Array.isArray(layer.position.keyframes)) {
+    for (const kf of layer.position.keyframes) {
+      if (isPlainObject(kf) && isNumberArray(kf.value, 2)) kf.value = [kf.value[0], kf.value[1] + delta];
+    }
+  }
+}
+
+/**
+ * Real, confirmed-live composition problem found across several
+ * otherwise bug-free beats in the same generated video: a beat with
+ * only 2-3 small elements (a number, a headline, maybe a subline/icon)
+ * and no large shape to fill the frame leaves the model's own default
+ * vertical placement - almost always clustered in the canvas's TOP
+ * third - sitting above a huge, visually empty stretch of plain
+ * background gradient for the rest of the frame. Confirmed directly
+ * against a real vision-judge run: three beats built exactly this way
+ * scored 25-35/100 with "zero visual hook"/"boring, PowerPoint slide"
+ * complaints, while beats that filled the frame with a large shape (a
+ * full-bleed color, a big circle) scored meaningfully higher with
+ * equally sparse TEXT - the emptiness, not the text itself, is what
+ * reads as unfinished.
+ *
+ * Fixed mechanically: when a beat has NO large shape/image (>= half
+ * the canvas tall - already visually filling the frame regardless of
+ * how sparse the text is, so left alone entirely) AND its actual
+ * content's vertical bounding box spans less than half the canvas,
+ * every content layer is shifted by one uniform vertical delta to
+ * re-center that bounding box on the canvas's own vertical middle -
+ * the same relative layout the model chose, just moved into the
+ * middle of the frame instead of stranded at the top, clamped so
+ * nothing lands within RECENTER_MARGIN_PX of either edge. Never
+ * touches an engine-added "__name__" layer (background grain, or
+ * anything ensureDecorativeAccent/enrichBackgroundDepth add) - those
+ * either don't need to move (full-canvas grain) or haven't been added
+ * yet at this point in the repair pipeline (ensureDecorativeAccent
+ * runs AFTER this on purpose, so it positions its own additions
+ * relative to the content's FINAL, now-recentered position).
+ */
+const RECENTER_PROXIMITY_PX = 150;
+
+function recenterSparseContent(beat) {
+  const layers = beat.visual.layers;
+  if (!Array.isArray(layers)) return;
+  const isEngineLayer = (l) => typeof l.id === 'string' && l.id.startsWith('__') && l.id.endsWith('__');
+  const eligible = layers.filter((l) => isPlainObject(l) && !l.parent && !isEngineLayer(l)
+    && (l.type === 'text' || l.type === 'shape' || l.type === 'image' || l.type === 'generate'));
+  if (eligible.length === 0) return;
+
+  const hasLargeShape = eligible.some((l) => {
+    if (l.type !== 'shape' && l.type !== 'image' && l.type !== 'generate') return false;
+    const size = sizeForSpreadCheck(l);
+    return size && typeof size.height === 'number' && size.height >= CANVAS_HEIGHT * 0.5;
+  });
+  if (hasLargeShape) return;
+
+  // The CORE bounding box - text and shape decoration only. A small
+  // image/icon is excluded here on purpose: confirmed live as a
+  // beat scoring 45/100 ("plain background, basic text will never
+  // stop a scroll") where the headline sat clustered at the top but a
+  // single small icon happened to be parked at y:800 (its OWN separate
+  // bug - an icon that silently failed to render at all, iconFetch.js's
+  // existing fallback for a failed fetch) - if that outlier alone
+  // counted toward the span, it would "prove" this beat wasn't sparse
+  // when the actual readable content plainly was.
+  let top = Infinity; let bottom = -Infinity;
+  for (const l of eligible) {
+    if (l.type !== 'text' && l.type !== 'shape') continue;
+    const extent = layerVerticalExtent(l);
+    if (!extent) continue;
+    top = Math.min(top, extent[0]);
+    bottom = Math.max(bottom, extent[1]);
+  }
+  if (!Number.isFinite(top) || !Number.isFinite(bottom)) return;
+  const span = bottom - top;
+  if (span >= CANVAS_HEIGHT * 0.5) return;
+
+  // Only an image/generate layer sitting reasonably CLOSE to that core
+  // block (within RECENTER_PROXIMITY_PX of either edge) moves with it -
+  // a genuine companion icon (e.g. sitting just below a headline) slides
+  // along so it stays attached, while a stray outlier like the one
+  // above is left exactly where it was (already broken/disconnected,
+  // not this fix's problem to solve) rather than dragged along or used
+  // to constrain how far the real content is allowed to move.
+  const movable = eligible.filter((l) => {
+    if (l.type === 'text' || l.type === 'shape') return true;
+    const extent = layerVerticalExtent(l);
+    if (!extent) return false;
+    const gap = Math.max(top - extent[1], extent[0] - bottom, 0);
+    return gap <= RECENTER_PROXIMITY_PX;
+  });
+
+  let fullTop = top; let fullBottom = bottom;
+  for (const l of movable) {
+    if (l.type === 'text' || l.type === 'shape') continue;
+    const extent = layerVerticalExtent(l);
+    if (!extent) continue;
+    fullTop = Math.min(fullTop, extent[0]);
+    fullBottom = Math.max(fullBottom, extent[1]);
+  }
+
+  const center = (top + bottom) / 2;
+  const minDelta = RECENTER_MARGIN_PX - fullTop;
+  const maxDelta = (CANVAS_HEIGHT - RECENTER_MARGIN_PX) - fullBottom;
+  if (minDelta > maxDelta) return;
+  let delta = CANVAS_HEIGHT / 2 - center;
+  delta = Math.max(minDelta, Math.min(maxDelta, delta));
+  if (Math.abs(delta) < 1) return;
+
+  for (const l of movable) shiftLayerY(l, delta);
 }
 
 /**
