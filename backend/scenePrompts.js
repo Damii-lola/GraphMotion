@@ -152,6 +152,23 @@ Concretely:
   pacing (~2.5-3 words/second, same estimate as above) - if a natural-
   sounding version of a line runs long, tighten the WORDING, don't
   stretch the beat to accommodate it.
+- Use ordinary punctuation the way natural speech actually uses it -
+  commas for a short breath, a question mark on anything genuinely
+  asked (real TTS applies real rising inflection to it), a semicolon
+  or em dash when one thought turns into a related one mid-sentence.
+  This is standard punctuation doing its normal job, not a trick -
+  don't force an em dash or ellipsis in just to have one.
+- Spell out numbers as words ("twenty-five", not "25") - a real,
+  confirmed TTS reliability improvement: raw digits are genuinely
+  ambiguous to read aloud (twenty-five? two five? a date?), and
+  spelling them out removes that ambiguity entirely.
+- Do NOT rely on capitalization for vocal emphasis ("this is VERY
+  important") - tested directly against this exact engine and found to
+  do nothing reliable; there is no real word-level emphasis control
+  available on this free TTS tier at all (the actual SSML mechanism
+  for it breaks the connection outright here), so don't write narration
+  assuming any word can be made to sound "stressed" - convey emphasis
+  through word choice and sentence structure instead.
 
 =====================================================================
 ANIMATABLE VALUES - every transform/effect number or vector accepts:

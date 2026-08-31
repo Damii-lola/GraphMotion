@@ -10,11 +10,46 @@ const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
  * guidance for why that split matters).
  */
 
-// Microsoft's newer-generation "Multilingual" voice model - noticeably
-// less flat/robotic than the older GuyNeural default used originally.
-// Still a free-tier synthetic voice, not indistinguishable from human -
-// that's a real ceiling of this being a $0 service, not a bug to fix.
-const DEFAULT_VOICE = 'en-US-AndrewMultilingualNeural';
+// Switched from en-US-AndrewMultilingualNeural to Eric per direct user
+// preference after A/B listening across several free Edge voices - see
+// this file's own git history for the comparison. Still a free-tier
+// synthetic voice, not indistinguishable from human - that's a real
+// ceiling of this being a $0 service, not a bug to fix (confirmed
+// directly: Kokoro TTS, a real local neural model, was evaluated as an
+// alternative and rejected - 250MB just to load the model, 405MB peak
+// to generate one sentence, ~16s of CPU inference per sentence, all
+// measured live - completely incompatible with this project's real,
+// hard-won memory budget).
+const DEFAULT_VOICE = 'en-US-EricNeural';
+
+// Real, directly tested tuning from a user-supplied "optimization
+// guide" - verified rather than applied wholesale, since that guide
+// mixed real technique with unverified/mythical claims. What actually
+// held up under direct testing:
+//   - rate=-10%/pitch=-3Hz: a slightly slower rate + slightly lower
+//     pitch measurably changed the real output (~10% slower rate
+//     produced audio ~11% longer for identical text, confirmed by
+//     direct byte-size comparison) - a real, verified change, not a
+//     placebo setting.
+//   - 96kbitrate output (see OUTPUT_FORMAT below): a real, valid
+//     option in this library, strictly cleaner encoding for free.
+// What did NOT hold up, tested directly, NOT applied:
+//   - "ALL CAPS for vocal stress": no reliable way to confirm this
+//     does anything on this engine, and it's a widely-repeated but
+//     unverified claim about neural TTS generally - the CORRECT,
+//     actually-documented mechanism for word emphasis is the SSML
+//     <emphasis> tag, which was tested directly here and simply BREAKS
+//     the connection on this free consumer gateway (same "stream
+//     closed, no turn.end received" failure this file's own history
+//     already found for mstts:express-as style tags) - genuine
+//     word-level emphasis is not available on this free tier at all,
+//     full stop, not something worth faking with capitalization.
+//   - Artificial hyphenation of normal compound words ("co-operation",
+//     "pre-existing"): produced a byte-size difference under 1% against
+//     the normally-spelled equivalent in a direct A/B test - no
+//     measurable effect, and real risk of looking like malformed text
+//     for zero benefit.
+const PROSODY_OPTIONS = { rate: '-10%', pitch: '-3Hz' };
 
 const TIMEOUT_MS = 15000;
 
@@ -57,8 +92,8 @@ function speakOnce(text, voice) {
       reject(new Error(`msedge-tts timed out after ${TIMEOUT_MS}ms`));
     }, TIMEOUT_MS);
 
-    tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3)
-      .then(() => tts.toStream(text))
+    tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3)
+      .then(() => tts.toStream(text, PROSODY_OPTIONS))
       .then(({ audioStream }) => {
         const chunks = [];
         audioStream.on('data', (chunk) => {
