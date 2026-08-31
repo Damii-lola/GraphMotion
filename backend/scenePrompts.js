@@ -169,24 +169,6 @@ Concretely:
   for it breaks the connection outright here), so don't write narration
   assuming any word can be made to sound "stressed" - convey emphasis
   through word choice and sentence structure instead.
-- BREAK EACH NARRATION LINE INTO ITS OWN PHRASES, one real newline
-  character between each phrase, wherever an actual person would take
-  a short breath mid-sentence - this is NOT the same thing as sentence-
-  ending punctuation; a single sentence usually still has 2-3 of these
-  internal breath points. A person does not say a whole sentence in one
-  unbroken run - they say it in short chunks. Example of the difference
-  (this is exactly how a real person breaks up this line when speaking
-  it, not how it would be punctuated as a caption):
-    WRONG (one flat run): "As adults, it's their way of marking their
-    territory and creating a cozy home base."
-    RIGHT (real breath groups, one per line):
-    "As adults
-    it's their way of marking their territory
-    and creating a cozy home base."
-  Every "narration" string should look like this - several short lines,
-  each one phrase, not one long line of prose. This is separate from
-  (and in addition to) normal sentence-ending punctuation between
-  different sentences.
 
 =====================================================================
 ANIMATABLE VALUES - every transform/effect number or vector accepts:
