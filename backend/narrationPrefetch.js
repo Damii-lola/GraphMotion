@@ -3,7 +3,29 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
-const { generateSpeech } = require('./ttsGen');
+const fishTts = require('./fishTtsGen');
+const edgeTts = require('./ttsGen');
+
+/**
+ * Production narration voice switched to Fish Audio's "Adrian" per
+ * direct user preference after a real A/B listen against 2 other Fish
+ * voices and msedge-tts's Eric. Falls back to msedge-tts (Eric, the
+ * previous production voice, zero-key/zero-account) if the Fish Audio
+ * call fails for ANY reason - a real, meaningful risk this engine
+ * carries that msedge-tts never did: it needs a real account + API key
+ * (FISH_API_KEY) and a paid/fair-use-limited service behind it, so a
+ * missing key, exhausted fair-use quota (402), or a transient outage
+ * (503) are all real failure modes worth falling back from rather than
+ * losing that beat's narration entirely.
+ */
+async function generateSpeech(text, voiceId = fishTts.DEFAULT_VOICE_ID) {
+  try {
+    return await fishTts.generateSpeech(text, voiceId);
+  } catch (err) {
+    console.warn(`[narrationPrefetch] Fish Audio TTS failed, falling back to Eric: ${err.message}`);
+    return edgeTts.generateSpeech(text);
+  }
+}
 
 function narrationDirFor(jobId) {
   return path.join(os.tmpdir(), 'shortform-renders', `${jobId}-narration`);
