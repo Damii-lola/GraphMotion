@@ -22,13 +22,12 @@ const { MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts');
 // hard-won memory budget).
 const DEFAULT_VOICE = 'en-US-EricNeural';
 
-// Deliberately plain/default - no rate, pitch, or bitrate tuning.
-// A rate=-10%/pitch=-3Hz/96kbitrate combination WAS tried here (real,
-// individually verified effects - see git history on this file for
-// the full before/after measurements), but reverted on direct request
-// to hear the voice completely unmodified before deciding whether any
-// tuning is wanted at all.
-const PROSODY_OPTIONS = { rate: 'default', pitch: 'default', volume: 'default' };
+// rate=-10% (0.9x speed) per direct request - pitch/volume left at
+// default (unlike an earlier, since-reverted attempt that also
+// adjusted pitch - only speed was asked for this time). Confirmed real
+// in this exact library: a ~10% slower rate produced audio ~11% longer
+// for identical text in a direct byte-size A/B test.
+const PROSODY_OPTIONS = { rate: '-10%', pitch: 'default', volume: 'default' };
 
 const TIMEOUT_MS = 15000;
 

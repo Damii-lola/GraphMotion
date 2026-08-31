@@ -152,12 +152,28 @@ Concretely:
   pacing (~2.5-3 words/second, same estimate as above) - if a natural-
   sounding version of a line runs long, tighten the WORDING, don't
   stretch the beat to accommodate it.
-- Use ordinary punctuation the way natural speech actually uses it -
-  commas for a short breath, a question mark on anything genuinely
-  asked (real TTS applies real rising inflection to it), a semicolon
-  or em dash when one thought turns into a related one mid-sentence.
-  This is standard punctuation doing its normal job, not a trick -
-  don't force an em dash or ellipsis in just to have one.
+- A real spoken sentence has MORE pause points than strict written
+  grammar would ever put a comma at - a person says a sentence in
+  short breath groups, not one unbroken run. Punctuate for how it's
+  SAID, not how it would be graded as an essay: put a comma at every
+  point a real person would take a short breath, even where formal
+  writing wouldn't require one there. Concretely, "As adults, it's
+  their way of marking their territory and creating a cozy home base"
+  is how it would be WRITTEN; how a person actually SAYS it has more
+  breath breaks than that: "As adults, it's their way of marking their
+  territory, and creating a cozy home base." A question mark on
+  anything genuinely asked gets real rising inflection from this TTS
+  engine; a semicolon or em dash works for one thought turning into a
+  related one mid-sentence. This all has to stay ordinary punctuation
+  inside ONE normal sentence, not separate lines or fragments - this
+  exact free TTS engine synthesizes each "narration" string as ONE
+  continuous pass, and breaking it into disconnected pieces (extra line
+  breaks, one clause per line) was tried and confirmed live to sound
+  WORSE - artificial and disjointed, each fragment getting its own
+  "sentence is now complete" ending instead of flowing into the next
+  clause - because a real sentence's natural rise-and-fall only happens
+  when the whole thing is synthesized together. More commas, still one
+  flowing sentence.
 - Spell out numbers as words ("twenty-five", not "25") - a real,
   confirmed TTS reliability improvement: raw digits are genuinely
   ambiguous to read aloud (twenty-five? two five? a date?), and
