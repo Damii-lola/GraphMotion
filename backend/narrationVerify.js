@@ -29,18 +29,39 @@ const { callGeminiWithAudio } = require('./geminiClient');
  * placement is a tagging problem, not just an unlucky TTS roll.
  */
 
-const JUDGE_SYSTEM_PROMPT = `You are a strict QA judge for AI-generated short-form video narration. You'll be given an audio clip and the exact script it was supposed to say. Respond ONLY with JSON, no markdown fences, no explanation outside the JSON.
+// Real, confirmed-live regression: an earlier version of this prompt
+// put pause-naturalness and "sounds robotic" in the SAME fail
+// condition as objective content errors (hallucinated/missing words,
+// non-speech noise). A full pipeline test measured close to a 100%
+// rejection rate under that prompt - nearly every beat burned all
+// MAX_ATTEMPTS retries, because a sufficiently critical judge can
+// almost always find SOME subjective delivery quibble, and retrying
+// doesn't reliably fix a subjective judgment the way it reliably fixes
+// "did it hallucinate a stray word" (a coin-flip that a fresh attempt
+// can just re-flip). Split into two categories per direct user
+// feedback: HARD issues (objective, verifiable, worth blocking and
+// retrying on) vs SOFT issues (subjective quality, worth reporting and
+// feeding into the next retag attempt's guidance, but not worth an
+// unbounded retry loop over). Only hardIssues gates pass/fail now -
+// see judgeNarrationAudio below, which computes `pass` itself from
+// hardIssues.length rather than trusting the model's own top-level
+// verdict.
+const JUDGE_SYSTEM_PROMPT = `You are a QA judge for AI-generated short-form video narration. You'll be given an audio clip and the exact script it was supposed to say. Respond ONLY with JSON, no markdown fences, no explanation outside the JSON.
 
-Fail the audio (pass: false) if ANY of these are true:
-- It contains ANY sound that isn't the script's words spoken cleanly - an extra word, a mumble, laughing, coughing, humming, static, or any noise not in the script, anywhere in the clip (start, middle, or end).
-- It's missing words from the script, or changes/reorders any of the script's actual words.
-- A pause happens somewhere a real human speaker would never actually pause when saying this sentence out loud (e.g. after a short/minor comma that doesn't need a breath, breaking the sentence's natural flow) - not every comma in written text gets spoken with a pause in real speech.
-- The delivery sounds robotic, monotone, or otherwise clearly synthetic rather than like a real person talking.
+Check for TWO separate categories of problems - keep them strictly separate, never report a soft problem as a hard one:
 
-Pass the audio (pass: true) only if it says exactly the script's words, cleanly, with no extra sounds, and any pauses present land somewhere a real speaker plausibly would.
+HARD problems (objective and verifiable - these actually break correctness):
+- The audio contains ANY sound that isn't the script's words spoken cleanly - an extra word, a mumble, laughing, coughing, humming, static, a sound effect, or any other noise not in the script, anywhere in the clip (start, middle, or end).
+- The audio is missing words from the script, or changes/reorders any of the script's actual words.
+
+SOFT problems (subjective delivery quality - real, but not a correctness failure):
+- A pause lands somewhere a real human speaker probably wouldn't pause when saying this sentence out loud (not every comma gets spoken with a pause in real speech).
+- The delivery sounds robotic, monotone, or otherwise noticeably synthetic rather than like a real person talking.
 
 Respond with exactly this JSON shape:
-{"pass": true or false, "issues": ["short specific issue", "..."], "retagInstruction": "one or two sentences of concrete guidance for how to re-tag this exact script's emotion/pause markup differently next time - empty string if pass is true"}`;
+{"hardIssues": ["short specific issue", "..."], "softIssues": ["short specific issue", "..."], "retagInstruction": "one or two sentences of concrete guidance for how to re-tag this exact script's emotion/pause markup differently next time, addressing whichever issues above are present - empty string if there are none of either kind"}
+
+Use empty arrays ([]) for either list when that category has no problems.`;
 
 function parseJudgeResponse(raw) {
   const cleaned = raw.replace(/```json|```/g, '').trim();
@@ -61,7 +82,13 @@ async function judgeNarrationAudio(audioBuffer, plainText) {
   // opposite of what should happen to a take bad enough to trigger a
   // long issues list. 700 gives real headroom.
   const raw = await callGeminiWithAudio(JUDGE_SYSTEM_PROMPT, audioBuffer, 'audio/mpeg', promptText, { jsonMode: true, maxTokens: 700, temperature: 0.0 });
-  return parseJudgeResponse(raw);
+  const parsed = parseJudgeResponse(raw);
+  const hardIssues = parsed.hardIssues || [];
+  const softIssues = parsed.softIssues || [];
+  // Computed here, not trusted from the model's own output - keeps the
+  // pass/fail boundary strictly tied to hardIssues regardless of
+  // whether the model's own internal notion of "pass" agrees.
+  return { pass: hardIssues.length === 0, hardIssues, softIssues, retagInstruction: parsed.retagInstruction || '' };
 }
 
 // A real full-pipeline test run (5 beats) measured a high per-call
@@ -108,8 +135,13 @@ async function synthesizeVerified(plainText, tagAndSynthesize) {
       console.warn(`[narrationVerify] judge call failed, accepting audio unverified: ${err.message}`);
       return { ...last, passed: false };
     }
-    if (verdict.pass) return { ...last, passed: true };
-    console.warn(`[narrationVerify] attempt ${attempt}/${MAX_ATTEMPTS} rejected by judge: ${(verdict.issues || []).join('; ')}`);
+    if (verdict.pass) {
+      if (verdict.softIssues.length > 0) {
+        console.warn(`[narrationVerify] attempt ${attempt}/${MAX_ATTEMPTS} accepted with soft (non-blocking) notes: ${verdict.softIssues.join('; ')}`);
+      }
+      return { ...last, passed: true };
+    }
+    console.warn(`[narrationVerify] attempt ${attempt}/${MAX_ATTEMPTS} rejected by judge (hard issues): ${verdict.hardIssues.join('; ')}`);
     feedback = verdict.retagInstruction || '';
   }
   console.warn(`[narrationVerify] still rejected after ${MAX_ATTEMPTS} attempts - using the last attempt anyway`);
