@@ -191,14 +191,23 @@ function trimTrailingArtifact(inputPath, outputPath) {
 }
 
 /**
- * Generates narration audio for every beat that has one, SEQUENTIALLY
- * (not parallel like imagePrefetch.js - this free TTS service is a
- * single-connection-per-call websocket, and total narration length
- * across a video's beats is naturally bounded, unlike a burst of
- * simultaneous image requests). For each beat with narration, measures
- * the real spoken duration and OVERRIDES that beat's `duration` param
- * to match (+ a small buffer) - visual pacing follows how long the
- * narration actually takes to say, not an arbitrary authored guess.
+ * Generates narration audio for every beat that has one, IN PARALLEL
+ * across beats (like imagePrefetch.js) - was sequential when the only
+ * engine was msedge-tts's single-connection-per-call websocket, but
+ * Fish Audio (the primary engine now, see generateSpeech above) is a
+ * stateless REST API with no such constraint, and each beat's own
+ * synthesizeVerified retry loop (narrationVerify.js, up to 5 attempts
+ * x 2 concurrent judge passes each) is now expensive enough that
+ * running 5 beats back to back rather than together was a real,
+ * measured source of the multi-minute generation times that prompted
+ * this change ("add it back but can u make it faster" - direct user
+ * feedback after the sequential 2-judge-pass version). Each beat only
+ * ever touches its OWN index in `renderScenes`/`audioFiles`, so
+ * there's no shared-state conflict between beats running concurrently.
+ * For each beat with narration, measures the real spoken duration and
+ * OVERRIDES that beat's `duration` param to match (+ a small buffer) -
+ * visual pacing follows how long the narration actually takes to say,
+ * not an arbitrary authored guess.
  *
  * Returns a NEW sceneJSON-shaped object (render-only, same pattern as
  * imagePrefetch.js - the original passed in is never mutated, so
@@ -220,7 +229,7 @@ async function prefetchNarration(sceneJSON, jobId) {
   const dir = narrationDirFor(jobId);
   fs.mkdirSync(dir, { recursive: true });
 
-  for (const { scene, index } of beatsWithNarration) {
+  await Promise.all(beatsWithNarration.map(async ({ scene, index }) => {
     try {
       // Scene generation writes PLAIN narration on purpose (see
       // scenePrompts.js) - tag annotation is this deliberately separate
@@ -304,7 +313,7 @@ async function prefetchNarration(sceneJSON, jobId) {
     } catch (err) {
       console.warn(`[narrationPrefetch] beat ${index} narration failed, keeping authored duration: ${err.message}`);
     }
-  }
+  }));
 
   return capToMaxDuration({ ...sceneJSON, scenes: renderScenes }, audioFiles);
 }

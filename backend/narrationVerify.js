@@ -151,33 +151,36 @@ async function synthesizeVerified(plainText, tagAndSynthesize) {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     last = await tagAndSynthesize(feedback);
     let verdict;
+    let tailVerdict;
     try {
-      verdict = await judgeNarrationAudio(last.buf, plainText);
+      // Both passes ask independent questions about the SAME audio
+      // (content/pause-naturalness vs specifically the tail) - firing
+      // them concurrently instead of one after the other cuts a full
+      // judge round-trip off the latency of every attempt that ends up
+      // passing both anyway, which is most of them. Direct user
+      // feedback after the sequential version measured 10+ minute
+      // generations: "add it back but can u make it faster."
+      [verdict, tailVerdict] = await Promise.all([
+        judgeNarrationAudio(last.buf, plainText),
+        judgeAudioTail(last.buf, plainText),
+      ]);
     } catch (err) {
       console.warn(`[narrationVerify] judge call failed, accepting audio unverified: ${err.message}`);
       return { ...last, passed: false };
     }
-    if (verdict.pass) {
+    if (verdict.pass && tailVerdict.clean) {
       if (verdict.softIssues.length > 0) {
-        console.warn(`[narrationVerify] attempt ${attempt}/${MAX_ATTEMPTS} passed first judge pass with soft (non-blocking) notes: ${verdict.softIssues.join('; ')}`);
+        console.warn(`[narrationVerify] attempt ${attempt}/${MAX_ATTEMPTS} passed with soft (non-blocking) notes: ${verdict.softIssues.join('; ')}`);
       }
-      // Second, narrower pass - see judgeAudioTail's own doc comment
-      // for why this specifically re-checks the tail rather than
-      // repeating the same broad question.
-      let tailVerdict;
-      try {
-        tailVerdict = await judgeAudioTail(last.buf, plainText);
-      } catch (err) {
-        console.warn(`[narrationVerify] second-pass tail check failed, accepting first pass's verdict: ${err.message}`);
-        return { ...last, passed: true };
-      }
-      if (tailVerdict.clean) return { ...last, passed: true };
-      console.warn(`[narrationVerify] attempt ${attempt}/${MAX_ATTEMPTS} passed the first judge pass but REJECTED by the second (tail) pass: ${tailVerdict.description}`);
-      feedback = `A previous take had extra sound at the very end of the clip after the script's real last word (${tailVerdict.description}), even though the rest of the content was fine - make sure the delivery stops cleanly right after the last word with nothing more.`;
-      continue;
+      return { ...last, passed: true };
     }
-    console.warn(`[narrationVerify] attempt ${attempt}/${MAX_ATTEMPTS} rejected by judge (hard issues): ${verdict.hardIssues.join('; ')}`);
+    const reasons = [...verdict.hardIssues];
+    if (!tailVerdict.clean) reasons.push(`extra sound at the very end (${tailVerdict.description})`);
+    console.warn(`[narrationVerify] attempt ${attempt}/${MAX_ATTEMPTS} rejected: ${reasons.join('; ')}`);
     feedback = verdict.retagInstruction || '';
+    if (!tailVerdict.clean) {
+      feedback += `${feedback ? ' Also, ' : ''}make sure the delivery stops cleanly right after the script's last word, with nothing else after it - a previous take had extra sound there (${tailVerdict.description}).`;
+    }
   }
   console.warn(`[narrationVerify] still rejected after ${MAX_ATTEMPTS} attempts - using the last attempt anyway`);
   return { ...last, passed: false };
