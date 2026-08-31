@@ -76,6 +76,24 @@ function runCapture(args) {
 const NARRATION_PRE_FILTER = 'highpass=f=90,acompressor=threshold=-20dB:ratio=1.5:attack=20:release=150:makeup=1';
 const NARRATION_LOUDNORM_TARGET = 'I=-16:TP=-2:LRA=11';
 
+// Real, directly measured bug found chasing "why does the voice sound
+// so deep": this used to hardcode -ar 24000 (and generateSilence's own
+// anullsrc rate), a value that made sense for msedge-tts's real native
+// output (OUTPUT_FORMAT.AUDIO_24KHZ_...) but was never revisited when
+// narration switched to Fish Audio - confirmed directly, Fish Audio's
+// raw mp3 output is actually 44100Hz. Downsampling 44100->24000 does
+// NOT shift pitch (verified live: resampled duration matched the
+// original to within MP3 frame-boundary rounding, so it's a real
+// resample, not a broken reinterpretation) - but it DOES throw away
+// every frequency above 12kHz (24000's Nyquist limit), stripping a
+// voice's upper harmonics/sibilance/"air". Losing that brightness
+// reads as a darker, heavier, "deeper"-sounding voice even though the
+// actual fundamental pitch never moved - a real, measurable quality
+// loss, not a subjective impression. Kept at Fish Audio's own native
+// rate instead of downsampling to a value inherited from a different
+// engine entirely.
+const NARRATION_SAMPLE_RATE = 44100;
+
 /**
  * Exported (not just used internally below) so narrationPrefetch.js
  * can call this on each beat's OWN clip individually, before assembly
@@ -117,12 +135,12 @@ async function masterNarrationAudio(inputPath, outputPath) {
     return outputPath;
   }
   const secondPassFilter = `${NARRATION_PRE_FILTER},loudnorm=${NARRATION_LOUDNORM_TARGET}:measured_I=${stats.input_i}:measured_TP=${stats.input_tp}:measured_LRA=${stats.input_lra}:measured_thresh=${stats.input_thresh}:offset=${stats.target_offset}:linear=true,alimiter=limit=0.891`;
-  await run(['-y', '-i', inputPath, '-af', secondPassFilter, '-ar', '24000', '-ac', '1', '-c:a', 'libmp3lame', '-q:a', '4', outputPath]);
+  await run(['-y', '-i', inputPath, '-af', secondPassFilter, '-ar', String(NARRATION_SAMPLE_RATE), '-ac', '1', '-c:a', 'libmp3lame', '-q:a', '4', outputPath]);
   return outputPath;
 }
 
 async function generateSilence(outPath, seconds) {
-  await run(['-y', '-f', 'lavfi', '-i', 'anullsrc=r=24000:cl=mono', '-t', String(Math.max(0.05, seconds)), '-q:a', '4', outPath]);
+  await run(['-y', '-f', 'lavfi', '-i', `anullsrc=r=${NARRATION_SAMPLE_RATE}:cl=mono`, '-t', String(Math.max(0.05, seconds)), '-q:a', '4', outPath]);
 }
 
 function getDurationSeconds(filePath) {
