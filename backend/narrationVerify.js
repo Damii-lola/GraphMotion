@@ -92,27 +92,6 @@ async function judgeNarrationAudio(audioBuffer, plainText) {
   return { pass: hardIssues.length === 0, hardIssues, softIssues, retagInstruction: parsed.retagInstruction || '' };
 }
 
-// Real, confirmed-live false negative: a live website test transcribed
-// a full assembled video and found a stray "Boo." tacked onto the end
-// of a beat the FIRST judge pass had already explicitly PASSED - the
-// broad, holistic judge call missed it. Every real hallucination found
-// across this whole session, without exception, has landed at the very
-// END of a clip - never the start or middle. A second, narrower pass
-// whose ONLY job is "listen closely to the tail, is there anything at
-// all after the sentence's real last word" is more likely to catch
-// what a broader single judgment call can overlook, precisely because
-// it isn't dividing attention across content-accuracy AND pause-
-// naturalness AND overall delivery at the same time - it only has one
-// narrow thing to listen for.
-const TAIL_CHECK_SYSTEM_PROMPT = `You are doing ONE narrow, focused check on an audio clip - not a general quality review. You will be told the script the clip should contain. Listen VERY carefully and specifically to the END of the clip, after the script's true final word is spoken. Is there ANY sound there at all - a word, a syllable, a mumble, a breath, a sigh, a laugh, a click, a hum, absolutely anything - even if it's brief or quiet? Respond ONLY with JSON, no markdown fences: {"clean": true or false, "description": "exactly what you heard after the real ending, or empty string if there was nothing"}`;
-
-async function judgeAudioTail(audioBuffer, plainText) {
-  const promptText = `Script: "${plainText}"\n\nListen closely to the very end of this clip, after those words finish. Is there anything audible there at all?`;
-  const raw = await callGeminiWithAudio(TAIL_CHECK_SYSTEM_PROMPT, audioBuffer, 'audio/mpeg', promptText, { jsonMode: true, maxTokens: 300, temperature: 0.0 });
-  const parsed = parseJudgeResponse(raw);
-  return { clean: parsed.clean !== false, description: parsed.description || '' };
-}
-
 // A real full-pipeline test run (5 beats) measured a high per-call
 // hallucination rate for the old word-count check: 4 of 5 beats
 // hallucinated on their FIRST attempt, and one beat still hadn't
@@ -135,9 +114,9 @@ const MAX_ATTEMPTS = 5;
  * If every attempt is still rejected, the last attempt is used anyway
  * rather than looping forever.
  *
- * Returns { taggedText, buf, passed } - `passed` is true only when
- * BOTH judge passes explicitly confirmed this exact audio, false for
- * the "still rejected after N attempts" and "judge call failed" paths.
+ * Returns { taggedText, buf, passed } - `passed` is true only when the
+ * judge explicitly confirmed this exact audio, false for both the
+ * "still rejected after N attempts" and "judge call failed" paths.
  * Callers use this to decide whether it's worth risking the mechanical
  * tail-artifact trim (narrationPrefetch.js's trimTrailingArtifact) on
  * the result - a judge-CONFIRMED clean clip has nothing to gain from
@@ -159,22 +138,9 @@ async function synthesizeVerified(plainText, tagAndSynthesize) {
     }
     if (verdict.pass) {
       if (verdict.softIssues.length > 0) {
-        console.warn(`[narrationVerify] attempt ${attempt}/${MAX_ATTEMPTS} passed first judge pass with soft (non-blocking) notes: ${verdict.softIssues.join('; ')}`);
+        console.warn(`[narrationVerify] attempt ${attempt}/${MAX_ATTEMPTS} accepted with soft (non-blocking) notes: ${verdict.softIssues.join('; ')}`);
       }
-      // Second, narrower pass - see judgeAudioTail's own doc comment
-      // for why this specifically re-checks the tail rather than
-      // repeating the same broad question.
-      let tailVerdict;
-      try {
-        tailVerdict = await judgeAudioTail(last.buf, plainText);
-      } catch (err) {
-        console.warn(`[narrationVerify] second-pass tail check failed, accepting first pass's verdict: ${err.message}`);
-        return { ...last, passed: true };
-      }
-      if (tailVerdict.clean) return { ...last, passed: true };
-      console.warn(`[narrationVerify] attempt ${attempt}/${MAX_ATTEMPTS} passed the first judge pass but REJECTED by the second (tail) pass: ${tailVerdict.description}`);
-      feedback = `A previous take had extra sound at the very end of the clip after the script's real last word (${tailVerdict.description}), even though the rest of the content was fine - make sure the delivery stops cleanly right after the last word with nothing more.`;
-      continue;
+      return { ...last, passed: true };
     }
     console.warn(`[narrationVerify] attempt ${attempt}/${MAX_ATTEMPTS} rejected by judge (hard issues): ${verdict.hardIssues.join('; ')}`);
     feedback = verdict.retagInstruction || '';
@@ -183,4 +149,4 @@ async function synthesizeVerified(plainText, tagAndSynthesize) {
   return { ...last, passed: false };
 }
 
-module.exports = { synthesizeVerified, judgeNarrationAudio, judgeAudioTail };
+module.exports = { synthesizeVerified, judgeNarrationAudio };
