@@ -69,6 +69,41 @@ function getAudioDurationSeconds(filePath) {
   });
 }
 
+// Real, directly measured finding: msedge-tts's own generated clips
+// carry meaningful internal silence - a real isolated clip for "It's a
+// comfort thing." (1.22s total) measured out to 0.14s of DEAD AIR
+// before the first word and 0.33s after the last one, via ffmpeg's own
+// silencedetect filter. Since this file's own beat-duration math below
+// treats the clip's FULL file duration as "how long the narration
+// takes," that trailing 0.33s was being counted as real speech time,
+// then the deliberate +0.4s buffer was added ON TOP of it - roughly
+// DOUBLING the real gap a viewer actually hears between one beat's
+// last spoken word and the next beat's first one (confirmed live via
+// silencedetect on a real assembled track: ~0.87s measured gaps
+// against the ~0.4s the code's own math implies). Fixed by trimming
+// each clip's leading/trailing silence BEFORE measuring its duration,
+// so the "+0.4s buffer" is added to the clip's ACTUAL spoken length,
+// not spoken-length-plus-however-much-dead-air-the-TTS-engine-left.
+//
+// The classic "trim both ends" ffmpeg idiom: silenceremove only ever
+// strips from the START of a stream, so trimming the END requires
+// reversing, stripping the (now-leading) silence, and reversing back.
+// `start_silence=0.05` deliberately leaves a small residual pause
+// rather than a hard, unnatural cut straight into the first phoneme.
+function trimClipSilence(inputPath, outputPath) {
+  return new Promise((resolve, reject) => {
+    const filter = 'silenceremove=start_periods=1:start_silence=0.05:start_threshold=-35dB:detection=peak,'
+      + 'areverse,'
+      + 'silenceremove=start_periods=1:start_silence=0.05:start_threshold=-35dB:detection=peak,'
+      + 'areverse';
+    const ff = spawn(ffmpegPath, ['-y', '-i', inputPath, '-af', filter, outputPath]);
+    let stderr = '';
+    ff.stderr.on('data', (d) => { stderr += d.toString(); });
+    ff.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg silence trim exited ${code}: ${stderr.slice(-500)}`))));
+    ff.on('error', reject);
+  });
+}
+
 /**
  * Generates narration audio for every beat that has one, SEQUENTIALLY
  * (not parallel like imagePrefetch.js - this free TTS service is a
@@ -102,8 +137,21 @@ async function prefetchNarration(sceneJSON, jobId) {
   for (const { scene, index } of beatsWithNarration) {
     try {
       const buf = await generateSpeech(scene.params.narration.trim());
+      const rawPath = path.join(dir, `${index}-raw.mp3`);
+      fs.writeFileSync(rawPath, buf);
+
       const filePath = path.join(dir, `${index}.mp3`);
-      fs.writeFileSync(filePath, buf);
+      try {
+        await trimClipSilence(rawPath, filePath);
+        fs.unlink(rawPath, () => {});
+      } catch (trimErr) {
+        // Silence trimming is polish, not correctness - if it fails for
+        // any reason, fall back to the untrimmed clip rather than
+        // losing this beat's narration entirely over it.
+        console.warn(`[narrationPrefetch] beat ${index} silence trim failed, using untrimmed clip: ${trimErr.message}`);
+        fs.renameSync(rawPath, filePath);
+      }
+
       const duration = await getAudioDurationSeconds(filePath);
       audioFiles.set(index, { path: filePath, duration });
       // Small buffer so the visual doesn't cut away the instant speech
