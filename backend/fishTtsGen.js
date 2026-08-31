@@ -31,6 +31,15 @@ const VOICES = {
 const DEFAULT_VOICE_ID = VOICES.adrian;
 const MODEL = process.env.FISH_MODEL || 's2.1-pro-free';
 
+// Fish Audio's own documented "expressiveness" controls. Raised from
+// the API's own default (0.7/0.7) per direct user preference after a
+// real A/B listen against 0.7 and 0.9 on identical text - 1.0 was
+// picked as sounding least "monotone" (the user's real complaint,
+// distinct from the separate noise/gain-staging issue already fixed
+// in audioMux.js - this is about pitch/delivery variation, not noise).
+const TEMPERATURE = 1.0;
+const TOP_P = 0.95;
+
 /**
  * Single call, no retry - generateSpeech (below) owns the retry, same
  * split as ttsGen.js's speakOnce/generateSpeech. A hard timeout is
@@ -58,6 +67,8 @@ async function speakOnce(text, voiceId) {
         reference_id: voiceId,
         format: 'mp3',
         mp3_bitrate: 128,
+        temperature: TEMPERATURE,
+        top_p: TOP_P,
       }),
       signal: controller.signal,
     });
