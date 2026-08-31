@@ -234,7 +234,7 @@ async function prefetchNarration(sceneJSON, jobId) {
       // placement both fail it. On rejection, re-tags AND re-synthesizes
       // from scratch with the judge's feedback folded in, rather than
       // just re-rolling the same TTS call - see narrationVerify.js.
-      const { taggedText, buf } = await synthesizeVerified(plainText, async (feedback) => {
+      const { taggedText, buf, passed } = await synthesizeVerified(plainText, async (feedback) => {
         const tagged = await annotateNarrationTags(plainText, feedback);
         const audioBuf = await generateSpeech(tagged);
         return { taggedText: tagged, buf: audioBuf };
@@ -259,15 +259,24 @@ async function prefetchNarration(sceneJSON, jobId) {
       // budget running out (see synthesizeVerified) - cuts off a
       // trailing hallucinated artifact if one is still there, using the
       // internal-silence-gap signature described on trimTrailingArtifact
-      // itself. No AI call, so it costs nothing extra even when it has
-      // nothing to do.
-      const tailTrimmedPath = path.join(dir, `${index}-tailtrimmed.mp3`);
-      try {
-        await trimTrailingArtifact(trimmedPath, tailTrimmedPath);
-        fs.unlink(trimmedPath, () => {});
-      } catch (tailErr) {
-        console.warn(`[narrationPrefetch] beat ${index} tail-artifact trim failed, using untrimmed clip: ${tailErr.message}`);
-        fs.renameSync(trimmedPath, tailTrimmedPath);
+      // itself. Deliberately gated on `passed` being false: a clip the
+      // judge already explicitly confirmed clean has nothing to gain
+      // from this blunt heuristic and only stands to lose real content
+      // if the gap-detection ever misfires (a real, confirmed failure
+      // mode caught in testing - it can mistake a genuine mid-sentence
+      // pause for an artifact boundary when there's only one qualifying
+      // gap in the whole clip). Only worth the risk on a take that
+      // wasn't trustworthy to begin with.
+      let tailTrimmedPath = trimmedPath;
+      if (!passed) {
+        tailTrimmedPath = path.join(dir, `${index}-tailtrimmed.mp3`);
+        try {
+          await trimTrailingArtifact(trimmedPath, tailTrimmedPath);
+          fs.unlink(trimmedPath, () => {});
+        } catch (tailErr) {
+          console.warn(`[narrationPrefetch] beat ${index} tail-artifact trim failed, using untrimmed clip: ${tailErr.message}`);
+          fs.renameSync(trimmedPath, tailTrimmedPath);
+        }
       }
 
       // Mastered PER CLIP, here, before assembly - not just on the

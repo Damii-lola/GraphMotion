@@ -52,7 +52,15 @@ function parseJudgeResponse(raw) {
 
 async function judgeNarrationAudio(audioBuffer, plainText) {
   const promptText = `Intended script: "${plainText}"\n\nJudge the audio clip against this script.`;
-  const raw = await callGeminiWithAudio(JUDGE_SYSTEM_PROMPT, audioBuffer, 'audio/mpeg', promptText, { jsonMode: true, maxTokens: 400, temperature: 0.0 });
+  // Real bug caught in production testing: 400 tokens was sometimes not
+  // enough room for the model to list every issue it found AND close
+  // the JSON object, so the response got truncated mid-way through a
+  // REJECTION - which callGeminiRaw treats as a hard error (no valid
+  // JSON to parse), which synthesizeVerified below then treats as "the
+  // judge is unavailable, accept this attempt unverified" - the exact
+  // opposite of what should happen to a take bad enough to trigger a
+  // long issues list. 700 gives real headroom.
+  const raw = await callGeminiWithAudio(JUDGE_SYSTEM_PROMPT, audioBuffer, 'audio/mpeg', promptText, { jsonMode: true, maxTokens: 700, temperature: 0.0 });
   return parseJudgeResponse(raw);
 }
 
@@ -77,6 +85,16 @@ const MAX_ATTEMPTS = 5;
  * blocking a whole video's narration on a QA-step outage would not be.
  * If every attempt is still rejected, the last attempt is used anyway
  * rather than looping forever.
+ *
+ * Returns { taggedText, buf, passed } - `passed` is true only when the
+ * judge explicitly confirmed this exact audio, false for both the
+ * "still rejected after N attempts" and "judge call failed" paths.
+ * Callers use this to decide whether it's worth risking the mechanical
+ * tail-artifact trim (narrationPrefetch.js's trimTrailingArtifact) on
+ * the result - a judge-CONFIRMED clean clip has nothing to gain from
+ * that blunt heuristic and only stands to lose real content if it ever
+ * misfires, so it should only run on the unverified/rejected path
+ * where the audio wasn't already trusted anyway.
  */
 async function synthesizeVerified(plainText, tagAndSynthesize) {
   let feedback = '';
@@ -88,14 +106,14 @@ async function synthesizeVerified(plainText, tagAndSynthesize) {
       verdict = await judgeNarrationAudio(last.buf, plainText);
     } catch (err) {
       console.warn(`[narrationVerify] judge call failed, accepting audio unverified: ${err.message}`);
-      return last;
+      return { ...last, passed: false };
     }
-    if (verdict.pass) return last;
+    if (verdict.pass) return { ...last, passed: true };
     console.warn(`[narrationVerify] attempt ${attempt}/${MAX_ATTEMPTS} rejected by judge: ${(verdict.issues || []).join('; ')}`);
     feedback = verdict.retagInstruction || '';
   }
   console.warn(`[narrationVerify] still rejected after ${MAX_ATTEMPTS} attempts - using the last attempt anyway`);
-  return last;
+  return { ...last, passed: false };
 }
 
 module.exports = { synthesizeVerified, judgeNarrationAudio };
