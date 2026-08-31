@@ -28,51 +28,69 @@ const { callGeminiRaw } = require('./geminiClient');
  * uses throughout sceneSchema.js's auto-repair pipeline.
  */
 
+// Deliberately pulled BACK to just two tag categories after direct
+// user feedback: word-level [emphasis] (nuclear/contrastive stress,
+// content-word tagging - real English phonetics, verified working in
+// isolated tests) and [soft] were both tried and, in real full videos,
+// judged to still not sound natural - "if not the emotional tags and
+// the break tags, it shouldn't use any other tag." Only emotion tags
+// (one per sentence, real mood) and break/long-break (pause timing)
+// remain - everything else (tone tags, [emphasis], breath/sound tags)
+// is removed from what the model is even offered, not just discouraged.
 const TAGGING_SYSTEM_PROMPT = `You add Fish Audio TTS voice tags to a plain spoken script. Output ONLY the tagged script, no explanation, no markdown fences, no quotes around it.
 
-Real, verified Fish Audio tags (use ONLY these exact names - no other tag names exist):
+Real, verified Fish Audio tags (use ONLY these exact names - no other tag names exist, and no other tags may be used at all, even ones you know are real Fish Audio tags):
 Emotions: [happy] [sad] [angry] [excited] [calm] [nervous] [confident] [surprised] [satisfied] [delighted] [scared] [worried] [upset] [frustrated] [embarrassed] [disgusted] [proud] [relaxed] [grateful] [curious] [sarcastic] [confused] [disappointed] [hopeful] [determined]
-Tone: [whispering] [soft] [emphasis] [shouting] [in a hurry tone]
-Breath/sound: [laughing] [chuckling] [sighing] [gasping] [clear throat] [panting] [groaning]
 Pauses: [break] [long-break]
 
 HARD RULES, no exceptions:
-1. The script MUST start with [soft] before anything else.
-2. Insert [break] immediately after EVERY comma, colon, or semicolon (, : ;) in the script - every single one, not just some.
-3. Insert [long-break] immediately after EVERY sentence-ending mark (. ? ! or ...) in the script - every single one, not just some.
-4. Add ONE emotion/tone tag at the start of each sentence where it genuinely fits the meaning - this sets the overall mood, it does NOT by itself create natural-sounding pitch variation within the sentence. Rule 5 below is what does that.
-5. WORD-LEVEL STRESS, based on how English is actually spoken (real prosody, not decoration): a real sentence is not said in one flat pitch - stressed CONTENT words (nouns, verbs, adjectives, adverbs - the words carrying the actual meaning) get real pitch/emphasis, while function words (the, a, is, of, to, and, that) stay unstressed. English also tends to start a sentence relatively high in pitch on its first stressed word, then drift down toward the end (rising back up only for a genuine yes/no question - see rule 8). Put [emphasis] immediately before roughly 1 in every 4-5 words, specifically the CONTENT words that would naturally carry stress if a person said this out loud. Never put [emphasis] on function words. Do not emphasis-tag every word - real speech has both stressed AND unstressed words, that contrast IS what creates natural-sounding variation.
-6. NUCLEAR STRESS - every sentence has ONE word that carries its real point, stronger than the others - this is usually the LAST major content word (English's neutral default), UNLESS an earlier word is what the sentence is actually about, in which case THAT word is the nuclear stress instead. That word must always get [emphasis] - it is never the word left out.
-7. CONTRASTIVE STRESS - when a sentence contrasts or corrects something ("not X, but Y", "more than", "instead of", "unlike"), the specific word being contrasted gets [emphasis] even if it's a shorter/simpler word than usual - contrast is what real speech stresses hardest, regardless of normal word-class rules.
-8. QUESTION INTONATION - this is a real, commonly-missed distinction: a yes/no question (can be answered "yes" or "no" - "Did you know...?", "Is it true...?") rises in pitch at the end. A WH-question (starts with why/what/when/where/who/how) actually FALLS at the end in neutral spoken English, the opposite of the common assumption - don't add extra tags for this (the "?" already triggers the engine's own question inflection), just be aware a wh-question's [emphasis] should land on the wh-word or the answer's key content word, not manufacture a rise that wouldn't happen naturally.
-9. GIVEN VS NEW INFORMATION - if a beat's narration re-mentions something already established earlier in the SAME script (a word or idea repeated from an earlier sentence), that repeat is "given" information and should NOT get [emphasis] the second time, even if it's a content word - only genuinely NEW information gets stressed. Saying an already-established word with the same stress as the first time it appeared is a real, common giveaway of unnatural TTS delivery.
-10. Never invent a tag name that isn't in the list above.
-11. Do not add, remove, or reword any of the actual spoken words - only insert bracket tags between them. The spoken text itself must stay byte-for-byte the same.
+1. Insert [break] immediately after EVERY comma, colon, or semicolon (, : ;) in the script - every single one, not just some.
+2. Insert [long-break] immediately after EVERY sentence-ending mark (. ? ! or ...) in the script - every single one, not just some.
+3. Add ONE emotion tag at the start of each sentence where it genuinely fits the meaning.
+4. Do NOT use any tag outside the two lists above - no tone tags, no [emphasis], no [soft], no breath/sound tags, nothing else, even if you believe it's a real Fish Audio tag.
+5. Never invent a tag name that isn't in the list above.
+6. Do not add, remove, or reword any of the actual spoken words - only insert bracket tags between them. The spoken text itself must stay byte-for-byte the same.
 
 Example:
 Input: "Ever wonder why cats knead blankets? It's actually a deep instinct, from when they were kittens."
-Output: "[soft] [curious] Ever wonder why [emphasis] cats [emphasis] knead blankets? [long-break] It's actually a [emphasis] deep instinct, [break] from when they were [emphasis] kittens. [long-break]"`;
+Output: "[curious] Ever wonder why cats knead blankets? [long-break] It's actually a deep instinct, [break] from when they were kittens. [long-break]"`;
 
-/** Deterministic guarantee for the two pause rules - runs regardless of what the model did, so rules 2-3 above are never actually optional. Skips insertion where a break/long-break tag is already immediately present (avoids double-tagging a spot the model already got right). Ellipsis ("...") is matched as ONE unit, not three separate sentence-enders. */
+/** Deterministic guarantee for the two pause rules - runs regardless of what the model did, so rules 1-2 above are never actually optional. Skips insertion where a break/long-break tag is already immediately present (avoids double-tagging a spot the model already got right). Ellipsis ("...") is matched as ONE unit, not three separate sentence-enders. */
 function ensurePauseTags(text) {
   let out = text.replace(/([,:;])(?!\s*\[(?:break|long-break)\])/g, '$1 [break]');
   out = out.replace(/(\.{2,}|[.?!])(?!\s*\[(?:break|long-break)\])/g, '$1 [long-break]');
-  if (!/^\s*\[soft\]/.test(out)) out = `[soft] ${out}`;
   return out;
 }
 
+/** Strips every [tag] and collapses whitespace - what a tagged string's actual WORDS reduce to, for comparing against the original plain text. */
+function stripTagsAndNormalize(text) {
+  return text.replace(/\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 /**
- * Annotates one beat's plain narration with real Fish Audio tags.
- * Falls back to a PURELY mechanical tagging (just ensurePauseTags on
- * the untouched plain text, no emotion tags) if the Gemini call fails
- * for any reason - losing the contextual emotion tags on one beat is
- * a real but minor quality loss; losing that beat's narration entirely
- * over a tagging-step failure would not be.
+ * Real, confirmed-live bug caught testing this file: the tagging model
+ * doesn't just insert tags - on at least one real call it HALLUCINATED
+ * entire extra sentences that were never in the input at all, a direct
+ * violation of its own "do not add/remove/reword words" rule. Nothing
+ * downstream would have caught that - ensurePauseTags only ever ADDS
+ * pause tags, it has no concept of "is this still the same words" - so
+ * a hallucinated script would have gone straight to TTS, producing
+ * narration audio far longer than the beat's own visual timing was
+ * ever built for. Fixed here: after tagging, strip every tag back out
+ * and compare against the original plain text (normalized) - if they
+ * don't match, the tagged version is discarded and mechanical-only
+ * tagging is used instead, exactly like a call failure. Losing the
+ * emotion tags on one beat is a real but minor loss; sending
+ * hallucinated content to TTS is not something to risk.
  */
 async function annotateNarrationTags(plainText) {
   try {
-    const tagged = await callGeminiRaw(TAGGING_SYSTEM_PROMPT, plainText, { jsonMode: false, maxTokens: 1000, temperature: 0.4 });
-    return ensurePauseTags(tagged.trim());
+    const tagged = (await callGeminiRaw(TAGGING_SYSTEM_PROMPT, plainText, { jsonMode: false, maxTokens: 1000, temperature: 0.4 })).trim();
+    if (stripTagsAndNormalize(tagged) !== stripTagsAndNormalize(plainText)) {
+      console.warn(`[narrationTagging] tagged text changed the actual words (likely hallucinated content) - using mechanical pause tags only. Original: "${plainText}" | Got: "${tagged}"`);
+      return ensurePauseTags(plainText);
+    }
+    return ensurePauseTags(tagged);
   } catch (err) {
     console.warn(`[narrationTagging] tag annotation failed, using mechanical pause tags only: ${err.message}`);
     return ensurePauseTags(plainText);
