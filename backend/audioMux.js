@@ -2,7 +2,13 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
-const { buildTimeline } = require('./renderEngine');
+// From the canvas-free timeline module, not renderEngine.js directly -
+// this file runs in the PARENT process (renderWorker.js), which never
+// draws a frame itself (that's exclusively done in forked chunk-worker
+// processes) - requiring renderEngine.js here would load @napi-rs/canvas
+// into the parent for zero benefit. See engine/timeline.js's own doc
+// comment for the real, measured cost this avoids.
+const { buildTimeline } = require('./engine/timeline');
 
 function run(args) {
   return new Promise((resolve, reject) => {

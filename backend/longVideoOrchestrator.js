@@ -4,7 +4,16 @@ const os = require('os');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
-const { buildTimeline, renderJobToFile } = require('./renderEngine');
+// From the canvas-free timeline module, not renderEngine.js directly -
+// this file runs in the PARENT process (renderWorker.js), which never
+// draws a frame itself for a long/chunked video (that's exclusively done
+// in forked chunk-worker processes) - requiring renderEngine.js here
+// unconditionally would load @napi-rs/canvas into the parent for every
+// job regardless of whether it ever takes the short-video direct-render
+// branch below. See engine/timeline.js's own doc comment for the real,
+// measured cost this avoids; renderJobToFile is required lazily, only
+// inside that branch, so the cost is paid solely when it's actually used.
+const { buildTimeline } = require('./engine/timeline');
 
 // Below this, render directly in this process - the common case
 // (most videos are short), no chunking overhead/complexity at all.
@@ -66,6 +75,7 @@ async function renderLongFormVideo(jobId, sceneJSON, onProgress) {
   const { totalDuration } = buildTimeline(sceneJSON);
 
   if (totalDuration <= CHUNK_THRESHOLD_SECONDS) {
+    const { renderJobToFile } = require('./renderEngine');
     return renderJobToFile(jobId, sceneJSON, onProgress);
   }
 

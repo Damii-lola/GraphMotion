@@ -7,6 +7,7 @@ const fs = require('fs');
 const { buildBeatVisual, loadBeatImages } = require('./sceneBuilder');
 const { gradientRamp } = require('./engine/generateEffects');
 const { renderWithMotionBlur } = require('./engine/motionBlur');
+const { buildTimeline, findActiveBeatIndex } = require('./engine/timeline');
 
 // Real, previously-unnoticed root cause of "the font/animation still
 // looks wrong" complaints surviving every prompt-wording change: this
@@ -108,36 +109,14 @@ const FRAME_DURATION = 1 / FPS;
 // exposure ghost.
 const MOTION_BLUR_CONFIG = { enabled: true, shutterAngle: 180, shutterPhase: -90, samples: 2 };
 
-/**
- * Computes each beat's [start,end) window in the overall timeline via a
- * running cumulative sum of `scene.params.duration` (same floor of 0.4s
- * this always used) - `totalDuration` is the one field
- * longVideoOrchestrator.js reads to decide whether to chunk; `beatRanges`
- * is additional (backward-compatible - existing callers reading only
- * totalDuration are unaffected) and is what renderTimelineRange itself
- * uses internally to know which beat is active at a given global time,
- * avoiding recomputing the same cumulative sum twice.
- */
-function buildTimeline(sceneJSON) {
-  let cursor = 0;
-  const beatRanges = (sceneJSON.scenes || []).map((scene) => {
-    const duration = Math.max(0.4, Number(scene.params?.duration) || 3);
-    const start = cursor;
-    cursor += duration;
-    return {
-      scene, duration, start, end: cursor,
-    };
-  });
-  return { totalDuration: cursor, beatRanges };
-}
-
-/** The beat active at global time `t` - clamps to the last beat once `t` reaches/exceeds totalDuration (Math.ceil rounding on the final chunk's endFrame can land one frame past the true end). */
-function findActiveBeatIndex(beatRanges, t) {
-  for (let i = 0; i < beatRanges.length; i++) {
-    if (t < beatRanges[i].end || i === beatRanges.length - 1) return i;
-  }
-  return beatRanges.length - 1;
-}
+// buildTimeline/findActiveBeatIndex now live in ./engine/timeline.js (a
+// canvas-free module, required near the top of this file) - callers that
+// only need beat TIMING math (audioMux.js, longVideoOrchestrator.js) can
+// require THAT directly WITHOUT the side effect of loading @napi-rs/canvas,
+// which requiring THIS file always does. Both names are still re-exported
+// below unchanged, so every existing importer of them from renderEngine.js
+// keeps working exactly as before - see engine/timeline.js's own doc
+// comment for the real, measured memory cost this split fixes.
 
 /**
  * Deterministic per-video seed, hashed from stable sceneJSON content

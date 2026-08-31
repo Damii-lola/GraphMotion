@@ -6,12 +6,71 @@
 
 const os = require('os');
 const path = require('path');
+const fs = require('fs');
+const { fork } = require('child_process');
 const { generateSceneJSON, generateEditedSceneJSON } = require('./geminiClient');
 const { renderLongFormVideo } = require('./longVideoOrchestrator');
 const { prefetchBeatImages, cleanupBeatImages } = require('./imagePrefetch');
-const { prefetchIcons, cleanupIcons } = require('./iconFetch');
 const { prefetchNarration, cleanupNarration } = require('./narrationPrefetch');
 const { muxNarrationOntoVideo } = require('./audioMux');
+
+// Deliberately NOT `require('./iconFetch')` here - that file requires
+// @resvg/resvg-js at its own top level, a real native SVG rasterizer
+// whose loading cost (confirmed live: +26MB RSS, measured via this
+// file's own process.memoryUsage() logging) would otherwise sit in
+// THIS process for the rest of the job's entire lifetime despite never
+// being touched again after icons are rasterized to disk. Icon
+// resolution instead runs in its own disposable forked process (see
+// iconFetchWorker.js and prefetchIconsIsolated below) so that cost is
+// paid and reclaimed there, the same isolation pattern
+// longVideoOrchestrator.js already uses for the render step itself.
+// cleanupIcons's own logic (a plain fs.rm on that job's temp icons
+// dir) is trivial enough to inline here rather than pull in the whole
+// module just for it.
+function iconsDirFor(jobId) {
+  return path.join(os.tmpdir(), 'shortform-renders', `${jobId}-icons`);
+}
+function cleanupIcons(jobId) {
+  fs.rm(iconsDirFor(jobId), { recursive: true, force: true }, () => {});
+}
+
+/** Runs prefetchIcons in an isolated, disposable child process - see the doc comment above for why. */
+function prefetchIconsIsolated(sceneJSON, jobId) {
+  return new Promise((resolve, reject) => {
+    const child = fork(path.join(__dirname, 'iconFetchWorker.js'), {
+      execArgv: ['--max-old-space-size=150'],
+    });
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error('icon fetch worker timed out'));
+    }, 30000);
+
+    child.on('message', (msg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (msg && msg.ok) resolve(msg.renderSceneJSON);
+      else reject(new Error((msg && msg.error) || 'icon fetch worker failed with no error message'));
+    });
+    child.on('exit', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(new Error(`icon fetch worker exited unexpectedly (code ${code})`));
+    });
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(err);
+    });
+
+    child.send({ sceneJSON, jobId });
+  });
+}
 
 let currentJobId = null;
 
@@ -29,10 +88,22 @@ function sendAndFlush(message) {
   });
 }
 
+// Real, in-process RSS (process.memoryUsage(), the same trustworthy,
+// cross-platform-accurate source renderEngine.js's own per-frame rss
+// logging already uses) - not an EXTERNAL tasklist/wmic snapshot, which
+// on Windows reflects working-set idle/active-transition behavior that
+// doesn't necessarily predict real memory pressure on the actual (Linux)
+// production host. Kept as a permanent, cheap diagnostic for this
+// PARENT process's own lifecycle, matching renderEngine.js's own
+// precedent for exactly the same "don't blind-guess if it happens again"
+// reason.
+function rssMB() { return Math.round(process.memoryUsage().rss / 1024 / 1024); }
+
 process.on('message', async ({ jobId, prompt, targetDurationSeconds, parentSceneJSON }) => {
   currentJobId = jobId;
 
   try {
+    console.log(`[renderWorker] job ${jobId} start, rss=${rssMB()}MB`);
     await sendAndFlush({ type: 'status', jobId, status: 'writing_scenes' });
 
     // If this job was created as an edit of a previous one, its
@@ -42,6 +113,7 @@ process.on('message', async ({ jobId, prompt, targetDurationSeconds, parentScene
     const sceneJSON = parentSceneJSON
       ? await generateEditedSceneJSON(parentSceneJSON, prompt, targetDurationSeconds || 12)
       : await generateSceneJSON(prompt, targetDurationSeconds || 12);
+    console.log(`[renderWorker] job ${jobId} scene generated, rss=${rssMB()}MB`);
 
     // sceneJSON (unmodified) goes back to the parent HERE - that's what
     // gets persisted to Supabase and reused as edit context later, so
@@ -55,14 +127,19 @@ process.on('message', async ({ jobId, prompt, targetDurationSeconds, parentScene
     // timeline (and therefore image prefetch, which is keyed by beat
     // index rather than timing) needs to already reflect.
     const { sceneJSON: narratedSceneJSON, audioFiles } = await prefetchNarration(sceneJSON, jobId);
+    console.log(`[renderWorker] job ${jobId} narration prefetched, rss=${rssMB()}MB`);
     const imageResolvedSceneJSON = await prefetchBeatImages(narratedSceneJSON, jobId);
-    const renderSceneJSON = await prefetchIcons(imageResolvedSceneJSON, jobId);
+    console.log(`[renderWorker] job ${jobId} images prefetched, rss=${rssMB()}MB`);
+    const renderSceneJSON = await prefetchIconsIsolated(imageResolvedSceneJSON, jobId);
+    console.log(`[renderWorker] job ${jobId} icons prefetched, rss=${rssMB()}MB`);
 
     const renderedPath = await renderLongFormVideo(jobId, renderSceneJSON, (pct) => {
       if (process.send) process.send({ type: 'progress', jobId, progress: pct });
     });
+    console.log(`[renderWorker] job ${jobId} render done, rss=${rssMB()}MB`);
 
     const localFilePath = await muxNarrationOntoVideo(renderedPath, renderSceneJSON, audioFiles, jobId, path.join(os.tmpdir(), 'shortform-renders'));
+    console.log(`[renderWorker] job ${jobId} mux done, rss=${rssMB()}MB`);
 
     await sendAndFlush({ type: 'render_complete', jobId, localFilePath });
   } catch (err) {
