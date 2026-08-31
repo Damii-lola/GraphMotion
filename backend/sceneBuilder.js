@@ -32,7 +32,16 @@ const {
 const {
   twirl, bulge, rippleWarp, waveWarp, displacementMap,
 } = require('./engine/distortEffects');
-const T = require('./engine/transitions');
+// engine/transitions.js is NOT required here - real dead weight found
+// during a full memory audit: renderEngine.js's own history already
+// documents that every beat-to-beat change now pans unconditionally
+// (the TYPE field a beat's old "transitionIn.type" would have selected
+// one of these transitions with is "no longer used at all"), and a
+// direct search confirmed zero references to this import anywhere in
+// this file - it was pure unused weight, pulling in its own further
+// dependency chain (noiseEffects.js, glitchEffects.js,
+// shapePrimitives.js, path.js) into every chunk-worker process for
+// zero benefit.
 
 /**
  * The real interpreter: turns validated scene JSON (sceneSchema.js)
@@ -591,5 +600,5 @@ function buildBeatVisual(visual, beatContext) {
 }
 
 module.exports = {
-  buildAnimatable, buildBeatVisual, applyEffectsToCanvas, buildGenerateCanvas, loadBeatImages, T,
+  buildAnimatable, buildBeatVisual, applyEffectsToCanvas, buildGenerateCanvas, loadBeatImages,
 };
