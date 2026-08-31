@@ -91,15 +91,22 @@ const FRAME_DURATION = 1 / FPS;
 // a reference tutorial ("enable motion blur by checking this icon") for
 // exactly the kind of fast text sweep this engine already builds -
 // confirmed as a real, missing piece of "why does ours look static"
-// rather than a guess. AE's own default is 8 samples/frame; halved
-// here since this already sacrificed FPS 24->20 for render-time budget
-// (see that constant's own history above) - 4 samples still gives a
-// real, visible blur trail on fast motion at half the added per-frame
-// cost, and this is a case where "no motion blur" (0 render calls
-// added) and "full 8-sample AE-grade blur" (7 extra render calls added
-// per frame) are far enough apart that a middle value is worth trying
-// before committing to either extreme.
-const MOTION_BLUR_CONFIG = { enabled: true, shutterAngle: 180, shutterPhase: -90, samples: 4 };
+// rather than a guess. AE's own default is 8 samples/frame.
+//
+// 8 -> 4 -> 2: each sample is a full extra render of the beat's entire
+// layer stack (layerStack.js/withEffects/dropShadow, all now pooled/
+// fused where possible, but each sample still needs its OWN canvas -
+// samples is a direct multiplier on top of everything else). Measured
+// directly, not assumed: a real dense-content frame's per-frame RSS
+// growth tracks with `samples` almost linearly, and this is a real
+// per-render-job memory budget this engine is being pushed toward (see
+// this file's own README-adjacent memory-fix history), not just a
+// render-time concern. 2 samples still gives a real, visible blur
+// trail on fast motion (confirmed directly on a real entrance
+// animation) - short of "no motion blur," this is the smallest sample
+// count that's still recognizably blur rather than a slight double-
+// exposure ghost.
+const MOTION_BLUR_CONFIG = { enabled: true, shutterAngle: 180, shutterPhase: -90, samples: 2 };
 
 /**
  * Computes each beat's [start,end) window in the overall timeline via a
