@@ -104,90 +104,6 @@ function trimClipSilence(inputPath, outputPath) {
   });
 }
 
-// Explicit request: every comma-level pause (not just between beats)
-// should last 2-3s - a real, deliberate, dramatic-pause style choice,
-// not a "sounds like natural conversation" one. There's no SSML way to
-// insert a pause on this free TTS tier at all (<break>, like <emphasis>
-// and style tags, breaks the connection outright - confirmed directly,
-// see this file's own git history), so this is done the only way that
-// actually works here: each comma-separated segment of a beat's
-// narration becomes its OWN plain-text TTS call (guaranteed to work),
-// stitched back together via ffmpeg concat with a real, silent gap
-// clip between segments - the same reliable mechanism already used for
-// inter-beat gaps.
-const COMMA_PAUSE_SECONDS = 2.5;
-
-function generateGapClip(outPath, seconds) {
-  return new Promise((resolve, reject) => {
-    const ff = spawn(ffmpegPath, ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=24000:cl=mono', '-t', String(seconds), '-q:a', '4', outPath]);
-    let stderr = '';
-    ff.stderr.on('data', (d) => { stderr += d.toString(); });
-    ff.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg gap-clip exited ${code}: ${stderr.slice(-500)}`))));
-    ff.on('error', reject);
-  });
-}
-
-/** Stream-copy concat (all inputs share the identical mp3 encoding, generated in sequence) - fast, lossless, the same technique longVideoOrchestrator.js already uses for whole chunk files. */
-function concatClips(clipPaths, outPath) {
-  return new Promise((resolve, reject) => {
-    const listPath = `${outPath}.concat-list.txt`;
-    fs.writeFileSync(listPath, clipPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'));
-    const ff = spawn(ffmpegPath, ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', outPath]);
-    let stderr = '';
-    ff.stderr.on('data', (d) => { stderr += d.toString(); });
-    ff.on('close', (code) => {
-      fs.unlink(listPath, () => {});
-      (code === 0 ? resolve() : reject(new Error(`ffmpeg concat exited ${code}: ${stderr.slice(-500)}`)));
-    });
-    ff.on('error', reject);
-  });
-}
-
-/**
- * Generates ONE beat's full narration clip, comma segment by comma
- * segment - each segment is its own separate plain-text TTS call
- * (trailing/leading commas stripped, since the 2-3s silence gap now
- * carries the pause the comma would have - leaving the comma in too
- * would just add the TTS engine's own small comma-pause on top),
- * trimmed individually (same trimClipSilence a single-segment beat
- * always used), then concatenated with COMMA_PAUSE_SECONDS of real
- * silence between segments. A beat with no comma is exactly one
- * segment - the same single TTS call + trim this file always did.
- */
-async function generateBeatNarrationClip(narrationText, dir, index) {
-  const segments = narrationText.split(',').map((s) => s.trim()).filter(Boolean);
-  const clips = [];
-  for (let s = 0; s < segments.length; s++) {
-    const buf = await generateSpeech(segments[s]);
-    const rawPath = path.join(dir, `${index}-s${s}-raw.mp3`);
-    fs.writeFileSync(rawPath, buf);
-    const trimmedPath = path.join(dir, `${index}-s${s}.mp3`);
-    try {
-      await trimClipSilence(rawPath, trimmedPath);
-      fs.unlink(rawPath, () => {});
-    } catch (trimErr) {
-      console.warn(`[narrationPrefetch] beat ${index} segment ${s} silence trim failed, using untrimmed clip: ${trimErr.message}`);
-      fs.renameSync(rawPath, trimmedPath);
-    }
-    clips.push(trimmedPath);
-  }
-
-  if (clips.length === 1) return clips[0];
-
-  const gapPath = path.join(dir, `${index}-gap.mp3`);
-  await generateGapClip(gapPath, COMMA_PAUSE_SECONDS);
-  const withGaps = [];
-  clips.forEach((clip, i) => {
-    withGaps.push(clip);
-    if (i < clips.length - 1) withGaps.push(gapPath);
-  });
-  const finalPath = path.join(dir, `${index}.mp3`);
-  await concatClips(withGaps, finalPath);
-  for (const clip of clips) fs.unlink(clip, () => {});
-  fs.unlink(gapPath, () => {});
-  return finalPath;
-}
-
 /**
  * Generates narration audio for every beat that has one, SEQUENTIALLY
  * (not parallel like imagePrefetch.js - this free TTS service is a
@@ -220,7 +136,22 @@ async function prefetchNarration(sceneJSON, jobId) {
 
   for (const { scene, index } of beatsWithNarration) {
     try {
-      const filePath = await generateBeatNarrationClip(scene.params.narration.trim(), dir, index);
+      const buf = await generateSpeech(scene.params.narration.trim());
+      const rawPath = path.join(dir, `${index}-raw.mp3`);
+      fs.writeFileSync(rawPath, buf);
+
+      const filePath = path.join(dir, `${index}.mp3`);
+      try {
+        await trimClipSilence(rawPath, filePath);
+        fs.unlink(rawPath, () => {});
+      } catch (trimErr) {
+        // Silence trimming is polish, not correctness - if it fails for
+        // any reason, fall back to the untrimmed clip rather than
+        // losing this beat's narration entirely over it.
+        console.warn(`[narrationPrefetch] beat ${index} silence trim failed, using untrimmed clip: ${trimErr.message}`);
+        fs.renameSync(rawPath, filePath);
+      }
+
       const duration = await getAudioDurationSeconds(filePath);
       audioFiles.set(index, { path: filePath, duration });
       // Small buffer so the visual doesn't cut away the instant speech
