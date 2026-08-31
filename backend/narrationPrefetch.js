@@ -130,6 +130,67 @@ function trimClipSilence(inputPath, outputPath) {
 }
 
 /**
+ * Real, repeatedly-confirmed pattern from testing narrationVerify.js's
+ * judge: when Fish Audio hallucinates trailing content (a sigh, a
+ * laugh, a stray word), it consistently lands AFTER a long INTERNAL
+ * silence gap - one trimClipSilence can't touch, since that filter
+ * only ever strips silence from the two edges of the file, and this
+ * gap is sandwiched between real audio on both sides. On a genuinely
+ * clean clip, no such gap survives trimClipSilence - whatever pause
+ * the TTS engine left past the real last word is, by definition, edge
+ * silence, and already gone by this point in the pipeline. So: any
+ * silence gap still present in the LATTER part of an already
+ * edge-trimmed clip, long enough to be well past a normal within-
+ * sentence [break] pause, is itself evidence of trailing artifact
+ * content sitting after it - cut the clip there rather than shipping
+ * whatever comes next.
+ *
+ * Deliberately conservative, and deliberately picks the LAST qualifying
+ * gap, not the first: a real sentence can have its OWN legitimate
+ * mid-sentence [break] pause (after a comma) that's just as long as an
+ * artifact-preceding gap - confirmed live in testing, where picking the
+ * first gap past 40% cut a clip off mid-sentence at a real comma pause,
+ * losing genuine trailing content along with the artifact it was meant
+ * to remove. The LAST such gap is safe because [break][break] (the
+ * sentence's own final pause) is always the last legitimate gap in
+ * correctly-tagged narration - nothing real ever follows it. Anything
+ * after that final gap is either nothing (clean clip - already edge-
+ * trimmed away) or hallucinated artifact content (dirty clip).
+ * Requires >= 600ms of silence to qualify at all (comfortably above the
+ * ~0.2-0.5s a real judgment-based mid-sentence [break] tends to
+ * produce on its own, based on measured pause durations on real
+ * assembled narration) and only acts on a gap starting after 40% of
+ * the clip's own duration (every observed hallucination has landed in
+ * the back half). Leaves the clip untouched if no such gap is found -
+ * this is a blunt, judge-free mechanical step (no AI call), so it only
+ * acts where the evidence is unambiguous.
+ */
+function trimTrailingArtifact(inputPath, outputPath) {
+  const ARTIFACT_GAP_THRESHOLD_S = 0.6;
+  const MIN_FRACTION_OF_CLIP = 0.4;
+  return new Promise((resolve, reject) => {
+    const ff = spawn(ffmpegPath, ['-i', inputPath, '-af', `silencedetect=noise=-30dB:d=${ARTIFACT_GAP_THRESHOLD_S}`, '-f', 'null', '-']);
+    let stderr = '';
+    ff.stderr.on('data', (d) => { stderr += d.toString(); });
+    ff.on('close', () => {
+      const durationMatch = stderr.match(/Duration:\s*(\d+):(\d+):(\d+\.\d+)/);
+      if (!durationMatch) { fs.copyFileSync(inputPath, outputPath); resolve(); return; }
+      const totalDuration = (+durationMatch[1]) * 3600 + (+durationMatch[2]) * 60 + parseFloat(durationMatch[3]);
+      const starts = [...stderr.matchAll(/silence_start:\s*(-?\d+(?:\.\d+)?)/g)].map((m) => parseFloat(m[1]));
+      const qualifying = starts.filter((s) => s > totalDuration * MIN_FRACTION_OF_CLIP);
+      const cutPoint = qualifying.length > 0 ? qualifying[qualifying.length - 1] : undefined;
+      if (cutPoint === undefined) { fs.copyFileSync(inputPath, outputPath); resolve(); return; }
+      const cutFf = spawn(ffmpegPath, ['-y', '-i', inputPath, '-t', String(cutPoint), outputPath]);
+      let cutStderr = '';
+      cutFf.stderr.on('data', (d) => { cutStderr += d.toString(); });
+      cutFf.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg tail-artifact cut exited ${code}: ${cutStderr.slice(-500)}`))));
+      cutFf.on('error', reject);
+    });
+    ff.on('error', reject);
+  });
+}
+
+/**
  * Generates narration audio for every beat that has one, SEQUENTIALLY
  * (not parallel like imagePrefetch.js - this free TTS service is a
  * single-connection-per-call websocket, and total narration length
@@ -194,6 +255,21 @@ async function prefetchNarration(sceneJSON, jobId) {
         fs.renameSync(rawPath, trimmedPath);
       }
 
+      // Mechanical last line of defense against the judge's own retry
+      // budget running out (see synthesizeVerified) - cuts off a
+      // trailing hallucinated artifact if one is still there, using the
+      // internal-silence-gap signature described on trimTrailingArtifact
+      // itself. No AI call, so it costs nothing extra even when it has
+      // nothing to do.
+      const tailTrimmedPath = path.join(dir, `${index}-tailtrimmed.mp3`);
+      try {
+        await trimTrailingArtifact(trimmedPath, tailTrimmedPath);
+        fs.unlink(trimmedPath, () => {});
+      } catch (tailErr) {
+        console.warn(`[narrationPrefetch] beat ${index} tail-artifact trim failed, using untrimmed clip: ${tailErr.message}`);
+        fs.renameSync(trimmedPath, tailTrimmedPath);
+      }
+
       // Mastered PER CLIP, here, before assembly - not just on the
       // final whole-track mix in audioMux.js. See masterNarrationAudio's
       // own doc comment for the real, measured reason: normalizing the
@@ -203,11 +279,11 @@ async function prefetchNarration(sceneJSON, jobId) {
       // boosting the actual VOICE more than the voice alone needs.
       const filePath = path.join(dir, `${index}.mp3`);
       try {
-        await masterNarrationAudio(trimmedPath, filePath);
-        fs.unlink(trimmedPath, () => {});
+        await masterNarrationAudio(tailTrimmedPath, filePath);
+        fs.unlink(tailTrimmedPath, () => {});
       } catch (masterErr) {
         console.warn(`[narrationPrefetch] beat ${index} per-clip mastering failed, using unmastered clip: ${masterErr.message}`);
-        fs.renameSync(trimmedPath, filePath);
+        fs.renameSync(tailTrimmedPath, filePath);
       }
 
       const duration = await getAudioDurationSeconds(filePath);
