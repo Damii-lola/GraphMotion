@@ -313,6 +313,12 @@ function withHardTimeout(promiseFactory, label) {
 module.exports = {
   generateSceneJSON: withHardTimeout(generateSceneJSON, 'generateSceneJSON'),
   generateEditedSceneJSON: withHardTimeout(generateEditedSceneJSON, 'generateEditedSceneJSON'),
+  // Exposed for narrationTagging.js's second-pass tag-annotation call -
+  // a plain, low-level "ask Gemini a focused question" primitive
+  // (key rotation/retry/timeout already handled inside it), reused
+  // rather than re-implemented for a call that isn't generating scene
+  // JSON at all.
+  callGeminiRaw: withHardTimeout(callGeminiRaw, 'callGeminiRaw'),
   buildTreatmentSystemPrompt,
   buildGenerationSystemPrompt,
   listTreatmentBeatHeaders,

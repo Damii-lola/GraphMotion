@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 const fishTts = require('./fishTtsGen');
 const edgeTts = require('./ttsGen');
+const { annotateNarrationTags } = require('./narrationTagging');
 
 /**
  * Production narration voice switched to Fish Audio's "Adrian" per
@@ -158,7 +159,13 @@ async function prefetchNarration(sceneJSON, jobId) {
 
   for (const { scene, index } of beatsWithNarration) {
     try {
-      const buf = await generateSpeech(scene.params.narration.trim());
+      // Scene generation writes PLAIN narration on purpose (see
+      // scenePrompts.js) - tag annotation is this deliberately separate
+      // second pass (narrationTagging.js), which also guarantees the
+      // mandatory [break]/[long-break]/[soft] placement mechanically,
+      // regardless of what the tagging model itself did or missed.
+      const taggedText = await annotateNarrationTags(scene.params.narration.trim());
+      const buf = await generateSpeech(taggedText);
       const rawPath = path.join(dir, `${index}-raw.mp3`);
       fs.writeFileSync(rawPath, buf);
 

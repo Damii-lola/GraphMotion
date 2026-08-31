@@ -163,35 +163,14 @@ Concretely:
   ambiguous to read aloud (twenty-five? two five? a date?), and
   spelling them out removes that ambiguity entirely.
 - Do NOT rely on capitalization for vocal emphasis ("this is VERY
-  important") - not how this engine reads emphasis; use the real
-  [emphasis] tag below instead.
-
-NARRATION VOICE TAGS - the TTS engine (Fish Audio) reads real inline
-bracket tags as vocal direction, not as spoken words - confirmed
-directly (not assumed): a tag like [whispering] measurably changes the
-audio without being read aloud as the literal word "whispering". Use
-them like stage directions inside the narration string, e.g. "[curious]
-Ever wonder why cats knead blankets?". Sentence-level emotion tags work
-best placed at the START of the sentence they apply to; tone/effect
-tags can go anywhere. Up to 3 per sentence.
-
-MANDATORY RULE: every single "narration" string, on every beat, no
-exceptions, MUST begin with the tag [breathy] before anything else -
-this is a hard requirement, not a style suggestion.
-
-Real supported tags, exactly as written (case/spelling/hyphenation
-matters):
-- Emotions: [happy] [sad] [angry] [excited] [calm] [nervous]
-  [confident] [surprised] [satisfied] [delighted] [scared] [worried]
-  [upset] [frustrated] [embarrassed] [disgusted] [proud] [relaxed]
-  [grateful] [curious] [sarcastic] [confused] [disappointed] [hopeful]
-  [determined]
-- Tone: [whispering] [soft tone] [emphasis] [shouting] [in a hurry
-  tone]
-- Sound/breath: [breathy] [laughing] [chuckling] [sighing] [gasping]
-  [clear throat] [panting] [groaning]
-- Pauses: [break] (short pause), [long-break] (longer pause) - NOT
-  "[pause]"/"[long pause]", those are not real tags on this engine.
+  important") - not how this engine reads emphasis.
+- Write "narration" as PLAIN spoken text ONLY - no bracket tags, no
+  [anything] here at all. Voice tagging is a deliberately SEPARATE step
+  (narrationTagging.js) that runs after this JSON is generated, on
+  purpose - the model's attention here should go entirely into writing
+  a real, natural-sounding SENTENCE, not into juggling tag syntax at
+  the same time. A "narration" string containing a bracket tag is a
+  mistake, not a style choice.
 
 =====================================================================
 ANIMATABLE VALUES - every transform/effect number or vector accepts:
