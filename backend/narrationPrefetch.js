@@ -6,6 +6,7 @@ const ffmpegPath = require('ffmpeg-static');
 const fishTts = require('./fishTtsGen');
 const edgeTts = require('./ttsGen');
 const { annotateNarrationTags } = require('./narrationTagging');
+const { masterNarrationAudio } = require('./audioMux');
 
 /**
  * Production narration voice switched to Fish Audio's "Adrian" per
@@ -165,20 +166,37 @@ async function prefetchNarration(sceneJSON, jobId) {
       // mandatory [break]/[long-break]/[soft] placement mechanically,
       // regardless of what the tagging model itself did or missed.
       const taggedText = await annotateNarrationTags(scene.params.narration.trim());
+      console.log(`[narrationPrefetch] beat ${index} tagged text: ${taggedText}`);
       const buf = await generateSpeech(taggedText);
       const rawPath = path.join(dir, `${index}-raw.mp3`);
       fs.writeFileSync(rawPath, buf);
 
-      const filePath = path.join(dir, `${index}.mp3`);
+      const trimmedPath = path.join(dir, `${index}-trimmed.mp3`);
       try {
-        await trimClipSilence(rawPath, filePath);
+        await trimClipSilence(rawPath, trimmedPath);
         fs.unlink(rawPath, () => {});
       } catch (trimErr) {
         // Silence trimming is polish, not correctness - if it fails for
         // any reason, fall back to the untrimmed clip rather than
         // losing this beat's narration entirely over it.
         console.warn(`[narrationPrefetch] beat ${index} silence trim failed, using untrimmed clip: ${trimErr.message}`);
-        fs.renameSync(rawPath, filePath);
+        fs.renameSync(rawPath, trimmedPath);
+      }
+
+      // Mastered PER CLIP, here, before assembly - not just on the
+      // final whole-track mix in audioMux.js. See masterNarrationAudio's
+      // own doc comment for the real, measured reason: normalizing the
+      // whole assembled track (every beat's clip plus every silence gap
+      // between them) computes its gain against an average that's been
+      // diluted quiet by all that deliberate silence, so it ends up
+      // boosting the actual VOICE more than the voice alone needs.
+      const filePath = path.join(dir, `${index}.mp3`);
+      try {
+        await masterNarrationAudio(trimmedPath, filePath);
+        fs.unlink(trimmedPath, () => {});
+      } catch (masterErr) {
+        console.warn(`[narrationPrefetch] beat ${index} per-clip mastering failed, using unmastered clip: ${masterErr.message}`);
+        fs.renameSync(trimmedPath, filePath);
       }
 
       const duration = await getAudioDurationSeconds(filePath);

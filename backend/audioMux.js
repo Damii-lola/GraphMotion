@@ -39,22 +39,65 @@ function runCapture(args) {
 // other content in a feed, not just a subjective impression. Fixed
 // with a real (if free-tier) voiceover mastering chain: a highpass to
 // clear sub-vocal rumble no real voice fundamental lives below anyway,
-// a light compressor to even out level swings between separately-
-// generated TTS clips (each beat's narration is its own isolated API
-// call - nothing upstream guarantees they land at consistent volume
-// relative to each other), then a proper two-pass EBU R128 loudnorm
-// (pass 1 measures the ACTUAL post-compression stats; pass 2 applies a
-// linear gain using those exact measured values, the accurate mode
-// loudnorm's own docs recommend over relying on single-pass dynamic
-// mode's approximation). A final brickwall alimiter is real, cheap
-// insurance - confirmed directly that linear-mode loudnorm's predicted
-// true peak can still land hotter than its own TP target (measured
-// live: asked for TP=-1.5, got -0.1 dBFS), which would risk clipping
-// on the AAC re-encode this same file goes through in the final mux
-// below.
-const NARRATION_PRE_FILTER = 'highpass=f=90,acompressor=threshold=-18dB:ratio=2.5:attack=10:release=80:makeup=2';
-const NARRATION_LOUDNORM_TARGET = 'I=-14:TP=-2:LRA=11';
+// a compressor to even out level swings between separately-generated
+// TTS clips (each beat's narration is its own isolated API call -
+// nothing upstream guarantees they land at consistent volume relative
+// to each other), then a proper two-pass EBU R128 loudnorm (pass 1
+// measures the ACTUAL post-compression stats; pass 2 applies a linear
+// gain using those exact measured values, the accurate mode loudnorm's
+// own docs recommend over relying on single-pass dynamic mode's
+// approximation). A final brickwall alimiter is real, cheap insurance -
+// confirmed directly that linear-mode loudnorm's predicted true peak
+// can still land hotter than its own TP target (measured live: asked
+// for TP=-1.5, got -0.1 dBFS), which would risk clipping on the AAC
+// re-encode this same file goes through in the final mux below.
+//
+// Compressor makeup=2 originally lightened, later found to be a REAL
+// bug, not a cosmetic one: acompressor's "makeup" parameter is a
+// LINEAR gain multiplier, not dB as the old comment here assumed -
+// makeup=2 was actually a ~+6dB boost stacked ON TOP of loudnorm's own
+// (already-correct) measured gain, real double-gain-staging. Combined
+// with a fairly aggressive ratio=2.5/attack=10ms, this measurably
+// raised RMS level by 8dB+ on quiet source material (confirmed
+// directly: a real Eric clip went from -21.8dB RMS raw to -13.7dB RMS
+// mastered) - real, audible "static"/noise the user reported hearing
+// throughout narrated videos, exactly what happens when a source
+// recording's own faint noise floor gets amplified 2.7x louder along
+// with the voice. Fish Audio's Adrian voice measured even quieter raw
+// (-23.9 LUFS) than Eric's msedge-tts output did, making this worse,
+// not better, with the switch. Fixed: makeup=1 (true unity, no extra
+// gain from the compressor itself - loudnorm's own accurate measured
+// gain is now the ONLY gain stage), a gentler ratio/threshold/timing
+// so the compressor catches real outlier peaks rather than continuously
+// squashing the whole signal, and the loudnorm target itself pulled
+// back from -14 to -16 LUFS - less total gain needed to reach it,
+// directly reducing how much any residual noise floor gets amplified,
+// while still a real, audible boost over a -23ish LUFS raw source.
+const NARRATION_PRE_FILTER = 'highpass=f=90,acompressor=threshold=-20dB:ratio=1.5:attack=20:release=150:makeup=1';
+const NARRATION_LOUDNORM_TARGET = 'I=-16:TP=-2:LRA=11';
 
+/**
+ * Exported (not just used internally below) so narrationPrefetch.js
+ * can call this on each beat's OWN clip individually, before assembly
+ * - a real, measured problem found chasing the "static" report even
+ * after the gain/compressor fix above: EBU R128 integrated loudness is
+ * an AVERAGE over the WHOLE signal, silence included. Running this
+ * ONLY on the final assembled+padded track (every beat's clip PLUS
+ * every inter-beat gap PLUS every [break]/[long-break] pause now baked
+ * into the narration itself) measured the assembled track at -26 LUFS
+ * even though the underlying VOICE was already close to its own
+ * natural level - all that deliberate silence drags the average down,
+ * so loudnorm computes a BIGGER gain to hit the same target than the
+ * actual spoken content needs, amplifying noise more than a per-clip
+ * measurement would ever suggest (confirmed directly: a real assembled
+ * track needed +10.3dB here, vs +7.9dB measured on one isolated
+ * clip). Mastering each clip's own speech individually, BEFORE all
+ * that pause silence gets stitched in and dilutes the average, means
+ * loudnorm's gain decision is based on the actual voice, not on how
+ * much dead air surrounds it. The whole-track pass below still runs
+ * afterward as a final consistency/safety net, but should now find the
+ * average already close to target and apply little extra gain.
+ */
 async function masterNarrationAudio(inputPath, outputPath) {
   let stats;
   try {
@@ -206,4 +249,4 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
   return outputPath;
 }
 
-module.exports = { muxNarrationOntoVideo };
+module.exports = { muxNarrationOntoVideo, masterNarrationAudio };
