@@ -6,6 +6,7 @@ const ffmpegPath = require('ffmpeg-static');
 const fishTts = require('./fishTtsGen');
 const edgeTts = require('./ttsGen');
 const { annotateNarrationTags } = require('./narrationTagging');
+const { synthesizeVerified } = require('./narrationVerify');
 const { masterNarrationAudio } = require('./audioMux');
 
 /**
@@ -166,9 +167,14 @@ async function prefetchNarration(sceneJSON, jobId) {
       // mandatory [break] placement mechanically (a longer pause is
       // just [break][break] back to back - there's no separate tag
       // for it), regardless of what the tagging model itself did or missed.
-      const taggedText = await annotateNarrationTags(scene.params.narration.trim());
+      const plainText = scene.params.narration.trim();
+      const taggedText = await annotateNarrationTags(plainText);
       console.log(`[narrationPrefetch] beat ${index} tagged text: ${taggedText}`);
-      const buf = await generateSpeech(taggedText);
+      // Fish Audio's TTS model can hallucinate extra sound not in the
+      // script (see narrationVerify.js) - verify against the real
+      // narration text and retry synthesis rather than trusting the
+      // first result blindly.
+      const buf = await synthesizeVerified(plainText, () => generateSpeech(taggedText));
       const rawPath = path.join(dir, `${index}-raw.mp3`);
       fs.writeFileSync(rawPath, buf);
 

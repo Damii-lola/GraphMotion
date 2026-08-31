@@ -118,7 +118,8 @@ function queueGeminiCall(makeFetch) {
 
 const MAX_RATE_LIMIT_RETRIES = 5;
 
-async function callGeminiRaw(systemPrompt, userMessage, { jsonMode = true, maxTokens = 12000, temperature = 0.7 } = {}, rateLimitRetriesLeft = MAX_RATE_LIMIT_RETRIES) {
+/** Shared transport for both plain-text prompts and multimodal (e.g. audio) parts - callGeminiRaw and callGeminiWithAudio are thin wrappers that just build a different `parts` array around this. */
+async function callGeminiParts(systemPrompt, parts, { jsonMode = true, maxTokens = 12000, temperature = 0.7 } = {}, rateLimitRetriesLeft = MAX_RATE_LIMIT_RETRIES) {
   let response;
   let usedKeyState;
   try {
@@ -137,7 +138,7 @@ async function callGeminiRaw(systemPrompt, userMessage, { jsonMode = true, maxTo
         },
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          contents: [{ role: 'user', parts }],
           generationConfig: {
             temperature,
             maxOutputTokens: maxTokens,
@@ -159,7 +160,7 @@ async function callGeminiRaw(systemPrompt, userMessage, { jsonMode = true, maxTo
       const backoffMs = Math.min(2000 * 2 ** attempt, 30000) + Math.random() * 1000;
       console.warn(`[geminiClient] transient network error (${err.code}), waiting ${Math.round(backoffMs)}ms before retry (${rateLimitRetriesLeft} left)`);
       await sleep(backoffMs);
-      return callGeminiRaw(systemPrompt, userMessage, { jsonMode, maxTokens, temperature }, rateLimitRetriesLeft - 1);
+      return callGeminiParts(systemPrompt, parts, { jsonMode, maxTokens, temperature }, rateLimitRetriesLeft - 1);
     }
     throw err;
   }
@@ -175,7 +176,7 @@ async function callGeminiRaw(systemPrompt, userMessage, { jsonMode = true, maxTo
         : Math.min(2000 * 2 ** attempt, 30000) + Math.random() * 1000;
       console.warn(`[geminiClient] rate limited (429), waiting ${Math.round(backoffMs)}ms before retry (${rateLimitRetriesLeft} left)`);
       await sleep(backoffMs);
-      return callGeminiRaw(systemPrompt, userMessage, { jsonMode, maxTokens, temperature }, rateLimitRetriesLeft - 1);
+      return callGeminiParts(systemPrompt, parts, { jsonMode, maxTokens, temperature }, rateLimitRetriesLeft - 1);
     }
     if (response.status >= 500 && response.status < 600 && rateLimitRetriesLeft > 0) {
       recordRateLimitHit(usedKeyState);
@@ -183,7 +184,7 @@ async function callGeminiRaw(systemPrompt, userMessage, { jsonMode = true, maxTo
       const backoffMs = Math.min(2000 * 2 ** attempt, 30000) + Math.random() * 1000;
       console.warn(`[geminiClient] Gemini server error (${response.status}), waiting ${Math.round(backoffMs)}ms before retry (${rateLimitRetriesLeft} left)`);
       await sleep(backoffMs);
-      return callGeminiRaw(systemPrompt, userMessage, { jsonMode, maxTokens, temperature }, rateLimitRetriesLeft - 1);
+      return callGeminiParts(systemPrompt, parts, { jsonMode, maxTokens, temperature }, rateLimitRetriesLeft - 1);
     }
     throw new Error(`Gemini API error ${response.status}: ${errText.slice(0, 800)}`);
   }
@@ -198,6 +199,18 @@ async function callGeminiRaw(systemPrompt, userMessage, { jsonMode = true, maxTo
   }
 
   return rawText;
+}
+
+async function callGeminiRaw(systemPrompt, userMessage, opts = {}) {
+  return callGeminiParts(systemPrompt, [{ text: userMessage }], opts);
+}
+
+/** Sends inline audio (e.g. a synthesized narration clip) to Gemini for verbatim transcription - reuses the exact same key-rotation/retry/timeout machinery as text prompts, just with a different `parts` payload. */
+async function callGeminiWithAudio(systemPrompt, audioBuffer, mimeType, opts = {}) {
+  return callGeminiParts(systemPrompt, [
+    { inline_data: { mime_type: mimeType, data: audioBuffer.toString('base64') } },
+    { text: 'Transcribe this audio verbatim.' },
+  ], opts);
 }
 
 async function callGeminiForJSON(systemPrompt, userMessage, retriesLeft, onRetry) {
@@ -319,6 +332,10 @@ module.exports = {
   // rather than re-implemented for a call that isn't generating scene
   // JSON at all.
   callGeminiRaw: withHardTimeout(callGeminiRaw, 'callGeminiRaw'),
+  // Exposed for narrationVerify.js's audio-hallucination check - same
+  // low-level primitive split as callGeminiRaw, just for inline audio
+  // instead of a text prompt.
+  callGeminiWithAudio: withHardTimeout(callGeminiWithAudio, 'callGeminiWithAudio'),
   buildTreatmentSystemPrompt,
   buildGenerationSystemPrompt,
   listTreatmentBeatHeaders,
