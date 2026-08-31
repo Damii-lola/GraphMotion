@@ -463,6 +463,26 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   // outgoing beat's own index.
   const frozenFrameCache = new Map();
 
+  // Real, directly measured finding: gradientRamp's per-pixel loop
+  // (518,400 pixels, radial-distance + color-lerp math) costs ~60ms per
+  // call - and the frame loop below was calling it UNCONDITIONALLY on
+  // EVERY frame, even though its only frame-varying inputs are camX/
+  // camY, which stay EXACTLY constant for every "parked" frame (the
+  // large majority - a beat is only actually panning for
+  // DEFAULT_PAN_DURATION_SECONDS, ~12 of a typical 40-70 frame beat).
+  // Measured directly: ~60ms x 60 frames/chunk is a real ~3.6s slice of
+  // a chunk's total render time, recomputing the IDENTICAL image over
+  // and over. Cached here by (camX, camY) - not the "reuse a mutable
+  // scratch canvas across renders" pattern that measured WORSE earlier
+  // in this same investigation (composition.js's reverted attempt),
+  // but the opposite: this canvas is fully computed and never mutated
+  // again, so skipping the recompute entirely and reusing the exact
+  // same finished bitmap via drawImage whenever camX/camY didn't
+  // change since the last frame is a plain, safe memoization.
+  let cachedBgCanvas = null;
+  let cachedBgCamX = null;
+  let cachedBgCamY = null;
+
   const canvas = createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext('2d');
   // Reused across every transition frame instead of allocated fresh
@@ -535,14 +555,22 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       // the dither noise visibly "swim" in place instead of panning
       // smoothly with the content, a worse artifact than the mild
       // banding risk a flat gradient this large might otherwise show.
-      const viewportBg = gradientRamp(WIDTH, HEIGHT, {
-        startPoint: [boardBgStartPoint[0] - camX, boardBgStartPoint[1] - camY],
-        endPoint: [boardBgEndPoint[0] - camX, boardBgEndPoint[1] - camY],
-        startColor: boardBackgroundDef.startColor,
-        endColor: boardBackgroundDef.endColor,
-        shape: boardBackgroundDef.shape,
-        dither: false,
-      });
+      let viewportBg;
+      if (cachedBgCanvas && camX === cachedBgCamX && camY === cachedBgCamY) {
+        viewportBg = cachedBgCanvas;
+      } else {
+        viewportBg = gradientRamp(WIDTH, HEIGHT, {
+          startPoint: [boardBgStartPoint[0] - camX, boardBgStartPoint[1] - camY],
+          endPoint: [boardBgEndPoint[0] - camX, boardBgEndPoint[1] - camY],
+          startColor: boardBackgroundDef.startColor,
+          endColor: boardBackgroundDef.endColor,
+          shape: boardBackgroundDef.shape,
+          dither: false,
+        });
+        cachedBgCanvas = viewportBg;
+        cachedBgCamX = camX;
+        cachedBgCamY = camY;
+      }
       ctx.drawImage(viewportBg, 0, 0);
 
       if (inPan) {
