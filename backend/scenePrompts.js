@@ -69,18 +69,89 @@ BEAT
 {
   "params": {
     "duration": number,       // seconds, REQUIRED. Overridden automatically
-                               // if "narration" is set (real measured speech
-                               // duration + 0.4s), so treat it as an ESTIMATE
-                               // when narration is present, exact otherwise.
-    "narration": string      // optional spoken line for this beat (real TTS)
+                               // once "narration" is spoken (real measured
+                               // speech duration + 0.4s), so treat it as an
+                               // ESTIMATE - it still needs to be a real,
+                               // reasonable number.
+    "narration": string      // REQUIRED, every beat, no exceptions - the
+                               // spoken line a real TTS voice reads aloud for
+                               // this beat. Never omit it and never leave it
+                               // empty - a beat with no narration renders
+                               // completely silent for its own duration,
+                               // which is a real, confirmed defect, not a
+                               // stylistic gap. See NARRATION - WRITE FOR THE
+                               // EAR, NOT THE EYE below for how to write this
+                               // well, not just present.
   },
   "visual": BeatVisual
 }
 
 Whole-video duration is capped at 45 seconds of narration. Pace beats
 accordingly: for short-form content, 2-5 seconds per beat is typical;
-a beat with narration should roughly match how long that line takes to
-speak (~2.5-3 words/second is a reasonable estimate).
+a beat's duration should roughly match how long its own narration line
+takes to speak (~2.5-3 words/second is a reasonable estimate).
+
+=====================================================================
+NARRATION - WRITE FOR THE EAR, NOT THE EYE
+=====================================================================
+REQUIRED on every single beat - real, confirmed-live defect this
+guards against: a model with no narration-craft guidance tends to
+either skip it outright (rendering that beat completely silent, no
+error, no warning - a real viewer just gets dead air) or paraphrase-
+mirror the on-screen text almost verbatim, which produces a
+mechanical, list-reading cadence the instant it's spoken aloud by a
+TTS voice ("First, no job description. Second, they're vague. Third,
+high turnover.") - grammatically fine as CAPTIONS, but nobody actually
+TALKS that way, and a synthetic voice reading stiff, caption-shaped
+sentences is exactly what makes narration sound robotic, on top of
+whatever the TTS engine's own voice quality already costs you.
+
+The on-screen text and the spoken narration are two DIFFERENT jobs,
+not one field duplicated into two places:
+- On-screen text can be a short punchy label, a number, a fragment -
+  it's read at a glance, so terseness is a feature there.
+- Narration is a sentence a real human would actually SAY out loud.
+  Before writing a narration line, silently say it to yourself the way
+  a real person talks - if it sounds like a report or a bulleted list,
+  rewrite it as something you'd actually tell a friend.
+
+Concretely:
+- Use contractions constantly - "it's", "they're", "you're", "don't",
+  "that's" - real spoken English is full of them; a script written
+  without a single contraction anywhere reads as stiff and formal, the
+  opposite of natural.
+- NEVER lean on a mechanical enumeration cadence repeated beat after
+  beat ("First, ... Second, ... Third, ..."). Real narrators vary how
+  they move from one point to the next - sometimes a plain transition
+  ("next up", "and then there's", "but here's the thing"), sometimes
+  none at all, just launching straight into the fact. The exact same
+  sentence shape on every beat is a dead giveaway of a generated
+  script, not a spoken one.
+- Vary sentence rhythm across beats - a short punchy line here, a
+  slightly longer one there - the way a real person's speech naturally
+  varies, not a uniform run of identical-length fragments.
+- The narration across ALL beats should read as ONE continuous
+  narrator's voiceover script when read start to finish, not a
+  disconnected list of captions each spoken in isolation - later
+  beats can reference or build on earlier ones the way a real script
+  does ("but here's where it gets interesting" / "and that's not even
+  the worst part"), not just restate the next fact cold.
+- A narration line does not need to match its beat's on-screen text
+  word-for-word, or at all - it needs to say the same IDEA in language
+  a person would actually speak.
+- NATURAL DOES NOT MEAN LONG - real, confirmed-live failure mode:
+  writing full, natural sentences for every beat, with no length
+  discipline, produced narration that took roughly DOUBLE the video's
+  own target duration to actually speak (a 12s target came out
+  spoken at ~22s), since every beat's duration gets overridden to
+  match its own narration's real measured speech length. A short,
+  punchy spoken line ("Most budgeting apps are designed to fail you.")
+  is exactly as natural as a long one - naturalness comes from real
+  sentence structure and contractions, not from length. Keep each
+  narration line roughly speakable within its beat's own intended
+  pacing (~2.5-3 words/second, same estimate as above) - if a natural-
+  sounding version of a line runs long, tighten the WORDING, don't
+  stretch the beat to accommodate it.
 
 =====================================================================
 ANIMATABLE VALUES - every transform/effect number or vector accepts:
@@ -975,6 +1046,16 @@ frame-for-frame:
      1s of screen time each) over one long sentence appearing all at
      once - the pacing of a fast, well-cut kinetic-typography edit, not
      a static caption card.
+   - The exact spoken NARRATION line for this beat - REQUIRED, every
+     beat, a real sentence a human narrator would actually say out
+     loud, NOT a restatement of the on-screen text in caption form
+     (see NARRATION - WRITE FOR THE EAR, NOT THE EYE in the next step's
+     schema for the full guidance - contractions, natural rhythm, no
+     mechanical "First/Second/Third" cadence repeated every beat, reads
+     as one continuous voiceover across the whole video rather than a
+     list of captions read aloud). Decide this now, at the same time as
+     the on-screen words, not as an afterthought once the visuals are
+     already locked.
    - What SHAPES/ICONS are in this beat, if any - a specific real icon
      concept (not "an icon", name what it actually represents - a
      rocket, a lightbulb, a checkmark), where it sits relative to the
@@ -1081,6 +1162,15 @@ generation are the ones most likely to slip by the last beat):
   single most common mistake on long generations; count your own
   "scenes" entries against the treatment's own beat headers before you
   consider the response finished.
+- MANDATORY, every single beat, no exceptions: a non-empty
+  "params.narration" string. A beat with no narration renders
+  completely silent for its own duration - a real, confirmed defect,
+  checked and REJECTED on every beat you write. It must also be
+  written as a real spoken sentence (see NARRATION - WRITE FOR THE EAR,
+  NOT THE EYE above), not a copy-pasted echo of that beat's on-screen
+  text - re-read that section before writing the LAST few beats
+  especially, where mechanically repeating the same sentence shape as
+  every beat before it is the most common way this slips.
 
 Generate a complete, valid scene JSON for a short-form vertical video
 matching the user's request below. Target roughly ${targetDurationSeconds}

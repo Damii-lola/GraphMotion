@@ -4106,6 +4106,20 @@ function validateBeat(beat, path = 'beat') {
   if (!isPlainObject(beat.params) || typeof beat.params.duration !== 'number' || beat.params.duration <= 0) {
     errors.push(`${path}.params.duration: is required and must be a positive number`);
   }
+  // Real, confirmed-live gap this closes: "narration" used to be
+  // documented as optional, and with nothing enforcing it, real
+  // generations were observed coming back with NO narration on any
+  // beat at all - not an error, just a video that renders completely
+  // silent, since narrationPrefetch.js only generates audio for beats
+  // that actually have a non-empty narration string. Whether a given
+  // video has audio was closer to a coin flip than a guarantee.
+  // Required here the same way duration is - a beat missing it fails
+  // validation and forces a real retry (scenePrompts.js's own
+  // NARRATION section gets fed back as the fix to make), rather than
+  // silently shipping a mute stretch of video.
+  if (!isPlainObject(beat.params) || typeof beat.params.narration !== 'string' || beat.params.narration.trim().length === 0) {
+    errors.push(`${path}.params.narration: is required and must be a non-empty string - every beat needs a real spoken line (see scenePrompts.js's own NARRATION guidance for how to write one that doesn't just echo the on-screen text), or that beat renders completely silent.`);
+  }
   const knownIds = new Set();
   validateBeatVisual(beat.visual, `${path}.visual`, errors, knownIds);
   return { valid: errors.length === 0, errors };

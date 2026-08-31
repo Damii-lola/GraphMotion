@@ -13,7 +13,6 @@ const {
   getJob,
   listJobsForUser,
   deleteJob,
-  countJobsToday,
   uploadRenderedVideo,
 } = require('./supabaseClient');
 
@@ -29,12 +28,14 @@ process.on('uncaughtException', (err) => {
   console.error('[uncaughtException] server staying up despite:', err);
 });
 
-const FREE_TIER_DAILY_LIMIT = Number(process.env.FREE_TIER_DAILY_LIMIT || 3);
-
-// One render at a time, everything else queues. Cheap insurance -
-// Skia rendering is lightweight, but there's no reason to risk
-// multiple ffmpeg encodes competing for CPU simultaneously either.
-const MAX_CONCURRENT_RENDERS = 1;
+// Raised 1 -> 5 once real per-chunk memory was brought down to a
+// consistent ~103-106MB (see renderEngine.js's own canvas-pooling/
+// gradient-caching history) - 5 concurrent chunk-worker processes at
+// that ceiling is ~530MB, plus the main server process itself; this is
+// a real product tradeoff (concurrency vs. total host memory), not a
+// free change, so it should be revisited if the host's actual memory
+// budget doesn't comfortably cover that math.
+const MAX_CONCURRENT_RENDERS = 5;
 let activeRenders = 0;
 const renderQueue = [];
 
@@ -181,13 +182,6 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
 
   let job;
   try {
-    const usedToday = await countJobsToday(identifier);
-    if (usedToday >= FREE_TIER_DAILY_LIMIT) {
-      return res.status(429).json({
-        error: `Daily free tier limit reached (${FREE_TIER_DAILY_LIMIT}/day). Try again tomorrow.`,
-      });
-    }
-
     job = await createJob({
       userId: identifier,
       prompt: prompt.trim(),
