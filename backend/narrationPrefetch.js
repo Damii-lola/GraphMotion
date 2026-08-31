@@ -163,8 +163,9 @@ async function prefetchNarration(sceneJSON, jobId) {
       // Scene generation writes PLAIN narration on purpose (see
       // scenePrompts.js) - tag annotation is this deliberately separate
       // second pass (narrationTagging.js), which also guarantees the
-      // mandatory [break]/[long-break]/[soft] placement mechanically,
-      // regardless of what the tagging model itself did or missed.
+      // mandatory [break] placement mechanically (a longer pause is
+      // just [break][break] back to back - there's no separate tag
+      // for it), regardless of what the tagging model itself did or missed.
       const taggedText = await annotateNarrationTags(scene.params.narration.trim());
       console.log(`[narrationPrefetch] beat ${index} tagged text: ${taggedText}`);
       const buf = await generateSpeech(taggedText);
