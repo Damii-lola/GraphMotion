@@ -205,11 +205,11 @@ async function callGeminiRaw(systemPrompt, userMessage, opts = {}) {
   return callGeminiParts(systemPrompt, [{ text: userMessage }], opts);
 }
 
-/** Sends inline audio (e.g. a synthesized narration clip) to Gemini for verbatim transcription - reuses the exact same key-rotation/retry/timeout machinery as text prompts, just with a different `parts` payload. */
-async function callGeminiWithAudio(systemPrompt, audioBuffer, mimeType, opts = {}) {
+/** Sends inline audio (e.g. a synthesized narration clip) to Gemini alongside a text prompt (transcription request, QA judgment request, etc) - reuses the exact same key-rotation/retry/timeout machinery as text-only prompts, just with a different `parts` payload. */
+async function callGeminiWithAudio(systemPrompt, audioBuffer, mimeType, promptText, opts = {}) {
   return callGeminiParts(systemPrompt, [
     { inline_data: { mime_type: mimeType, data: audioBuffer.toString('base64') } },
-    { text: 'Transcribe this audio verbatim.' },
+    { text: promptText },
   ], opts);
 }
 

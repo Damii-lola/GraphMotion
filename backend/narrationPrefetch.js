@@ -164,17 +164,21 @@ async function prefetchNarration(sceneJSON, jobId) {
       // Scene generation writes PLAIN narration on purpose (see
       // scenePrompts.js) - tag annotation is this deliberately separate
       // second pass (narrationTagging.js), which also guarantees the
-      // mandatory [break] placement mechanically (a longer pause is
-      // just [break][break] back to back - there's no separate tag
-      // for it), regardless of what the tagging model itself did or missed.
+      // mandatory sentence-ending [break][break] placement mechanically,
+      // regardless of what the tagging model itself did or missed.
       const plainText = scene.params.narration.trim();
-      const taggedText = await annotateNarrationTags(plainText);
+      // A third AI stage judges the actual synthesized audio (not just
+      // the tagged text) against the real script - non-speech artifacts
+      // (hallucinated words, laughing, etc) and unnatural pause
+      // placement both fail it. On rejection, re-tags AND re-synthesizes
+      // from scratch with the judge's feedback folded in, rather than
+      // just re-rolling the same TTS call - see narrationVerify.js.
+      const { taggedText, buf } = await synthesizeVerified(plainText, async (feedback) => {
+        const tagged = await annotateNarrationTags(plainText, feedback);
+        const audioBuf = await generateSpeech(tagged);
+        return { taggedText: tagged, buf: audioBuf };
+      });
       console.log(`[narrationPrefetch] beat ${index} tagged text: ${taggedText}`);
-      // Fish Audio's TTS model can hallucinate extra sound not in the
-      // script (see narrationVerify.js) - verify against the real
-      // narration text and retry synthesis rather than trusting the
-      // first result blindly.
-      const buf = await synthesizeVerified(plainText, () => generateSpeech(taggedText));
       const rawPath = path.join(dir, `${index}-raw.mp3`);
       fs.writeFileSync(rawPath, buf);
 
