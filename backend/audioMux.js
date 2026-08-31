@@ -14,6 +14,64 @@ function run(args) {
   });
 }
 
+/** Same as run(), but resolves with the captured stderr text on success - needed for masterNarrationAudio's loudnorm analysis pass, which prints its measured stats to stderr as JSON rather than stdout. */
+function runCapture(args) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(ffmpegPath, args);
+    let err = '';
+    p.stderr.on('data', (d) => { err += d.toString(); });
+    p.on('close', (code) => (code === 0 ? resolve(err) : reject(new Error(`ffmpeg exited ${code}: ${err.slice(-500)}`))));
+    p.on('error', reject);
+  });
+}
+
+// Real, directly measured finding: msedge-tts's raw output for a real
+// narrated video sat at -20.5 LUFS integrated loudness (ffmpeg's own
+// ebur128 filter) against the ~-14 LUFS modern social-video loudness
+// norm (YouTube/TikTok/Instagram all target roughly this range) - a
+// real, quantified reason narration reads as quiet/thin/"off" next to
+// other content in a feed, not just a subjective impression. Fixed
+// with a real (if free-tier) voiceover mastering chain: a highpass to
+// clear sub-vocal rumble no real voice fundamental lives below anyway,
+// a light compressor to even out level swings between separately-
+// generated TTS clips (each beat's narration is its own isolated API
+// call - nothing upstream guarantees they land at consistent volume
+// relative to each other), then a proper two-pass EBU R128 loudnorm
+// (pass 1 measures the ACTUAL post-compression stats; pass 2 applies a
+// linear gain using those exact measured values, the accurate mode
+// loudnorm's own docs recommend over relying on single-pass dynamic
+// mode's approximation). A final brickwall alimiter is real, cheap
+// insurance - confirmed directly that linear-mode loudnorm's predicted
+// true peak can still land hotter than its own TP target (measured
+// live: asked for TP=-1.5, got -0.1 dBFS), which would risk clipping
+// on the AAC re-encode this same file goes through in the final mux
+// below.
+const NARRATION_PRE_FILTER = 'highpass=f=90,acompressor=threshold=-18dB:ratio=2.5:attack=10:release=80:makeup=2';
+const NARRATION_LOUDNORM_TARGET = 'I=-14:TP=-2:LRA=11';
+
+async function masterNarrationAudio(inputPath, outputPath) {
+  let stats;
+  try {
+    const analyzeOutput = await runCapture(['-i', inputPath, '-af', `${NARRATION_PRE_FILTER},loudnorm=${NARRATION_LOUDNORM_TARGET}:print_format=json`, '-f', 'null', '-']);
+    const jsonMatch = analyzeOutput.match(/\{[^]*?"target_offset"[^]*?\}/);
+    stats = jsonMatch && JSON.parse(jsonMatch[0]);
+  } catch (err) {
+    stats = null;
+  }
+  if (!stats) {
+    // Mastering is a polish step, not a correctness one - if the
+    // analysis pass fails for any reason (a malformed/empty clip,
+    // ffmpeg's loudnorm printing something unexpected), fall back to
+    // the untouched narration rather than failing the whole render
+    // over audio polish.
+    fs.copyFileSync(inputPath, outputPath);
+    return outputPath;
+  }
+  const secondPassFilter = `${NARRATION_PRE_FILTER},loudnorm=${NARRATION_LOUDNORM_TARGET}:measured_I=${stats.input_i}:measured_TP=${stats.input_tp}:measured_LRA=${stats.input_lra}:measured_thresh=${stats.input_thresh}:offset=${stats.target_offset}:linear=true,alimiter=limit=0.891`;
+  await run(['-y', '-i', inputPath, '-af', secondPassFilter, '-ar', '24000', '-ac', '1', '-c:a', 'libmp3lame', '-q:a', '4', outputPath]);
+  return outputPath;
+}
+
 async function generateSilence(outPath, seconds) {
   await run(['-y', '-f', 'lavfi', '-i', 'anullsrc=r=24000:cl=mono', '-t', String(Math.max(0.05, seconds)), '-q:a', '4', outPath]);
 }
@@ -128,11 +186,15 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
     assembledPath = paddedPath;
   }
 
+  const masteredPath = path.join(workDir, `${jobId}-mastered-narration.mp3`);
+  await masterNarrationAudio(assembledPath, masteredPath);
+
   const outputPath = videoPath.replace(/\.mp4$/, '-narrated.mp4');
-  await run(['-y', '-i', videoPath, '-i', assembledPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest', outputPath]);
+  await run(['-y', '-i', videoPath, '-i', masteredPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest', outputPath]);
 
   fs.unlink(listPath, () => {});
   fs.unlink(assembledPath, () => {});
+  fs.unlink(masteredPath, () => {});
   cleanupPaths.forEach((p) => fs.unlink(p, () => {}));
 
   return outputPath;
