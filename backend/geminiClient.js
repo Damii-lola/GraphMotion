@@ -211,17 +211,32 @@ async function callGeminiParts(systemPrompt, parts, { jsonMode = true, maxTokens
       });
     });
   } catch (err) {
-    if (err.name === 'AbortError') throw new Error(`Gemini request timed out after ${GEMINI_TIMEOUT_MS}ms`);
+    // Real bug found immediately after cutting GEMINI_TIMEOUT_MS from
+    // 240000 to 45000: an AbortError (our OWN client-side timeout
+    // firing) used to throw straight out, bypassing the retry path
+    // below entirely - never wired in because aborts were rare enough
+    // under the old 4-minute ceiling to not matter much. Shortening the
+    // timeout to fail fast on purpose means aborts now happen far more
+    // often (that was the whole point), but every single one was
+    // killing the ENTIRE generation outright instead of retrying on a
+    // different key - confirmed live, a real job failed hard on exactly
+    // this within minutes of deploying the timeout change. An abort is
+    // just as retryable as a transient network error or a 5xx - it
+    // means THIS attempt didn't get a usable response in time, not that
+    // every attempt won't.
+    const isAbort = err.name === 'AbortError';
     const transientCodes = ['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND'];
     const isTransientNetworkError = transientCodes.includes(err.code)
       || transientCodes.some((code) => String(err.message).includes(code));
-    if (isTransientNetworkError && rateLimitRetriesLeft > 0) {
+    if ((isAbort || isTransientNetworkError) && rateLimitRetriesLeft > 0) {
       const attempt = MAX_RATE_LIMIT_RETRIES - rateLimitRetriesLeft;
       const backoffMs = Math.min(2000 * 2 ** attempt, 30000) + Math.random() * 1000;
-      console.warn(`[geminiClient] transient network error (${err.code}), waiting ${Math.round(backoffMs)}ms before retry (${rateLimitRetriesLeft} left)`);
+      const reason = isAbort ? `timed out after ${GEMINI_TIMEOUT_MS}ms` : `transient network error (${err.code})`;
+      console.warn(`[geminiClient] ${reason}, waiting ${Math.round(backoffMs)}ms before retry (${rateLimitRetriesLeft} left)`);
       await sleep(backoffMs);
       return callGeminiParts(systemPrompt, parts, { jsonMode, maxTokens, temperature }, rateLimitRetriesLeft - 1);
     }
+    if (isAbort) throw new Error(`Gemini request timed out after ${GEMINI_TIMEOUT_MS}ms (retries exhausted)`);
     throw err;
   }
 
