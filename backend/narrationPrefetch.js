@@ -331,10 +331,21 @@ async function prefetchNarration(sceneJSON, jobId) {
 
       const duration = await getAudioDurationSeconds(filePath);
       audioFiles.set(index, { path: filePath, duration });
-      // Small buffer so the visual doesn't cut away the instant speech
-      // ends - a beat that's ONLY as long as the narration reads as
-      // clipped, not intentional.
-      renderScenes[index].params.duration = duration + 0.4;
+      // Buffer so the visual doesn't cut away the instant speech ends -
+      // a beat that's ONLY as long as the narration reads as clipped,
+      // not intentional. This gap is also the actual audible pause
+      // between one beat's last word and the next beat's first one
+      // (muxNarrationOntoVideo inserts real silence to fill exactly this
+      // remainder - see its own beat.duration - audio.duration math).
+      // Direct user feedback: pauses after a period read as too short.
+      // Real cause: the whole finished video gets sped up 1.2x AFTER
+      // this track is assembled (audioMux.js's speedUpVideo), which
+      // divides every timestamp - including this gap - by 1.2, so the
+      // 0.4s buffer this used to be only ever reached the viewer's ear
+      // at ~0.33s. Raised to 0.65s so the post-speedup pause lands
+      // around ~0.54s instead - a real, noticeably longer gap, not a
+      // cosmetic bump.
+      renderScenes[index].params.duration = duration + 0.65;
     } catch (err) {
       console.warn(`[narrationPrefetch] beat ${index} narration failed, keeping authored duration: ${err.message}`);
     }
