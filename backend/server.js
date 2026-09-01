@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { fork } = require('child_process');
 const rateLimit = require('express-rate-limit');
+const { startWorkerKeepAlive } = require('./renderDispatch');
 
 const {
   supabase,
@@ -289,6 +290,16 @@ function startRenderWorker(jobId, prompt, targetDurationSeconds, parentSceneJSON
           await updateJob(jobId, { status: 'failed', error: String(msg.error) });
           onSettled();
           break;
+
+        // Rendering was handed off to a render-worker service (see
+        // renderDispatch.js) - that worker is responsible for its own
+        // progress updates, upload, and final status from here, so
+        // this only needs to free up the local concurrency slot, not
+        // touch Supabase itself.
+        case 'dispatched_to_worker':
+          settled = true;
+          onSettled();
+          break;
       }
     } catch (err) {
       console.error(`[startRenderWorker] job ${jobId} handling "${msg.type}" failed:`, err);
@@ -357,4 +368,5 @@ app.delete('/api/jobs/:id', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`[server] listening on port ${PORT}`);
+  startWorkerKeepAlive();
 });

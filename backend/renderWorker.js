@@ -13,6 +13,7 @@ const { renderLongFormVideo } = require('./longVideoOrchestrator');
 const { prefetchBeatImages, cleanupBeatImages } = require('./imagePrefetch');
 const { prefetchNarration, cleanupNarration } = require('./narrationPrefetch');
 const { muxNarrationOntoVideo } = require('./audioMux');
+const { dispatchToWorker } = require('./renderDispatch');
 
 // Deliberately NOT `require('./iconFetch')` here - that file requires
 // @resvg/resvg-js at its own top level, a real native SVG rasterizer
@@ -128,6 +129,22 @@ process.on('message', async ({ jobId, prompt, targetDurationSeconds, parentScene
     // index rather than timing) needs to already reflect.
     const { sceneJSON: narratedSceneJSON, audioFiles } = await prefetchNarration(sceneJSON, jobId);
     console.log(`[renderWorker] job ${jobId} narration prefetched, rss=${rssMB()}MB`);
+
+    // Try handing the memory-heavy part (image/icon prefetch + Skia
+    // render + ffmpeg mux) off to a dedicated render-worker service -
+    // see renderDispatch.js's own doc comment for the full picture.
+    // narratedSceneJSON is exactly what a worker needs: beat durations
+    // already reflect the real narration length, but image/icon paths
+    // aren't resolved yet - the worker resolves those itself. Fails
+    // soft: dispatchToWorker only ever returns false (never throws) on
+    // any problem, so falling through to the local render path below
+    // is always safe.
+    if (await dispatchToWorker(jobId, narratedSceneJSON, audioFiles)) {
+      console.log(`[renderWorker] job ${jobId} handed off to a render worker, rss=${rssMB()}MB`);
+      await sendAndFlush({ type: 'dispatched_to_worker', jobId });
+      return;
+    }
+
     const imageResolvedSceneJSON = await prefetchBeatImages(narratedSceneJSON, jobId);
     console.log(`[renderWorker] job ${jobId} images prefetched, rss=${rssMB()}MB`);
     const renderSceneJSON = await prefetchIconsIsolated(imageResolvedSceneJSON, jobId);

@@ -1,0 +1,20 @@
+{
+  "name": "graphmotion-render-worker",
+  "version": "1.0.0",
+  "description": "Render-only worker for GraphMotion - receives a narrated scene JSON from the main backend, does image/icon prefetch + Skia render + ffmpeg mux, uploads straight to Supabase. Deployed as its own Render service, root directory /render-worker.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.53",
+    "@resvg/resvg-js": "^2.6.2",
+    "@supabase/supabase-js": "^2.45.4",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "ffmpeg-static": "^5.2.0",
+    "node-fetch": "^2.7.0"
+  }
+}
