@@ -195,6 +195,35 @@ Concretely:
   beat's narration, even when both are short - if the plain script
   reads as two sentences, it's two beats. Longer, unhurried lines
   belong in a slow explainer video, not this one.
+- HOOK THE FIRST LINE, HARD - every one of these videos lives or dies
+  in its first 1-2 seconds, and the opening beat's narration is the
+  single highest-leverage line in the whole script. Never open on a
+  neutral, scene-setting line ("Today we're going to talk about...").
+  Instead, open with one of: a direct command aimed at the viewer
+  ("Stop scrolling.", "Watch this."), a flat, confident claim stated as
+  fact ("This is the iPhone." / "Editing is like cooking."), a
+  rhetorical question or rapid string of them aimed straight at the
+  viewer ("Tired of strategies that don't work?"), or a direct callout
+  to the specific audience watching ("Video editors, ..."). Pick
+  whichever fits the topic - the point is the FIRST beat's narration
+  should make a viewer who is mid-scroll stop, not ease them in.
+- ADDRESS THE VIEWER DIRECTLY - lean on second person ("you", "your")
+  throughout rather than narrating about the topic in the abstract.
+  "You just got to stay long enough to become it" lands harder than
+  "People need to stay consistent to improve."
+- END ON A PAYOFF, NOT A TRAIL-OFF - the last beat's narration is the
+  second highest-leverage line after the hook. Close with either a
+  short, quotable one-line takeaway that reframes everything before it
+  (a mini "moral of the story"), or a direct call to action aimed at
+  the viewer (save this, comment a word, follow for more). Never let
+  the script just end on another plain fact with nothing to land on -
+  the viewer should feel like the video arrived somewhere.
+- A CONTRAST FLIP is a strong, reusable device when the topic allows
+  it - state what something is commonly assumed to be, then flatly
+  deny it and state what it actually is ("They were never just selling
+  watches. They were selling status."). Don't force it into every
+  video, but reach for it when the topic has a real misconception to
+  overturn.
 - Use ordinary punctuation the way natural speech actually uses it -
   commas for a short breath, a question mark on anything genuinely
   asked (real TTS applies real rising inflection to it), a semicolon
