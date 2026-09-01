@@ -141,25 +141,26 @@ function trimClipSilence(inputPath, outputPath) {
  * silence, and already gone by this point in the pipeline. So: any
  * silence gap still present in the LATTER part of an already
  * edge-trimmed clip, long enough to be well past a normal within-
- * sentence [break] pause, is itself evidence of trailing artifact
- * content sitting after it - cut the clip there rather than shipping
- * whatever comes next.
+ * sentence pause, is itself evidence of trailing artifact content
+ * sitting after it - cut the clip there rather than shipping whatever
+ * comes next.
  *
  * Deliberately conservative, and deliberately picks the LAST qualifying
  * gap, not the first: a real sentence can have its OWN legitimate
- * mid-sentence [break] pause (after a comma) that's just as long as an
- * artifact-preceding gap - confirmed live in testing, where picking the
- * first gap past 40% cut a clip off mid-sentence at a real comma pause,
- * losing genuine trailing content along with the artifact it was meant
- * to remove. The LAST such gap is safe because [break][break] (the
- * sentence's own final pause) is always the last legitimate gap in
- * correctly-tagged narration - nothing real ever follows it. Anything
- * after that final gap is either nothing (clean clip - already edge-
- * trimmed away) or hallucinated artifact content (dirty clip).
- * Requires >= 600ms of silence to qualify at all (comfortably above the
- * ~0.2-0.5s a real judgment-based mid-sentence [break] tends to
- * produce on its own, based on measured pause durations on real
- * assembled narration) and only acts on a gap starting after 40% of
+ * mid-sentence pause (an inserted "..." after a comma - see
+ * narrationTagging.js) that's just as long as an artifact-preceding
+ * gap - confirmed live in testing, where picking the first gap past
+ * 40% cut a clip off mid-sentence at a real comma pause, losing genuine
+ * trailing content along with the artifact it was meant to remove. The
+ * LAST such gap is safe because the sentence's own final "..." is
+ * always the last legitimate gap in correctly-tagged narration -
+ * nothing real ever follows it. Anything after that final gap is
+ * either nothing (clean clip - already edge-trimmed away) or
+ * hallucinated artifact content (dirty clip). Requires >= 600ms of
+ * silence to qualify at all (comfortably above the ~0.2-0.5s a real
+ * judgment-based mid-sentence pause tends to produce on its own, based
+ * on measured pause durations on real assembled narration) and only
+ * acts on a gap starting after 40% of
  * the clip's own duration (every observed hallucination has landed in
  * the back half). Leaves the clip untouched if no such gap is found -
  * this is a blunt, judge-free mechanical step (no AI call), so it only
@@ -234,7 +235,7 @@ async function prefetchNarration(sceneJSON, jobId) {
       // Scene generation writes PLAIN narration on purpose (see
       // scenePrompts.js) - tag annotation is this deliberately separate
       // second pass (narrationTagging.js), which also guarantees the
-      // mandatory sentence-ending [break][break] placement mechanically,
+      // mandatory sentence-ending "..." pause placement mechanically,
       // regardless of what the tagging model itself did or missed.
       const plainText = scene.params.narration.trim();
       // A third AI stage judges the actual synthesized audio (not just

@@ -5,82 +5,95 @@ const { callGeminiRaw } = require('./geminiClient');
  * generation into its OWN focused step, per direct user request: the
  * main generation call writes a PLAIN spoken script (no tags at all,
  * so the model's attention there stays on writing something that
- * actually sounds like natural speech, not on juggling tag syntax at
- * the same time), then this file's job is exclusively "take that
- * plain script and mark it up for Fish Audio's real tag system"
+ * actually sounds like natural speech, not on juggling tag/pause
+ * syntax at the same time), then this file's job is exclusively "take
+ * that plain script and mark it up for Fish Audio" - emotion tags
  * (fishTtsGen.js/scenePrompts.js's own docs have the full verified tag
- * list this leans on).
+ * list this leans on) plus pause placement.
  *
- * Two real risks with letting an LLM do 100% of this: (1) it might
- * miss a genuinely-needed sentence-ending pause - not acceptable for
- * that one HARD rule (every sentence-ender gets [break][break], no
- * exceptions - unlike mid-sentence commas, this one really is close to
- * universal in real speech), and (2) the tag names are new/unfamiliar
- * enough (this project's own earlier testing found a user-supplied tag
- * list had 2 wrong names) that a model could plausibly invent a
- * slightly-wrong tag. The sentence-ending rule is fixed by NOT trusting
- * the model's punctuation-pause placement alone there - ensurePauseTags
- * below runs as a deterministic, 100%-reliable regex pass AFTER the
- * model's own attempt, guaranteeing every sentence-ending mark gets its
- * required tag regardless of what the model did or didn't do (mid-
- * sentence comma pauses are deliberately NOT force-guaranteed this way
- * - see ensurePauseTags' own comment for why). Same "AI does the
- * judgment-based part, code guarantees the mechanical part" split this
- * codebase already uses throughout sceneSchema.js's auto-repair
- * pipeline, just narrower in scope than it used to be.
+ * Pauses used to be a real Fish Audio bracket tag, [break] (doubled up
+ * for a longer pause at sentence ends). Real, precisely diagnosed
+ * finding from direct A/B testing: across every temperature setting
+ * tried (0.4, 1.0, 1.5 - temperature was never the actual variable),
+ * a script ending in the literal bracket sequence "[break][break]"
+ * hallucinated a trailing non-speech sound (a breath, a stray word)
+ * on effectively every attempt for at least one real sentence -
+ * removing that trailing tag sequence and sending NOTHING after the
+ * period instead measured 2 clean takes out of 3 on the exact same
+ * sentence, where every prior config (any temperature, WITH the tag)
+ * had measured 0. The working theory: an artificial bracket tag sitting
+ * right at the end of the input is a token sequence Fish Audio's model
+ * never saw much of in training, so its stop-generation behavior gets
+ * confused into thinking more content follows. An ellipsis ("...") is
+ * real, extremely common punctuation - the model has genuine, well-
+ * trained behavior for it - so replacing the tag with literal "..." in
+ * the actual text (direct user request) gets the same "trail off/pause
+ * here" effect through a token sequence the model already knows how to
+ * end cleanly after, instead of an artificial one it doesn't.
+ *
+ * Two real risks with letting an LLM do 100% of the placement: (1) it
+ * might miss a genuinely-needed sentence-ending pause - not acceptable
+ * for that one HARD rule (every sentence-ender gets a trailing "...",
+ * no exceptions - unlike mid-sentence commas, this one really is close
+ * to universal in real speech), and (2) letting the model reword things
+ * while it's at it. Both are fixed the same way as before: ensurePauseTags
+ * runs as a deterministic, 100%-reliable regex pass AFTER the model's
+ * own attempt (mid-sentence comma pauses are deliberately NOT force-
+ * guaranteed this way - see its own comment for why), and
+ * stripTagsAndNormalize's hallucination guard compares actual words
+ * before trusting the model's output at all.
  */
 
-// Deliberately pulled BACK to just two tag categories after direct
-// user feedback: word-level [emphasis] (nuclear/contrastive stress,
-// content-word tagging - real English phonetics, verified working in
-// isolated tests) and [soft] were both tried and, in real full videos,
-// judged to still not sound natural - "if not the emotional tags and
-// the break tags, it shouldn't use any other tag." Only emotion tags
-// (one per sentence, real mood) and [break] (pause timing) remain -
-// everything else (tone tags, [emphasis], breath/sound tags) is
-// removed from what the model is even offered, not just discouraged.
-// [long-break] itself was later dropped too, per further direct
-// feedback ("remove [long-break] completely, replace it with two
-// breaks") - a longer pause is now just [break][break] back to back,
-// so there is only ever one real pause tag in the whole system.
-const TAGGING_SYSTEM_PROMPT = `You add Fish Audio TTS voice tags to a plain spoken script. Output ONLY the tagged script, no explanation, no markdown fences, no quotes around it.
+const TAGGING_SYSTEM_PROMPT = `You add light emotional voice tags and natural pause punctuation to a plain spoken script, for a real TTS engine to read aloud. Output ONLY the tagged script, no explanation, no markdown fences, no quotes around it.
 
-Real, verified Fish Audio tags (use ONLY these exact names - no other tag names exist, and no other tags may be used at all, even ones you know are real Fish Audio tags):
-Emotions: [happy] [sad] [angry] [excited] [calm] [nervous] [confident] [surprised] [satisfied] [delighted] [scared] [worried] [upset] [frustrated] [embarrassed] [disgusted] [proud] [relaxed] [grateful] [curious] [sarcastic] [confused] [disappointed] [hopeful] [determined]
-Pause: [break]
+Real, verified emotion tags (use ONLY these exact names - no other tag names exist, and no other bracket tags may be used at all, even ones you know are real):
+[happy] [sad] [angry] [excited] [calm] [nervous] [confident] [surprised] [satisfied] [delighted] [scared] [worried] [upset] [frustrated] [embarrassed] [disgusted] [proud] [relaxed] [grateful] [curious] [sarcastic] [confused] [disappointed] [hopeful] [determined]
+
+Pauses are NOT a bracket tag - they are real ellipsis punctuation ("...") inserted directly into the text itself, exactly like a person's writing would show a trailing-off pause.
 
 RULES:
-1. A comma, colon, or semicolon (, : ;) gets a [break] immediately after it ONLY where a real person speaking this sentence out loud would actually pause there. Many commas in fluent speech are spoken straight through with no pause at all, especially short ones or ones that don't mark a real breath/thought boundary - do not mechanically add [break] after every single one. Use real judgment about how this specific sentence would actually be spoken.
-2. Insert [break][break] (two [break] tags back to back, no other text between them) immediately after EVERY sentence-ending mark (. ? ! or ...) in the script - every single one, not just some. Unlike mid-sentence commas, a brief pause between two separate sentences is natural essentially every time. There is no separate "long pause" tag - a longer pause is always written as two [break] tags in a row, never anything else.
+1. A comma, colon, or semicolon (, : ;) gets "..." inserted immediately after it ONLY where a real person speaking this sentence out loud would actually pause there. Many commas in fluent speech are spoken straight through with no pause at all, especially short ones or ones that don't mark a real breath/thought boundary - do not mechanically add a pause after every single one. Use real judgment about how this specific sentence would actually be spoken. Keep the original comma/colon/semicolon in place; the "..." is added right after it, not instead of it.
+2. Insert "..." immediately after EVERY sentence-ending mark (. ? ! or an existing ...) in the script - every single one, not just some. Unlike mid-sentence commas, a brief pause between two separate sentences is natural essentially every time. Keep the original punctuation mark in place; "..." follows it.
 3. Add ONE emotion tag at the start of each sentence where it genuinely fits the meaning.
-4. Do NOT use any tag outside the two lists above - no tone tags, no [emphasis], no [soft], no breath/sound tags, no [long-break], nothing else, even if you believe it's a real Fish Audio tag.
+4. Do NOT use any bracket tag outside the emotion list above - no tone tags, no [break], no [emphasis], no [soft], no breath/sound tags, nothing else, even if you believe it's real.
 5. Never invent a tag name that isn't in the list above.
-6. Do not add, remove, or reword any of the actual spoken words - only insert bracket tags between them. The spoken text itself must stay byte-for-byte the same.
+6. Do not add, remove, or reword any of the actual spoken words - only insert emotion tags and "..." between them. The spoken text itself must stay byte-for-byte the same.
 
 Example:
 Input: "Ever wonder why cats knead blankets? It's actually a deep instinct, and it starts from when they were kittens."
-Output: "[curious] Ever wonder why cats knead blankets? [break][break] It's actually a deep instinct, and it starts from when they were kittens. [break][break]"
-(Note: no [break] after "instinct," in the example above - a real speaker would run that comma straight through, so it gets none.)`;
+Output: "[curious] Ever wonder why cats knead blankets? ... It's actually a deep instinct, and it starts from when they were kittens. ..."
+(Note: no pause after "instinct," in the example above - a real speaker would run that comma straight through, so it gets none.)`;
 
 /**
  * Deterministic guarantee for rule 2 (sentence-enders) only - comma/
- * colon/semicolon pauses are now the tagging model's judgment call
- * (rule 1), not force-inserted here, per direct feedback ("there are
- * parts that dont need pauses" - real speech doesn't pause at every
- * comma, and a blanket mechanical rule can't tell which ones actually
- * want one). Sentence-boundary pauses stay guaranteed since that one
- * really is close to universal in real speech. Skips insertion where a
- * [break] is already immediately present (won't pile a third [break]
- * onto a spot that already has one or two). Ellipsis ("...") is
- * matched as ONE unit, not three separate sentence-enders.
+ * colon/semicolon pauses are the tagging model's judgment call (rule
+ * 1), not force-inserted here, per direct feedback ("there are parts
+ * that dont need pauses" - real speech doesn't pause at every comma,
+ * and a blanket mechanical rule can't tell which ones actually want
+ * one). Sentence-boundary pauses stay guaranteed since that one really
+ * is close to universal in real speech. Skips insertion where "..."
+ * already immediately follows (won't pile on a spot the model already
+ * got right). An existing ellipsis (2+ dots, whether it's the model's
+ * own inserted pause or genuine "..." in the original writing) already
+ * IS a pause and is left completely alone - only a bare ., ?, or !
+ * gets one appended.
  */
 function ensurePauseTags(text) {
-  return text.replace(/(\.{2,}|[.?!])(?!\s*\[break\])/g, '$1 [break][break]');
+  return text.replace(/(\.{2,})|([.?!])(?!\s*\.\.\.)/g, (match, ellipsis, single) => (ellipsis ? ellipsis : `${single} ...`));
 }
 
-/** Strips every [tag] and collapses whitespace - what a tagged string's actual WORDS reduce to, for comparing against the original plain text. */
+/**
+ * Strips every [emotion tag] AND every inserted ellipsis, then
+ * collapses whitespace - what a tagged string's actual WORDS reduce
+ * to, for comparing against the original plain text. Ellipsis has to
+ * be stripped here too now that pauses are real punctuation added to
+ * the text rather than a bracket tag - otherwise every correctly-
+ * tagged (not hallucinated) response would falsely trip the
+ * hallucination guard below just for containing the "..." this file
+ * itself asked the model to add.
+ */
 function stripTagsAndNormalize(text) {
-  return text.replace(/\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  return text.replace(/\[[^\]]*\]/g, ' ').replace(/\.{2,}/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 /**
@@ -89,15 +102,16 @@ function stripTagsAndNormalize(text) {
  * entire extra sentences that were never in the input at all, a direct
  * violation of its own "do not add/remove/reword words" rule. Nothing
  * downstream would have caught that - ensurePauseTags only ever ADDS
- * pause tags, it has no concept of "is this still the same words" - so
- * a hallucinated script would have gone straight to TTS, producing
- * narration audio far longer than the beat's own visual timing was
- * ever built for. Fixed here: after tagging, strip every tag back out
- * and compare against the original plain text (normalized) - if they
- * don't match, the tagged version is discarded and mechanical-only
- * tagging is used instead, exactly like a call failure. Losing the
- * emotion tags on one beat is a real but minor loss; sending
- * hallucinated content to TTS is not something to risk.
+ * pause punctuation, it has no concept of "is this still the same
+ * words" - so a hallucinated script would have gone straight to TTS,
+ * producing narration audio far longer than the beat's own visual
+ * timing was ever built for. Fixed here: after tagging, strip every
+ * tag and pause mark back out and compare against the original plain
+ * text (normalized) - if they don't match, the tagged version is
+ * discarded and mechanical-only tagging is used instead, exactly like
+ * a call failure. Losing the emotion tags on one beat is a real but
+ * minor loss; sending hallucinated content to TTS is not something to
+ * risk.
  */
 async function annotateNarrationTags(plainText, feedback = '') {
   const userMessage = feedback
