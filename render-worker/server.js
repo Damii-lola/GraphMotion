@@ -6,9 +6,13 @@ const path = require('path');
 const { fork } = require('child_process');
 
 const { prefetchBeatImages, cleanupBeatImages } = require('./imagePrefetch');
-const { renderLongFormVideo, RenderCancelledError } = require('./longVideoOrchestrator');
+const {
+  renderLongFormVideo, RenderCancelledError, CHUNK_THRESHOLD_SECONDS,
+  computeChunkRanges, renderSingleChunk, concatChunks,
+} = require('./longVideoOrchestrator');
 const { muxNarrationOntoVideo } = require('./audioMux');
 const { updateJob, uploadRenderedVideo } = require('./supabaseClient');
+const { getAvailableSibling, requestHelp } = require('./chunkDispatch');
 
 /**
  * Render-only worker service. Part of a coordinator/worker split added
@@ -169,6 +173,151 @@ function withRenderLock(fn) {
 }
 
 /**
+ * Handles a sibling's help request (see chunkDispatch.js and
+ * renderWithPossibleHelp below) - renders exactly the chunk ranges
+ * asked for and returns them as base64, nothing else. Does its OWN
+ * full image/icon prefetch even though it's only rendering a SUBSET of
+ * the video's beats - a chunk's own rendered frames can still
+ * reference any beat's image/icon depending on where that beat's own
+ * on-screen time falls, and these fetches use free keyless URLs, so
+ * redundant fetching across the primary and this helper costs a little
+ * duplicate network time, never correctness. Goes through the SAME
+ * withRenderLock as a normal /render job - a help request is exactly
+ * as memory-heavy as a normal one while it's actually rendering, and
+ * this worker still only has room for one such active render at a time
+ * regardless of which route asked for it.
+ */
+async function handleRenderChunksRequest(jobId, sceneJSON, chunkRanges) {
+  const imageResolvedSceneJSON = await prefetchBeatImages(sceneJSON, jobId);
+  const renderSceneJSON = await prefetchIconsIsolated(imageResolvedSceneJSON, jobId);
+
+  const workDir = path.join(os.tmpdir(), 'shortform-renders', `${jobId}-help-chunks`);
+  fs.mkdirSync(workDir, { recursive: true });
+
+  try {
+    return await withRenderLock(async () => {
+      const results = [];
+      for (const range of chunkRanges) {
+        const chunkPath = path.join(workDir, `chunk-${range.index}.mp4`);
+        await renderSingleChunk(jobId, renderSceneJSON, range.start, range.end, chunkPath, range.index, () => {});
+        results.push({ index: range.index, base64: fs.readFileSync(chunkPath).toString('base64') });
+      }
+      return results;
+    });
+  } finally {
+    cleanupBeatImages(jobId);
+    cleanupIcons(jobId);
+    fs.rm(workDir, { recursive: true, force: true }, () => {});
+  }
+}
+
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+/**
+ * Drop-in replacement for calling renderLongFormVideo directly - tries
+ * to split a long video's chunks across this worker and ONE available
+ * sibling before falling back to rendering every chunk itself, exactly
+ * as renderLongFormVideo already does. Short videos (no chunking
+ * needed at all) and the case where no sibling has room both fall
+ * through to the ORIGINAL, unchanged solo path - this only changes
+ * behavior when there's real chunked work AND real help available.
+ *
+ * Splits roughly in half by chunk COUNT (not by content) - simple, and
+ * each chunk costs about the same regardless of what it contains, so
+ * an even split is already a good balance. Kicks off the sibling
+ * request and this worker's own half CONCURRENTLY (Promise.all), not
+ * sequentially, since that's the entire point - waiting on one before
+ * starting the other would throw away the parallelism this exists for.
+ * If the sibling request fails for any reason, its assigned chunks are
+ * rendered locally as a fallback (slower than the happy path, but
+ * still correct - a flaky sibling should never lose real chunks).
+ */
+async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled) {
+  const chunkRanges = computeChunkRanges(sceneJSON);
+
+  if (chunkRanges.length <= 1) {
+    // Not even chunked (CHUNK_THRESHOLD_SECONDS not exceeded) - nothing
+    // to split, renderLongFormVideo's own short-video direct-render
+    // path handles this exactly as before.
+    return renderLongFormVideo(jobId, sceneJSON, onProgress, isCancelled);
+  }
+
+  const siblingUrl = await getAvailableSibling();
+  if (!siblingUrl) {
+    return renderLongFormVideo(jobId, sceneJSON, onProgress, isCancelled);
+  }
+
+  console.log(`[chunkDispatch] job ${jobId} splitting ${chunkRanges.length} chunks with ${siblingUrl}`);
+  const splitAt = Math.ceil(chunkRanges.length / 2);
+  const myRanges = chunkRanges.slice(0, splitAt);
+  const helperRanges = chunkRanges.slice(splitAt);
+
+  const workDir = path.join(os.tmpdir(), 'shortform-renders', `${jobId}-chunks`);
+  fs.mkdirSync(workDir, { recursive: true });
+
+  const helperPromise = requestHelp(siblingUrl, jobId, sceneJSON, helperRanges).catch((err) => {
+    console.warn(`[chunkDispatch] job ${jobId} sibling ${siblingUrl} failed, rendering its ${helperRanges.length} chunk(s) locally instead: ${err.message}`);
+    return null;
+  });
+
+  const myChunkPaths = [];
+  for (let i = 0; i < myRanges.length; i++) {
+    if (isCancelled && isCancelled()) {
+      for (const p of myChunkPaths) fs.unlink(p, () => {});
+      fs.rm(workDir, { recursive: true, force: true }, () => {});
+      throw new RenderCancelledError(jobId);
+    }
+    const { start, end, index } = myRanges[i];
+    const chunkPath = path.join(workDir, `chunk-${index}.mp4`);
+    await renderSingleChunk(jobId, sceneJSON, start, end, chunkPath, index, (chunkPct) => {
+      // My own half's progress only, scaled into the first ~50% of the
+      // overall bar - the second half jumps in once the sibling's
+      // result (or the local fallback for it) is actually in hand.
+      if (onProgress) onProgress(Math.min(48, Math.round(((i + chunkPct / 100) / myRanges.length) * 48)));
+    });
+    myChunkPaths.push(chunkPath);
+    if (i < myRanges.length - 1) await sleep(400);
+  }
+
+  if (onProgress) onProgress(50);
+
+  const helperChunks = await helperPromise;
+  const helperChunkPaths = [];
+  if (helperChunks) {
+    for (const chunk of helperChunks) {
+      const p = path.join(workDir, `chunk-${chunk.index}.mp4`);
+      fs.writeFileSync(p, Buffer.from(chunk.base64, 'base64'));
+      helperChunkPaths.push(p);
+    }
+  } else {
+    // Sibling failed entirely - render its assigned ranges myself,
+    // sequentially, exactly like the ordinary solo path would.
+    for (const { start, end, index } of helperRanges) {
+      if (isCancelled && isCancelled()) {
+        for (const p of [...myChunkPaths, ...helperChunkPaths]) fs.unlink(p, () => {});
+        fs.rm(workDir, { recursive: true, force: true }, () => {});
+        throw new RenderCancelledError(jobId);
+      }
+      const chunkPath = path.join(workDir, `chunk-${index}.mp4`);
+      await renderSingleChunk(jobId, sceneJSON, start, end, chunkPath, index, () => {});
+      helperChunkPaths.push(chunkPath);
+    }
+  }
+
+  if (onProgress) onProgress(90);
+
+  const allChunkPaths = [...myChunkPaths, ...helperChunkPaths];
+  const finalOutputPath = path.join(os.tmpdir(), 'shortform-renders', `${jobId}.mp4`);
+  await concatChunks(allChunkPaths, finalOutputPath);
+
+  for (const p of allChunkPaths) fs.unlink(p, () => {});
+  fs.rm(workDir, { recursive: true, force: true }, () => {});
+
+  if (onProgress) onProgress(100);
+  return finalOutputPath;
+}
+
+/**
  * Writes the base64 narration clips the coordinator sent into local
  * files and reconstructs the same Map<beatIndex, {path, duration}>
  * shape muxNarrationOntoVideo already expects (see ../backend's
@@ -205,7 +354,7 @@ async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
     const imageResolvedSceneJSON = await prefetchBeatImages(sceneJSON, jobId);
     const renderSceneJSON = await prefetchIconsIsolated(imageResolvedSceneJSON, jobId);
 
-    const renderedPath = await withRenderLock(() => renderLongFormVideo(jobId, renderSceneJSON, (pct) => {
+    const renderedPath = await withRenderLock(() => renderWithPossibleHelp(jobId, renderSceneJSON, (pct) => {
       const now = Date.now();
       const isFinal = pct >= 100;
       if (isFinal || now - lastProgressUpdateAt >= PROGRESS_UPDATE_MIN_INTERVAL_MS) {
@@ -264,5 +413,45 @@ app.post('/render', (req, res) => {
   });
 });
 
+// Handles a SIBLING worker's request for help rendering a subset of
+// chunks - see chunkDispatch.js and renderWithPossibleHelp above for
+// the full picture. Deliberately synchronous (unlike /render, which
+// acknowledges immediately and works in the background): the calling
+// worker is actively AWAITING these exact bytes to assemble the final
+// video, so there's nothing useful to do except hold the connection
+// open until the chunks are actually ready - see the server's own
+// requestTimeout override below for why that's safe to do here.
+app.post('/render-chunks', (req, res) => {
+  const { jobId, sceneJSON, chunkRanges } = req.body || {};
+  if (!jobId || !sceneJSON || !Array.isArray(chunkRanges) || chunkRanges.length === 0) {
+    res.status(400).json({ error: 'jobId, sceneJSON, and a non-empty chunkRanges array are required' });
+    return;
+  }
+  if (activeRenders >= MAX_CONCURRENT_RENDERS) {
+    res.status(503).json({ error: 'worker at capacity' });
+    return;
+  }
+
+  activeRenders++;
+  handleRenderChunksRequest(jobId, sceneJSON, chunkRanges)
+    .then((chunks) => res.json({ chunks }))
+    .catch((err) => {
+      console.error(`[render-worker] /render-chunks failed for job ${jobId}:`, err);
+      res.status(500).json({ error: String((err && err.message) || err) });
+    })
+    .finally(() => { activeRenders--; });
+});
+
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`[render-worker] listening on port ${PORT}, maxConcurrent=${MAX_CONCURRENT_RENDERS}`));
+const server = app.listen(PORT, () => console.log(`[render-worker] listening on port ${PORT}, maxConcurrent=${MAX_CONCURRENT_RENDERS}`));
+// Node's default HTTP server timeout closes an in-flight request after
+// 5 minutes of inactivity - fine for /render (which responds in
+// milliseconds and works in the background) but /render-chunks
+// deliberately holds the connection open for as long as real rendering
+// takes, which measured logs show can genuinely run several minutes
+// for a real chunk subset on Render's actual host. Raised well past
+// chunkDispatch.js's own HELP_REQUEST_TIMEOUT_MS (8 min) so the
+// CALLER's timeout is always what fires first, not this server
+// dropping an otherwise-still-working connection out from under it.
+server.requestTimeout = 10 * 60 * 1000;
+server.headersTimeout = 10 * 60 * 1000 + 5000;

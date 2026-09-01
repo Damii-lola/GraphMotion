@@ -75,6 +75,29 @@ class RenderCancelledError extends Error {
 }
 
 /**
+ * Extracted out of renderLongFormVideo so cross-worker chunk-splitting
+ * (see ../chunkDispatch.js) can compute the SAME chunk boundaries a
+ * solo render would use, without needing to actually start rendering -
+ * a "primary" worker needs this list up front to decide how much to
+ * hand off to a sibling before either of them starts real work.
+ */
+function computeChunkRanges(sceneJSON) {
+  const { totalDuration } = buildTimeline(sceneJSON);
+  const chunkRanges = [];
+  let index = 0;
+  for (let t = 0; t < totalDuration; t += CHUNK_SIZE_SECONDS) {
+    // `index` is each range's GLOBAL position in the whole video - the
+    // solo path below never needs it (it just uses the array's own
+    // position, which is identical), but chunkDispatch.js's cross-
+    // worker split does: a sibling rendering a subset has no other way
+    // to know where its own chunks belong in the final concat order.
+    chunkRanges.push({ start: t, end: Math.min(t + CHUNK_SIZE_SECONDS, totalDuration), index });
+    index++;
+  }
+  return chunkRanges;
+}
+
+/**
  * Renders sceneJSON to outputPath, transparently chunking if the
  * video is long enough to need it. onProgress receives 0-100 across
  * the WHOLE video regardless of how many chunks it took internally.
@@ -96,10 +119,7 @@ async function renderLongFormVideo(jobId, sceneJSON, onProgress, isCancelled) {
     return renderJobToFile(jobId, sceneJSON, onProgress);
   }
 
-  const chunkRanges = [];
-  for (let t = 0; t < totalDuration; t += CHUNK_SIZE_SECONDS) {
-    chunkRanges.push({ start: t, end: Math.min(t + CHUNK_SIZE_SECONDS, totalDuration) });
-  }
+  const chunkRanges = computeChunkRanges(sceneJSON);
 
   const workDir = path.join(os.tmpdir(), 'shortform-renders', `${jobId}-chunks`);
   fs.mkdirSync(workDir, { recursive: true });
@@ -289,4 +309,18 @@ function concatChunks(chunkPaths, outputPath) {
   });
 }
 
-module.exports = { renderLongFormVideo, RenderCancelledError, CHUNK_THRESHOLD_SECONDS, CHUNK_SIZE_SECONDS };
+module.exports = {
+  renderLongFormVideo,
+  RenderCancelledError,
+  CHUNK_THRESHOLD_SECONDS,
+  CHUNK_SIZE_SECONDS,
+  // Exported specifically for chunkDispatch.js's cross-worker split -
+  // a "helper" worker renders only ITS assigned subset of chunks via
+  // renderSingleChunk directly (skipping renderLongFormVideo's own
+  // full chunk-range computation and concat), and the "primary" needs
+  // computeChunkRanges to plan the split and concatChunks to stitch
+  // its own chunks back together with whatever a helper returns.
+  computeChunkRanges,
+  renderSingleChunk,
+  concatChunks,
+};
