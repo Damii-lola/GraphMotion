@@ -179,17 +179,41 @@ function drawHighlights(ctx, chars, fontSize, highlights, t, totalChars, totalWo
 // 1) by that character's combined selection strength.
 // ---------------------------------------------------------------------
 
+// Real, previously-unnoticed cost: layoutText (word-wrap + a
+// ctx.measureText() call for every word AND every character) has zero
+// dependency on `t` - a beat's text content/font/box never changes
+// across its own frames, only the PER-CHARACTER ANIMATION strengths
+// (computed separately, below) do. Every caller (sceneBuilder.js's
+// buildTextDraw) already builds ONE closure per beat per text layer
+// and calls it once per frame with that same closure - so layoutText
+// was being redone from scratch on EVERY SINGLE FRAME of a beat's
+// entire duration (dozens of measureText calls x every frame x every
+// text layer x every beat), recomputing the byte-for-byte identical
+// result every time. Cached here keyed by the exact inputs that can
+// affect layout - if the caller passes the SAME `layoutCache` object
+// across calls (as buildTextDraw does, scoped to one beat), a cache
+// hit skips layoutText entirely; any input actually changing (should
+// never happen mid-beat by this schema's own design - text-layout
+// fields aren't part of the keyframe/Property system - but checked
+// anyway rather than assumed) transparently recomputes instead of
+// silently serving a stale layout.
 function renderAnimatedText(ctx, text, t, opts) {
   const {
     fontFamily, fontWeight, fontSize, lineHeight, maxWidth, centerX, centerY, textAlign = 'center',
-    fillStyle = '#FFFFFF', animators = [], highlights = [],
+    fillStyle = '#FFFFFF', animators = [], highlights = [], layoutCache = null,
   } = opts;
 
-  const {
-    chars, totalWords,
-  } = layoutText(ctx, text, {
-    fontFamily, fontWeight, fontSize, lineHeight, maxWidth, centerX, centerY, textAlign,
-  });
+  const layoutKey = `${text}|${fontFamily}|${fontWeight}|${fontSize}|${lineHeight}|${maxWidth}|${centerX}|${centerY}|${textAlign}`;
+  let layout;
+  if (layoutCache && layoutCache.key === layoutKey) {
+    layout = layoutCache.result;
+  } else {
+    layout = layoutText(ctx, text, {
+      fontFamily, fontWeight, fontSize, lineHeight, maxWidth, centerX, centerY, textAlign,
+    });
+    if (layoutCache) { layoutCache.key = layoutKey; layoutCache.result = layout; }
+  }
+  const { chars, totalWords } = layout;
   const totalChars = chars.length;
 
   if (highlights.length > 0) drawHighlights(ctx, chars, fontSize, highlights, t, totalChars, totalWords);

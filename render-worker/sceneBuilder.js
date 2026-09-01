@@ -333,10 +333,15 @@ function buildTextDraw(layerDef, beatContext) {
       forceAlignment: layerDef.onPath.forceAlignment,
     });
   }
+  // Scoped to THIS closure (one beat, one text layer) so the cache
+  // naturally starts fresh for every new beat - see renderAnimatedText's
+  // own doc comment for why this is safe and what it skips.
+  const layoutCache = { key: null, result: null };
   return (ctx, t) => renderAnimatedText(ctx, layerDef.text, t, {
     ...textOpts,
     maxWidth: layerDef.maxWidth || Math.max(100, beatContext.width - 60),
     centerX: layerDef.centerX || 0,
+    layoutCache,
     centerY: layerDef.centerY || 0,
   });
 }
