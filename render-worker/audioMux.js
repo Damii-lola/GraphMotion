@@ -73,7 +73,28 @@ function runCapture(args) {
 // back from -14 to -16 LUFS - less total gain needed to reach it,
 // directly reducing how much any residual noise floor gets amplified,
 // while still a real, audible boost over a -23ish LUFS raw source.
-const NARRATION_PRE_FILTER = 'highpass=f=90,acompressor=threshold=-20dB:ratio=1.5:attack=20:release=150:makeup=1';
+// Real, directly measured finding after the production voice switched
+// to Deepgram's Aura-2: raw Deepgram output sits at -28.3 LUFS (even
+// quieter than Fish Audio's -23.9 LUFS raw), so the SAME 2-pass
+// loudnorm below now has to apply +12.3dB of gain to hit -16 LUFS,
+// vs the +7.9dB this whole chain was actually tuned against. Measured
+// consequence on a real clip: LRA (loudness range) went from 6.5 LU
+// raw down to 2.2 LU after this compressor - a much bigger squash than
+// intended, and confirmed directly to correlate with a real user
+// complaint of the narration sounding "like an auditorium, lots of
+// echo/reverb" (compressor pumping/breathing - rapid gain-reduction
+// cycling as level repeatedly crosses threshold, especially on phrases
+// with several close-together comma pauses - is a well-documented real
+// cause of a washy/roomy quality, distinct from literal delayed echo
+// but easily perceived as similar). Threshold raised from -20dB to
+// -16dB so the compressor goes back to catching only genuine outlier
+// peaks rather than regular speech content, and release lengthened
+// from 150ms to 220ms so it recovers more gradually between closely-
+// spaced pauses instead of slamming shut and reopening on each one.
+// Kept in sync with ../backend/audioMux.js's own copy - the per-clip
+// mastering pass runs on the coordinator, the whole-track pass runs
+// here on the worker (muxNarrationOntoVideo), so both need this.
+const NARRATION_PRE_FILTER = 'highpass=f=90,acompressor=threshold=-16dB:ratio=1.5:attack=20:release=220:makeup=1';
 const NARRATION_LOUDNORM_TARGET = 'I=-16:TP=-2:LRA=11';
 
 // Real, directly measured bug found chasing "why does the voice sound
