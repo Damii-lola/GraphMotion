@@ -199,7 +199,12 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
 // with ../render-worker/audioMux.js's own copy - this is the local-
 // render fallback path's version, used only when no render worker was
 // available to dispatch to.
-const SPEED_FACTOR = 1.2;
+// Lowered from 1.2 to 1.1 per direct user request. Note this also
+// slightly changes the real inter-beat pause length: the 0.65s buffer
+// in narrationPrefetch.js was sized against 1.2x compression (landing
+// ~0.54s post-speedup) - at 1.1x the same buffer lands closer to
+// ~0.59s, a bit longer, not shorter.
+const SPEED_FACTOR = 1.1;
 
 function speedUpVideo(inputPath, outputPath) {
   return run([
