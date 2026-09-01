@@ -32,8 +32,71 @@ function run(args) {
 // once per clip on the coordinator, once on the whole assembled track
 // here on the worker) were stripping real high-frequency content
 // Deepgram's own output actually had, correlating with a user
-// complaint of narration sounding "like an auditorium." Deepgram's
-// output is used PLAIN now, all the way through.
+// complaint of narration sounding "like an auditorium."
+//
+// Real follow-up regression found after removing the WHOLE chain: it
+// fixed the echo complaint but ALSO silently removed loudness
+// correction, which was never the actual problem. Measured on a real
+// render: -29.5dB mean volume (Deepgram's raw output sits around -28
+// LUFS, completely unboosted) - reads as quiet/thin against the ~-14
+// to -16 LUFS modern platforms target, a real, separate issue from the
+// echo one. The ACTUAL culprit for the echo/reverb complaint was the
+// COMPRESSOR specifically (rapid gain-reduction pumping on phrases with
+// close-together pauses, pulling up whatever sits below its threshold
+// along with the voice) - not loudnorm itself, which just applies one
+// flat measured gain to the whole signal with no threshold/attack/
+// release dynamics to pump. Added back below as loudness-ONLY
+// normalization (no highpass, no compressor, no per-clip duplicate
+// pass) - keeps the echo fix while fixing the volume regression it
+// accidentally introduced.
+const NARRATION_LOUDNESS_TARGET = 'I=-16:TP=-2:LRA=11';
+
+/** Same as run(), but resolves with the captured stderr text on success - needed for loudnorm's own analysis pass, which prints its measured stats to stderr as JSON rather than stdout. */
+function runCapture(args) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(ffmpegPath, args);
+    let err = '';
+    p.stderr.on('data', (d) => { err += d.toString(); });
+    p.on('close', (code) => (code === 0 ? resolve(err) : reject(new Error(`ffmpeg exited ${code}: ${err.slice(-500)}`))));
+    p.on('error', reject);
+  });
+}
+
+/**
+ * Loudness-only normalization (2-pass accurate EBU R128) - see the
+ * NARRATION_LOUDNESS_TARGET comment above for why this exists and why
+ * it's safe against the compressor-pumping issue the old full chain
+ * had. Applied exactly ONCE, on the final whole assembled track (not
+ * per-clip like the old chain), to minimize the OTHER real finding
+ * from the same investigation - repeated lossy mp3 re-encode passes
+ * compounding real quality/bandwidth loss - down to a single extra
+ * generation instead of the old chain's two full passes. A light
+ * alimiter stays as cheap safety insurance against linear-mode
+ * loudnorm's predicted true peak landing hotter than its own TP target
+ * (a real, previously-measured gap, not a hypothetical) - alimiter
+ * only acts on true-peak overshoot, never touches quiet content the
+ * way a compressor does, so it can't reintroduce the pumping issue.
+ */
+async function applyLoudnessNormalization(inputPath, outputPath) {
+  let stats;
+  try {
+    const analyzeOutput = await runCapture(['-i', inputPath, '-af', `loudnorm=${NARRATION_LOUDNESS_TARGET}:print_format=json`, '-f', 'null', '-']);
+    const jsonMatch = analyzeOutput.match(/\{[^]*?"target_offset"[^]*?\}/);
+    stats = jsonMatch && JSON.parse(jsonMatch[0]);
+  } catch (err) {
+    stats = null;
+  }
+  if (!stats) {
+    // Loudness correction is polish, not correctness - if the analysis
+    // pass fails for any reason, fall back to the untouched track
+    // rather than failing the whole render over audio polish.
+    fs.copyFileSync(inputPath, outputPath);
+    return outputPath;
+  }
+  const secondPassFilter = `loudnorm=${NARRATION_LOUDNESS_TARGET}:measured_I=${stats.input_i}:measured_TP=${stats.input_tp}:measured_LRA=${stats.input_lra}:measured_thresh=${stats.input_thresh}:offset=${stats.target_offset}:linear=true,alimiter=limit=0.891`;
+  await run(['-y', '-i', inputPath, '-af', secondPassFilter, '-c:a', 'libmp3lame', '-q:a', '4', outputPath]);
+  return outputPath;
+}
 
 // Real, directly measured bug found chasing "why does the voice sound
 // so deep": this used to hardcode -ar 24000 (and generateSilence's own
@@ -167,14 +230,17 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
     assembledPath = paddedPath;
   }
 
-  // Whole-track mastering pass REMOVED per direct user request - see
-  // the constant's own doc comment above for the full reasoning.
-  // assembledPath goes straight into the final mux now.
+  // Loudness-only normalization (see its own doc comment above) -
+  // applied ONCE here on the whole assembled track, not per-clip.
+  const loudnessNormalizedPath = path.join(workDir, `${jobId}-loudness-narration.mp3`);
+  await applyLoudnessNormalization(assembledPath, loudnessNormalizedPath);
+
   const outputPath = videoPath.replace(/\.mp4$/, '-narrated.mp4');
-  await run(['-y', '-i', videoPath, '-i', assembledPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest', outputPath]);
+  await run(['-y', '-i', videoPath, '-i', loudnessNormalizedPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest', outputPath]);
 
   fs.unlink(listPath, () => {});
   fs.unlink(assembledPath, () => {});
+  fs.unlink(loudnessNormalizedPath, () => {});
   cleanupPaths.forEach((p) => fs.unlink(p, () => {}));
 
   return outputPath;
