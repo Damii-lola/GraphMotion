@@ -196,15 +196,16 @@ function trimTrailingArtifact(inputPath, outputPath) {
  * across beats (like imagePrefetch.js) - was sequential when the only
  * engine was msedge-tts's single-connection-per-call websocket, but
  * Fish Audio (the primary engine now, see generateSpeech above) is a
- * stateless REST API with no such constraint, and each beat's own
- * synthesizeVerified retry loop (narrationVerify.js, up to 5 attempts
- * x 2 concurrent judge passes each) is now expensive enough that
- * running 5 beats back to back rather than together was a real,
- * measured source of the multi-minute generation times that prompted
- * this change ("add it back but can u make it faster" - direct user
- * feedback after the sequential 2-judge-pass version). Each beat only
- * ever touches its OWN index in `renderScenes`/`audioFiles`, so
- * there's no shared-state conflict between beats running concurrently.
+ * stateless REST API with no such constraint. synthesizeVerified
+ * (narrationVerify.js) used to retry up to 5 times with 2 concurrent
+ * judge passes each, expensive enough on its own that running 5 beats
+ * back to back was a real source of multi-minute generations - that
+ * retry loop is gone now (see narrationVerify.js's own doc comment:
+ * real API-call-volume consequences, not just a speed tradeoff), but
+ * beats still run in parallel since there's no reason not to. Each
+ * beat only ever touches its OWN index in `renderScenes`/`audioFiles`,
+ * so there's no shared-state conflict between beats running
+ * concurrently.
  * For each beat with narration, measures the real spoken duration and
  * OVERRIDES that beat's `duration` param to match (+ a small buffer) -
  * visual pacing follows how long the narration actually takes to say,
@@ -238,12 +239,13 @@ async function prefetchNarration(sceneJSON, jobId) {
       // mandatory sentence-ending "..." pause placement mechanically,
       // regardless of what the tagging model itself did or missed.
       const plainText = scene.params.narration.trim();
-      // A third AI stage judges the actual synthesized audio (not just
-      // the tagged text) against the real script - non-speech artifacts
-      // (hallucinated words, laughing, etc) and unnatural pause
-      // placement both fail it. On rejection, re-tags AND re-synthesizes
-      // from scratch with the judge's feedback folded in, rather than
-      // just re-rolling the same TTS call - see narrationVerify.js.
+      // A third AI stage judges the actual synthesized audio's tail
+      // (not just the tagged text) against the real script, once - no
+      // retry loop (see narrationVerify.js's own doc comment for why:
+      // a real, serious API-call-volume consequence, not a style
+      // choice). `passed` below just decides whether the free
+      // mechanical trimTrailingArtifact step gets a chance to clean up
+      // whatever the judge flagged.
       const { taggedText, buf, passed } = await synthesizeVerified(plainText, async (feedback) => {
         const tagged = await annotateNarrationTags(plainText, feedback);
         const audioBuf = await generateSpeech(tagged);
@@ -265,10 +267,10 @@ async function prefetchNarration(sceneJSON, jobId) {
         fs.renameSync(rawPath, trimmedPath);
       }
 
-      // Mechanical last line of defense against the judge's own retry
-      // budget running out (see synthesizeVerified) - cuts off a
-      // trailing hallucinated artifact if one is still there, using the
-      // internal-silence-gap signature described on trimTrailingArtifact
+      // Mechanical last line of defense now that synthesizeVerified is
+      // single-shot with no retry (see its own doc comment) - cuts off
+      // a trailing hallucinated artifact if one is still there, using
+      // the internal-silence-gap signature described on trimTrailingArtifact
       // itself. Deliberately gated on `passed` being false: a clip the
       // judge already explicitly confirmed clean has nothing to gain
       // from this blunt heuristic and only stands to lose real content
