@@ -172,7 +172,7 @@ Concretely:
   every 1.2-2.5s, text building word-by-word) is built for quick,
   punchy delivery, and the narration driving it has to match that
   energy, not undercut it with long-winded lines. Every beat's own
-  narration line should default SHORT - a single short sentence or
+  narration line should default VERY SHORT - a single short sentence or
   even a fragment, not a compound sentence with multiple clauses. Cut
   ruthlessly: drop qualifiers, subordinate clauses, and throat-clearing
   ("basically", "essentially", "the thing is") that a real fast-paced
