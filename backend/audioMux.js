@@ -267,4 +267,32 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
   return outputPath;
 }
 
-module.exports = { muxNarrationOntoVideo, masterNarrationAudio };
+// Direct user request: every finished video is sped up before it's
+// ever uploaded/shown to anyone - both streams together, so they stay
+// in sync, not just the video track alone. ffmpeg's atempo filter
+// supports 0.5-2.0 directly in one pass (1.2 doesn't need chaining
+// multiple atempo calls the way a >2.0 factor would). setpts speeds up
+// the video stream to match. This is a genuine, real re-encode of
+// BOTH streams (changing PTS can't be done with a stream copy the way
+// the final mux above manages to for video), so it adds real
+// processing time on top of everything else in the pipeline - not
+// free, but that's what was asked for. Matches the SAME encode
+// settings (libx264 ultrafast/yuv420p, aac 128k) the rest of this file
+// already uses, for consistent output characteristics. Kept in sync
+// with ../render-worker/audioMux.js's own copy - this is the local-
+// render fallback path's version, used only when no render worker was
+// available to dispatch to.
+const SPEED_FACTOR = 1.2;
+
+function speedUpVideo(inputPath, outputPath) {
+  return run([
+    '-y', '-i', inputPath,
+    '-filter_complex', `[0:v]setpts=PTS/${SPEED_FACTOR}[v];[0:a]atempo=${SPEED_FACTOR}[a]`,
+    '-map', '[v]', '-map', '[a]',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-b:a', '128k',
+    outputPath,
+  ]);
+}
+
+module.exports = { muxNarrationOntoVideo, masterNarrationAudio, speedUpVideo };

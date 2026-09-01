@@ -6,6 +6,7 @@ const path = require('path');
 const { fork } = require('child_process');
 const rateLimit = require('express-rate-limit');
 const { startWorkerKeepAlive, cancelJobOnWorker } = require('./renderDispatch');
+const { speedUpVideo } = require('./audioMux');
 
 const {
   supabase,
@@ -285,10 +286,19 @@ function startRenderWorker(jobId, prompt, targetDurationSeconds, parentSceneJSON
 
         case 'render_complete': {
           state.settled = true;
-          await updateJob(jobId, { status: 'uploading', progress: 100 });
-          const fileBuffer = fs.readFileSync(msg.localFilePath);
-          const videoUrl = await uploadRenderedVideo(jobId, msg.localFilePath, fileBuffer);
+          // Direct user request: speed up the finished video (video +
+          // audio together, staying in sync) before it's ever uploaded
+          // or shown to anyone - matches ../render-worker/server.js's
+          // own copy of this same step for the primary (dispatched)
+          // render path; this is the local-render FALLBACK path's
+          // version, used only when no render worker was available.
+          const spedUpPath = msg.localFilePath.replace(/\.mp4$/, '-sped-up.mp4');
+          await speedUpVideo(msg.localFilePath, spedUpPath);
           fs.unlink(msg.localFilePath, () => {});
+          await updateJob(jobId, { status: 'uploading', progress: 100 });
+          const fileBuffer = fs.readFileSync(spedUpPath);
+          const videoUrl = await uploadRenderedVideo(jobId, spedUpPath, fileBuffer);
+          fs.unlink(spedUpPath, () => {});
           await updateJob(jobId, { status: 'done', video_url: videoUrl });
           activeJobs.delete(jobId);
           onSettled();

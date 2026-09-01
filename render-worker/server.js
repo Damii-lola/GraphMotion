@@ -10,7 +10,7 @@ const {
   renderLongFormVideo, RenderCancelledError, CHUNK_THRESHOLD_SECONDS,
   computeChunkRanges, renderSingleChunk, concatChunks,
 } = require('./longVideoOrchestrator');
-const { muxNarrationOntoVideo } = require('./audioMux');
+const { muxNarrationOntoVideo, speedUpVideo } = require('./audioMux');
 const { updateJob, uploadRenderedVideo } = require('./supabaseClient');
 const { getAvailableSibling, requestHelp } = require('./chunkDispatch');
 
@@ -366,7 +366,15 @@ async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
       }
     }, () => cancelledJobs.has(jobId)));
 
-    const localFilePath = await muxNarrationOntoVideo(renderedPath, renderSceneJSON, audioFiles, jobId, os.tmpdir());
+    const muxedPath = await muxNarrationOntoVideo(renderedPath, renderSceneJSON, audioFiles, jobId, os.tmpdir());
+
+    // Direct user request: speed up the finished video (video + audio
+    // together, staying in sync) before it's ever uploaded or shown to
+    // anyone - see speedUpVideo's own doc comment for the real added
+    // cost (a genuine re-encode, not free).
+    const localFilePath = muxedPath.replace(/\.mp4$/, '-sped-up.mp4');
+    await speedUpVideo(muxedPath, localFilePath);
+    fs.unlink(muxedPath, () => {});
     const fileBuffer = fs.readFileSync(localFilePath);
 
     await updateJob(jobId, { status: 'uploading', progress: 100 });
