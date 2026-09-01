@@ -47,6 +47,21 @@ can't spend on the scene itself. Write it as ONE continuous line, e.g.
 {"scenes":[{"params":{"duration":2.5},"visual":{"layers":[...]}}]}
 - not spread across multiple indented lines.
 
+BRACE COUNTING AT SCENE BOUNDARIES - a real, repeated, precisely
+diagnosed failure (confirmed by inspecting actual malformed output):
+each scene is its own wrapper object, {"params":{...},"visual":{...}} -
+that wrapper needs ITS OWN closing "}" (on top of "visual"'s own
+closing "}") before the "," that starts the next scene. With two
+scenes, the transition looks EXACTLY like this - study the DOUBLE "}}"
+right before the comma:
+{"scenes":[{"params":{"duration":2},"visual":{"layers":[{"type":"text","position":[270,480],"text":"First beat"}]}},{"params":{"duration":2},"visual":{"layers":[{"type":"text","position":[270,480],"text":"Second beat"}]}}]}
+The most common mistake is writing only ONE "}" there (closing
+"visual" but forgetting to also close the scene wrapper around it) -
+that single missing brace breaks the ENTIRE response, not just that
+one beat. Before outputting, mentally walk every scene boundary in
+your own response and confirm there are exactly two "}" back to back
+right before each "," that starts the next scene.
+
 The canvas is ${COMP_WIDTH} x ${COMP_HEIGHT} pixels (9:16 vertical). Every
 position/size you author is in these pixel units, origin (0,0) at the
 top-left for 2D content. Keep primary content within a safe zone

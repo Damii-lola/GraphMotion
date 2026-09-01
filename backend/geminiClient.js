@@ -46,6 +46,33 @@ if (KEYS.length === 0) {
   console.log(`[geminiClient] ${KEYS.length} Gemini API key(s) configured, model=${MODEL}`);
 }
 
+/**
+ * Real, precisely diagnosed failure mode - previous versions of this
+ * file's own prompt guidance guessed the repeated "Expected double-
+ * quoted property name" failure was about unescaped quotes in
+ * narration text. It wasn't (or at least, that's not what was actually
+ * happening in the reproduced cases). Confirmed instead by dumping raw
+ * failed JSON to disk and inspecting it directly: the model reliably
+ * drops exactly ONE closing brace at scene boundaries. Each scene is
+ * `{"params":{...},"visual":{"layers":[...]}}}` - that OUTER wrapper
+ * needs its own closing "}" before the "," that starts the next scene,
+ * and the model consistently stops one brace short there specifically,
+ * not randomly elsewhere: `..."layers":[...]}]},{"params":...` (three
+ * closes - last layer, layers array, visual object) where it should be
+ * `..."layers":[...]}]}},{"params":...` (a fourth close for the scene
+ * wrapper itself). Confirmed identical across every reproduced sample.
+ * Cheap and safe to apply unconditionally before jsonrepair: the
+ * literal sequence this targets doesn't occur in valid output from
+ * this schema - the only OTHER place "params" appears is nested inside
+ * a shape's "path" (e.g. `"shape":{"kind":"rectangle","params":...}`),
+ * which is never preceded by three closing brackets, so this never
+ * fires on a false positive. A no-op (via split/join) on any input
+ * that doesn't contain the exact pattern.
+ */
+function fixMissingSceneCloseBrace(text) {
+  return text.split('}]},{"params":').join('}]}},{"params":');
+}
+
 // Same jsonrepair-before-retry strategy as the old mistralClient.js: a
 // local repair of near-valid JSON (missing comma, unterminated string)
 // costs microseconds; a failed repair costs nothing beyond the attempt,
@@ -55,7 +82,7 @@ function extractJson(text) {
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
   if (start === -1 || end === -1) throw new Error('No JSON object found in Gemini response');
-  const candidate = cleaned.slice(start, end + 1);
+  const candidate = fixMissingSceneCloseBrace(cleaned.slice(start, end + 1));
   try {
     return JSON.parse(candidate);
   } catch (originalErr) {
@@ -65,6 +92,23 @@ function extractJson(text) {
       console.warn(`[geminiClient] JSON parse failed (${originalErr.message}) but jsonrepair recovered it locally - no retry needed`);
       return result;
     } catch (repairErr) {
+      // Diagnostic only, and only on the expensive path (jsonrepair
+      // ALSO failed, meaning a full retry is about to happen) - the
+      // error message alone never showed what the model actually wrote,
+      // making every past instance of this a guess rather than a
+      // diagnosed fix. Logs a window of the raw text around the
+      // reported failure position so the actual malformed content is
+      // visible next time this fires, instead of just the position.
+      const posMatch = originalErr.message.match(/position (\d+)/);
+      if (posMatch) {
+        const pos = Number(posMatch[1]);
+        const windowText = candidate.slice(Math.max(0, pos - 60), pos + 60);
+        console.warn(`[geminiClient] JSON parse failure context (around position ${pos}): ...${windowText}...`);
+        console.warn(`[geminiClient] JSON parse failure exact char at ${pos}: ${JSON.stringify(candidate[pos])}, chars ${pos - 3}-${pos + 3}: ${JSON.stringify(candidate.slice(pos - 3, pos + 3))}`);
+      }
+      if (process.env.DUMP_JSON_FAILURES) {
+        require('fs').writeFileSync(`C:/Users/SIFON/AppData/Local/Temp/claude/C--Users-SIFON-Downloads-GraphMotion-main-GraphMotion-main/efb7c23c-4417-43ff-a5d1-00cc9d8f82de/scratchpad/failed-json-${Date.now()}.txt`, candidate);
+      }
       throw originalErr;
     }
   }
