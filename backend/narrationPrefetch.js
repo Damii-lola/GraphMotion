@@ -3,28 +3,33 @@ const path = require('path');
 const os = require('os');
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
+const deepgramTts = require('./deepgramTtsGen');
 const fishTts = require('./fishTtsGen');
 const edgeTts = require('./ttsGen');
 const { annotateNarrationTags } = require('./narrationTagging');
 const { masterNarrationAudio } = require('./audioMux');
 
 /**
- * Production narration voice switched to Fish Audio's "Adrian" per
- * direct user preference after a real A/B listen against 2 other Fish
- * voices and msedge-tts's Eric. Falls back to msedge-tts (Eric, the
- * previous production voice, zero-key/zero-account) if the Fish Audio
- * call fails for ANY reason - a real, meaningful risk this engine
- * carries that msedge-tts never did: it needs a real account + API key
- * (FISH_API_KEY) and a paid/fair-use-limited service behind it, so a
- * missing key, exhausted fair-use quota (402), or a transient outage
- * (503) are all real failure modes worth falling back from rather than
- * losing that beat's narration entirely.
+ * Production narration voice promoted to Deepgram's Aura-2 (orpheus)
+ * after direct user comparison against Fish Audio's free tier - a real
+ * generated sample, blind listen, "sounds way better." Three-tier
+ * fallback, each a real independent failure mode worth falling back
+ * from rather than losing a beat's narration entirely: Deepgram first
+ * (needs DEEPGRAM_API_KEY + its own account), then Fish Audio (needs
+ * FISH_API_KEY, was the previous primary), then msedge-tts's Eric
+ * (zero-key/zero-account, the original zero-dependency fallback this
+ * project has always had).
  */
-async function generateSpeech(text, voiceId = fishTts.DEFAULT_VOICE_ID) {
+async function generateSpeech(text) {
   try {
-    return await fishTts.generateSpeech(text, voiceId);
+    return await deepgramTts.generateSpeech(text);
   } catch (err) {
-    console.warn(`[narrationPrefetch] Fish Audio TTS failed, falling back to Eric: ${err.message}`);
+    console.warn(`[narrationPrefetch] Deepgram TTS failed, falling back to Fish Audio: ${err.message}`);
+  }
+  try {
+    return await fishTts.generateSpeech(text);
+  } catch (err) {
+    console.warn(`[narrationPrefetch] Fish Audio TTS also failed, falling back to Eric: ${err.message}`);
     return edgeTts.generateSpeech(text);
   }
 }

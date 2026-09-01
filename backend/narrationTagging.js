@@ -44,24 +44,30 @@ const { callGeminiRaw } = require('./geminiClient');
  * before trusting the model's output at all.
  */
 
-const TAGGING_SYSTEM_PROMPT = `You add light emotional voice tags and natural pause punctuation to a plain spoken script, for a real TTS engine to read aloud. Output ONLY the tagged script, no explanation, no markdown fences, no quotes around it.
+// Emotion bracket tags ([calm], [confident], etc.) were dropped from
+// this prompt when the production engine switched from Fish Audio to
+// Deepgram's Aura-2 - Fish Audio had real, verified support for that
+// exact tag list, but Deepgram has no SSML/bracket-tag support on its
+// roadmap, so a literal "[calm]" in the text risks being read aloud as
+// text rather than interpreted, a real regression, not just a wasted
+// tag. Pause punctuation stays - Deepgram's own docs confirm the same
+// mechanism this project already uses (commas/periods -> short pauses,
+// "..." -> longer ones), so the judgment call this prompt makes about
+// WHICH commas deserve a pause still carries real value under the new
+// engine.
+const TAGGING_SYSTEM_PROMPT = `You add natural pause punctuation to a plain spoken script, for a real TTS engine to read aloud. Output ONLY the tagged script, no explanation, no markdown fences, no quotes around it.
 
-Real, verified emotion tags (use ONLY these exact names - no other tag names exist, and no other bracket tags may be used at all, even ones you know are real):
-[happy] [sad] [angry] [excited] [calm] [nervous] [confident] [surprised] [satisfied] [delighted] [scared] [worried] [upset] [frustrated] [embarrassed] [disgusted] [proud] [relaxed] [grateful] [curious] [sarcastic] [confused] [disappointed] [hopeful] [determined]
-
-Pauses are NOT a bracket tag - they are real ellipsis punctuation ("...") inserted directly into the text itself, exactly like a person's writing would show a trailing-off pause.
+Pauses are real ellipsis punctuation ("...") inserted directly into the text itself, exactly like a person's writing would show a trailing-off pause.
 
 RULES:
 1. A comma, colon, or semicolon (, : ;) gets "..." inserted immediately after it ONLY where a real person speaking this sentence out loud would actually pause there. Many commas in fluent speech are spoken straight through with no pause at all, especially short ones or ones that don't mark a real breath/thought boundary - do not mechanically add a pause after every single one. Use real judgment about how this specific sentence would actually be spoken. Keep the original comma/colon/semicolon in place; the "..." is added right after it, not instead of it.
 2. Insert "..." immediately after EVERY sentence-ending mark (. ? ! or an existing ...) in the script - every single one, not just some. Unlike mid-sentence commas, a brief pause between two separate sentences is natural essentially every time. Keep the original punctuation mark in place; "..." follows it.
-3. Add ONE emotion tag at the start of each sentence where it genuinely fits the meaning.
-4. Do NOT use any bracket tag outside the emotion list above - no tone tags, no [break], no [emphasis], no [soft], no breath/sound tags, nothing else, even if you believe it's real.
-5. Never invent a tag name that isn't in the list above.
-6. Do not add, remove, or reword any of the actual spoken words - only insert emotion tags and "..." between them. The spoken text itself must stay byte-for-byte the same.
+3. Do NOT use any bracket tag, of any kind, anywhere in the output - no emotion tags, no tone tags, no [break], no [emphasis], no [soft], no breath/sound tags, nothing else, even if you believe it's real. The target engine has no tag support at all; a bracket tag in the output would be read aloud as literal text.
+4. Do not add, remove, or reword any of the actual spoken words - only insert "..." between them. The spoken text itself must stay byte-for-byte the same.
 
 Example:
 Input: "Ever wonder why cats knead blankets? It's actually a deep instinct, and it starts from when they were kittens."
-Output: "[curious] Ever wonder why cats knead blankets? ... It's actually a deep instinct, and it starts from when they were kittens. ..."
+Output: "Ever wonder why cats knead blankets? ... It's actually a deep instinct, and it starts from when they were kittens. ..."
 (Note: no pause after "instinct," in the example above - a real speaker would run that comma straight through, so it gets none.)`;
 
 /**
