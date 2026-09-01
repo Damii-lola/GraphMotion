@@ -270,8 +270,45 @@ async function callGeminiForJSON(systemPrompt, userMessage, retriesLeft, onRetry
   }
 }
 
+// Direct user request: "how is it that we run the same prompt many
+// times and get EXTREMELY similar result... i want variation, do it
+// like how u do it, if i rerun a chat on claude it WILL be different."
+// Sampling temperature (already 0.85 below, already fairly high)
+// wasn't enough on its own - confirmed by reasoning through WHY, not
+// just cranking temperature further: for a topic with a small set of
+// "obvious" facts (why cats knead blankets has maybe 3-4 commonly-known
+// real explanations), a model asked the same question repeatedly tends
+// to reach for the same most-associated answer regardless of sampling
+// noise, the same way a person asked to "just pick a number" usually
+// reaches for the same few numbers even when genuinely trying to be
+// random. Randomly picking and INJECTING a concrete creative angle
+// into the prompt itself (see buildTreatmentSystemPrompt's own
+// handling of this) forces real structural variation - which facts to
+// lead with, what tone, what structure - rather than leaving that
+// entirely up to chance.
+const CREATIVE_ANGLES = [
+  'Lead with a surprising or counter-intuitive fact most people get wrong about this - open by correcting a common misconception, not with a neutral intro.',
+  'Lead with a relatable "you have definitely experienced this" moment - open on the everyday scenario itself, second person, before explaining anything.',
+  'Lead with a bold, opinionated claim stated flatly as fact - confident and a little provocative, not hedged.',
+  'Structure this as a rapid-fire list or countdown - distinct, separately-numbered points building to a payoff, not one flowing explanation.',
+  'Lead with a specific short scenario or mini-story (a particular moment, not a general statement) and use it as the throughline for the rest of the video.',
+  'Lead with a direct question aimed straight at the viewer, second person, and treat the rest of the video as answering it conversationally.',
+  'Lead with a surprising number or statistic as the hook, then build the explanation around why that number is true.',
+  'Structure this as myth vs. reality - state the common assumption first, then dismantle it point by point.',
+  'Frame this as letting the viewer in on an insider secret or something "they don\'t want you to know" - a behind-the-scenes reveal tone.',
+  'Take a warm, personal, first-person-feeling tone throughout, like a friend explaining something they find genuinely delightful, not a neutral narrator.',
+  'Lead with the single most surprising or weirdest fact available on this topic, saved-for-last normally - front-load it as the hook instead.',
+  'Structure this around a clear before/after or problem/solution arc - what things looked like before, what changed, why it matters now.',
+];
+
+function pickRandomCreativeAngle() {
+  return CREATIVE_ANGLES[Math.floor(Math.random() * CREATIVE_ANGLES.length)];
+}
+
 async function generateCreativeTreatment(userPrompt, targetDurationSeconds) {
-  const systemPrompt = buildTreatmentSystemPrompt(targetDurationSeconds);
+  const creativeAngle = pickRandomCreativeAngle();
+  console.log(`[geminiClient] creative angle for this generation: ${creativeAngle}`);
+  const systemPrompt = buildTreatmentSystemPrompt(targetDurationSeconds, creativeAngle);
   return callGeminiRaw(systemPrompt, userPrompt, { jsonMode: false, maxTokens: 8000, temperature: 0.85 });
 }
 

@@ -1005,7 +1005,7 @@ DESIGN QUALITY - this is the whole point, not an afterthought
 // composition, hierarchy, and motion.
 // ---------------------------------------------------------------------
 
-function buildTreatmentSystemPrompt(targetDurationSeconds) {
+function buildTreatmentSystemPrompt(targetDurationSeconds, creativeAngle) {
   // Real, confirmed-live gap: this used to hand the model a RANGE
   // ("roughly LO-HI beats") and let it pick freely within it - but the
   // downstream completeness check (both the JSON-encoding stage's own
@@ -1158,7 +1158,25 @@ Example of the beat-header format:
 ===BEAT 1=== duration:3.0s
 <full description of beat 1 here>
 
-Be decisive and specific throughout, the way a real director committing
+${creativeAngle ? `MANDATORY CREATIVE ANGLE FOR THIS SPECIFIC VIDEO: ${creativeAngle}
+Real, confirmed-live problem this directly fixes: the exact same
+request submitted more than once was producing near-identical scripts
+every time - same hook, same handful of facts, same structure, just
+reworded. Random sampling temperature alone doesn't reliably fix this
+for a topic with a small set of "obvious" facts - a model asked the
+same question twice tends to reach for the same most-associated
+answer regardless, the way a person asked to "just pick a number"
+usually reaches for the same few numbers. This angle was chosen
+specifically to force a genuinely different take THIS time, the way a
+real director assigned the same brief twice wouldn't hand back two
+near-identical cuts. Commit to it fully - let it shape the hook, which
+facts/points you lead with and which you leave out entirely, the
+tone, and the overall structure, not just a surface-level word swap
+on top of the same underlying plan. If this angle doesn't obviously
+fit the request, adapt it rather than ignoring it - find the genuine
+version of this angle for this specific topic.
+
+` : ''}Be decisive and specific throughout, the way a real director committing
 to real choices would - no hedging, no "could be" or "maybe", no
 generic filler description. This treatment will be built EXACTLY as
 written, so anything vague or missing here will be vague or missing in
