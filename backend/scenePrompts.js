@@ -167,6 +167,20 @@ Concretely:
   pacing (~2.5-3 words/second, same estimate as above) - if a natural-
   sounding version of a line runs long, tighten the WORDING, don't
   stretch the beat to accommodate it.
+- FAST-PACED IS THE WHOLE POINT, not a side effect to tolerate - this
+  format's entire visual language (see BEATVISUAL below - beats cutting
+  every 1.2-2.5s, text building word-by-word) is built for quick,
+  punchy delivery, and the narration driving it has to match that
+  energy, not undercut it with long-winded lines. Every beat's own
+  narration line should default SHORT - a single short sentence or
+  even a fragment, not a compound sentence with multiple clauses. Cut
+  ruthlessly: drop qualifiers, subordinate clauses, and throat-clearing
+  ("basically", "essentially", "the thing is") that a real fast-paced
+  narrator wouldn't bother with - say the ONE idea the beat needs and
+  move on. If a line needs "and" or "but" to connect two separate
+  ideas, that's usually two beats' worth of narration written as one -
+  split it instead of writing one longer line. Longer, unhurried lines
+  belong in a slow explainer video, not this one.
 - Use ordinary punctuation the way natural speech actually uses it -
   commas for a short breath, a question mark on anything genuinely
   asked (real TTS applies real rising inflection to it), a semicolon
