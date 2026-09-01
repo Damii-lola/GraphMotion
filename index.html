@@ -489,6 +489,12 @@
   // from the DOM each time, since it needs to be checked synchronously
   // right when the user hits Generate.
   let currentJobStatus = null;
+  // Guards generate() itself against being re-entered while a request
+  // is already in flight - see generate()'s own comment for the real
+  // production incident (repeated Enter presses, no guard, 5+
+  // duplicate jobs) this closes. Reset in generate()'s own finally
+  // block, so it can't get stuck true after an error.
+  let isGenerating = false;
 
   // Simple persisted anonymous id so the backend's free-tier daily
   // limit (per userId) works across page reloads during testing.
@@ -667,9 +673,25 @@
   }
 
   async function generate() {
+    // Real, confirmed-live bug: this had no guard against being called
+    // again while a generation was already in flight. The Enter-key
+    // handler below calls generate() directly on every keydown with no
+    // check of its own, and setLoading()'s generateBtn.disable=true
+    // only blocks a SECOND click on the button - it does nothing to
+    // stop the keydown path. A user pressing Enter more than once
+    // (impatience, a stuck/repeated key, a double-tap) fired a fresh
+    // POST /api/generate every single time, with nothing to stop it -
+    // confirmed live via real production logs showing 5+ concurrent
+    // jobs for the same prompt seconds apart, followed by the backend
+    // crashing under that load and every in-flight request briefly
+    // seeing it as a CORS/502 failure once it did. Guarding the
+    // function itself (not just one call site) closes this for good,
+    // regardless of what triggers generate() in the future.
+    if (isGenerating) return;
     const prompt = promptInput.value.trim();
     if (!prompt) return;
 
+    isGenerating = true;
     const editingParentId = isInEditMode() ? currentJobId : null;
     setLoading(editingParentId ? "Applying your edit..." : "Starting...");
 
@@ -701,6 +723,13 @@
       await pollJob(data.job.id);
     } catch (err) {
       setError(err.message || String(err));
+    } finally {
+      // Always resets, success or failure - this flag intentionally
+      // stays true for the WHOLE pollJob duration above (a full
+      // generation can run several minutes), not just the initial
+      // POST, since that's exactly the window a re-entrant call needs
+      // to be blocked for.
+      isGenerating = false;
     }
   }
 
