@@ -6,7 +6,6 @@ const ffmpegPath = require('ffmpeg-static');
 const fishTts = require('./fishTtsGen');
 const edgeTts = require('./ttsGen');
 const { annotateNarrationTags } = require('./narrationTagging');
-const { synthesizeVerified } = require('./narrationVerify');
 const { masterNarrationAudio } = require('./audioMux');
 
 /**
@@ -219,16 +218,21 @@ function trimTrailingArtifact(inputPath, outputPath) {
  * across beats (like imagePrefetch.js) - was sequential when the only
  * engine was msedge-tts's single-connection-per-call websocket, but
  * Fish Audio (the primary engine now, see generateSpeech above) is a
- * stateless REST API with no such constraint. synthesizeVerified
- * (narrationVerify.js) used to retry up to 5 times with 2 concurrent
- * judge passes each, expensive enough on its own that running 5 beats
- * back to back was a real source of multi-minute generations - that
- * retry loop is gone now (see narrationVerify.js's own doc comment:
- * real API-call-volume consequences, not just a speed tradeoff), but
- * beats still run in parallel since there's no reason not to. Each
- * beat only ever touches its OWN index in `renderScenes`/`audioFiles`,
- * so there's no shared-state conflict between beats running
- * concurrently.
+ * stateless REST API with no such constraint. Narration verification
+ * has a real history here worth knowing if this ever needs revisiting:
+ * first a judge call with up to 5 retries, then a single judge call
+ * with no retry (real API-call-volume consequences from the retry
+ * version - see git history), and now no AI judge at all - direct user
+ * request once production logs showed rendering, not narration, is the
+ * actual dominant cost of a generation, so trading away this stage's
+ * own quality gate barely moves total time but does cut a full Gemini
+ * call and a few seconds of latency per beat. trimTrailingArtifact
+ * (below) is what's left doing quality control here, unconditionally
+ * now instead of judge-gated - see its own doc comment for why that's
+ * still safe. Beats still run in parallel since there's no reason not
+ * to. Each beat only ever touches its OWN index in
+ * `renderScenes`/`audioFiles`, so there's no shared-state conflict
+ * between beats running concurrently.
  * For each beat with narration, measures the real spoken duration and
  * OVERRIDES that beat's `duration` param to match (+ a small buffer) -
  * visual pacing follows how long the narration actually takes to say,
@@ -262,18 +266,20 @@ async function prefetchNarration(sceneJSON, jobId) {
       // mandatory sentence-ending "..." pause placement mechanically,
       // regardless of what the tagging model itself did or missed.
       const plainText = scene.params.narration.trim();
-      // A third AI stage judges the actual synthesized audio's tail
-      // (not just the tagged text) against the real script, once - no
-      // retry loop (see narrationVerify.js's own doc comment for why:
-      // a real, serious API-call-volume consequence, not a style
-      // choice). `passed` below just decides whether the free
-      // mechanical trimTrailingArtifact step gets a chance to clean up
-      // whatever the judge flagged.
-      const { taggedText, buf, passed } = await synthesizeVerified(plainText, async (feedback) => {
-        const tagged = await annotateNarrationTags(plainText, feedback);
-        const audioBuf = await generateSpeech(tagged);
-        return { taggedText: tagged, buf: audioBuf };
-      });
+      // No AI audio judge anymore, and no retry - direct user request
+      // to cut every remaining second/API-call off the narration stage
+      // once real production logs showed rendering (not narration) is
+      // the actual dominant cost anyway, so trading away this stage's
+      // own quality gate barely moves total generation time but does
+      // remove a full Gemini call + a few seconds of latency per beat.
+      // Tag, synthesize, done - trimTrailingArtifact below now runs
+      // UNCONDITIONALLY instead of only on a judge-flagged clip; its
+      // own internal safety checks (a qualifying silence gap must
+      // exist, and cutting it can't discard more than 2s of audio -
+      // see its own doc comment) are what keep this safe without an AI
+      // judgment call deciding whether it's worth attempting.
+      const taggedText = await annotateNarrationTags(plainText);
+      const buf = await generateSpeech(taggedText);
       console.log(`[narrationPrefetch] beat ${index} tagged text: ${taggedText}`);
       const rawPath = path.join(dir, `${index}-raw.mp3`);
       fs.writeFileSync(rawPath, buf);
@@ -290,28 +296,21 @@ async function prefetchNarration(sceneJSON, jobId) {
         fs.renameSync(rawPath, trimmedPath);
       }
 
-      // Mechanical last line of defense now that synthesizeVerified is
-      // single-shot with no retry (see its own doc comment) - cuts off
-      // a trailing hallucinated artifact if one is still there, using
-      // the internal-silence-gap signature described on trimTrailingArtifact
-      // itself. Deliberately gated on `passed` being false: a clip the
-      // judge already explicitly confirmed clean has nothing to gain
-      // from this blunt heuristic and only stands to lose real content
-      // if the gap-detection ever misfires (a real, confirmed failure
-      // mode caught in testing - it can mistake a genuine mid-sentence
-      // pause for an artifact boundary when there's only one qualifying
-      // gap in the whole clip). Only worth the risk on a take that
-      // wasn't trustworthy to begin with.
-      let tailTrimmedPath = trimmedPath;
-      if (!passed) {
-        tailTrimmedPath = path.join(dir, `${index}-tailtrimmed.mp3`);
-        try {
-          await trimTrailingArtifact(trimmedPath, tailTrimmedPath);
-          fs.unlink(trimmedPath, () => {});
-        } catch (tailErr) {
-          console.warn(`[narrationPrefetch] beat ${index} tail-artifact trim failed, using untrimmed clip: ${tailErr.message}`);
-          fs.renameSync(trimmedPath, tailTrimmedPath);
-        }
+      // Mechanical (no AI call) tail-artifact cleanup - now runs on
+      // EVERY clip unconditionally, since there's no judge verdict left
+      // to gate it on. Safe to run unconditionally specifically because
+      // trimTrailingArtifact only ever acts when it finds an unambiguous
+      // internal silence gap AND cutting there would discard 2 seconds
+      // or less (see its own doc comment) - a clean clip simply has no
+      // such gap to find, so this is a fast no-op cost (one ffmpeg
+      // silencedetect pass) on the common case, not a real risk.
+      const tailTrimmedPath = path.join(dir, `${index}-tailtrimmed.mp3`);
+      try {
+        await trimTrailingArtifact(trimmedPath, tailTrimmedPath);
+        fs.unlink(trimmedPath, () => {});
+      } catch (tailErr) {
+        console.warn(`[narrationPrefetch] beat ${index} tail-artifact trim failed, using untrimmed clip: ${tailErr.message}`);
+        fs.renameSync(trimmedPath, tailTrimmedPath);
       }
 
       // Mastered PER CLIP, here, before assembly - not just on the

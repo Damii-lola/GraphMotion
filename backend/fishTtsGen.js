@@ -41,8 +41,8 @@ const MODEL = process.env.FISH_MODEL || 's2.1-pro-free';
 // to make the model converge more reliably on adding a small trailing
 // utterance after the real words end, rather than sometimes stopping
 // cleanly the way higher-temperature sampling's extra randomness
-// allows. Reverted - this isn't a lever that helps here. The layered
-// defense (narrationVerify.js's judge + retry + trimTrailingArtifact)
+// allows. Reverted - this isn't a lever that helps here.
+// narrationPrefetch.js's trimTrailingArtifact (mechanical, no AI call)
 // remains the real mitigation, not a generation-config tweak.
 const TEMPERATURE = 1.0;
 const TOP_P = 0.95;
