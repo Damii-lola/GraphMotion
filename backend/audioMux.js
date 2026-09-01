@@ -20,79 +20,20 @@ function run(args) {
   });
 }
 
-/** Same as run(), but resolves with the captured stderr text on success - needed for masterNarrationAudio's loudnorm analysis pass, which prints its measured stats to stderr as JSON rather than stdout. */
-function runCapture(args) {
-  return new Promise((resolve, reject) => {
-    const p = spawn(ffmpegPath, args);
-    let err = '';
-    p.stderr.on('data', (d) => { err += d.toString(); });
-    p.on('close', (code) => (code === 0 ? resolve(err) : reject(new Error(`ffmpeg exited ${code}: ${err.slice(-500)}`))));
-    p.on('error', reject);
-  });
-}
-
-// Real, directly measured finding: msedge-tts's raw output for a real
-// narrated video sat at -20.5 LUFS integrated loudness (ffmpeg's own
-// ebur128 filter) against the ~-14 LUFS modern social-video loudness
-// norm (YouTube/TikTok/Instagram all target roughly this range) - a
-// real, quantified reason narration reads as quiet/thin/"off" next to
-// other content in a feed, not just a subjective impression. Fixed
-// with a real (if free-tier) voiceover mastering chain: a highpass to
-// clear sub-vocal rumble no real voice fundamental lives below anyway,
-// a compressor to even out level swings between separately-generated
-// TTS clips (each beat's narration is its own isolated API call -
-// nothing upstream guarantees they land at consistent volume relative
-// to each other), then a proper two-pass EBU R128 loudnorm (pass 1
-// measures the ACTUAL post-compression stats; pass 2 applies a linear
-// gain using those exact measured values, the accurate mode loudnorm's
-// own docs recommend over relying on single-pass dynamic mode's
-// approximation). A final brickwall alimiter is real, cheap insurance -
-// confirmed directly that linear-mode loudnorm's predicted true peak
-// can still land hotter than its own TP target (measured live: asked
-// for TP=-1.5, got -0.1 dBFS), which would risk clipping on the AAC
-// re-encode this same file goes through in the final mux below.
-//
-// Compressor makeup=2 originally lightened, later found to be a REAL
-// bug, not a cosmetic one: acompressor's "makeup" parameter is a
-// LINEAR gain multiplier, not dB as the old comment here assumed -
-// makeup=2 was actually a ~+6dB boost stacked ON TOP of loudnorm's own
-// (already-correct) measured gain, real double-gain-staging. Combined
-// with a fairly aggressive ratio=2.5/attack=10ms, this measurably
-// raised RMS level by 8dB+ on quiet source material (confirmed
-// directly: a real Eric clip went from -21.8dB RMS raw to -13.7dB RMS
-// mastered) - real, audible "static"/noise the user reported hearing
-// throughout narrated videos, exactly what happens when a source
-// recording's own faint noise floor gets amplified 2.7x louder along
-// with the voice. Fish Audio's Adrian voice measured even quieter raw
-// (-23.9 LUFS) than Eric's msedge-tts output did, making this worse,
-// not better, with the switch. Fixed: makeup=1 (true unity, no extra
-// gain from the compressor itself - loudnorm's own accurate measured
-// gain is now the ONLY gain stage), a gentler ratio/threshold/timing
-// so the compressor catches real outlier peaks rather than continuously
-// squashing the whole signal, and the loudnorm target itself pulled
-// back from -14 to -16 LUFS - less total gain needed to reach it,
-// directly reducing how much any residual noise floor gets amplified,
-// while still a real, audible boost over a -23ish LUFS raw source.
-// Real, directly measured finding after the production voice switched
-// to Deepgram's Aura-2: raw Deepgram output sits at -28.3 LUFS (even
-// quieter than Fish Audio's -23.9 LUFS raw), so the SAME 2-pass
-// loudnorm below now has to apply +12.3dB of gain to hit -16 LUFS,
-// vs the +7.9dB this whole chain was actually tuned against. Measured
-// consequence on a real clip: LRA (loudness range) went from 6.5 LU
-// raw down to 2.2 LU after this compressor - a much bigger squash than
-// intended, and confirmed directly to correlate with a real user
-// complaint of the narration sounding "like an auditorium, lots of
-// echo/reverb" (compressor pumping/breathing - rapid gain-reduction
-// cycling as level repeatedly crosses threshold, especially on phrases
-// with several close-together comma pauses - is a well-documented real
-// cause of a washy/roomy quality, distinct from literal delayed echo
-// but easily perceived as similar). Threshold raised from -20dB to
-// -16dB so the compressor goes back to catching only genuine outlier
-// peaks rather than regular speech content, and release lengthened
-// from 150ms to 220ms so it recovers more gradually between closely-
-// spaced pauses instead of slamming shut and reopening on each one.
-const NARRATION_PRE_FILTER = 'highpass=f=90,acompressor=threshold=-16dB:ratio=1.5:attack=20:release=220:makeup=1';
-const NARRATION_LOUDNORM_TARGET = 'I=-16:TP=-2:LRA=11';
+// Voiceover mastering chain (highpass/compressor/loudnorm/alimiter)
+// REMOVED per direct user request after switching the production voice
+// to Deepgram's Aura-2. History for why it existed at all, kept for
+// context: it was built to fix msedge-tts's raw -20.5 LUFS output
+// reading as quiet/thin, then tuned further for Fish Audio's even
+// quieter -23.9 LUFS raw output. Deepgram's raw output needs none of
+// it, and the chain became a real, measured liability once Deepgram
+// was primary - a spectrogram comparison showed the chain's repeated
+// lossy mp3 re-encode passes (this mastering step ran TWICE per video:
+// once per clip, once on the whole assembled track) were stripping
+// real high-frequency content Deepgram's own output actually had,
+// correlating with a user complaint of narration sounding "like an
+// auditorium." Deepgram's output is used PLAIN now, all the way
+// through - see narrationPrefetch.js and muxNarrationOntoVideo below.
 
 // Real, directly measured bug found chasing "why does the voice sound
 // so deep": this used to hardcode -ar 24000 (and generateSilence's own
@@ -111,51 +52,6 @@ const NARRATION_LOUDNORM_TARGET = 'I=-16:TP=-2:LRA=11';
 // rate instead of downsampling to a value inherited from a different
 // engine entirely.
 const NARRATION_SAMPLE_RATE = 44100;
-
-/**
- * Exported (not just used internally below) so narrationPrefetch.js
- * can call this on each beat's OWN clip individually, before assembly
- * - a real, measured problem found chasing the "static" report even
- * after the gain/compressor fix above: EBU R128 integrated loudness is
- * an AVERAGE over the WHOLE signal, silence included. Running this
- * ONLY on the final assembled+padded track (every beat's clip PLUS
- * every inter-beat gap PLUS every [break]/[long-break] pause now baked
- * into the narration itself) measured the assembled track at -26 LUFS
- * even though the underlying VOICE was already close to its own
- * natural level - all that deliberate silence drags the average down,
- * so loudnorm computes a BIGGER gain to hit the same target than the
- * actual spoken content needs, amplifying noise more than a per-clip
- * measurement would ever suggest (confirmed directly: a real assembled
- * track needed +10.3dB here, vs +7.9dB measured on one isolated
- * clip). Mastering each clip's own speech individually, BEFORE all
- * that pause silence gets stitched in and dilutes the average, means
- * loudnorm's gain decision is based on the actual voice, not on how
- * much dead air surrounds it. The whole-track pass below still runs
- * afterward as a final consistency/safety net, but should now find the
- * average already close to target and apply little extra gain.
- */
-async function masterNarrationAudio(inputPath, outputPath) {
-  let stats;
-  try {
-    const analyzeOutput = await runCapture(['-i', inputPath, '-af', `${NARRATION_PRE_FILTER},loudnorm=${NARRATION_LOUDNORM_TARGET}:print_format=json`, '-f', 'null', '-']);
-    const jsonMatch = analyzeOutput.match(/\{[^]*?"target_offset"[^]*?\}/);
-    stats = jsonMatch && JSON.parse(jsonMatch[0]);
-  } catch (err) {
-    stats = null;
-  }
-  if (!stats) {
-    // Mastering is a polish step, not a correctness one - if the
-    // analysis pass fails for any reason (a malformed/empty clip,
-    // ffmpeg's loudnorm printing something unexpected), fall back to
-    // the untouched narration rather than failing the whole render
-    // over audio polish.
-    fs.copyFileSync(inputPath, outputPath);
-    return outputPath;
-  }
-  const secondPassFilter = `${NARRATION_PRE_FILTER},loudnorm=${NARRATION_LOUDNORM_TARGET}:measured_I=${stats.input_i}:measured_TP=${stats.input_tp}:measured_LRA=${stats.input_lra}:measured_thresh=${stats.input_thresh}:offset=${stats.target_offset}:linear=true,alimiter=limit=0.891`;
-  await run(['-y', '-i', inputPath, '-af', secondPassFilter, '-ar', String(NARRATION_SAMPLE_RATE), '-ac', '1', '-c:a', 'libmp3lame', '-q:a', '4', outputPath]);
-  return outputPath;
-}
 
 async function generateSilence(outPath, seconds) {
   await run(['-y', '-f', 'lavfi', '-i', `anullsrc=r=${NARRATION_SAMPLE_RATE}:cl=mono`, '-t', String(Math.max(0.05, seconds)), '-q:a', '4', outPath]);
@@ -271,15 +167,18 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
     assembledPath = paddedPath;
   }
 
-  const masteredPath = path.join(workDir, `${jobId}-mastered-narration.mp3`);
-  await masterNarrationAudio(assembledPath, masteredPath);
-
+  // Whole-track mastering pass REMOVED per direct user request - see
+  // the per-clip removal in narrationPrefetch.js for the full reasoning
+  // (Deepgram's raw output needs none of the gain/EQ/dynamics chain
+  // that was tuned for Fish Audio, and the repeated lossy mp3 re-encode
+  // passes that chain added were a real, measured contributor to a
+  // "sounds like an auditorium" complaint). assembledPath goes straight
+  // into the final mux now.
   const outputPath = videoPath.replace(/\.mp4$/, '-narrated.mp4');
-  await run(['-y', '-i', videoPath, '-i', masteredPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest', outputPath]);
+  await run(['-y', '-i', videoPath, '-i', assembledPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest', outputPath]);
 
   fs.unlink(listPath, () => {});
   fs.unlink(assembledPath, () => {});
-  fs.unlink(masteredPath, () => {});
   cleanupPaths.forEach((p) => fs.unlink(p, () => {}));
 
   return outputPath;
@@ -313,4 +212,4 @@ function speedUpVideo(inputPath, outputPath) {
   ]);
 }
 
-module.exports = { muxNarrationOntoVideo, masterNarrationAudio, speedUpVideo };
+module.exports = { muxNarrationOntoVideo, speedUpVideo };

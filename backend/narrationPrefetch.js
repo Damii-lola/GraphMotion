@@ -7,7 +7,6 @@ const deepgramTts = require('./deepgramTtsGen');
 const fishTts = require('./fishTtsGen');
 const edgeTts = require('./ttsGen');
 const { annotateNarrationTags } = require('./narrationTagging');
-const { masterNarrationAudio } = require('./audioMux');
 
 /**
  * Production narration voice promoted to Deepgram's Aura-2 (orpheus)
@@ -318,20 +317,24 @@ async function prefetchNarration(sceneJSON, jobId) {
         fs.renameSync(trimmedPath, tailTrimmedPath);
       }
 
-      // Mastered PER CLIP, here, before assembly - not just on the
-      // final whole-track mix in audioMux.js. See masterNarrationAudio's
-      // own doc comment for the real, measured reason: normalizing the
-      // whole assembled track (every beat's clip plus every silence gap
-      // between them) computes its gain against an average that's been
-      // diluted quiet by all that deliberate silence, so it ends up
-      // boosting the actual VOICE more than the voice alone needs.
+      // Mastering (highpass/compressor/loudnorm/alimiter) REMOVED per
+      // direct user request after switching to Deepgram's Aura-2 -
+      // that whole chain was tuned entirely around Fish Audio's very
+      // quiet (-23.9 LUFS), noisy raw output. Deepgram's raw output
+      // needs none of that, and the chain was a real, confirmed
+      // contributor to a "sounds like an auditorium" complaint: a
+      // spectrogram comparison showed raw Deepgram audio has genuine
+      // energy up to its own true ~11-12kHz ceiling, while the final
+      // processed render only had real content up to ~8.8kHz - each
+      // extra lossy mp3 re-encode pass this file went through (this
+      // mastering step included) compounds quality loss. Deepgram's
+      // own output is used PLAIN now - just the trim/tail-artifact
+      // safety steps, no gain/EQ/dynamics processing on top.
       const filePath = path.join(dir, `${index}.mp3`);
       try {
-        await masterNarrationAudio(tailTrimmedPath, filePath);
-        fs.unlink(tailTrimmedPath, () => {});
-      } catch (masterErr) {
-        console.warn(`[narrationPrefetch] beat ${index} per-clip mastering failed, using unmastered clip: ${masterErr.message}`);
         fs.renameSync(tailTrimmedPath, filePath);
+      } catch (renameErr) {
+        console.warn(`[narrationPrefetch] beat ${index} final rename failed: ${renameErr.message}`);
       }
 
       const duration = await getAudioDurationSeconds(filePath);
