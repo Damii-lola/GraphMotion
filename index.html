@@ -210,6 +210,25 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
+  .prompt-bar button.cancel-btn {
+    background: transparent;
+    color: #ff9d9d;
+    border: 1px solid #5c2020;
+    border-radius: 10px;
+    padding: 0 18px;
+    height: 44px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .prompt-bar button.cancel-btn:hover {
+    background: #2a1414;
+  }
+  .prompt-bar button.cancel-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
   .error-box {
     background: #2a1414;
     border: 1px solid #5c2020;
@@ -426,6 +445,7 @@
     ></textarea>
     <button id="expandPromptBtn" title="Expand">⤢</button>
   </div>
+  <button id="cancelBtn" class="cancel-btn" style="display:none;">Cancel</button>
   <button id="generateBtn" class="generate-btn">Generate</button>
 </div>
   </div>
@@ -450,6 +470,7 @@
 
   const promptInput = document.getElementById("promptInput");
   const generateBtn = document.getElementById("generateBtn");
+  const cancelBtn = document.getElementById("cancelBtn");
   const videoWrap = document.getElementById("videoWrap");
   const codeOutput = document.getElementById("codeOutput");
   const statusLine = document.getElementById("statusLine");
@@ -494,6 +515,9 @@
     statusLine.textContent = "";
     generateBtn.disabled = true;
     generateBtn.textContent = "Generating...";
+    cancelBtn.style.display = "inline-block";
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = "Cancel";
   }
 
   // Maps backend job status to a human label + a rough progress
@@ -543,6 +567,7 @@
     statusLine.textContent = "";
     generateBtn.disabled = false;
     generateBtn.textContent = "Generate";
+    cancelBtn.style.display = "none";
   }
 
   // Shared display function - used both right after a fresh
@@ -552,6 +577,8 @@
   function loadJobIntoView(job) {
     if (job.video_url) {
       videoWrap.innerHTML = `<video src="${job.video_url}" controls autoplay loop></video>`;
+    } else if (job.status === "cancelled") {
+      videoWrap.innerHTML = `<div class="placeholder">Generation cancelled.</div>`;
     } else if (job.status === "failed") {
       videoWrap.innerHTML = `<div class="placeholder">This generation failed${job.error ? ": " + escapeHtml(job.error) : "."}</div>`;
     } else {
@@ -569,6 +596,7 @@
     statusLine.textContent = `status: ${job.status} · job id: ${job.id}`;
     generateBtn.disabled = false;
     generateBtn.textContent = "Generate";
+    cancelBtn.style.display = "none";
     promptInput.value = job.prompt || "";
     autoResizePromptInput();
 
@@ -591,6 +619,7 @@
     statusLine.textContent = "";
     generateBtn.disabled = false;
     generateBtn.textContent = "Generate";
+    cancelBtn.style.display = "none";
     highlightActiveHistoryItem();
     updateEditModeUI();
     promptInput.focus();
@@ -615,7 +644,7 @@
       updateEditModeUI();
 
       const job = data.job;
-      const isTerminal = job.status === "done" || job.status === "failed";
+      const isTerminal = job.status === "done" || job.status === "failed" || job.status === "cancelled";
       if (isTerminal) {
         loadJobIntoView(job);
       } else {
@@ -675,6 +704,30 @@
     }
   }
 
+  // Direct user request. currentJobId is whatever job the poll loop
+  // above is currently watching - the very next tick after this call
+  // resolves will see status "cancelled" on the backend (POST below
+  // already wrote it) and route into loadJobIntoView's calm cancelled
+  // message via pollJob's own status check, same path a real "done"
+  // takes - no separate UI state to maintain here beyond disabling the
+  // button while the request is in flight.
+  async function cancelGeneration() {
+    if (!currentJobId) return;
+    cancelBtn.disabled = true;
+    cancelBtn.textContent = "Cancelling...";
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${currentJobId}/cancel?userId=${encodeURIComponent(getUserId())}`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Failed to cancel (${res.status})`);
+    } catch (err) {
+      cancelBtn.disabled = false;
+      cancelBtn.textContent = "Cancel";
+      setError(err.message || String(err));
+    }
+  }
+
   function pollJob(jobId) {
     const POLL_INTERVAL_MS = 2000;
     // Backend's own worst-case budget, kept in sync with the actual
@@ -726,6 +779,15 @@
           if (job.status === "done") {
             loadJobIntoView(job);
             loadHistory(); // status changed - refresh the sidebar entry
+            return resolve();
+          }
+          if (job.status === "cancelled") {
+            // Not a failure - the user asked for this. loadJobIntoView
+            // (not reject) so it gets the calm "Generation cancelled."
+            // message rather than the red error box a rejection would
+            // trigger in generate()'s own catch handler.
+            loadJobIntoView(job);
+            loadHistory();
             return resolve();
           }
           if (job.status === "failed") {
@@ -972,6 +1034,7 @@
   }
 
   generateBtn.addEventListener("click", generate);
+  cancelBtn.addEventListener("click", cancelGeneration);
   promptInput.addEventListener("keydown", (e) => {
     // Enter submits, Shift+Enter inserts a real newline - the
     // standard convention for a multi-line prompt box (matches most

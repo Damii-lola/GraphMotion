@@ -136,12 +136,16 @@ process.on('message', async ({ jobId, prompt, targetDurationSeconds, parentScene
     // narratedSceneJSON is exactly what a worker needs: beat durations
     // already reflect the real narration length, but image/icon paths
     // aren't resolved yet - the worker resolves those itself. Fails
-    // soft: dispatchToWorker only ever returns false (never throws) on
-    // any problem, so falling through to the local render path below
-    // is always safe.
-    if (await dispatchToWorker(jobId, narratedSceneJSON, audioFiles)) {
+    // soft: dispatchToWorker only ever returns {dispatched:false} (never
+    // throws) on any problem, so falling through to the local render
+    // path below is always safe.
+    const dispatch = await dispatchToWorker(jobId, narratedSceneJSON, audioFiles);
+    if (dispatch.dispatched) {
       console.log(`[renderWorker] job ${jobId} handed off to a render worker, rss=${rssMB()}MB`);
-      await sendAndFlush({ type: 'dispatched_to_worker', jobId });
+      // workerUrl travels back to server.js so a later cancel request
+      // for this job knows which worker to also notify - see
+      // server.js's activeJobProcesses tracking and POST /api/jobs/:id/cancel.
+      await sendAndFlush({ type: 'dispatched_to_worker', jobId, workerUrl: dispatch.workerUrl });
       return;
     }
 

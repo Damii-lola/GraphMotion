@@ -66,12 +66,29 @@ const { buildTimeline } = require('./engine/timeline');
 const CHUNK_THRESHOLD_SECONDS = 10;
 const CHUNK_SIZE_SECONDS = 3;
 
+/** Thrown by renderLongFormVideo when a job is cancelled mid-render - callers (render-worker/server.js) check for this specific error to write status 'cancelled' instead of 'failed'. */
+class RenderCancelledError extends Error {
+  constructor(jobId) {
+    super(`Render cancelled for job ${jobId}`);
+    this.name = 'RenderCancelledError';
+  }
+}
+
 /**
  * Renders sceneJSON to outputPath, transparently chunking if the
  * video is long enough to need it. onProgress receives 0-100 across
  * the WHOLE video regardless of how many chunks it took internally.
+ * `isCancelled` (optional) is checked between chunks - direct user
+ * request for a cancel button. Only checked at chunk boundaries, not
+ * mid-chunk: chunks are already small (CHUNK_SIZE_SECONDS, a few
+ * seconds of video each), so the worst case is finishing one chunk
+ * already in flight before actually stopping, not a real delay. The
+ * short-video direct-render branch below (renderJobToFile) has no
+ * chunk boundaries to check at all - cancelling mid-render there isn't
+ * supported, but those renders are fast enough that this is a low-
+ * impact gap, not a real one.
  */
-async function renderLongFormVideo(jobId, sceneJSON, onProgress) {
+async function renderLongFormVideo(jobId, sceneJSON, onProgress, isCancelled) {
   const { totalDuration } = buildTimeline(sceneJSON);
 
   if (totalDuration <= CHUNK_THRESHOLD_SECONDS) {
@@ -95,6 +112,12 @@ async function renderLongFormVideo(jobId, sceneJSON, onProgress) {
   // peak memory bounded to a single chunk regardless of total video
   // length.
   for (let i = 0; i < chunkRanges.length; i++) {
+    if (isCancelled && isCancelled()) {
+      for (const p of chunkPaths) fs.unlink(p, () => {});
+      fs.rm(workDir, { recursive: true, force: true }, () => {});
+      throw new RenderCancelledError(jobId);
+    }
+
     const { start, end } = chunkRanges[i];
     const chunkPath = path.join(workDir, `chunk-${i}.mp4`);
 
@@ -266,4 +289,4 @@ function concatChunks(chunkPaths, outputPath) {
   });
 }
 
-module.exports = { renderLongFormVideo, CHUNK_THRESHOLD_SECONDS, CHUNK_SIZE_SECONDS };
+module.exports = { renderLongFormVideo, RenderCancelledError, CHUNK_THRESHOLD_SECONDS, CHUNK_SIZE_SECONDS };

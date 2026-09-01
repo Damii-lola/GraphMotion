@@ -105,10 +105,15 @@ function encodeNarrationAudio(audioFiles) {
  * there - render, mux, upload, and updating the job row are all its
  * own responsibility from this point on), or false if no worker could
  * be used for any reason, meaning the caller should render locally.
+ * Returns `{ dispatched: false }` on any failure (caller falls back to
+ * local rendering), or `{ dispatched: true, workerUrl }` on success -
+ * the workerUrl is handed back so the caller (renderWorker.js, then
+ * server.js via IPC) can remember which worker owns this job, which
+ * cancelJobOnWorker below needs to actually cancel it later.
  */
 async function dispatchToWorker(jobId, sceneJSON, audioFiles) {
   const workerUrl = await selectWorker();
-  if (!workerUrl) return false;
+  if (!workerUrl) return { dispatched: false };
 
   try {
     const narrationAudio = encodeNarrationAudio(audioFiles);
@@ -119,13 +124,22 @@ async function dispatchToWorker(jobId, sceneJSON, audioFiles) {
     }, DISPATCH_TIMEOUT_MS);
     if (!res.ok) {
       console.warn(`[renderDispatch] worker ${workerUrl} rejected job ${jobId}: HTTP ${res.status}`);
-      return false;
+      return { dispatched: false };
     }
     console.log(`[renderDispatch] job ${jobId} dispatched to ${workerUrl}`);
-    return true;
+    return { dispatched: true, workerUrl };
   } catch (err) {
     console.warn(`[renderDispatch] dispatch to ${workerUrl} failed for job ${jobId}, falling back to local render: ${err.message}`);
-    return false;
+    return { dispatched: false };
+  }
+}
+
+/** Best-effort - tells a specific worker to stop working on a job (see render-worker/server.js's own POST /cancel/:jobId). Never throws; a cancel request that fails to reach the worker (it already finished, or is briefly unreachable) isn't worth failing the user-facing cancel action over - the job row's status update is what the frontend actually reacts to either way. */
+async function cancelJobOnWorker(workerUrl, jobId) {
+  try {
+    await fetchWithTimeout(`${workerUrl}/cancel/${encodeURIComponent(jobId)}`, { method: 'POST' }, CAPACITY_CHECK_TIMEOUT_MS);
+  } catch (err) {
+    console.warn(`[renderDispatch] cancel request to ${workerUrl} for job ${jobId} failed (non-fatal): ${err.message}`);
   }
 }
 
@@ -144,4 +158,4 @@ function startWorkerKeepAlive(intervalMs = 10 * 60 * 1000) {
   }, intervalMs);
 }
 
-module.exports = { dispatchToWorker, startWorkerKeepAlive, WORKER_URLS };
+module.exports = { dispatchToWorker, cancelJobOnWorker, startWorkerKeepAlive, WORKER_URLS };

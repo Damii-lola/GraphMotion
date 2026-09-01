@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { fork } = require('child_process');
 const rateLimit = require('express-rate-limit');
-const { startWorkerKeepAlive } = require('./renderDispatch');
+const { startWorkerKeepAlive, cancelJobOnWorker } = require('./renderDispatch');
 
 const {
   supabase,
@@ -216,6 +216,15 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
 // against going forward.
 const RENDER_WORKER_MAX_OLD_SPACE_MB = 100;
 
+// jobId -> { child, settled, cancelledByUser, workerUrl } - tracked so
+// POST /api/jobs/:id/cancel (below) can find and stop a job that's
+// still actually running on THIS server, regardless of which stage
+// it's in. `workerUrl` is filled in once a job is handed off to a
+// render-worker service (see the 'dispatched_to_worker' case below),
+// since cancelling THAT job means notifying the worker too, not just
+// this process - the child here will have already exited by then.
+const activeJobs = new Map();
+
 function startRenderWorker(jobId, prompt, targetDurationSeconds, parentSceneJSON, onSettled) {
   const child = fork(path.join(__dirname, 'renderWorker.js'), {
     stdio: 'inherit',
@@ -232,7 +241,8 @@ function startRenderWorker(jobId, prompt, targetDurationSeconds, parentSceneJSON
     execArgv: [`--max-old-space-size=${RENDER_WORKER_MAX_OLD_SPACE_MB}`, '--expose-gc'],
   });
 
-  let settled = false;
+  const state = { child, settled: false, cancelledByUser: false, workerUrl: null };
+  activeJobs.set(jobId, state);
   // Progress messages arrive roughly 6x/second per chunk with zero
   // throttling previously - every single one fired an immediate,
   // un-awaited Supabase network call from THIS process (the main
@@ -274,20 +284,22 @@ function startRenderWorker(jobId, prompt, targetDurationSeconds, parentSceneJSON
         }
 
         case 'render_complete': {
-          settled = true;
+          state.settled = true;
           await updateJob(jobId, { status: 'uploading', progress: 100 });
           const fileBuffer = fs.readFileSync(msg.localFilePath);
           const videoUrl = await uploadRenderedVideo(jobId, msg.localFilePath, fileBuffer);
           fs.unlink(msg.localFilePath, () => {});
           await updateJob(jobId, { status: 'done', video_url: videoUrl });
+          activeJobs.delete(jobId);
           onSettled();
           break;
         }
 
         case 'failed':
-          settled = true;
+          state.settled = true;
           console.error(`[renderWorker] job ${jobId} failed:`, msg.error);
           await updateJob(jobId, { status: 'failed', error: String(msg.error) });
+          activeJobs.delete(jobId);
           onSettled();
           break;
 
@@ -295,9 +307,13 @@ function startRenderWorker(jobId, prompt, targetDurationSeconds, parentSceneJSON
         // renderDispatch.js) - that worker is responsible for its own
         // progress updates, upload, and final status from here, so
         // this only needs to free up the local concurrency slot, not
-        // touch Supabase itself.
+        // touch Supabase itself. The job stays in activeJobs (NOT
+        // deleted here) with workerUrl now set, so a cancel request
+        // arriving after this point still has somewhere to route to -
+        // see POST /api/jobs/:id/cancel below.
         case 'dispatched_to_worker':
-          settled = true;
+          state.settled = true;
+          state.workerUrl = msg.workerUrl || null;
           onSettled();
           break;
       }
@@ -307,19 +323,99 @@ function startRenderWorker(jobId, prompt, targetDurationSeconds, parentSceneJSON
   });
 
   child.on('exit', (code, signal) => {
-    if (!settled) {
-      console.error(`[renderWorker] job ${jobId} child exited unexpectedly - code: ${code}, signal: ${signal}`);
-      updateJob(jobId, {
-        status: 'failed',
-        error: `Render process exited unexpectedly (code ${code}, signal ${signal || 'none'}).`,
-      }).catch(() => {});
-      settled = true;
+    if (!state.settled) {
+      // A deliberate cancel kills this same child, which lands here
+      // too - the cancel endpoint already wrote the job's real status
+      // itself, so this must not overwrite it with a confusing
+      // "exited unexpectedly" error.
+      if (!state.cancelledByUser) {
+        console.error(`[renderWorker] job ${jobId} child exited unexpectedly - code: ${code}, signal: ${signal}`);
+        updateJob(jobId, {
+          status: 'failed',
+          error: `Render process exited unexpectedly (code ${code}, signal ${signal || 'none'}).`,
+        }).catch(() => {});
+      }
+      state.settled = true;
       onSettled();
     }
+    // Dispatched-to-worker jobs deliberately stay in activeJobs after
+    // this (see the case above) - only delete here for jobs that
+    // rendered locally and never got a workerUrl.
+    if (!state.workerUrl) activeJobs.delete(jobId);
   });
 
   child.send({ jobId, prompt, targetDurationSeconds, parentSceneJSON });
 }
+
+/**
+ * Direct user request. Two real cases to handle, since rendering can
+ * be happening in two different places by the time a cancel request
+ * arrives:
+ * 1. Still local (narration/generation, or the local-render fallback
+ *    path) - the tracked child process is killed outright. Killing the
+ *    WHOLE process is a clean, complete cancel here regardless of
+ *    which internal step it's on (narration call, image prefetch,
+ *    Skia render, ffmpeg mux) - there's nothing partial to clean up
+ *    since nothing outside that process has been touched yet.
+ * 2. Already dispatched to a render-worker service - the coordinator
+ *    can't kill a process on a different machine, so it POSTs to that
+ *    worker's own POST /cancel/:jobId instead (best-effort, see
+ *    renderDispatch.js's cancelJobOnWorker) and marks the job
+ *    cancelled here directly, rather than waiting on the worker to
+ *    confirm - the user asked to cancel, so the job stops being
+ *    "theirs" immediately from the frontend's perspective even if the
+ *    worker takes a moment longer to actually stop.
+ * A job not found in activeJobs at all has already finished (done/
+ * failed) or was never running on this server - nothing to cancel.
+ */
+app.post('/api/jobs/:id/cancel', async (req, res) => {
+  const jobId = req.params.id;
+  const userId = req.query.userId;
+  if (!userId || typeof userId !== 'string') {
+    return res.status(400).json({ error: 'userId query param is required' });
+  }
+
+  // Same ownership check as DELETE /api/jobs/:id - this app has no
+  // real auth, just per-user identifiers, so without this anyone who
+  // learned another user's job id could cancel their in-progress
+  // generation.
+  let job;
+  try {
+    job = await getJob(jobId);
+  } catch (err) {
+    console.error(`[POST /api/jobs/:id/cancel] lookup failed for ${jobId}:`, err);
+    return res.status(500).json({ error: 'Failed to look up the job' });
+  }
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+  if (job.user_id !== userId) {
+    return res.status(403).json({ error: 'This job does not belong to you' });
+  }
+
+  const state = activeJobs.get(jobId);
+  if (!state) {
+    return res.status(409).json({ error: 'This job is not currently running, so there is nothing to cancel.' });
+  }
+
+  state.cancelledByUser = true;
+
+  if (state.child && !state.settled) {
+    state.child.kill();
+  }
+  if (state.workerUrl) {
+    cancelJobOnWorker(state.workerUrl, jobId); // best-effort, not awaited - see its own doc comment
+  }
+
+  try {
+    await updateJob(jobId, { status: 'cancelled', error: 'Cancelled by user' });
+  } catch (err) {
+    console.error(`[POST /api/jobs/:id/cancel] failed to update job ${jobId} status:`, err);
+  }
+
+  activeJobs.delete(jobId);
+  res.json({ ok: true });
+});
 
 app.get('/api/jobs', async (req, res) => {
   const userId = req.query.userId;

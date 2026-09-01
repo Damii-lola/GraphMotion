@@ -6,7 +6,7 @@ const path = require('path');
 const { fork } = require('child_process');
 
 const { prefetchBeatImages, cleanupBeatImages } = require('./imagePrefetch');
-const { renderLongFormVideo } = require('./longVideoOrchestrator');
+const { renderLongFormVideo, RenderCancelledError } = require('./longVideoOrchestrator');
 const { muxNarrationOntoVideo } = require('./audioMux');
 const { updateJob, uploadRenderedVideo } = require('./supabaseClient');
 
@@ -54,8 +54,25 @@ process.on('uncaughtException', (err) => {
 const MAX_CONCURRENT_RENDERS = 3;
 let activeRenders = 0;
 
+// jobIds the coordinator has asked to cancel - checked between chunks
+// in renderLongFormVideo (see its own isCancelled param). A Set, not a
+// per-job object, since this worker doesn't otherwise track individual
+// job state outside the single handleRenderJob call handling it.
+const cancelledJobs = new Set();
+
 app.get('/health', (req, res) => {
   res.json({ ok: true, activeRenders, maxConcurrent: MAX_CONCURRENT_RENDERS });
+});
+
+// Direct user request (cancel button). Best-effort and fire-and-forget
+// from the coordinator's side (see ../backend/renderDispatch.js's
+// cancelJobOnWorker) - always returns 200 whether or not this jobId is
+// actually running here right now, since the coordinator doesn't wait
+// on this to confirm anything and a job that already finished or was
+// never dispatched here isn't an error case worth surfacing.
+app.post('/cancel/:jobId', (req, res) => {
+  cancelledJobs.add(req.params.jobId);
+  res.json({ ok: true });
 });
 
 // Polled by the coordinator (../backend/renderDispatch.js) to pick a
@@ -198,7 +215,7 @@ async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
         // progress tick isn't worth failing a render over.
         updateJob(jobId, { progress: pct }).catch(() => {});
       }
-    }));
+    }, () => cancelledJobs.has(jobId)));
 
     const localFilePath = await muxNarrationOntoVideo(renderedPath, renderSceneJSON, audioFiles, jobId, os.tmpdir());
     const fileBuffer = fs.readFileSync(localFilePath);
@@ -208,11 +225,17 @@ async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
     await updateJob(jobId, { status: 'done', video_url: videoUrl });
     console.log(`[render-worker] job ${jobId} done -> ${videoUrl}`);
   } catch (err) {
-    console.error(`[render-worker] job ${jobId} failed:`, err);
-    await updateJob(jobId, { status: 'failed', error: String((err && err.message) || err) }).catch(() => {});
+    if (err instanceof RenderCancelledError) {
+      console.log(`[render-worker] job ${jobId} cancelled by user`);
+      await updateJob(jobId, { status: 'cancelled', error: 'Cancelled by user' }).catch(() => {});
+    } else {
+      console.error(`[render-worker] job ${jobId} failed:`, err);
+      await updateJob(jobId, { status: 'failed', error: String((err && err.message) || err) }).catch(() => {});
+    }
   } finally {
     cleanupBeatImages(jobId);
     cleanupIcons(jobId);
+    cancelledJobs.delete(jobId);
     fs.rm(narrationDir, { recursive: true, force: true }, () => {});
   }
 }
