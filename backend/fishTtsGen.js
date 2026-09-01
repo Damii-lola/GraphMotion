@@ -31,12 +31,19 @@ const VOICES = {
 const DEFAULT_VOICE_ID = VOICES.adrian;
 const MODEL = process.env.FISH_MODEL || 's2.1-pro-free';
 
-// Fish Audio's own documented "expressiveness" controls. Raised from
-// the API's own default (0.7/0.7) per direct user preference after a
-// real A/B listen against 0.7 and 0.9 on identical text - 1.0 was
-// picked as sounding least "monotone" (the user's real complaint,
-// distinct from the separate noise/gain-staging issue already fixed
-// in audioMux.js - this is about pitch/delivery variation, not noise).
+// Fish Audio's own documented "expressiveness" controls. Tried lowering
+// this to 0.4/0.85 specifically to reduce trailing-artifact
+// hallucination rate (direct user request) - real tested result was
+// the OPPOSITE of the goal: 6/6 trials across two different sentences
+// (one previously-clean, one previously-worst-case) hallucinated a
+// trailing breath sound at 0.4, a HIGHER and more consistent rate than
+// 1.0 ever showed. Counter-intuitive but real: lower temperature seems
+// to make the model converge more reliably on adding a small trailing
+// utterance after the real words end, rather than sometimes stopping
+// cleanly the way higher-temperature sampling's extra randomness
+// allows. Reverted - this isn't a lever that helps here. The layered
+// defense (narrationVerify.js's judge + retry + trimTrailingArtifact)
+// remains the real mitigation, not a generation-config tweak.
 const TEMPERATURE = 1.0;
 const TOP_P = 0.95;
 
