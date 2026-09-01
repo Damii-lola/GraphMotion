@@ -114,7 +114,23 @@ function extractJson(text) {
   }
 }
 
-const GEMINI_TIMEOUT_MS = 240000;
+// Real, directly measured finding: a production job's own logs showed
+// a single Gemini call taking 200279ms (3min20s) before Gemini's OWN
+// server finally responded - with a 503, i.e. that entire wait was for
+// nothing. The old 240000ms (4min) timeout never got a chance to
+// protect against this, since Gemini responded (with a failure) just
+// under that ceiling. Checked every real request-time log line from
+// this project's actual production traffic across many jobs: every
+// LEGITIMATE successful call completed well under 28s; nothing has
+// ever genuinely needed more than that to succeed. Cut to 45000ms
+// (45s) - real margin over the slowest successful call ever observed,
+// while turning a worst-case hung/overloaded request from a ~4min
+// dead wait into a fast abort-and-retry-on-a-different-key instead.
+// The retry loop below already handles a failed attempt correctly
+// (confirmed live in the same log - the very next key's retry
+// succeeded in under 4s) - the problem was never retry logic, only
+// how long one doomed attempt was allowed to sit before failing.
+const GEMINI_TIMEOUT_MS = 45000;
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 // Same per-key serialized-queue-with-adaptive-spacing design as the old
