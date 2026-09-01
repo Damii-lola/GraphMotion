@@ -107,7 +107,16 @@ const FRAME_DURATION = 1 / FPS;
 // animation) - short of "no motion blur," this is the smallest sample
 // count that's still recognizably blur rather than a slight double-
 // exposure ghost.
-const MOTION_BLUR_CONFIG = { enabled: true, shutterAngle: 180, shutterPhase: -90, samples: 2 };
+// Disabled per direct user request to cut render time/memory - motion
+// blur meant EVERY frame rendered the entire layer stack `samples`
+// times (2, previously) and blended them, a real, measured near-2x
+// multiplier on top of everything else in the frame loop, for content
+// that's mostly text/icons where a blur trail is a nice-to-have, not
+// essential. motionBlur.js's own fast path (samples <= 1 or !enabled)
+// skips the whole sampling loop entirely and does exactly one direct
+// render, so this is a real, full removal of that cost, not a
+// reduction.
+const MOTION_BLUR_CONFIG = { enabled: false, shutterAngle: 180, shutterPhase: -90, samples: 2 };
 
 // buildTimeline/findActiveBeatIndex now live in ./engine/timeline.js (a
 // canvas-free module, required near the top of this file) - callers that
