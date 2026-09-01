@@ -118,6 +118,40 @@ function narrationDirFor(jobId) {
 }
 
 /**
+ * Real, measured cause found after a direct user report ("using a ton
+ * of memory" / "incredibly slow"): longVideoOrchestrator.js's own
+ * extensive history (see its doc comments) already fought hard to get
+ * ONE active chunk-render's real peak RSS down to ~245-589MB on a
+ * memory-capped host - that number is native Skia buffer memory,
+ * entirely outside what --max-old-space-size bounds. That work assumed
+ * only ONE chunk-worker is ever active at a time, which was true when
+ * this ran as a single job per process. It stopped being true here:
+ * MAX_CONCURRENT_RENDERS lets up to 3 jobs be in flight on one worker,
+ * and each job's OWN chunks are sequential, but nothing stopped
+ * DIFFERENT jobs' active chunk-workers from overlapping - 3 concurrent
+ * jobs could mean 3 simultaneous ~245-589MB native processes, up to
+ * ~1.8GB of real pressure, which explains both symptoms directly: the
+ * memory spike, AND the slowness (memory pressure causes exactly the
+ * V8 GC-thrashing longVideoOrchestrator.js's own history already
+ * documents for the single-job case - not a coincidence, the same
+ * mechanism, just re-triggered by concurrency instead of chunk size).
+ *
+ * Fix: keep accepting up to MAX_CONCURRENT_RENDERS jobs (image/icon
+ * prefetch - network I/O, low memory - still runs concurrently across
+ * them), but serialize the actual chunk-rendering step itself through
+ * this lock, so only ONE job's Skia rendering is ever active on this
+ * worker at a time regardless of how many jobs are in flight. Restores
+ * the single-render memory ceiling all that prior tuning was actually
+ * calibrated for.
+ */
+let renderLockTail = Promise.resolve();
+function withRenderLock(fn) {
+  const run = renderLockTail.then(fn, fn);
+  renderLockTail = run.then(() => {}, () => {});
+  return run;
+}
+
+/**
  * Writes the base64 narration clips the coordinator sent into local
  * files and reconstructs the same Map<beatIndex, {path, duration}>
  * shape muxNarrationOntoVideo already expects (see ../backend's
@@ -154,7 +188,7 @@ async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
     const imageResolvedSceneJSON = await prefetchBeatImages(sceneJSON, jobId);
     const renderSceneJSON = await prefetchIconsIsolated(imageResolvedSceneJSON, jobId);
 
-    const renderedPath = await renderLongFormVideo(jobId, renderSceneJSON, (pct) => {
+    const renderedPath = await withRenderLock(() => renderLongFormVideo(jobId, renderSceneJSON, (pct) => {
       const now = Date.now();
       const isFinal = pct >= 100;
       if (isFinal || now - lastProgressUpdateAt >= PROGRESS_UPDATE_MIN_INTERVAL_MS) {
@@ -164,7 +198,7 @@ async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
         // progress tick isn't worth failing a render over.
         updateJob(jobId, { progress: pct }).catch(() => {});
       }
-    });
+    }));
 
     const localFilePath = await muxNarrationOntoVideo(renderedPath, renderSceneJSON, audioFiles, jobId, os.tmpdir());
     const fileBuffer = fs.readFileSync(localFilePath);
