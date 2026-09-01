@@ -165,10 +165,27 @@ function trimClipSilence(inputPath, outputPath) {
  * the back half). Leaves the clip untouched if no such gap is found -
  * this is a blunt, judge-free mechanical step (no AI call), so it only
  * acts where the evidence is unambiguous.
+ *
+ * SECOND safety check, added after a real production miss: a beat
+ * whose narration accidentally had TWO full sentences (a scenePrompts.js
+ * gap since fixed, but the model won't always obey it) has TWO
+ * legitimate "..." gaps - the one between its sentences, and its real
+ * final one. If the true trailing artifact after the SECOND sentence
+ * has less silence before it than ARTIFACT_GAP_THRESHOLD_S (a quiet
+ * breath sound, observed in production, can follow almost immediately
+ * with barely a pause), the between-sentences gap becomes the only
+ * "last qualifying gap" found - and cutting there discards the ENTIRE
+ * second sentence, real content, not an artifact. Real trailing
+ * artifacts are always brief (a word, a breath, a laugh) - if cutting
+ * at the chosen gap would discard more than MAX_DISCARD_S of audio,
+ * that's a strong sign this is real content, not an artifact, and the
+ * clip is left untouched instead (a missed artifact is a much smaller
+ * loss than a discarded sentence).
  */
 function trimTrailingArtifact(inputPath, outputPath) {
   const ARTIFACT_GAP_THRESHOLD_S = 0.6;
   const MIN_FRACTION_OF_CLIP = 0.4;
+  const MAX_DISCARD_S = 2.0;
   return new Promise((resolve, reject) => {
     const ff = spawn(ffmpegPath, ['-i', inputPath, '-af', `silencedetect=noise=-30dB:d=${ARTIFACT_GAP_THRESHOLD_S}`, '-f', 'null', '-']);
     let stderr = '';
@@ -181,6 +198,12 @@ function trimTrailingArtifact(inputPath, outputPath) {
       const qualifying = starts.filter((s) => s > totalDuration * MIN_FRACTION_OF_CLIP);
       const cutPoint = qualifying.length > 0 ? qualifying[qualifying.length - 1] : undefined;
       if (cutPoint === undefined) { fs.copyFileSync(inputPath, outputPath); resolve(); return; }
+      if (totalDuration - cutPoint > MAX_DISCARD_S) {
+        console.warn(`[narrationPrefetch] tail-artifact trim skipped - candidate cut would discard ${(totalDuration - cutPoint).toFixed(2)}s, too long to be a real artifact (likely a second sentence instead)`);
+        fs.copyFileSync(inputPath, outputPath);
+        resolve();
+        return;
+      }
       const cutFf = spawn(ffmpegPath, ['-y', '-i', inputPath, '-t', String(cutPoint), outputPath]);
       let cutStderr = '';
       cutFf.stderr.on('data', (d) => { cutStderr += d.toString(); });

@@ -179,7 +179,21 @@ Concretely:
   narrator wouldn't bother with - say the ONE idea the beat needs and
   move on. If a line needs "and" or "but" to connect two separate
   ideas, that's usually two beats' worth of narration written as one -
-  split it instead of writing one longer line. Longer, unhurried lines
+  split it instead of writing one longer line. ONE SENTENCE PER BEAT,
+  no exceptions - a real, confirmed-live failure mode: two separate
+  SHORT sentences both individually obey the length rule above but
+  still break something else entirely by being crammed into the same
+  beat ("Consider it a feline hug. They're just saying they love
+  you." - two clean short sentences, still wrong as ONE beat's
+  narration). Downstream, a beat with two sentences means its own
+  narration audio has an internal pause mid-clip in addition to its
+  final one - real, measured consequence: an audio QA step tuned to
+  find and trim a bad NOISE right at a clip's true end got confused by
+  that earlier, harmless internal pause and cut off the entire second
+  sentence by mistake, discarding real content. Never combine two
+  complete sentences (each with its own subject and verb) into one
+  beat's narration, even when both are short - if the plain script
+  reads as two sentences, it's two beats. Longer, unhurried lines
   belong in a slow explainer video, not this one.
 - Use ordinary punctuation the way natural speech actually uses it -
   commas for a short breath, a question mark on anything genuinely
