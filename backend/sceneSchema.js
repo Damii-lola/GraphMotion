@@ -4655,14 +4655,30 @@ function ensureActiveBackgroundElement(beat, beatIndex, topic) {
  * animation language, not two unrelated systems.
  */
 function ensureBackgroundSwoosh(beat, beatIndex) {
+  // Real, direct user report right after this shipped: "it's sooo
+  // slow" - a real, measured cost, not a false alarm. withEffects has
+  // no caching at all (true of every effect in this engine, not just
+  // this one) - gaussianBlur's own real 2-pass separable convolution
+  // (see blurEffects.js's own doc comment: not a naive O(n^2), but
+  // still real per-pixel work) was re-running on a 1200x450 (540,000px)
+  // buffer EVERY SINGLE FRAME, on EVERY beat, even though this shape's
+  // own content never changes frame-to-frame (only its outer position
+  // does, a separate, cheap transform - the blur work itself was 100%
+  // redundant repeated computation with no way in this engine to cache
+  // it). Only every OTHER beat gets one now, halving the total blurred-
+  // frame count across a video outright.
+  if (beatIndex % 2 !== 0) return;
   if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   const alreadyHasSwoosh = layers.some((l) => isPlainObject(l) && l.id === '__bg_swoosh__');
   if (alreadyHasSwoosh) return;
 
-  const diagonalDown = beatIndex % 2 === 0;
-  const rotation = diagonalDown ? 32 : -32;
+  // "beatIndex % 2 === 0" would always be true here now (odd beats
+  // already returned above) - direction now comes from the seed hash
+  // instead, so beats still alternate diagonal direction for variety.
   const seed = hashString('swoosh' + beatIndex);
+  const diagonalDown = seed % 2 === 0;
+  const rotation = diagonalDown ? 32 : -32;
   const color = ACCENT_PALETTE[seed % ACCENT_PALETTE.length];
 
   const restX = CANVAS_WIDTH / 2;
@@ -4694,20 +4710,30 @@ function ensureBackgroundSwoosh(beat, beatIndex) {
   //     effects-bearing shape layer. Position stays animated (keyframed
   //     position on OTHER effect-free layers, e.g. the watermark icon,
   //     is separately confirmed working, so that part isn't the suspect).
+  // Shrunk from 900x150/radius-45/buffer-1200x450 to these numbers as
+  // part of the same "sooo slow" fix above - a smaller buffer AND a
+  // smaller blur radius both directly cut the separable convolution's
+  // real per-pixel cost (roughly buffer-pixel-count x radius), and a
+  // smaller band still reads as the same soft diagonal accent at this
+  // low an opacity (confirmed via the same local render check used to
+  // verify the hard-edge fix). Padding kept proportional to the new,
+  // smaller radius (60px margin >> 20px blur radius, still comfortably
+  // enough room to fade to nothing before the buffer edge).
+  const RECT_W = 700; const RECT_H = 110; const BLUR_RADIUS = 20; const PAD = 60;
   layers.unshift({
     id: '__bg_swoosh__',
     type: 'shape',
-    width: 1200,
-    height: 450,
+    width: RECT_W + PAD * 2,
+    height: RECT_H + PAD * 2,
     position: { keyframes: [
       { time: 0, value: [startX, startY] },
       { time: 0.7, value: [restX, restY], easing: 'easeOutCubic', interpolation: 'easing' },
     ] },
     rotation,
     opacity: 0.1,
-    effects: [{ type: 'gaussianBlur', params: { radius: 45 } }],
+    effects: [{ type: 'gaussianBlur', params: { radius: BLUR_RADIUS } }],
     contents: [
-      { type: 'path', shape: { kind: 'rectangle', params: { width: 900, height: 150 } } },
+      { type: 'path', shape: { kind: 'rectangle', params: { width: RECT_W, height: RECT_H } } },
       { type: 'fill', color },
     ],
   });
