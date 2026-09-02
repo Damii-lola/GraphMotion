@@ -1,4 +1,4 @@
-const { callGroqRaw } = require('./groqClient');
+const { callMistralRaw } = require('./mistralClient');
 
 /**
  * Second-pass narration tagging - deliberately split from scene JSON
@@ -119,12 +119,25 @@ function stripTagsAndNormalize(text) {
  * minor loss; sending hallucinated content to TTS is not something to
  * risk.
  */
+// Real, confirmed-live bug found via production logs: this used to call
+// Groq (like sceneGenClient.js's treatment step) - but this file runs
+// its call for EVERY beat IN PARALLEL (narrationPrefetch.js's
+// Promise.all), right after the treatment call already spent Groq's
+// entire 8000 TPM budget for that minute. Result: some beats' tagging
+// calls got real LLM comma-pause judgment, others hit a 429 and fell
+// back to mechanical-only tagging (still safe - see ensurePauseTags -
+// but no comma-pause judgment at all) - INCONSISTENT pacing between
+// beats within the SAME video, a real, if subtle, cause of a video
+// reading as "off" even with no single beat outright broken. Moved to
+// Mistral instead - a separate provider with its own much larger
+// budget (500,000 TPM vs Groq's 8000), so this no longer competes with
+// the treatment call at all.
 async function annotateNarrationTags(plainText, feedback = '') {
   const userMessage = feedback
     ? `${plainText}\n\n(A previous take of this exact script was reviewed by an audio QA judge and rejected - apply this specific feedback this time: ${feedback})`
     : plainText;
   try {
-    const tagged = (await callGroqRaw(TAGGING_SYSTEM_PROMPT, userMessage, { jsonMode: false, maxTokens: 1000, temperature: 0.4 })).trim();
+    const tagged = (await callMistralRaw(TAGGING_SYSTEM_PROMPT, userMessage, { jsonMode: false, maxTokens: 1000, temperature: 0.4 })).trim();
     if (stripTagsAndNormalize(tagged) !== stripTagsAndNormalize(plainText)) {
       console.warn(`[narrationTagging] tagged text changed the actual words (likely hallucinated content) - using mechanical pause tags only. Original: "${plainText}" | Got: "${tagged}"`);
       return ensurePauseTags(plainText);
