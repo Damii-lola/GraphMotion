@@ -179,7 +179,14 @@ Concretely:
   narrator wouldn't bother with - say the ONE idea the beat needs and
   move on. If a line needs "and" or "but" to connect two separate
   ideas, that's usually two beats' worth of narration written as one -
-  split it instead of writing one longer line. ONE SENTENCE PER BEAT,
+  split it instead of writing one longer line. HARD CAP: 14 words per
+  beat, enforced (a longer line fails validation and forces a retry) -
+  a real generated video went out with an 18-word beat that jammed a
+  whole extra clause onto the end of what should have been its own
+  beat ("...that's the secret to a winning morning" tacked onto an
+  already-complete sentence). If a natural version of a line runs past
+  14 words, that is itself the signal to split it into two beats, not a
+  reason to trim words while keeping one bloated beat. ONE SENTENCE PER BEAT,
   no exceptions - a real, confirmed-live failure mode: two separate
   SHORT sentences both individually obey the length rule above but
   still break something else entirely by being crammed into the same

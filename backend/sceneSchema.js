@@ -4119,6 +4119,26 @@ function validateBeat(beat, path = 'beat') {
   // silently shipping a mute stretch of video.
   if (!isPlainObject(beat.params) || typeof beat.params.narration !== 'string' || beat.params.narration.trim().length === 0) {
     errors.push(`${path}.params.narration: is required and must be a non-empty string - every beat needs a real spoken line (see scenePrompts.js's own NARRATION guidance for how to write one that doesn't just echo the on-screen text), or that beat renders completely silent.`);
+  } else {
+    // Real, direct user complaint after comparing against reference
+    // videos: this prompt's own NARRATION section already asks for
+    // short, punchy lines (~2.5-3 words/sec pacing, "usually two beats'
+    // worth crammed into one" as an anti-pattern) - but that's prose
+    // guidance only, nothing downstream ever actually rejected a long
+    // one, and a real generated video came back with an 18-word beat
+    // ("Finally, pick a single five-minute stretch and own it - that's
+    // the secret to a winning morning.") stacking a whole extra clause
+    // onto what should have been one short beat. Same lesson as
+    // varyHeadlinePositions below: prompt wording alone doesn't reliably
+    // move this, so it's now a real, enforced (retry-triggering) cap,
+    // not just advice. 14 words is generous for a single short sentence
+    // or fragment at natural pace but firmly excludes stacking a second
+    // clause on top of one.
+    const wordCount = beat.params.narration.trim().split(/\s+/).length;
+    const MAX_NARRATION_WORDS = 14;
+    if (wordCount > MAX_NARRATION_WORDS) {
+      errors.push(`${path}.params.narration: "${beat.params.narration.trim()}" is ${wordCount} words - too long for one beat (cap is ${MAX_NARRATION_WORDS}). This reads as two ideas stacked into one narration line. Split it into two separate beats instead, each with its own short line, matching this project's fast-paced reference style - not one long sentence with a trailing clause tacked on.`);
+    }
   }
   const knownIds = new Set();
   validateBeatVisual(beat.visual, `${path}.visual`, errors, knownIds);
@@ -4196,6 +4216,7 @@ function validateSceneJSON(sceneJSON) {
   });
 
   varyHeadlinePositions(sceneJSON);
+  ensureSustainedWordMotion(sceneJSON);
 
   return { valid: errors.length === 0, errors };
 }
@@ -4302,6 +4323,98 @@ function varyHeadlinePositions(sceneJSON) {
       const layerSize = estimateTextEffectiveSize(layer);
       const safetyWidth = Math.max(1, (layerSize.actualWidth || layerSize.width) * 1.6);
       clampSettledPositionToCanvas(layer, safetyWidth, layerSize.height);
+    });
+  });
+}
+
+/**
+ * Real, direct user complaint after comparing against reference videos:
+ * "why is it just stationary text ALWAYS in the middle of the screen"
+ * (also see varyHeadlinePositions above, which already fixed the
+ * ALWAYS-CENTERED half of that same complaint). The remaining half is
+ * about TIME, not position - a real generated beat's dominant headline
+ * routinely pops/slides in during its first ~0.2-0.3s (a "textAnimation.in"
+ * preset, or a layer-level opacity/scale keyframe pair) and then sits
+ * completely frozen for the rest of the beat's 2-3 second duration,
+ * even though this prompt's own AE-TECHNIQUE-PATTERNS section already
+ * claims "a real per-character reveal should always be happening... at
+ * minimum, every single beat" - prose guidance the model doesn't
+ * reliably follow (confirmed directly: a real 5-beat generation had a
+ * real per-word "animators" reveal on only 1 of 5 beats; the other 4
+ * had nothing but an early one-shot entrance). Same fix philosophy as
+ * varyHeadlinePositions: mechanical, deterministic, applied AFTER
+ * generation rather than hoped for during it.
+ *
+ * For each beat's DOMINANT text layer only (the one already picked out
+ * by varyHeadlinePositions - keeps this minimal and low-risk rather
+ * than touching every layer), either STRETCHES an existing but
+ * too-early-finishing per-word/character reveal so it actually spans
+ * most of the beat, or - if the layer has no "animators" at all -
+ * INJECTS a minimal, guaranteed-schema-valid per-word color sweep
+ * (never opacity/position, so this can never be the thing that makes
+ * text invisible or scrambled - see validateAnimator's own doc comment
+ * for exactly that class of past bug). A beat under 1.2s is left alone
+ * entirely - too short for a sweep to read as anything but a flicker.
+ */
+function ensureSustainedWordMotion(sceneJSON) {
+  const scenes = sceneJSON.scenes;
+  if (!Array.isArray(scenes)) return;
+  const MIN_BEAT_DURATION_FOR_SWEEP = 1.2;
+  const SUSTAIN_FRACTION = 0.75;
+  scenes.forEach((beat) => {
+    if (!isPlainObject(beat) || !isPlainObject(beat.params) || typeof beat.params.duration !== 'number') return;
+    const duration = beat.params.duration;
+    if (duration < MIN_BEAT_DURATION_FOR_SWEEP) return;
+    if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
+    if (textLayers.length === 0) return;
+    const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+    const targetEndTime = Math.max(0.3, duration * SUSTAIN_FRACTION);
+
+    const wordReveal = Array.isArray(dominant.animators)
+      ? dominant.animators.find((an) => isPlainObject(an) && isPlainObject(an.selector) && an.selector.type === 'range' && (an.selector.basedOn === 'words' || an.selector.basedOn === 'characters'))
+      : null;
+
+    if (wordReveal) {
+      const end = wordReveal.selector.end;
+      if (isPlainObject(end) && Array.isArray(end.keyframes) && end.keyframes.length > 0) {
+        const last = end.keyframes[end.keyframes.length - 1];
+        if (isPlainObject(last) && typeof last.time === 'number' && last.time < targetEndTime) {
+          last.time = targetEndTime;
+        }
+      }
+      // A plain-number "end" (no keyframes at all) is a static reveal,
+      // not an animated sweep - nothing to stretch, and safer not to
+      // guess a keyframe shape onto a field the model deliberately left
+      // static.
+      return;
+    }
+
+    // No existing per-word/character reveal on this layer at all - inject
+    // a minimal one. Reuses an accent color already present in this SAME
+    // beat (a "highlights" chip color on this layer, or a sibling icon's
+    // "iconColor") when available, so the injected sweep matches the
+    // beat's own palette instead of introducing an unrelated color.
+    let accentColor = null;
+    if (Array.isArray(dominant.highlights)) {
+      const h = dominant.highlights.find((hl) => isPlainObject(hl) && typeof hl.color === 'string' && HEX_COLOR_RE.test(hl.color));
+      if (h) accentColor = h.color;
+    }
+    if (!accentColor) {
+      const iconLayer = beat.visual.layers.find((l) => isPlainObject(l) && l.type === 'image' && typeof l.iconColor === 'string' && HEX_COLOR_RE.test(l.iconColor));
+      if (iconLayer) accentColor = iconLayer.iconColor;
+    }
+    if (!accentColor) accentColor = '#FFD700';
+
+    if (!Array.isArray(dominant.animators)) dominant.animators = [];
+    dominant.animators.push({
+      selector: {
+        type: 'range',
+        start: 0,
+        end: { keyframes: [{ time: 0, value: 0 }, { time: targetEndTime, value: 100, easing: 'easeOutCubic', interpolation: 'easing' }] },
+        basedOn: 'words',
+      },
+      properties: { color: accentColor },
     });
   });
 }
