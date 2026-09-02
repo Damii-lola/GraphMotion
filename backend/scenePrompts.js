@@ -408,104 +408,42 @@ TEXTLAYERDEF - one entry in "layers"
 
   "text": string, "fontFamily": string, "fontWeight": string, "fontSize": number,
   "lineHeight": number, "maxWidth": number, "fillStyle": color, "textAlign": string,
-      // "fontFamily" MUST be EXACTLY one of these four literal strings:
-      // ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')} -
-      // these are the ONLY fonts actually bundled and registered with
-      // this engine (real .ttf files, loaded at startup on every host).
-      // This is a closed set of exactly four strings, full stop - not
-      // just "avoid the wrong Poppins weight." A real, confirmed-live
-      // mistake reaching well beyond Poppins: naming a totally different
-      // real commercial typeface by name ("Frutiger LT 65 Bold",
-      // "Frutiger LT 55 Roman") because it felt like the right premium/
-      // editorial look for the content - Helvetica, Futura, Arial,
-      // Montserrat, Frutiger, or literally any other real font name is
-      // EQUALLY not bundled here and fails EXACTLY the same silent way
-      // as a wrong Poppins weight (falls back to a generic, unstyled
-      // default). There is no "pick whatever font fits the mood" step
-      // in this schema at all - the only decision is which of the four
-      // exact strings above best serves the moment, never a fifth name.
-      // Real, repeatedly-recurring mistake: Poppins is a well-known
-      // real font family with MANY real weights (Thin, Light, Regular,
-      // Medium, SemiBold, Bold, ExtraBold, Black), and the natural
-      // instinct is to reach for one of those familiar weight names -
-      // but this engine bundles ONLY the four exact strings above.
-      // "Poppins Regular"/"Poppins SemiBold"/"Poppins Light"/bare
-      // "Poppins" (no weight suffix at all) are ALL real Poppins
-      // weights that do NOT exist as bundled files here and WILL
-      // silently fall back to a generic, unstyled default font -
-      // confirmed directly by measuring real glyph metrics, not a
-      // style guess. There is no "regular"/"normal" weight bundled at
-      // all - "Poppins Medium" is the closest thing to a body-text
-      // weight available; use it, not "Poppins Regular". "Poppins
-      // Black" (weight 900) is the workhorse for bold
-      // headline text - a heavy, rounded geometric grotesk, exactly the
-      // kind of confident, punchy display type real kinetic-typography
-      // edits use. "Poppins Bold"/"Poppins Medium" for secondary/
-      // supporting lines that should read as a clear step down in
-      // weight from the headline. "Poppins Italic" ONLY for a
-      // deliberate rhythm-break accent word (sparingly, at most once
-      // per beat), never as a primary headline face. Set "fontWeight"
-      // to match the family's own real weight ("900" for Black, "700"
-      // for Bold, "500" for Medium) - the GLYPHS themselves are already
-      // that weight; "fontWeight" here is bookkeeping, not synthetic
-      // bolding.
-      // "fontSize" - real, confirmed-live mistake: 90-110px on this
-      // ${COMP_WIDTH}px-wide canvas for a multi-word phrase leaves NO
-      // margin at all, so the text box always ends up needing to be
-      // dead-center just to avoid clipping - which then makes every
-      // single beat look identical (same size, same spot), the exact
-      // "repetitive/boring" failure a real brutal comparison flagged.
-      // For a 2+ word headline, keep fontSize in the 44-72px range so
-      // the box has real room to sit off-center sometimes (see
-      // "position" below); reserve 80px+ for a genuinely SHORT
-      // standalone moment (one word, a single number/stat) where
-      // filling more of the frame is the actual intent, not an
-      // accident of picking too large a size for a longer phrase.
-      // "position" - do NOT default every beat to the frame's exact
-      // center ([${COMP_WIDTH / 2},${COMP_HEIGHT / 2}]) out of habit.
-      // Once fontSize leaves real margin (per the note above), vary
-      // where headlines actually sit beat to beat - left-of-center,
-      // right-of-center, upper-third, lower-third - the same way a
-      // real edit doesn't lock every single card to one fixed spot.
-      // Center is still fine for a genuine title-card moment; it just
-      // shouldn't be the ONLY position ever used across a whole video.
-      // "textAlign": "left" | "center" | "right", default "center".
-      // Real kinetic-typography edits overwhelmingly stack MULTI-WORD
-      // phrases LEFT-aligned (every line starts at the same left edge,
-      // ragged right) rather than each line individually centered on
-      // its own width - use "left" for any multi-line body headline
-      // building up phrase-by-phrase. Reserve "center" for a short,
-      // standalone one-or-two-word title-card moment (a single word or
-      // short phrase alone in the frame, not part of a longer build-up).
-      // "maxWidth" controls line-wrapping (text wraps to a new line once a
-      // line would exceed it) - omitting it defaults to a safe ${COMP_WIDTH - 60}px
-      // (comp width minus margin), but for a large headline set it
-      // explicitly to control exactly where it wraps, e.g. ${Math.round(COMP_WIDTH * 0.85)}
-      // for most single-column text on this ${COMP_WIDTH}px-wide canvas.
-      // CRITICAL, real confirmed-live bug: "position"'s x is ALWAYS the
-      // text box's own CENTER, regardless of "textAlign" ("left"/"right"
-      // just change how each line sits WITHIN that same centered box,
-      // not where the box itself is) - it is NEVER a left-margin/indent
-      // value. A real broken example: "position":[71,...] with
-      // "maxWidth":459 - that reads like "start near the left edge with
-      // a bit of margin," but it actually centers a 459px-wide box on
-      // x=71, so the box spans roughly -158 to 300 and nearly a third of
-      // it renders off the left edge of this ${COMP_WIDTH}px canvas for
-      // the whole beat. For text anywhere near "maxWidth" wide, keep
-      // position.x within roughly maxWidth/2 of ${Math.round(COMP_WIDTH / 2)}
-      // (the canvas center) so the box stays fully on-screen - to get a
-      // true left-margin look, use "textAlign":"left" together with a
-      // SMALLER "maxWidth" (the space actually available from that
-      // margin to the right edge), keeping position.x at the CENTER of
-      // that smaller box, not its left edge.
-      // "lineHeight" is an ABSOLUTE PIXEL value, NOT a CSS-style
-      // unitless multiplier - confirmed as a real, live bug: writing
-      // "lineHeight":1.2 (meaning "1.2x the font size", a common web/
-      // CSS convention) made every wrapped line render almost exactly
-      // on top of the next, since 1.2 is used AS PIXELS directly. For
-      // a fontSize:60 headline, use lineHeight around 66-75 (roughly
-      // 1.1-1.25x the font size) - omit it entirely to get a sane
-      // default (fontSize*1.15) rather than guess at a multiplier.
+      // "fontFamily": EXACTLY one of these four literal strings, nothing
+      // else - no other font name (not "Poppins Regular", not a real
+      // commercial typeface like "Helvetica"/"Futura"/"Frutiger") is
+      // bundled, and using one silently falls back to an unstyled
+      // default (validated - a wrong name gets rejected with the full
+      // list): ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')}.
+      // "Poppins Black" (900) = bold headline workhorse. "Poppins Bold"/
+      // "Medium" = secondary/supporting lines, a clear step down in
+      // weight. "Poppins Italic" = sparingly, one rhythm-break accent
+      // word, never a primary headline. Match "fontWeight" to the real
+      // weight ("900"/"700"/"500").
+      // "fontSize": for a 2+ word headline keep it 44-72px - 90-110px
+      // leaves no margin on this ${COMP_WIDTH}px canvas, forcing dead-
+      // center every time (repetitive). Reserve 80px+ for a genuinely
+      // short standalone moment (one word/number).
+      // "position": vary where headlines sit beat to beat (left-of-
+      // center, right-of-center, upper/lower-third) once fontSize
+      // leaves real margin - don't default to frame-center every beat.
+      // "textAlign": "left"|"center"|"right", default "center". Real
+      // kinetic-typography stacks multi-word phrases LEFT-aligned
+      // (ragged right); reserve "center" for a short standalone title-
+      // card moment.
+      // "maxWidth" controls wrapping (default ${COMP_WIDTH - 60}px); set
+      // explicitly for a large headline, e.g. ${Math.round(COMP_WIDTH * 0.85)}.
+      // CRITICAL: "position"'s x is ALWAYS the text box's own CENTER,
+      // regardless of "textAlign" - never a left-margin/indent value.
+      // A box with maxWidth:459 at position.x:71 centers on 71, so it
+      // spans roughly -158 to 300 - nearly a third renders off the left
+      // edge. Keep position.x within maxWidth/2 of ${Math.round(COMP_WIDTH / 2)}
+      // (canvas center); for a true left-margin look, pair
+      // "textAlign":"left" with a SMALLER "maxWidth", position.x still
+      // at that smaller box's own center, not its left edge.
+      // "lineHeight" is an ABSOLUTE PIXEL value, not a CSS multiplier -
+      // "lineHeight":1.2 renders wrapped lines almost on top of each
+      // other. For fontSize:60, use ~66-75; omit for a sane default
+      // (fontSize*1.15).
   "animators": [ { "selector": SelectorDef, "properties": { "opacity": number,
       "position": [dx,dy], "scale": number, "rotation": number, "color": "#rrggbb" } }, ... ],
       // real per-character animation - see SELECTORS below. opacity/position/
@@ -533,127 +471,60 @@ TEXTLAYERDEF - one entry in "layers"
       // is DIFFERENT - not a delta, a per-character fill-color OVERRIDE: at
       // full selector strength that character renders in this hex color
       // instead of the layer's own "fillStyle", blending smoothly at partial
-      // strength. Use a selector scoped to ONE word (basedOn:"words",
-      // start/end computed as that word's exact PERCENTAGE range - see
-      // SELECTORS below for the precise formula) to accent a single
-      // word a different color from the rest of the line - e.g. the rest of
-      // a headline in white with one key word in a bright accent color.
-      // Remember "invert":false (see SELECTORS below) - without it the
-      // color lands on every OTHER word instead of the one you targeted.
-      // A color accent needs its OWN arrival moment too, same as every
-      // other property here - to make it switch ON a beat or two AFTER
-      // the word has already landed, keep "start"/"end" FIXED on the
-      // target word the whole time and instead keyframe the selector's
-      // "amount" from 0 to 1 at the moment you want the color to
-      // appear. NEVER animate "start"/"end" for this purpose - that
-      // changes WHICH characters are covered (growing the selection),
-      // not WHEN the color switches on, and will color far more of the
-      // line than intended.
+      // strength. Scope a selector to ONE word (basedOn:"words", start/
+      // end = that word's exact percentage range, see SELECTORS below)
+      // to accent it a different color than the rest of the line - e.g.
+      // white headline, one key word in accent color. Set "invert":false
+      // (else the color lands on every OTHER word). To make the color
+      // switch ON a beat after the word lands: keep "start"/"end" FIXED
+      // on the target word and keyframe "amount" 0->1 instead - never
+      // animate "start"/"end" for timing, that changes WHICH characters
+      // are covered, not WHEN the color appears.
   "highlights": [ { "selector": SelectorDef, "color": "#rrggbb" (solid) OR
       "gradient": { "from": "#rrggbb", "to": "#rrggbb" }, "paddingX": number,
       "paddingY": number, "cornerRadius": number }, ... ],
-      // a "marker highlighter" chip - a rounded-rect box drawn BEHIND one
-      // word (or a short run of characters), like a highlighter stroke or a
-      // call-out label. Scope the selector to the target word with
-      // basedOn:"words" and start/end computed as the exact PERCENTAGE
-      // range for that one word index (see SELECTORS below for the
-      // precise formula and a worked example - do NOT guess small
-      // arbitrary numbers). Unlike an animator, a highlight's selector
-      // is used AS-IS with no invert - the word(s) your start/end
-      // percentage range actually covers are exactly what gets boxed,
-      // nothing more.
-      // paddingX/paddingY default to 8/4px, cornerRadius defaults to 6px.
-      // NEVER give a highlight static full coverage - a real reference
-      // example of this exact effect shows the marker box arriving with
-      // its OWN motion, not present from the word's first frame. To
-      // animate it in: keep "start"/"end" FIXED on the target word's
-      // exact percentage range for the WHOLE beat (never animate them -
-      // see the "color" note above for exactly why that goes wrong),
-      // and instead keyframe "amount" from 0 to 1 over ~0.15-0.3s,
-      // timed to land shortly AFTER the word itself has already
-      // landed, so the chip visibly draws ON behind the still-correct
-      // word as its own distinct, later-timed motion - not simultaneous
-      // with the text reveal, and never simply "on" the whole time.
-      // NOT supported together with "onPath".
+      // A rounded-rect "marker highlighter" chip drawn BEHIND one word.
+      // Scope the selector to the target word (basedOn:"words", exact
+      // percentage range - see SELECTORS below for the formula). Used
+      // AS-IS, no invert. paddingX/Y default 8/4px, cornerRadius 6px.
+      // Give it its own arrival: keep "start"/"end" FIXED on the target
+      // word and keyframe "amount" 0->1 over ~0.15-0.3s, landing shortly
+      // AFTER the word itself - never present from the word's first
+      // frame. Not supported with "onPath".
       //
-      // CRITICAL: a highlight (or a "color" accent animator) ALWAYS
-      // lives on the SAME layer as the text it's decorating, targeting
-      // one word of THAT layer's own "text" string via the selector -
-      // it is NEVER a second, separate layer that repeats the same
-      // word next to the original. Real, confirmed-live mistake: a
-      // headline layer with text "3 FACTS" (wrapping to two lines,
-      // "3" then "FACTS") got a SECOND, entirely separate text layer
-      // containing just "3" with a highlight on it, hand-positioned to
-      // try to sit on top of the headline's own "3" - since no author
-      // can know exactly where a wrapped multi-line headline's
-      // individual words land in pixels ahead of render time, the
-      // guessed position landed wrong and the two literal "3"s
-      // rendered overlapping each other, illegible. The correct way to
-      // highlight the "3" in "3 FACTS" is a "highlights" entry ON THAT
-      // SAME "3 FACTS" layer, with a selector scoped to just its first
-      // character/word (e.g. basedOn:"characters", start:0,end:X% to
-      // cover only "3") - never a duplicate sibling layer.
-      //
-      // Every "type":"text" layer's "text" field is REQUIRED and must
-      // be a real, non-empty string - there is no such thing as a
-      // "decoration-only" or "highlight-only" text layer with no text
-      // of its own. If a layer exists purely to add visual emphasis
-      // (a color accent, a highlight chip), that emphasis belongs as
-      // "highlights"/an animator "color" on an EXISTING layer that
-      // already has real words - it is never a reason to add another
-      // layer, and never a reason for a layer's own "text" to be
-      // omitted or empty.
-      //
-      // GENERAL RULE (the "3 FACTS" case above is one specific example
-      // of this, not the only one): NEVER put the exact same "text"
-      // string on two different layers in the same beat, for ANY
-      // reason - this was ALSO seen live as a "plain copy + accented
-      // copy" pattern (e.g. two entire separate layers both reading
-      // "20 MILLION TONS dissolved in seawater", one presumably meant
-      // to be the base and one meant to carry a highlight/color), which
-      // is just as wrong and renders as visibly doubled, overlapping
-      // text either way. This is hard-enforced by validation, not just
-      // advisory - every distinct piece of text content in a beat gets
-      // exactly ONE layer, and any emphasis on part of it is a
-      // "highlights"/"color" addition to THAT one layer, never a
-      // reason to duplicate it into a second.
+      // A highlight or "color" accent ALWAYS lives on the SAME layer as
+      // the text it decorates (targeting one word via the selector) -
+      // NEVER a second layer repeating the same word to sit a highlight
+      // on top of it (a real confirmed rendering bug: two independently-
+      // positioned copies of "3" in "3 FACTS" landed overlapping and
+      // illegible, since no one can predict where a wrapped headline's
+      // words land in pixels ahead of render time). Every "text" layer's
+      // "text" field is required and non-empty - there's no "decoration-
+      // only" layer; emphasis is always a "highlights"/"color" addition
+      // to an EXISTING layer, never a reason to add or duplicate one.
+      // Hard-enforced by validation: two layers with identical "text" in
+      // one beat is always rejected, no exceptions.
   "textAnimation": { "in": InOutSpec, "out": InOutSpec },  // OPTIONAL -
-      // real ENGINE-level entrance/exit motion for the WHOLE text block
-      // (or, for the character/word/line presets, the reveal of its own
-      // content) - not something you hand-keyframe yourself. Every
-      // named preset below is fully implemented in code (real position/
-      // scale/opacity/rotation/blur math, tuned easing, tested) - you
-      // only ever choose a NAME (plus optional direction/duration/
-      // startAt), never author the underlying motion by hand.
-      // InOutSpec is either a bare preset name string, or an object:
+      // real ENGINE-level entrance/exit motion, fully implemented (real
+      // position/scale/opacity/rotation math) - choose a NAME only,
+      // never hand-author the motion. InOutSpec: a bare preset name, or
       // { "preset": string, "direction"?: ${TEXT_ANIMATION_DIRECTIONS.map((d) => `"${d}"`).join('|')},
-      //   "duration"?: number (seconds), "startAt"?: number (seconds
-      //   into the BEAT this animation begins - use this to stagger
-      //   several text layers' entrances across a beat instead of every
-      //   layer landing at the exact same instant) }.
-      // "in" preset choices (pick ONE per layer, deliberately, for real
-      // variety across a video - do not default to the same one every
-      // beat): ${TEXT_IN_PRESETS.join(', ')}.
-      // "out" preset choices (OPTIONAL - most text can simply persist
-      // until the beat ends and disappear with the beat cut; only add
-      // an explicit "out" when a layer needs to leave the frame BEFORE
-      // the beat itself ends): ${TEXT_OUT_PRESETS.join(', ')}.
-      // MANDATORY: every text layer needs a real "in" entrance - a text
-      // layer with no "textAnimation" at all and no other motion of its
-      // own (no "animators", no keyframed position/scale/opacity) will
-      // still get a safe default automatically, but a DELIBERATE choice
-      // here almost always reads better and is how you create real
-      // variety - do not lean on the automatic default as your plan.
-      // ${TEXT_IN_PRESETS.slice(0, 4).join('/')} etc are whole-BLOCK
-      // motion (the text moves/fades/scales in as one rigid unit);
-      // "typewriter"/"wordCascade"/"lineCascade"/"splitIn" instead
-      // reveal the text's own CONTENT progressively (character-by-
-      // character or word-by-word) - these populate the layer's real
-      // "animators" array for you, so do NOT also hand-author a
-      // separate per-character animator on a layer that already uses
-      // one of these four as its "in" preset (the two would double up).
-      // Example - a headline that pops in with overshoot, sits, then
-      // exits by sliding right shortly before the beat ends:
+      //   "duration"?: number, "startAt"?: number (seconds into the beat -
+      //   use to stagger several layers' entrances) }.
+      // "in" choices (pick deliberately, vary across the video):
+      // ${TEXT_IN_PRESETS.join(', ')}.
+      // "out" (optional - most text just persists to the beat cut):
+      // ${TEXT_OUT_PRESETS.join(', ')}.
+      // MANDATORY: every text layer needs a real "in" - one with none at
+      // all gets a safe default automatically, but a deliberate choice
+      // reads better and is how you create real variety.
+      // ${TEXT_IN_PRESETS.slice(0, 4).join('/')} etc move the whole block
+      // as one rigid unit; "typewriter"/"wordCascade"/"lineCascade"/
+      // "splitIn" instead reveal content progressively and populate the
+      // layer's own "animators" for you - don't ALSO hand-author a
+      // separate per-character animator on a layer already using one of
+      // these four (they'd double up).
+      // Example: pop in with overshoot, then exit sliding right near the end:
       //   "textAnimation": { "in": { "preset": "popIn" },
       //     "out": { "preset": "slideOut", "direction": "right", "startAt": 1.9 } }
 }
@@ -873,18 +744,12 @@ is not using this engine's real range; reach for these often.
    short supporting text label near it - a real, common motion-
    graphics pattern (a stat with its own icon, a feature with its own
    icon) that reads far more designed than a bare text-only stat.
-6. TEXT DEPTH via drop shadow: give a primary headline layer an
-   "effects": [{"type":"dropShadow","params":{"color":"#000000",
-   "blur":6-10,"offsetX":0,"offsetY":4-8,"opacity":0.3-0.5}}] - real,
-   confirmed-live comparison against professional reference work showed
-   this is a large part of what makes flat text read as "designed" vs.
-   "static/lifeless" - a headline with NO depth at all looks pasted-on.
-   NOT OPTIONAL: every beat's single largest/dominant text layer gets
-   this - a real brutal side-by-side against reference footage showed
-   video after video with zero drop shadow anywhere, and flat text
-   next to the reference's consistently-shadowed text is exactly what
-   reads as "lifeless" vs "designed." Skip it only on a small
-   secondary/supporting label, never on the beat's main headline.
+6. TEXT DEPTH via drop shadow: a dominant headline with real depth
+   ("effects":[{"type":"dropShadow","params":{"color":"#000000","blur":
+   6-10,"offsetX":0,"offsetY":4-8,"opacity":0.3-0.5}}]) reads as
+   designed, not pasted-on. (The engine adds this automatically to
+   every beat's dominant text layer if you omit it - setting your own
+   deliberately-tuned version here still reads better than the default.)
 7. TRAVELING ACCENT (not just revealing IN PLACE): a small decorative
    shape (a short dash/line, a small ring/circle) that starts at ONE
    position, near but not touching the text, then ANIMATES ITS OWN
