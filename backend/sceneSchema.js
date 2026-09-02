@@ -4639,6 +4639,20 @@ function ensureActiveBackgroundElement(beat, beatIndex, topic) {
  * layers array, same z-order rule as the watermark icon above) and
  * BEFORE the watermark icon specifically so the icon still reads on
  * top of it, not buried under it.
+ *
+ * Real, direct user follow-up after seeing this rendered: "the line
+ * animation, rn it's just bland" - the first version had genuinely
+ * ZERO animation on it at all (a flat "opacity":0.1, a static
+ * "position", present in full from frame 0) - the exact "static image,
+ * not motion graphics" anti-pattern this project's own prompt already
+ * warns against everywhere else. Fixed with a real entrance: slides
+ * in ALONG ITS OWN ROTATED AXIS (using the same angle the band is
+ * already rotated to, via cos/sin - not a plain horizontal/vertical
+ * slide, which would look like it's cutting across its own length
+ * instead of wiping along it) from further out, plus a real fade-in,
+ * over the same ~0.7s window the watermark icon's own entrance uses -
+ * so the two "active background" elements feel like one consistent
+ * animation language, not two unrelated systems.
  */
 function ensureBackgroundSwoosh(beat, beatIndex) {
   if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
@@ -4651,14 +4665,27 @@ function ensureBackgroundSwoosh(beat, beatIndex) {
   const seed = hashString('swoosh' + beatIndex);
   const color = ACCENT_PALETTE[seed % ACCENT_PALETTE.length];
 
+  const restX = CANVAS_WIDTH / 2;
+  const restY = CANVAS_HEIGHT / 2;
+  const rad = (rotation * Math.PI) / 180;
+  const travel = 260;
+  const startX = restX - Math.cos(rad) * travel;
+  const startY = restY - Math.sin(rad) * travel;
+
   layers.unshift({
     id: '__bg_swoosh__',
     type: 'shape',
     width: 900,
     height: 150,
-    position: [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2],
+    position: { keyframes: [
+      { time: 0, value: [startX, startY] },
+      { time: 0.7, value: [restX, restY], easing: 'easeOutCubic', interpolation: 'easing' },
+    ] },
     rotation,
-    opacity: 0.1,
+    opacity: { keyframes: [
+      { time: 0, value: 0 },
+      { time: 0.6, value: 0.1, easing: 'easeOutCubic', interpolation: 'easing' },
+    ] },
     effects: [{ type: 'gaussianBlur', params: { radius: 45 } }],
     contents: [
       { type: 'path', shape: { kind: 'rectangle', params: { width: 900, height: 150 } } },
