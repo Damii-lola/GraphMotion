@@ -4251,6 +4251,7 @@ function validateSceneJSON(sceneJSON) {
 
   varyHeadlinePositions(sceneJSON);
   ensureSustainedWordMotion(sceneJSON);
+  ensureModestTextSize(sceneJSON);
   ensureDropShadowOnDominant(sceneJSON);
   requireAtLeastOneRealPhoto(sceneJSON, errors);
   ensureVisibleHeroImage(sceneJSON);
@@ -4655,19 +4656,16 @@ function ensureActiveBackgroundElement(beat, beatIndex, topic) {
  * animation language, not two unrelated systems.
  */
 function ensureBackgroundSwoosh(beat, beatIndex) {
-  // Real, direct user report right after this shipped: "it's sooo
-  // slow" - a real, measured cost, not a false alarm. withEffects has
-  // no caching at all (true of every effect in this engine, not just
-  // this one) - gaussianBlur's own real 2-pass separable convolution
-  // (see blurEffects.js's own doc comment: not a naive O(n^2), but
-  // still real per-pixel work) was re-running on a 1200x450 (540,000px)
-  // buffer EVERY SINGLE FRAME, on EVERY beat, even though this shape's
-  // own content never changes frame-to-frame (only its outer position
-  // does, a separate, cheap transform - the blur work itself was 100%
-  // redundant repeated computation with no way in this engine to cache
-  // it). Only every OTHER beat gets one now, halving the total blurred-
-  // frame count across a video outright.
-  if (beatIndex % 2 !== 0) return;
+  // History: this WAS every-other-beat only, to offset the original
+  // 1200x450/radius-45 version's real per-frame blur cost ("it's sooo
+  // slow" - see the size/radius shrink a few lines below, which
+  // independently cut that same cost ~4.8x, measured locally). Direct
+  // follow-up user complaint: "the line and images are inconsistent" -
+  // skipping half the beats reads as broken/patchy, not as a
+  // deliberate stylistic choice. Now that the per-instance cost is
+  // already far cheaper (the smaller buffer/radius below), EVERY beat
+  // gets one again - 5 cheap instances cost meaningfully less than the
+  // 2-3 expensive ones this was working around before.
   if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   const alreadyHasSwoosh = layers.some((l) => isPlainObject(l) && l.id === '__bg_swoosh__');
@@ -4781,6 +4779,39 @@ function ensureVisibleHeroImage(sceneJSON) {
         l.width = Math.round(l.width * scale);
         l.height = Math.round(l.height * scale);
       }
+    });
+  });
+}
+
+// Real, direct user complaint: "why is the text the main thing on the
+// screen why is the text size sooo big, reduce the size, make it to be
+// as half as attention grabbing, letting the bg and the different
+// things in the bg fill the other half." Real measured data from the
+// last live generation: every dominant headline landed in the 44-48px
+// range on a 540px-wide canvas - at that size, a real 3-4 word wrapped
+// headline (plus its own backing card) routinely eats a third or more
+// of the whole frame's height, leaving the background elements this
+// SAME session already built (the swoosh, the watermark icon, a hero
+// photo) no real room to actually read as part of the composition.
+// Capped mechanically rather than just tightened in the prompt - the
+// exact same "prose alone doesn't move this" lesson as everywhere else
+// in this file. Area (what actually reads as "dominant") scales with
+// the SQUARE of font size, not linearly - dropping from ~46px to 32px
+// is roughly a 30% linear cut but close to a 50% cut in actual screen
+// area, which is the real target here. Applies to every real text
+// layer's fontSize (not just the dominant one) - a secondary line
+// already smaller than this cap is left untouched, only ever a
+// downward clamp, never a forced increase.
+const MAX_TEXT_FONT_SIZE = 32;
+
+function ensureModestTextSize(sceneJSON) {
+  const scenes = sceneJSON.scenes;
+  if (!Array.isArray(scenes)) return;
+  scenes.forEach((beat) => {
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    beat.visual.layers.forEach((l) => {
+      if (!isPlainObject(l) || l.type !== 'text' || typeof l.fontSize !== 'number') return;
+      if (l.fontSize > MAX_TEXT_FONT_SIZE) l.fontSize = MAX_TEXT_FONT_SIZE;
     });
   });
 }
