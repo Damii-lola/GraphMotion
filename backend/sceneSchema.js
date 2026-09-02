@@ -4530,7 +4530,17 @@ function isBeatAlreadyDecorated(beat) {
     && !OWN_MARKER_IDS.has(l.id)
     && l.iconColor !== '#9A9A9A' // this file's own watermark icon, not a THIRD pass's decision to make
   ).length;
-  return decorativeCount >= 2;
+  // Real, direct measurement after shipping this at ">= 2": a real
+  // generation came back with EVERY beat skipped (zero swooshes
+  // anywhere in the whole video) - >=2 was catching the completely
+  // ordinary "one icon + one shape" composition most beats naturally
+  // have, not just the genuinely over-decorated 4-layer case
+  // (background card + kicker pill + divider bar + its own icon) this
+  // was actually meant to catch. Raised to >=3 so a normal, modest
+  // beat still gets its ambient background element, and only a beat
+  // that's ALREADY nearly as rich as ensureDecorativeAccent's own full
+  // card composition gets skipped.
+  return decorativeCount >= 3;
 }
 
 /**
