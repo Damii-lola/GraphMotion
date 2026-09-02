@@ -4,7 +4,6 @@ const { validateSceneJSON } = require('./sceneSchema');
 const {
   buildTreatmentSystemPrompt, buildGenerationSystemPrompt, buildEditSystemPrompt, listTreatmentBeatHeaders,
 } = require('./scenePrompts');
-const { callGroqRaw } = require('./groqClient');
 
 /**
  * Gemini replacement for the old mistralClient.js - same resilience
@@ -289,30 +288,8 @@ async function callGeminiWithAudio(systemPrompt, audioBuffer, mimeType, promptTe
   ], opts);
 }
 
-/**
- * Tries Groq (llama-3.3-70b-versatile) first, falling back to Gemini on
- * ANY failure - missing key, rate limit, timeout, truncated response.
- * Direct motivation: a real production job hit three consecutive 45s
- * timeouts across all three configured Gemini keys, then three more
- * 503s, before finally succeeding - Google's own infrastructure having
- * a genuinely bad stretch. Groq is free (no card), runs on dedicated
- * LPU hardware, and is a completely independent provider - an outage
- * on one almost never coincides with the other. This wraps ONLY the
- * low-level transport, not the retry/validation loop above it in
- * generateWholeSceneJSON - so every one of that loop's own retries
- * still gets this same Groq-first behavior, not just the first attempt.
- */
-async function callLLMRaw(systemPrompt, userMessage, opts = {}) {
-  try {
-    return await callGroqRaw(systemPrompt, userMessage, opts);
-  } catch (err) {
-    console.warn(`[geminiClient] Groq failed (${err.message}), falling back to Gemini`);
-    return callGeminiRaw(systemPrompt, userMessage, opts);
-  }
-}
-
 async function callGeminiForJSON(systemPrompt, userMessage, retriesLeft, onRetry) {
-  const rawText = await callLLMRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 28000 });
+  const rawText = await callGeminiRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 28000 });
   try {
     return extractJson(rawText);
   } catch (err) {
@@ -363,7 +340,7 @@ async function generateCreativeTreatment(userPrompt, targetDurationSeconds) {
   const creativeAngle = pickRandomCreativeAngle();
   console.log(`[geminiClient] creative angle for this generation: ${creativeAngle}`);
   const systemPrompt = buildTreatmentSystemPrompt(targetDurationSeconds, creativeAngle);
-  return callLLMRaw(systemPrompt, userPrompt, { jsonMode: false, maxTokens: 8000, temperature: 0.85 });
+  return callGeminiRaw(systemPrompt, userPrompt, { jsonMode: false, maxTokens: 8000, temperature: 0.85 });
 }
 
 async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft = 16, priorErrors = null } = {}) {

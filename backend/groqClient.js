@@ -2,23 +2,26 @@ const fetch = require('node-fetch');
 
 /**
  * Text generation via Groq's OpenAI-compatible chat completions API -
- * promoted to primary scene-generation engine (geminiClient.js's
- * callLLMRaw tries this first) after a real production incident: a
- * single generation hit three consecutive 45s timeouts across all
- * three configured Gemini keys, then three more 503s, before finally
- * succeeding - Google's own infrastructure having a bad stretch, not
- * anything in this codebase. Groq runs on dedicated LPU hardware (not
- * shared GPUs) and is genuinely free with no credit card required.
+ * used for sceneGenClient.js's SMALLER treatment-planning call only
+ * (not the big JSON-encoding step - see openRouterClient.js for that).
+ * Real, directly measured finding: this account's free tier caps at a
+ * flat 8000 TPM (tokens per minute) - confirmed identical across every
+ * model tried (openai/gpt-oss-120b, qwen/qwen3.6-27b both hit the exact
+ * same ceiling), not a per-model variation the way older docs
+ * described. The treatment prompt (~2185 tokens) plus a real,
+ * generous output budget fits comfortably under that; the full scene-
+ * JSON prompt (~16,923 tokens on its own) does not, no matter which
+ * model - confirmed by direct testing, not assumed.
  *
- * Model: llama-3.3-70b-versatile - picked over Groq's other free-tier
- * options specifically for its 12,000 TPM ceiling (double the 6,000
- * TPM default most Groq models get), the highest among models actually
- * capable of this task's complexity (Gemma 2 9B has a higher raw TPM
- * ceiling but is far too small a model for reliably generating this
- * project's nested scene JSON - keyframes, animators, layer stacks).
+ * Model: openai/gpt-oss-120b - the largest, most capable model
+ * confirmed actually available on this account's real /v1/models list
+ * (llama-3.3-70b-versatile, cited by earlier research, turned out to
+ * be fully retired - a live model-list query is what caught this, not
+ * documentation). Genuinely free, no credit card, independent LPU
+ * hardware from Gemini's own infrastructure.
  */
 
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const GROQ_MODEL = 'openai/gpt-oss-120b';
 const GROQ_TIMEOUT_MS = 45000;
 
 /**

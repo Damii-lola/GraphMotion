@@ -1,4 +1,4 @@
-const { callGeminiRaw } = require('./geminiClient');
+const { callGroqRaw } = require('./groqClient');
 
 /**
  * Second-pass narration tagging - deliberately split from scene JSON
@@ -124,7 +124,7 @@ async function annotateNarrationTags(plainText, feedback = '') {
     ? `${plainText}\n\n(A previous take of this exact script was reviewed by an audio QA judge and rejected - apply this specific feedback this time: ${feedback})`
     : plainText;
   try {
-    const tagged = (await callGeminiRaw(TAGGING_SYSTEM_PROMPT, userMessage, { jsonMode: false, maxTokens: 1000, temperature: 0.4 })).trim();
+    const tagged = (await callGroqRaw(TAGGING_SYSTEM_PROMPT, userMessage, { jsonMode: false, maxTokens: 1000, temperature: 0.4 })).trim();
     if (stripTagsAndNormalize(tagged) !== stripTagsAndNormalize(plainText)) {
       console.warn(`[narrationTagging] tagged text changed the actual words (likely hallucinated content) - using mechanical pause tags only. Original: "${plainText}" | Got: "${tagged}"`);
       return ensurePauseTags(plainText);
