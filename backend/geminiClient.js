@@ -67,11 +67,17 @@ const KEYS = loadKeys();
 // failure - the model is simply retired for any API key created after
 // some cutoff). Every call falling back to Mistral also hammered
 // Mistral with real, wasted 429-retry storms for the whole job, a real
-// resource cost, not just a clean "try again" - reverted immediately
-// rather than burn more real API calls guessing at yet another Gemini
-// tier name blind. flash-lite remains the only Gemini model confirmed
-// to actually work reliably in this project, full stop.
-const MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
+// resource cost, not just a clean "try again".
+//
+// TESTING gemini-2.5-flash (2026-09-02): same generation as the just-
+// retired 2.5-pro, so real risk it's ALSO retired for new keys - but
+// Flash-tier models tend to stay available longer than Pro-tier ones
+// (cheaper for Google to keep serving), and this one has a far more
+// generous free quota (~1,500 req/day vs 2.5-pro's ~50) if it IS still
+// live. One real test will show a 404 immediately if it's also retired -
+// revert to 'gemini-3.1-flash-lite' the instant that happens, same as
+// every other failed attempt tonight.
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
 if (KEYS.length === 0) {
   console.warn('[geminiClient] No GEMINI_API_KEYS/GEMINI_API_KEY_N configured');
