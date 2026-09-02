@@ -67,9 +67,17 @@ position/size you author is in these pixel units, origin (0,0) at the
 top-left for 2D content. Keep primary content within a safe zone
 roughly 45px in from every edge so nothing critical is clipped.
 
-EVERY object in a "layers" array MUST include an explicit "type" field.
-Right now there is exactly ONE valid value: "type":"text" - every
-single layer you write is a text layer, no exceptions.
+EVERY object in a "layers" array MUST include an explicit "type" field,
+one of: "text", "shape", "image", "precomp", "generate", "null" (full
+per-type field reference for each: TEXTLAYERDEF, SHAPELAYERDEF,
+IMAGELAYERDEF, and the "precomp"/"generate"/"null" sections, all
+below). Text is the primary content every beat needs (see the "at
+least one text layer" rule below), but it is NOT the only layer type
+available - lean on "shape" (backgrounds, reveals, color blocks,
+doodles, rings, progress bars) and "image" (real icons via Iconify,
+see ICONS below) just as freely. A beat that only ever uses "text"
+layers, beat after beat, is under-using this schema, not respecting a
+restriction - there is no restriction.
 
 JSON STRING ESCAPING - a real, repeated failure: any quote character
 ("), backslash (\\), or literal newline INSIDE a text value (e.g.
@@ -322,10 +330,17 @@ BEATVISUAL
 There is no "background" field here, and never author one. The ENTIRE
 video shares ONE continuous gradient BACKDROP, generated and panned
 automatically by the render engine itself - not per beat, and not
-something you request or influence. Same for the camera panning from
-one beat to the next: handled ENTIRELY by the render engine,
-automatically, between every beat. You never author, request, or
-control either one. There is no "transitionIn" field to set right now.
+something you request or influence. Camera movement from one beat to
+the next is ALSO fully automatic (a real, unconditional eased pan
+between every beat, always - the render engine's own real, deliberate
+design, not a placeholder) - you never choose a transition STYLE (no
+crossfade/wipe/etc - there is only ever the one continuous pan). The
+ONE thing you CAN still influence about it: an optional top-level
+"transitionIn": {"duration": number} on a beat controls how long
+THAT beat's own incoming pan takes (default 0.6s) - a slower pan
+(1.0-1.5s) reads as a deliberate, weighty beat change; a faster one
+(0.3-0.4s) reads as a snappy cut-like change. Omit it entirely for the
+default pacing; there is no "type" field to set on it.
 That backdrop is the FLOOR, not the ceiling - real motion graphics
 (shapes, icons/logos) live in "layers" ON TOP of it, exactly like a
 real After Effects composition builds up from a base color into a full
@@ -838,6 +853,113 @@ is not using this engine's real range; reach for these often.
    randomly-spaced lines - achieve the tight gap with each layer's own
    "position" y-values close together (roughly the small line's own
    fontSize*1.1 apart, not the usual generous beat-wide spacing).
+10. CUMULATIVE LIST BUILD - USE THIS WHENEVER the treatment is a
+    numbered/ranked countdown ("5 reasons...", "the top 4 mistakes...",
+    "3 fonts you need") rather than a plain sequence of unrelated facts.
+    Each beat in the countdown is NOT its own isolated composition -
+    every earlier item STAYS on screen, already fully landed/static
+    (no "animators", no "textAnimation" on it - it already finished
+    animating in an EARLIER beat, so it must render motionless now),
+    while ONLY the new item for THIS beat animates in below it. This
+    means beat N's own "layers" array must re-include every item from
+    beats 1..N-1 as plain static text layers (same text/fontSize/
+    position as when they first appeared) PLUS the new Nth item as the
+    one with real reveal animation. Reserve a fixed vertical list region
+    up front (e.g. y=420 to y=820) and give each item its own fixed row
+    inside it based on its rank, independent of which beat it belongs
+    to (row height = region height / total item count from the
+    treatment's own beat count) - so item 3 always renders at the same
+    Y across every beat it appears in, items never shift position once
+    placed. A real 3-beat worked skeleton (list of 3, rows at y=520/
+    640/760):
+    beat1: [{"type":"text","text":"1. FIRST ITEM","position":[270,520],...with reveal animator}]
+    beat2: [{"type":"text","text":"1. FIRST ITEM","position":[270,520],... NO animator, static},{"type":"text","text":"2. SECOND ITEM","position":[270,640],...with reveal animator}]
+    beat3: [{"type":"text","text":"1. FIRST ITEM","position":[270,520],... static},{"type":"text","text":"2. SECOND ITEM","position":[270,640],... static},{"type":"text","text":"3. THIRD ITEM","position":[270,760],...with reveal animator}]
+    This is what makes a countdown read as one accumulating list
+    (matching real reference footage) instead of the SAME single line
+    of text being replaced beat after beat - a real, confirmed-live
+    failure mode when this pattern isn't followed. Do NOT use this
+    pattern for a beat sequence that isn't actually an enumerated list
+    (a plain narrative walkthrough with no numbers/ranking) - forcing
+    old content to persist there just clutters beats that were never
+    meant to accumulate.
+
+=====================================================================
+EFFECTDEF - real per-layer post-processing (any "shape"/"image"/"text"
+layer's own "effects": [EffectDef, ...] array, applied in order)
+=====================================================================
+28 real, working effect types exist - "dropShadow" (see AE TECHNIQUE
+PATTERNS #6 above) is only ONE of them and should not be the only one
+you ever reach for. Real reference footage leans on these constantly
+(a glitchy digital feel, a punchy glow behind a stat, a soft blur
+transition) - a video with dropShadow as its only effect, or NO effects
+at all, is under-using this engine, the same way text-only layers are.
+Each effect is {"type":"<name>","params":{...}} - every param below has
+a real default (safe to omit any you don't need to change).
+
+DEPTH/GLOW (layer styles - work on any shape/image/text layer):
+- dropShadow {color,opacity,blur,offsetX,offsetY} - see AE PATTERN #6.
+- outerGlow {color,opacity,blur,blendMode} - a soft light halo around
+  the layer's own alpha edge (great behind a stat number/icon).
+- innerGlow / innerShadow {color,opacity,blur,blendMode} - glow/shadow
+  cast INWARD from the layer's own edge instead of outward.
+- layerStroke {color,width,align} - a real, clean outline stroke around
+  the layer's own silhouette (align: "center"|"inside"|"outside").
+
+BLUR:
+- gaussianBlur {radius} / boxBlur {radius,iterations} - general softening
+  (a background element you want to visually recede, a soft focus pull).
+- directionalBlur {length,angle} - a linear motion-streak blur (great on
+  a fast-traveling accent shape).
+- radialBlur {amount,center,mode:"zoom"|"spin",samples} - a zoom-burst
+  or spin-blur radiating from a point - real impact-moment energy.
+
+COLOR GRADE (subtle grading, not garish - small values read as
+"professionally graded", large ones read as broken):
+- curves {master,r,g,b} - each an array of [input0-255,output0-255]
+  control points; omit a channel to leave it untouched.
+- hueSaturation {hueShift(deg),saturationScale,lightnessShift}
+- colorBalance {shadows:[r,g,b],midtones:[r,g,b],highlights:[r,g,b]} -
+  each a small tone-targeted color push, AE's real 3-way color wheel.
+- levels {inBlack,inWhite,gamma,outBlack,outWhite,channel}
+
+GRAIN/NOISE (a real, subtle film/analog texture - small values only,
+e.g. addGrain intensity 0.05-0.15 - large values just look broken):
+- addGrain {intensity,size,seed} - addNoise {amount,monochrome,seed}
+
+GLITCH/RETRO (real kinetic-typography energy - use as a brief accent on
+an impact beat, e.g. a "WRONG"/reveal moment, not sustained every frame):
+- rgbShift {redOffset:[dx,dy],greenOffset:[dx,dy],blueOffset:[dx,dy]} -
+  the classic chromatic-aberration glitch look; animate the offsets in
+  from a large split down to [0,0] for a "glitch resolving into focus"
+  entrance.
+- blockDisplace {bandHeight,maxShift,seed,probability} - real
+  datamosh-style horizontal band jitter.
+- scanLines {spacing,darkenAmount,lineWidth} - CRT/VHS scanline texture.
+- pixelSort {direction:"horizontal"|"vertical",threshold:[lo,hi]} - the
+  real glitch-art "pixel sorting" streak look.
+
+STYLIZE:
+- findEdges {invert} - posterize {levels} - mosaic {blockSize} - emboss
+  {strength,angle} - real graphic/poster/glitch-adjacent looks, use
+  sparingly as a deliberate stylistic choice for one specific beat, not
+  a default.
+- autoGlow {threshold,blurRadius,intensity} - blooms ONLY the layer's
+  own brightest pixels (a real HDR-glow look on bright text/icons).
+
+WARP/DISTORT (canvas-space warps - twirl/bulge/rippleWarp/waveWarp all
+take an optional "center":[x,y], default the layer's own center):
+- twirl {center,radius,angle(deg)} - a spinning vortex distortion.
+- bulge {center,radius,power} - a lens-bulge/pinch (power>1 bulges out,
+  <1 pinches in).
+- rippleWarp {center,amplitude,wavelength,phase,decay} - concentric
+  ripples radiating from a point, real water/impact-ripple energy.
+- waveWarp {amplitude,wavelength,phase,direction:"horizontal"|"vertical"} -
+  a "flag wave"/heat-shimmer ripple.
+- displacementMap {map:GenerateDef,maxDisplacement,xChannel,yChannel} -
+  an advanced per-pixel push using a second generated pattern (e.g. a
+  "fractalNoise" GenerateDef) as the displacement source; reach for the
+  simpler warps above first, this one is for real organic distortion.
 
 =====================================================================
 SELECTORS (per-character text animator drivers)
