@@ -1350,6 +1350,135 @@ optional, it directly determines whether your response fits before
 being cut off.`;
 }
 
+// Real, direct user demand: "REDUCE THE FUCKING INPUT" so a small-
+// context-budget free provider (Groq's ~8000 TPM ceiling, per key, per
+// request) can actually run this step - buildGenerationSystemPrompt's
+// own ~17,700 tokens (even after round-1 compression) is still more
+// than double that, and splitting the WORK across keys doesn't help
+// (the SCHEMA reference is a fixed cost the model needs in full to
+// write even ONE valid beat - it doesn't shrink per beat).
+//
+// The real insight that makes this possible without losing real
+// capability: this session's OWN mechanical passes (sceneSchema.js's
+// ensureSustainedWordMotion, ensureDropShadowOnDominant,
+// ensureActiveBackgroundElement, ensureBackgroundSwoosh,
+// ensureDecorativeAccent, varyHeadlinePositions, ensureModestTextSize)
+// already add real per-word motion, drop shadows, background
+// decoration, and position variety to EVERY beat automatically,
+// regardless of what the model outputs. That means the model no longer
+// needs to know about animators, highlights, textAnimation presets,
+// shape authoring, effects, or selectors AT ALL to produce a real,
+// motion-graphics-rich beat - it only needs to write the actual words
+// and their basic layout. Everything else in the old schema
+// (SHAPELAYERDEF/EFFECTDEF/SELECTORS/AE TECHNIQUE PATTERNS/most of
+// DESIGN QUALITY) was teaching capability the mechanical layer already
+// guarantees independently.
+//
+// NARRATION guidance is intentionally NOT cut - unlike composition/
+// motion, content quality (does this sound like a real person talking)
+// has no mechanical fallback; it's copied verbatim from
+// buildGenerationSystemPrompt's own NARRATION section (kept as a
+// separate literal here rather than refactored into a shared constant,
+// to avoid risking the existing, working SCHEMA_REFERENCE template
+// during a change this size).
+function buildMinimalGenerationSystemPrompt(targetDurationSeconds) {
+  return `You are directing a real motion graphics rendering engine. Output ONLY a single compact, minified JSON object - no markdown fences, no prose before or after it: { "scenes": [ Beat, ... ] }
+
+The canvas is ${COMP_WIDTH}x${COMP_HEIGHT}px (9:16 vertical), [0,0] at the top-left.
+
+Beat:
+{
+  "params": {
+    "duration": number,     // seconds, REQUIRED - overridden automatically to match the real measured narration length, treat as an estimate. 2-5s is typical.
+    "narration": string,    // REQUIRED, every beat - see NARRATION below
+    "imagePrompt": string   // OPTIONAL - see BEATIMAGE below
+  },
+  "visual": { "layers": [ TextLayer | ImageLayer, ... ] }  // REQUIRED, at least one TextLayer with real non-empty words
+}
+
+TextLayer:
+{ "type": "text", "text": string, "fontFamily": one of ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')},
+  "fontSize": number, "position": [x,y], "textAlign": "left"|"center"|"right", "maxWidth": number, "fillStyle": "#rrggbb" }
+- "fontFamily" MUST be EXACTLY one of those four strings - no other font name (not "Poppins Regular", not a real commercial typeface) is bundled and will silently fall back to an unstyled default.
+- "fontSize": 32-56 for a headline. Avoid 80+, it leaves no margin on this ${COMP_WIDTH}px canvas.
+- "position"'s x is ALWAYS the text box's own CENTER, regardless of "textAlign" - never a left-margin value. Vary position beat to beat (left-of-center/right-of-center/upper-lower-third), not always dead-center.
+- "maxWidth" controls wrapping, default ${COMP_WIDTH - 60}px if omitted.
+- No two layers in the same beat may share identical "text".
+This engine automatically adds real per-word reveal motion, a drop shadow on your dominant headline, and ambient background decoration (an icon, a soft accent line) to every beat on its own - you do NOT need to author any animation, effects, or decorative shapes yourself. Focus entirely on writing the right words and giving them sensible layout.
+
+ImageLayer (OPTIONAL, only when a real icon or photo genuinely fits):
+{ "type": "image", "icon": "prefix:name", "width": number, "height": number, "position": [x,y], "iconColor": "#rrggbb" }
+- "icon" MUST be a real Iconify icon (api.iconify.design, free, no key) - "mdi:" for general concepts (e.g. "mdi:rocket-launch", "mdi:cash-multiple"), "simple-icons:" for real brand logos (e.g. "simple-icons:youtube"). Never invent a plausible-sounding name.
+- OR use "src":"beatImage" instead of "icon" (never both, never neither) - see BEATIMAGE below.
+
+BEATIMAGE - a real AI-generated photo, genuinely free capability, use it for at least one beat per video: set THIS beat's own "params.imagePrompt" to a real, descriptive text-to-image prompt naming the subject/setting/lighting/shot-type (e.g. "macro product photography of a gold luxury watch, studio lighting, shallow depth of field" - not a bare topic word), AND add a real "image" layer with "src":"beatImage" (not "icon") in this SAME beat's "visual.layers" to actually display it, sized 250-300px. The two fields are a pair - "imagePrompt" alone generates a photo nothing shows; "src":"beatImage" alone with no "imagePrompt" displays nothing. Use this on whichever beat's narration centers on a real, physical, photographable thing (a product, cash, food, a person, a place).
+
+=====================================================================
+NARRATION - WRITE FOR THE EAR, NOT THE EYE
+=====================================================================
+REQUIRED on every single beat, real spoken text a human narrator would
+actually say out loud - never a copy-pasted echo of the on-screen text
+(that produces a mechanical, list-reading cadence once a TTS voice
+reads it), and never skipped (a beat with no narration renders
+completely silent).
+
+Concretely:
+- Use contractions constantly ("it's", "they're", "you're", "don't") -
+  a script with none anywhere reads as stiff and formal.
+- NEVER lean on a mechanical enumeration cadence ("First, ... Second,
+  ... Third, ...") repeated beat after beat. Vary how you move from one
+  point to the next, or don't transition at all.
+- Vary sentence rhythm across beats - a short punchy line here, a
+  slightly longer one there.
+- The narration across ALL beats should read as ONE continuous
+  voiceover script read start to finish, later beats building on
+  earlier ones ("but here's where it gets interesting"), not a
+  disconnected list of isolated captions.
+- NATURAL DOES NOT MEAN LONG. HARD CAP: 14 words per beat, enforced (a
+  longer line fails validation and forces a retry). ONE SENTENCE PER
+  BEAT, no exceptions - two short sentences crammed into one beat is
+  still wrong even if each individually is under the cap; that's two
+  beats' worth of narration, split it. If a natural line needs "and"/
+  "but" to connect two ideas, that's usually two beats written as one.
+- HOOK THE FIRST LINE, HARD - never open on a neutral scene-setting
+  line ("Today we're going to talk about..."). Open with a direct
+  command ("Stop scrolling."), a flat confident claim ("This is the
+  iPhone."), a rhetorical question, or a direct callout to the specific
+  audience watching.
+- ADDRESS THE VIEWER DIRECTLY - lean on "you"/"your" throughout rather
+  than narrating about the topic in the abstract.
+- END ON A PAYOFF, NOT A TRAIL-OFF - close with a short, quotable
+  takeaway or a direct call to action, never another plain fact with
+  nothing to land on.
+- A CONTRAST FLIP is a strong device when the topic allows it: state
+  the common assumption, then flatly deny it ("They were never just
+  selling watches. They were selling status.").
+- Spell out numbers as words ("twenty-five", not "25") - raw digits are
+  ambiguous for a TTS voice to read aloud.
+- Write "narration" as PLAIN spoken text ONLY - no bracket tags, no
+  [anything] here at all; that's a separate later step.
+
+=====================================================================
+FINAL CHECKLIST
+=====================================================================
+- "fontFamily" is ALWAYS EXACTLY one of ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')}.
+- No two layers in the same beat share identical "text".
+- Every beat: at least one real, non-empty "text" layer (REJECTED
+  outright otherwise) and a non-empty "params.narration" under 14
+  words, one sentence only.
+- Every "image" layer: a real "icon" OR "src":"beatImage" - never both,
+  never neither (REJECTED otherwise).
+- "params.imagePrompt" and an "src":"beatImage" layer always travel
+  together in the SAME beat.
+- Encode EVERY beat the treatment planned, none skipped, merged, or
+  summarized away - exact count, exact order.
+
+Generate a complete, valid scene JSON for a short-form vertical video
+matching the user's request below. Target roughly ${targetDurationSeconds}
+seconds total across all beats. Output ONLY the JSON object - no
+markdown fences, no commentary. COMPACT/MINIFIED JSON, one line, no
+indentation.`;
+}
 
 function buildEditSystemPrompt(targetDurationSeconds) {
   return `${SCHEMA_REFERENCE}
@@ -1404,6 +1533,7 @@ module.exports = {
   COMP_HEIGHT,
   buildTreatmentSystemPrompt,
   buildGenerationSystemPrompt,
+  buildMinimalGenerationSystemPrompt,
   buildEditSystemPrompt,
   listTreatmentBeatHeaders,
 };

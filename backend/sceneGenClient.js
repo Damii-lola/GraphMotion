@@ -1,7 +1,7 @@
 const { jsonrepair } = require('jsonrepair');
 const { validateSceneJSON } = require('./sceneSchema');
 const {
-  buildTreatmentSystemPrompt, buildGenerationSystemPrompt, buildEditSystemPrompt, listTreatmentBeatHeaders,
+  buildTreatmentSystemPrompt, buildMinimalGenerationSystemPrompt, buildEditSystemPrompt, listTreatmentBeatHeaders,
 } = require('./scenePrompts');
 const { callGroqRaw } = require('./groqClient');
 const { callMistralRaw } = require('./mistralClient');
@@ -87,8 +87,31 @@ async function callSceneJSONTransport(systemPrompt, userMessage, maxTokens) {
   }
 }
 
-async function callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, onRetry) {
-  const rawText = await callSceneJSONTransport(systemPrompt, userMessage, 28000);
+// Real, direct user demand this session: "REDUCE THE FUCKING INPUT" so
+// Groq (free, fast, but a flat ~8000 TPM ceiling per key per request)
+// can actually run the whole-scene JSON-encoding call, not just the
+// small treatment step. buildMinimalGenerationSystemPrompt measures at
+// ~1,720 tokens (down from buildGenerationSystemPrompt's ~17,700) by
+// cutting everything this session's own mechanical passes
+// (ensureSustainedWordMotion/ensureDropShadowOnDominant/
+// ensureActiveBackgroundElement/ensureBackgroundSwoosh/
+// ensureDecorativeAccent/varyHeadlinePositions, all in sceneSchema.js)
+// already guarantee regardless of what the model outputs - see that
+// function's own doc comment for the full reasoning. Groq first (fits
+// comfortably now), Gemini then Mistral as real fallback if Groq's
+// transport itself fails - same fallback shape as the rich path above,
+// just a different primary.
+async function callMinimalSceneJSONTransport(systemPrompt, userMessage, maxTokens) {
+  try {
+    return await callGroqRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 5000 });
+  } catch (err) {
+    console.warn(`[sceneGenClient] Groq failed (${err.message}), falling back to Gemini`);
+    return callSceneJSONTransport(systemPrompt, userMessage, maxTokens);
+  }
+}
+
+async function callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, onRetry, transport = callSceneJSONTransport) {
+  const rawText = await transport(systemPrompt, userMessage, 28000);
   try {
     return extractJson(rawText);
   } catch (err) {
@@ -138,15 +161,15 @@ async function generateCreativeTreatment(userPrompt, targetDurationSeconds) {
 }
 
 async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft = 16, priorErrors = null } = {}) {
-  const systemPrompt = buildGenerationSystemPrompt(targetDurationSeconds);
+  const systemPrompt = buildMinimalGenerationSystemPrompt(targetDurationSeconds);
   const beatHeaders = listTreatmentBeatHeaders(treatment);
-  let userMessage = `CREATIVE TREATMENT (already planned by a senior director - encode this EXACTLY and FAITHFULLY, missing nothing; every decision below must become real text layers/animators from the schema above, never simplified or dropped to something generic. The treatment may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead (a hard hit, a flash, a snap into place) rather than inventing a nonexistent field. Only use real fields from the schema above - never invent new ones.):\n${treatment}\n\nOriginal request: ${userPrompt}`;
+  let userMessage = `CREATIVE TREATMENT (already planned by a senior director - encode this EXACTLY and FAITHFULLY, missing nothing; every real beat/idea below must become its own real text layer, never simplified or dropped to something generic. The treatment may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead (a hard hit, a flash, a snap into place) rather than inventing a nonexistent field. Only use real fields from the schema above - never invent new ones. Motion, effects, and background decoration are already handled automatically - focus entirely on real words and layout.):\n${treatment}\n\nOriginal request: ${userPrompt}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON - still encoding the treatment above.`;
   if (beatHeaders.length > 0) {
     userMessage += `\n\nThe treatment above contains EXACTLY ${beatHeaders.length} beats:\n${beatHeaders.join('\n')}\n\nYour "scenes" array MUST contain EXACTLY ${beatHeaders.length} entries, one per beat above, in this same order - not fewer, not merged, not summarized. Before you finish, go down this list one at a time and confirm each has its own real entry in "scenes".`;
   }
 
-  const result = await callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: nextRetriesLeft, priorErrors }));
+  const result = await callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: nextRetriesLeft, priorErrors }), callMinimalSceneJSONTransport);
 
   const { valid, errors } = validateSceneJSON(result);
   const expectedBeats = beatHeaders.length;
