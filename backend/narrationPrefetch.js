@@ -345,15 +345,18 @@ async function prefetchNarration(sceneJSON, jobId) {
       // between one beat's last word and the next beat's first one
       // (muxNarrationOntoVideo inserts real silence to fill exactly this
       // remainder - see its own beat.duration - audio.duration math).
-      // Direct user feedback: pauses after a period read as too short.
-      // Real cause: the whole finished video gets sped up 1.2x AFTER
-      // this track is assembled (audioMux.js's speedUpVideo), which
-      // divides every timestamp - including this gap - by 1.2, so the
-      // 0.4s buffer this used to be only ever reached the viewer's ear
-      // at ~0.33s. Raised to 0.65s so the post-speedup pause lands
-      // around ~0.54s instead - a real, noticeably longer gap, not a
-      // cosmetic bump.
-      renderScenes[index].params.duration = duration + 0.65;
+      // The whole finished video gets sped up AFTER this track is
+      // assembled (audioMux.js's speedUpVideo, currently 1.1x), which
+      // divides every timestamp - including this gap - by that factor,
+      // so whatever's set here is NOT the real perceived pause length.
+      // Direct user request: a full 1.5s pause before each new sentence.
+      // At the current 1.1x speed factor, pre-speedup value needs to be
+      // target * 1.1 = 1.65 to land on a real 1.5s gap post-speedup. If
+      // SPEED_FACTOR in audioMux.js ever changes again, this needs
+      // re-deriving the same way (real, confirmed live via silencedetect
+      // measurement on an earlier round of this same tuning - see git
+      // history - not just trusted from the math alone).
+      renderScenes[index].params.duration = duration + 1.65;
     } catch (err) {
       console.warn(`[narrationPrefetch] beat ${index} narration failed, keeping authored duration: ${err.message}`);
     }
