@@ -4154,8 +4154,23 @@ function validateBeat(beat, path = 'beat') {
   // cap above).
   if (isPlainObject(beat.visual) && Array.isArray(beat.visual.layers)) {
     const usesBeatImage = beat.visual.layers.some((l) => isPlainObject(l) && l.type === 'image' && l.src === 'beatImage');
-    if (usesBeatImage && (!isPlainObject(beat.params) || typeof beat.params.imagePrompt !== 'string' || beat.params.imagePrompt.trim().length === 0)) {
+    const hasImagePrompt = isPlainObject(beat.params) && typeof beat.params.imagePrompt === 'string' && beat.params.imagePrompt.trim().length > 0;
+    if (usesBeatImage && !hasImagePrompt) {
       errors.push(`${path}.params.imagePrompt: this beat has an image layer with "src":"beatImage" but no "params.imagePrompt" string - that layer will render as NOTHING (a real, silent failure, not a crash). Add a real, descriptive text-to-image prompt to "params.imagePrompt" (see scenePrompts.js's own BEATIMAGE section), or switch that layer to a real "icon" instead if a photo isn't actually needed here.`);
+    }
+    // Real, confirmed-live gap the OTHER direction missed: a live
+    // generation set a real, well-written "params.imagePrompt" on a
+    // beat but never actually added a "src":"beatImage" layer anywhere
+    // in that SAME beat's "visual.layers" - the image still gets
+    // generated (wasting the call) but nothing ever displays it, and
+    // requireAtLeastOneRealPhoto (whole-scene level, below) only checks
+    // that SOME beat somewhere set imagePrompt, not that THIS beat
+    // actually has a layer to show it - so this slipped through
+    // completely undetected until the user reported "where are the
+    // images" on a real rendered video. The two fields must be paired
+    // in BOTH directions, not just one.
+    if (hasImagePrompt && !usesBeatImage) {
+      errors.push(`${path}.visual.layers: this beat set "params.imagePrompt" but has no image layer with "src":"beatImage" anywhere in "visual.layers" - the generated photo will never be displayed (a wasted image generation call, not a crash). Add a real "image" layer with "src":"beatImage" to this beat's layers to actually place it, or remove "params.imagePrompt" if this beat doesn't need a photo after all.`);
     }
   }
 
