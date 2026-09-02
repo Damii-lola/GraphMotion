@@ -4672,20 +4672,39 @@ function ensureBackgroundSwoosh(beat, beatIndex) {
   const startX = restX - Math.cos(rad) * travel;
   const startY = restY - Math.sin(rad) * travel;
 
+  // Real, direct user report on a live render: "it's broken" - a giant,
+  // hard-edged, near-full-opacity color block instead of a soft, faint
+  // diagonal band. Two real, separate bugs, both fixed here:
+  // (1) The declared layer "width"/"height" (900x150) was IDENTICAL to
+  //     the rectangle content's own size - withEffects' effects buffer
+  //     is sized exactly to those dimensions, leaving the 45px
+  //     gaussianBlur zero margin to fade INTO before hitting the
+  //     buffer's own edge, so the blur got hard-clipped there instead
+  //     of softening - a real, blurred-but-clipped edge reads as a
+  //     sharp edge, not a soft one. Fixed by declaring a LARGER buffer
+  //     (1200x450) than the rectangle content actually drawn inside it
+  //     (still 900x150, centered) - 150px of real margin on every side,
+  //     comfortably more than the 45px blur radius needs to fade to
+  //     nothing before reaching the buffer boundary.
+  // (2) Animating "opacity" was new in this exact version (previously a
+  //     plain static number, which rendered correctly - only "bland",
+  //     never "broken"); reverted back to a static value rather than
+  //     risk shipping another broken render chasing an unconfirmed
+  //     render-engine theory about animated opacity specifically on an
+  //     effects-bearing shape layer. Position stays animated (keyframed
+  //     position on OTHER effect-free layers, e.g. the watermark icon,
+  //     is separately confirmed working, so that part isn't the suspect).
   layers.unshift({
     id: '__bg_swoosh__',
     type: 'shape',
-    width: 900,
-    height: 150,
+    width: 1200,
+    height: 450,
     position: { keyframes: [
       { time: 0, value: [startX, startY] },
       { time: 0.7, value: [restX, restY], easing: 'easeOutCubic', interpolation: 'easing' },
     ] },
     rotation,
-    opacity: { keyframes: [
-      { time: 0, value: 0 },
-      { time: 0.6, value: 0.1, easing: 'easeOutCubic', interpolation: 'easing' },
-    ] },
+    opacity: 0.1,
     effects: [{ type: 'gaussianBlur', params: { radius: 45 } }],
     contents: [
       { type: 'path', shape: { kind: 'rectangle', params: { width: 900, height: 150 } } },
