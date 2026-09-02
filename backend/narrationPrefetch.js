@@ -7,6 +7,7 @@ const deepgramTts = require('./deepgramTtsGen');
 const fishTts = require('./fishTtsGen');
 const edgeTts = require('./ttsGen');
 const { annotateNarrationTags } = require('./narrationTagging');
+const { getWordTimings } = require('./wordTiming');
 
 /**
  * Production narration voice promoted to Deepgram's Aura-2 (orpheus)
@@ -339,6 +340,13 @@ async function prefetchNarration(sceneJSON, jobId) {
 
       const duration = await getAudioDurationSeconds(filePath);
       audioFiles.set(index, { path: filePath, duration });
+
+      // Real, audio-measured per-word timing (start/end seconds within
+      // THIS clip) - see wordTiming.js's own doc comment. Read back off
+      // disk rather than reusing `buf` above since `buf` is the PRE-trim
+      // TTS output; this needs to match the exact audio that ships.
+      const wordTimings = await getWordTimings(fs.readFileSync(filePath));
+      if (wordTimings) renderScenes[index].params.wordTimings = wordTimings;
       // Buffer so the visual doesn't cut away the instant speech ends -
       // a beat that's ONLY as long as the narration reads as clipped,
       // not intentional. This gap is also the actual audible pause
