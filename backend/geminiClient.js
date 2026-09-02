@@ -74,10 +74,18 @@ const KEYS = loadKeys();
 // Flash-tier models tend to stay available longer than Pro-tier ones
 // (cheaper for Google to keep serving), and this one has a far more
 // generous free quota (~1,500 req/day vs 2.5-pro's ~50) if it IS still
-// live. One real test will show a 404 immediately if it's also retired -
-// revert to 'gemini-3.1-flash-lite' the instant that happens, same as
-// every other failed attempt tonight.
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+// live.
+//
+// REVERTED same day: also retired - "This model models/gemini-2.5-flash
+// is no longer available to new users." The ENTIRE Gemini catalog has
+// now actually been tried, live, in this project: 3.6-flash (hard
+// 20/day quota wall), 3.8-flash (broken JSON output), 2.5-pro
+// (retired), 2.5-flash (retired). flash-lite is the only model in the
+// whole family confirmed to work. This search is done, not paused -
+// do not try another Gemini model name without a genuinely new reason
+// to believe it's different (e.g. a real new release Google announces
+// later), not just "try the other one."
+const MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
 
 if (KEYS.length === 0) {
   console.warn('[geminiClient] No GEMINI_API_KEYS/GEMINI_API_KEY_N configured');
