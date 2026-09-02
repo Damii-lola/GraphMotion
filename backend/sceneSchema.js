@@ -4238,6 +4238,7 @@ function validateSceneJSON(sceneJSON) {
   ensureSustainedWordMotion(sceneJSON);
   ensureDropShadowOnDominant(sceneJSON);
   requireAtLeastOneRealPhoto(sceneJSON, errors);
+  ensureVisibleHeroImage(sceneJSON);
   if (Array.isArray(sceneJSON.scenes)) {
     // Picked ONCE from the WHOLE video's combined text, not per-beat -
     // real, direct finding from testing per-beat matching first: most
@@ -4258,7 +4259,15 @@ function validateSceneJSON(sceneJSON) {
       .join(' ');
     const videoTopic = pickTopicIcon(wholeVideoText);
     sceneJSON.scenes.forEach((beat, i) => {
-      if (isPlainObject(beat)) ensureActiveBackgroundElement(beat, i, videoTopic);
+      if (!isPlainObject(beat)) return;
+      // Order matters: each call unshift()s to the FRONT of the layers
+      // array, and later entries draw ON TOP of earlier ones - calling
+      // the icon first, swoosh second, means swoosh's own unshift lands
+      // it BEFORE (behind) the icon in the final array, so the icon
+      // still reads on top of the soft background band, not buried
+      // under it.
+      ensureActiveBackgroundElement(beat, i, videoTopic);
+      ensureBackgroundSwoosh(beat, i);
     });
   }
 
@@ -4463,13 +4472,26 @@ function ensureSustainedWordMotion(sceneJSON) {
   });
 }
 
-// Four corner "bleed" anchors - the icon's own CENTER sits AT the
-// corner point, so roughly a quarter of it naturally bleeds off two
-// canvas edges at once, matching real reference footage (a giant
-// watermark icon/silhouette cropped by the frame, not a clean fully-
-// on-canvas graphic) rather than a neat little accent floating free in
-// open space.
-const BG_WATERMARK_CORNERS = [[0, 0], [CANVAS_WIDTH, 0], [0, CANVAS_HEIGHT], [CANVAS_WIDTH, CANVAS_HEIGHT]];
+// 8 candidate anchors - the 4 corners PLUS the 4 edge midpoints (real,
+// direct user feedback: "most of it is just off screen" - the first
+// version centered the icon EXACTLY on the raw corner point, bleeding
+// off TWO edges at once with only roughly a quarter of the icon left
+// on-canvas; also "meant to appear randomly btw the 4 diff corners and
+// the middle" - a plain 4-corner alternation read as too predictable).
+// bleedX/bleedY (-1/0/1) say which direction(s) this anchor's resting
+// position gets pulled OFF-canvas from its raw edge point - a corner
+// bleeds both axes, an edge midpoint only the one perpendicular axis
+// (so a top/bottom-mid anchor never bleeds sideways, only up/down).
+const BG_WATERMARK_ANCHORS = [
+  { x: 0, y: 0, bleedX: 1, bleedY: 1 },
+  { x: CANVAS_WIDTH, y: 0, bleedX: -1, bleedY: 1 },
+  { x: 0, y: CANVAS_HEIGHT, bleedX: 1, bleedY: -1 },
+  { x: CANVAS_WIDTH, y: CANVAS_HEIGHT, bleedX: -1, bleedY: -1 },
+  { x: CANVAS_WIDTH / 2, y: 0, bleedX: 0, bleedY: 1 },
+  { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT, bleedX: 0, bleedY: -1 },
+  { x: 0, y: CANVAS_HEIGHT / 2, bleedX: 1, bleedY: 0 },
+  { x: CANVAS_WIDTH, y: CANVAS_HEIGHT / 2, bleedX: -1, bleedY: 0 },
+];
 
 /**
  * Real, direct user feedback with an annotated reference screenshot:
@@ -4518,31 +4540,56 @@ function ensureActiveBackgroundElement(beat, beatIndex, topic) {
     return { left: p[0] - w / 2, right: p[0] + w / 2, top: p[1] - h / 2, bottom: p[1] + h / 2 };
   }).filter(Boolean);
 
-  const WATERMARK_SIZE = 320;
+  const WATERMARK_SIZE = 240;
+  // How far the resting position is pulled IN from the raw edge point,
+  // along each bleeding axis - real, direct user feedback ("most of it
+  // is just off screen") against the first version, which centered the
+  // icon exactly ON the edge point (half+ of it off-canvas). Pulled in
+  // by 34% of the icon's own half-size, leaving roughly two-thirds of
+  // it genuinely visible on-canvas while still letting the remainder
+  // bleed past the frame edge for the real "cropped watermark" look
+  // reference footage has - not a fully on-canvas graphic, not a
+  // mostly-invisible one either.
+  const INSET = WATERMARK_SIZE * 0.34;
   const overlapsAnyText = (cx, cy) => {
     const half = WATERMARK_SIZE / 2;
     const wmRect = { left: cx - half, right: cx + half, top: cy - half, bottom: cy + half };
     return textRects.some((r) => wmRect.left < r.right && wmRect.right > r.left && wmRect.top < r.bottom && wmRect.bottom > r.top);
   };
 
-  const preferredCorner = BG_WATERMARK_CORNERS[beatIndex % BG_WATERMARK_CORNERS.length];
-  const oppositeCorner = BG_WATERMARK_CORNERS[(beatIndex + 2) % BG_WATERMARK_CORNERS.length];
-  let corner = null;
-  if (!overlapsAnyText(preferredCorner[0], preferredCorner[1])) corner = preferredCorner;
-  else if (!overlapsAnyText(oppositeCorner[0], oppositeCorner[1])) corner = oppositeCorner;
-  if (!corner) return;
+  // Seeded pseudo-random order across ALL 8 anchors (corners + edge
+  // midpoints), not a predictable 2-way alternation - direct user
+  // feedback: "they are meant to appear randomly btw the 4 diff corners
+  // and the middle". Deterministic (same beat always picks the same
+  // anchor on a re-render) but varies beat-to-beat and video-to-video.
+  // Tries anchors in this seeded order until one doesn't collide with
+  // this beat's own text; skips the watermark entirely (rather than
+  // force an overlap) if none of the 8 are clear.
+  const baseSeed = hashString(topic.icon + beatIndex);
+  const order = BG_WATERMARK_ANCHORS
+    .map((a, idx) => ({ a, key: hashString(topic.icon + beatIndex + idx) }))
+    .sort((p, q) => p.key - q.key)
+    .map((p) => p.a);
 
-  const [cx, cy] = corner;
-  // Slides in from further past its own resting corner (still centered
-  // on the same corner point, just displaced outward along the
-  // diagonal toward canvas center at rest, further out at the start) -
-  // a real, visible entrance rather than present from frame 0. Faint
-  // rotation (seeded, not random-per-render) adds the same kind of
-  // deliberate-not-static feel real reference watermarks have.
-  const dirX = cx === 0 ? 1 : -1;
-  const dirY = cy === 0 ? 1 : -1;
+  let anchor = null;
+  let restX = 0; let restY = 0;
+  for (const cand of order) {
+    const rx = cand.x + cand.bleedX * INSET;
+    const ry = cand.y + cand.bleedY * INSET;
+    if (!overlapsAnyText(rx, ry)) { anchor = cand; restX = rx; restY = ry; break; }
+  }
+  if (!anchor) return;
+
+  const [cx, cy] = [restX, restY];
+  // Slides in from further past its own resting spot (same bleed
+  // direction, just displaced further out at the start) - a real,
+  // visible entrance rather than present from frame 0. Faint rotation
+  // (seeded, not random-per-render) adds the same kind of deliberate-
+  // not-static feel real reference watermarks have.
+  const dirX = anchor.bleedX || 0;
+  const dirY = anchor.bleedY || 0;
   const startOffset = 50;
-  const seed = hashString(topic.icon + beatIndex);
+  const seed = baseSeed;
   const rotation = ((seed % 30) - 15);
 
   beat.visual.layers.unshift({
@@ -4560,6 +4607,94 @@ function ensureActiveBackgroundElement(beat, beatIndex, topic) {
       { time: 0, value: 0 },
       { time: 0.6, value: 0.22, easing: 'easeOutCubic', interpolation: 'easing' },
     ] },
+  });
+}
+
+/**
+ * Real, direct user follow-up on the SAME reference screenshot as
+ * ensureActiveBackgroundElement above: "where is the line" - the soft
+ * diagonal color band visible sweeping across the reference video's own
+ * background, a second real "active background" element distinct from
+ * the corner watermark icon. A wide, rotated rectangle shape layer with
+ * NO stroke (fill only, low opacity) plus a real gaussianBlur effect on
+ * that same layer for the soft, feathered edge reference footage has
+ * (a hard-edged rectangle would read as a UI panel, not an ambient
+ * background sweep). Diagonal direction alternates by beat index for
+ * variety; drawn BEHIND everything (unshifted to the front of the
+ * layers array, same z-order rule as the watermark icon above) and
+ * BEFORE the watermark icon specifically so the icon still reads on
+ * top of it, not buried under it.
+ */
+function ensureBackgroundSwoosh(beat, beatIndex) {
+  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  const layers = beat.visual.layers;
+  const alreadyHasSwoosh = layers.some((l) => isPlainObject(l) && l.id === '__bg_swoosh__');
+  if (alreadyHasSwoosh) return;
+
+  const diagonalDown = beatIndex % 2 === 0;
+  const rotation = diagonalDown ? 32 : -32;
+  const seed = hashString('swoosh' + beatIndex);
+  const color = ACCENT_PALETTE[seed % ACCENT_PALETTE.length];
+
+  layers.unshift({
+    id: '__bg_swoosh__',
+    type: 'shape',
+    width: 900,
+    height: 150,
+    position: [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2],
+    rotation,
+    opacity: 0.1,
+    effects: [{ type: 'gaussianBlur', params: { radius: 45 } }],
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: 900, height: 150 } } },
+      { type: 'fill', color },
+    ],
+  });
+}
+
+/**
+ * Real, direct measurement: the FIRST real generation to actually use
+ * "params.imagePrompt" (right after BEATIMAGE's own prompt section
+ * shipped) set that beat's "src":"beatImage" layer to "opacity":0.3 -
+ * a real AI-generated macro photo of watch gears, rendered so faint in
+ * the actual output video it read as a vague background wash, not a
+ * real hero photo (confirmed directly via a rendered contact sheet).
+ * BEATIMAGE's own guidance never said anything about opacity at all,
+ * so the model picked a low value on its own, probably erring cautious
+ * about text legibility - same "prompt gap -> mechanical floor" story
+ * as everything else in this file. A real photo the user (and this
+ * project's own reference-video research) specifically wants FEATURED
+ * should never render as a faint wash - bumps any "beatImage" layer's
+ * own STATIC (plain-number) opacity up to a real, visible floor. A
+ * legitimately ANIMATED (keyframed) opacity is left alone - that's a
+ * deliberate fade-in/out choice, a different case from a flat, static
+ * "just make it faint" value.
+ */
+// Real, direct user feedback on the very next test after imagePrompt
+// first shipped: "the image and the text is sooooo big that there is
+// barely any room for the rest of the stuff to fit" - the model's own
+// first real hero image came back at 450x450 (83% of the 540px canvas
+// width), technically within BEATIMAGE's own stated "60-84%" range,
+// which was itself simply too generous. Capped here as a real ceiling
+// (proportional shrink, aspect ratio preserved) rather than relying on
+// a tighter prompt number alone actually being followed.
+const MAX_HERO_IMAGE_PX = 300;
+
+function ensureVisibleHeroImage(sceneJSON) {
+  const scenes = sceneJSON.scenes;
+  if (!Array.isArray(scenes)) return;
+  const MIN_HERO_OPACITY = 0.85;
+  scenes.forEach((beat) => {
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    beat.visual.layers.forEach((l) => {
+      if (!isPlainObject(l) || l.type !== 'image' || l.src !== 'beatImage') return;
+      if (typeof l.opacity === 'number' && l.opacity < MIN_HERO_OPACITY) l.opacity = MIN_HERO_OPACITY;
+      if (typeof l.width === 'number' && typeof l.height === 'number' && Math.max(l.width, l.height) > MAX_HERO_IMAGE_PX) {
+        const scale = MAX_HERO_IMAGE_PX / Math.max(l.width, l.height);
+        l.width = Math.round(l.width * scale);
+        l.height = Math.round(l.height * scale);
+      }
+    });
   });
 }
 

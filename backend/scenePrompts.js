@@ -803,9 +803,16 @@ background, dramatic side lighting, photorealistic" or "a gold luxury
 wristwatch, product photography, white background, studio lighting".
 Then, in that SAME beat's "visual.layers", add a real "image" layer
 with "src":"beatImage" (NOT "icon") to actually place it - size/position
-it like any other image layer (a natural hero size is roughly 60-84% of
-the canvas width, placed as a focal element, not full-bleed background -
-the continuous gradient backdrop already handles full-bleed). Setting
+it like any other image layer. KEEP IT MODEST: max 280-300px on its
+longer side (roughly 40-55% of the canvas width) - a real, direct user
+complaint after the first version overshot this ("the image and the
+text is sooooo big that there is barely any room for the rest of the
+stuff to fit") - a focal accent alongside real headline/decoration
+room, never the dominant thing eating the whole composition. Also keep
+"opacity" at or near 1 (0.85+) - this is a real featured photo, not a
+faint background texture; a low opacity here reads as a washed-out
+mistake, not a stylistic choice (the continuous gradient backdrop
+already handles full-bleed background). Setting
 "imagePrompt" with no "src":"beatImage" layer generates an image nothing
 ever displays (wasted); adding "src":"beatImage" with no "imagePrompt"
 on that beat displays nothing (a real, silent failure - see BEATIMAGE
