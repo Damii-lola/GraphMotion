@@ -4580,15 +4580,54 @@ function isBeatAlreadyDecorated(beat) {
  * own card) - the SAME icon appearing twice in one frame reads as a
  * mistake, not a deliberate motif.
  */
+// Real, direct follow-up user feedback with screenshots, after the
+// minimal-schema Groq prompt shipped: "the icons aint even at the
+// corners or even big that's the main issue." Root-caused directly
+// against a real job's own JSON: every icon on screen (bitcoin, crown,
+// factory, gears, bank) was the MODEL's own small (30-60px), near-text
+// "ImageLayer" choice - this session's earlier assumption (the model
+// rarely adds its own icons, so inject a NEW one via keyword-matching)
+// no longer holds now that the minimal prompt explicitly offers
+// ImageLayer as one of its only two real tools and the model leans on
+// it often, sometimes 2-3 per beat. pickTopicIcon's own keyword table
+// almost never got a chance to fire as a result (near-zero real
+// matches across the same job). The fix: MECHANICALLY TRANSFORM the
+// beat's own existing icon into the big/corner/animated watermark
+// style instead of trying to inject a competing second one - the
+// model is already choosing genuinely relevant icons per beat (a
+// crown for Rolex, a factory for production, gears for assembly), the
+// only real problem was their size and position, not their relevance.
+const SMALL_ICON_MAX_SIZE = 100;
+function findExistingSmallIcon(layers) {
+  return layers.find((l) => isPlainObject(l) && l.type === 'image' && typeof l.icon === 'string'
+    && typeof l.width === 'number' && l.width <= SMALL_ICON_MAX_SIZE);
+}
+
 function ensureActiveBackgroundElement(beat, beatIndex, topic) {
-  if (!topic) return;
   if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
-  if (isBeatAlreadyDecorated(beat)) return;
   const layers = beat.visual.layers;
+  const existingIcon = findExistingSmallIcon(layers);
 
-  const alreadyUsed = layers.some((l) => isPlainObject(l) && l.type === 'image' && l.icon === topic.icon);
-  if (alreadyUsed) return;
+  // Fallback path (no icon of its own at all): behaves exactly as
+  // before - inject one via keyword-matching, skip outright if nothing
+  // matches or if this beat already reads as busy.
+  if (!existingIcon) {
+    if (!topic) return;
+    if (isBeatAlreadyDecorated(beat)) return;
+    const alreadyUsed = layers.some((l) => isPlainObject(l) && l.type === 'image' && l.icon === topic.icon);
+    if (alreadyUsed) return;
+    return injectWatermarkIcon(beat, beatIndex, topic.icon, 0.22);
+  }
 
+  // Primary path: enlarge/reposition the model's OWN icon in place -
+  // keeps its already-relevant icon choice and color, just fixes size/
+  // position. A real, visible opacity (not the old faint 0.22) since
+  // this is now the beat's own real content, not pure ambient texture.
+  transformIconIntoWatermark(beat, beatIndex, existingIcon, 0.55);
+}
+
+function transformIconIntoWatermark(beat, beatIndex, iconLayer, targetOpacity) {
+  const layers = beat.visual.layers;
   const textLayers = layers.filter((l) => isPlainObject(l) && l.type === 'text' && typeof l.fontSize === 'number');
   const textRects = textLayers.map((l) => {
     const p = representativePosition(l.position);
@@ -4624,9 +4663,10 @@ function ensureActiveBackgroundElement(beat, beatIndex, topic) {
   // Tries anchors in this seeded order until one doesn't collide with
   // this beat's own text; skips the watermark entirely (rather than
   // force an overlap) if none of the 8 are clear.
-  const baseSeed = hashString(topic.icon + beatIndex);
+  const seedKey = iconLayer.icon || 'icon';
+  const baseSeed = hashString(seedKey + beatIndex);
   const order = BG_WATERMARK_ANCHORS
-    .map((a, idx) => ({ a, key: hashString(topic.icon + beatIndex + idx) }))
+    .map((a, idx) => ({ a, key: hashString(seedKey + beatIndex + idx) }))
     .sort((p, q) => p.key - q.key)
     .map((p) => p.a);
 
@@ -4637,7 +4677,7 @@ function ensureActiveBackgroundElement(beat, beatIndex, topic) {
     const ry = cand.y + cand.bleedY * INSET;
     if (!overlapsAnyText(rx, ry)) { anchor = cand; restX = rx; restY = ry; break; }
   }
-  if (!anchor) return;
+  if (!anchor) return false;
 
   const [cx, cy] = [restX, restY];
   // Slides in from further past its own resting spot (same bleed
@@ -4648,25 +4688,43 @@ function ensureActiveBackgroundElement(beat, beatIndex, topic) {
   const dirX = anchor.bleedX || 0;
   const dirY = anchor.bleedY || 0;
   const startOffset = 50;
-  const seed = baseSeed;
-  const rotation = ((seed % 30) - 15);
+  const rotation = ((baseSeed % 30) - 15);
 
+  // Mutates the model's OWN icon layer in place - same icon/color it
+  // already chose, only size/position/motion change. Left where it
+  // already sits in "layers" (z-order relative to text is whatever the
+  // model intended), not moved to the front/back.
+  iconLayer.width = WATERMARK_SIZE;
+  iconLayer.height = WATERMARK_SIZE;
+  iconLayer.rotation = rotation;
+  iconLayer.position = { keyframes: [
+    { time: 0, value: [cx + dirX * startOffset, cy + dirY * startOffset] },
+    { time: 0.7, value: [cx, cy], easing: 'easeOutCubic', interpolation: 'easing' },
+  ] };
+  iconLayer.opacity = { keyframes: [
+    { time: 0, value: 0 },
+    { time: 0.6, value: targetOpacity, easing: 'easeOutCubic', interpolation: 'easing' },
+  ] };
+  return true;
+}
+
+// Fallback path only (no icon of its own): the original inject-a-new-
+// watermark behavior, unchanged - kept as its own function so the
+// primary (transform-in-place) and fallback (inject) paths stay
+// clearly separate instead of one function branching internally.
+// Removes the injected layer again if no non-colliding anchor was
+// found - real edge case this closes: transformIconIntoWatermark
+// returning early with the freshly-unshifted layer still sitting in
+// "layers" at its default (unset) position would leave a stray,
+// un-animated tiny icon at the canvas origin instead of cleanly
+// skipping like every other "no room for it" case in this file does.
+function injectWatermarkIcon(beat, beatIndex, icon, targetOpacity) {
   beat.visual.layers.unshift({
-    type: 'image',
-    icon: topic.icon,
-    iconColor: '#9A9A9A',
-    width: WATERMARK_SIZE,
-    height: WATERMARK_SIZE,
-    rotation,
-    position: { keyframes: [
-      { time: 0, value: [cx + dirX * startOffset, cy + dirY * startOffset] },
-      { time: 0.7, value: [cx, cy], easing: 'easeOutCubic', interpolation: 'easing' },
-    ] },
-    opacity: { keyframes: [
-      { time: 0, value: 0 },
-      { time: 0.6, value: 0.22, easing: 'easeOutCubic', interpolation: 'easing' },
-    ] },
+    type: 'image', icon, iconColor: '#9A9A9A', width: 40, height: 40,
   });
+  const injected = beat.visual.layers[0];
+  const ok = transformIconIntoWatermark(beat, beatIndex, injected, targetOpacity);
+  if (!ok) beat.visual.layers.shift();
 }
 
 /**
@@ -4713,13 +4771,19 @@ function ensureBackgroundSwoosh(beat, beatIndex) {
   const layers = beat.visual.layers;
   const alreadyHasSwoosh = layers.some((l) => isPlainObject(l) && l.id === '__bg_swoosh__');
   if (alreadyHasSwoosh) return;
-  // Real, direct user report: a beat with ensureDecorativeAccent's own
-  // full 4-layer card composition (background card, kicker pill,
-  // divider bar, its own icon) PLUS a swoosh on top read as genuine
-  // clutter, not texture - "what up with the bg icons??? what up with
-  // the text box". A beat already this rich doesn't need (and can't
-  // visually afford) one more ambient element stacked on it.
-  if (isBeatAlreadyDecorated(beat)) return;
+  // The isBeatAlreadyDecorated clutter-gate that used to sit here was
+  // REMOVED per a real, direct follow-up bug report: "in one of the
+  // scenes, the line isnt there" - traced directly to a beat with 3
+  // small (30px) model-added gear icons tripping the same >=3 threshold
+  // built for a genuinely different, heavier case (ensureDecorativeAccent's
+  // own full 4-layer card: background card, kicker pill, divider bar,
+  // icon). A few small foreground icons can't visually clash with a
+  // faint (opacity ~0.1), fully-behind-everything background wash the
+  // way a whole card composition could - this gate was blocking the
+  // swoosh far more often than the original clutter concern ever
+  // applied. The clutter-gate stays on ensureActiveBackgroundElement's
+  // own fallback-inject path (a NEW foreground icon competing with
+  // existing ones is a real concern there); it never belonged here.
 
   // "beatIndex % 2 === 0" would always be true here now (odd beats
   // already returned above) - direction now comes from the seed hash
