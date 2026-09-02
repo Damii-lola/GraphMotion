@@ -4509,6 +4509,30 @@ const BG_WATERMARK_ANCHORS = [
   { x: CANVAS_WIDTH, y: CANVAS_HEIGHT / 2, bleedX: -1, bleedY: 0 },
 ];
 
+// Real, direct user report on a live render: "what's up with the bg
+// icons??? what up with the text box... WHAT THE FUCK IS WRONG WITH
+// THE VIDEO" - traced to a real, confirmed cause: beat 4 of that exact
+// job had FIVE separate decorative layers stacked on one frame -
+// ensureDecorativeAccent's own full card composition (a background
+// card, a kicker pill, a divider bar, its own topic icon - 4 layers,
+// ALL mechanically injected by THAT function when it found a bare
+// beat) PLUS this file's own swoosh on top, with no coordination
+// between the two mechanical passes at all - each one only checks
+// its OWN prior output, never what the OTHER already added. This
+// helper gives ensureActiveBackgroundElement/ensureBackgroundSwoosh a
+// real way to back off when a beat is already visually rich, instead
+// of blindly stacking on top of it regardless.
+function isBeatAlreadyDecorated(beat) {
+  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return false;
+  const OWN_MARKER_IDS = new Set(['__bg_swoosh__']);
+  const decorativeCount = beat.visual.layers.filter((l) => isPlainObject(l)
+    && (l.type === 'shape' || l.type === 'image')
+    && !OWN_MARKER_IDS.has(l.id)
+    && l.iconColor !== '#9A9A9A' // this file's own watermark icon, not a THIRD pass's decision to make
+  ).length;
+  return decorativeCount >= 2;
+}
+
 /**
  * Real, direct user feedback with an annotated reference screenshot:
  * "their bg isnt plain...see that line in the background see the
@@ -4541,6 +4565,7 @@ const BG_WATERMARK_ANCHORS = [
 function ensureActiveBackgroundElement(beat, beatIndex, topic) {
   if (!topic) return;
   if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  if (isBeatAlreadyDecorated(beat)) return;
   const layers = beat.visual.layers;
 
   const alreadyUsed = layers.some((l) => isPlainObject(l) && l.type === 'image' && l.icon === topic.icon);
@@ -4670,6 +4695,13 @@ function ensureBackgroundSwoosh(beat, beatIndex) {
   const layers = beat.visual.layers;
   const alreadyHasSwoosh = layers.some((l) => isPlainObject(l) && l.id === '__bg_swoosh__');
   if (alreadyHasSwoosh) return;
+  // Real, direct user report: a beat with ensureDecorativeAccent's own
+  // full 4-layer card composition (background card, kicker pill,
+  // divider bar, its own icon) PLUS a swoosh on top read as genuine
+  // clutter, not texture - "what up with the bg icons??? what up with
+  // the text box". A beat already this rich doesn't need (and can't
+  // visually afford) one more ambient element stacked on it.
+  if (isBeatAlreadyDecorated(beat)) return;
 
   // "beatIndex % 2 === 0" would always be true here now (odd beats
   // already returned above) - direction now comes from the seed hash
