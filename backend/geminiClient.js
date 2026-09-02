@@ -39,18 +39,19 @@ const KEYS = loadKeys();
 // (no thoughtsTokenCount in its usageMetadata), so it's also cheaper per
 // call.
 //
-// TESTING gemini-3.8-flash (2026-09-02): real, direct user complaint
-// that flash-lite's own JSON-encoding output quality has a genuine
-// ceiling (inconsistent composition, missed instructions even with
-// heavy mechanical scaffolding) - Google's own current pricing page
-// confirms 3.8-flash's input/output tokens are BOTH still "Free of
-// charge" on the free tier, same as flash-lite, and it's a newer, more
-// capable model. The ONLY unknown is whether it carries a restrictive
-// per-model DAILY REQUEST quota the way 3.6-flash did (20/day, confirmed
-// live) - untested until now. If this hits the same wall, revert to
-// 'gemini-3.1-flash-lite' immediately; if not, this is a genuine free
-// quality upgrade with zero cost and zero other tradeoff.
-const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+// TRIED gemini-3.8-flash (2026-09-02), REVERTED same day: a real live
+// test job failed outright at the JSON-parsing stage ("Expected
+// double-quoted property name in JSON") - not the anticipated daily-
+// quota wall (that would show RESOURCE_EXHAUSTED), a genuinely
+// different and worse failure: 3.8-flash's raw output apparently
+// doesn't follow this prompt's strict compact-JSON formatting rules
+// reliably enough for even jsonrepair's fallback to recover, across
+// every one of generateWholeSceneJSON's own retries, ending in a hard
+// failure the user actually saw ("failed" status, not just a retry).
+// flash-lite has never produced a hard parse failure like this in any
+// real generation this project has run. Back to the known-reliable
+// model; a stronger model is worth revisiting later, but not this one.
+const MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
 
 if (KEYS.length === 0) {
   console.warn('[geminiClient] No GEMINI_API_KEYS/GEMINI_API_KEY_N configured');
