@@ -4140,6 +4140,25 @@ function validateBeat(beat, path = 'beat') {
       errors.push(`${path}.params.narration: "${beat.params.narration.trim()}" is ${wordCount} words - too long for one beat (cap is ${MAX_NARRATION_WORDS}). This reads as two ideas stacked into one narration line. Split it into two separate beats instead, each with its own short line, matching this project's fast-paced reference style - not one long sentence with a trailing clause tacked on.`);
     }
   }
+  // Real, confirmed-live silent failure mode this closes: "src":"beatImage"
+  // on an image layer resolves to nothing at all (sceneBuilder.js's
+  // buildImageDraw literally draws nothing) unless this SAME beat also
+  // sets a top-level "params.imagePrompt" string - a completely separate
+  // field the model was never told about at all until scenePrompts.js's
+  // own BEATIMAGE section was added. Confirmed directly: every real
+  // generation audited before that fix used "icon" exclusively, never
+  // "beatImage", on every single image layer - the model had no way to
+  // know setting one without the other renders as a dead, invisible
+  // layer. Caught here as a real, retry-triggering error rather than
+  // hoping prompt wording alone is enough (same lesson as the narration
+  // cap above).
+  if (isPlainObject(beat.visual) && Array.isArray(beat.visual.layers)) {
+    const usesBeatImage = beat.visual.layers.some((l) => isPlainObject(l) && l.type === 'image' && l.src === 'beatImage');
+    if (usesBeatImage && (!isPlainObject(beat.params) || typeof beat.params.imagePrompt !== 'string' || beat.params.imagePrompt.trim().length === 0)) {
+      errors.push(`${path}.params.imagePrompt: this beat has an image layer with "src":"beatImage" but no "params.imagePrompt" string - that layer will render as NOTHING (a real, silent failure, not a crash). Add a real, descriptive text-to-image prompt to "params.imagePrompt" (see scenePrompts.js's own BEATIMAGE section), or switch that layer to a real "icon" instead if a photo isn't actually needed here.`);
+    }
+  }
+
   const knownIds = new Set();
   validateBeatVisual(beat.visual, `${path}.visual`, errors, knownIds);
   return { valid: errors.length === 0, errors };

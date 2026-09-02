@@ -105,6 +105,17 @@ BEAT
                                // stylistic gap. See NARRATION - WRITE FOR THE
                                // EAR, NOT THE EYE below for how to write this
                                // well, not just present.
+    "imagePrompt": string      // OPTIONAL but STRONGLY ENCOURAGED for a real
+                               // fraction of beats (see BEATIMAGE - REAL
+                               // PHOTOGRAPHIC CONTENT below) - a real AI image
+                               // generation prompt (Flux). Setting this on a
+                               // beat is what makes "src":"beatImage" in that
+                               // SAME beat's "image" layer(s) actually draw
+                               // something - without it, "src":"beatImage"
+                               // renders NOTHING (a real, silent failure mode,
+                               // not a crash - see BEATIMAGE below). Omit
+                               // entirely for a beat that uses only icons/
+                               // shapes/text, no image layer.
   },
   "visual": BeatVisual
 }
@@ -769,6 +780,54 @@ name is real, prefer a well-known "mdi:" concept icon over guessing at
 a more specific or brand-specific one.
 An image layer needs either "icon" or "src":"beatImage" (an AI-
 generated hero photo for this beat) - never both, never neither.
+
+=====================================================================
+BEATIMAGE - REAL PHOTOGRAPHIC CONTENT (a real, working, currently
+UNDER-USED capability - use it deliberately, often)
+=====================================================================
+Real reference footage in this exact space (short-form kinetic-
+typography/motion-graphics content) leans HEAVILY on real photographic
+or rendered imagery as its visual backbone - a real product shot, a
+real photo cutout, a real textured/rendered hero image sitting behind
+or beside the text - not text and vector icons alone floating on a flat
+color. A video built entirely from icons/shapes/text, beat after beat,
+with zero real imagery anywhere, reads as noticeably flatter/cheaper
+than reference work - reach for a real image often, not as a rare
+accent.
+
+HOW: set this BEAT's own top-level "params.imagePrompt" (a sibling of
+"duration"/"narration", NOT inside "visual") to a real, descriptive
+text-to-image prompt (Flux model, free, generated automatically before
+render) - e.g. "a stack of hundred dollar bills on a dark textured
+background, dramatic side lighting, photorealistic" or "a gold luxury
+wristwatch, product photography, white background, studio lighting".
+Then, in that SAME beat's "visual.layers", add a real "image" layer
+with "src":"beatImage" (NOT "icon") to actually place it - size/position
+it like any other image layer (a natural hero size is roughly 60-84% of
+the canvas width, placed as a focal element, not full-bleed background -
+the continuous gradient backdrop already handles full-bleed). Setting
+"imagePrompt" with no "src":"beatImage" layer generates an image nothing
+ever displays (wasted); adding "src":"beatImage" with no "imagePrompt"
+on that beat displays nothing (a real, silent failure - see BEATIMAGE
+above). The two always travel together.
+
+WRITE THE PROMPT LIKE A REAL PHOTOGRAPHER/RENDER ARTIST WOULD, not a
+vague topic word - name the actual subject, the setting/background, the
+lighting, and the shot type (e.g. "product photography", "cinematic",
+"studio lighting", "shallow depth of field", "textured paper
+background") - a bare one-or-two-word prompt like "money" or "success"
+produces a far weaker, more generic result than a fully art-directed one.
+
+WHEN TO USE IT: any beat whose own narration/on-screen text centers on
+a real, physical, photographable thing (a product, cash, a person, an
+object, a place, food) is a strong candidate - this is exactly the kind
+of beat reference footage gives a real hero shot to, instead of a
+generic icon standing in for it. A beat about a pure abstract idea with
+nothing physical to depict is a reasonable one to skip. Across a whole
+video, aim for AT LEAST 1-2 real "imagePrompt" beats in a typical
+4-6 beat video - not every beat needs one, but a video with ZERO of
+them is under-using this engine's real range, the same way a beat with
+only "dropShadow" under-uses the effects library.
 
 =====================================================================
 AE TECHNIQUE PATTERNS - real recipes, not abstract capability
