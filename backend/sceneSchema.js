@@ -4253,36 +4253,44 @@ function validateSceneJSON(sceneJSON) {
   ensureSustainedWordMotion(sceneJSON);
   ensureModestTextSize(sceneJSON);
   ensureDropShadowOnDominant(sceneJSON);
-  requireAtLeastOneRealPhoto(sceneJSON, errors);
-  ensureVisibleHeroImage(sceneJSON);
+  // requireAtLeastOneRealPhoto/ensureVisibleHeroImage REMOVED per direct
+  // user request: "i dont want actual imagess" - the prompt (both
+  // scenePrompts.js's minimal and rich versions) no longer tells the
+  // model "imagePrompt"/"src":"beatImage" exist at all, so forcing a
+  // retry that DEMANDS one here would just burn every one of
+  // generateWholeSceneJSON's retries every single generation, never
+  // satisfied. validateBeat's own imagePrompt/beatImage pairing check
+  // (a few hundred lines up) stays as a safety net in case either field
+  // ever appears anyway, but nothing here actively requires them.
   if (Array.isArray(sceneJSON.scenes)) {
-    // Picked ONCE from the WHOLE video's combined text, not per-beat -
-    // real, direct finding from testing per-beat matching first: most
-    // individual beats' own narration ("Rolex builds every component
-    // itself", "Everything is produced in their own Swiss factories")
-    // never happens to contain one of TOPIC_ICON_KEYWORDS' specific
-    // words even when the video's own subject clearly does (only the
-    // beat that literally said "costs" matched, 1 of 5) - and more
-    // importantly, real reference footage reuses the SAME icon as a
-    // recurring motif across a whole video (one crown, over and over),
-    // not a different, independently-matched icon per beat. Whole-video
-    // text gives a far higher match rate AND produces the right
-    // "recurring motif" behavior for free.
-    const wholeVideoText = sceneJSON.scenes
-      .filter((b) => isPlainObject(b) && isPlainObject(b.visual) && Array.isArray(b.visual.layers))
-      .flatMap((b) => b.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && typeof l.text === 'string').map((l) => l.text))
-      .concat(sceneJSON.scenes.filter((b) => isPlainObject(b) && isPlainObject(b.params) && typeof b.params.narration === 'string').map((b) => b.params.narration))
-      .join(' ');
-    const videoTopic = pickTopicIcon(wholeVideoText);
+    // Reverted back to PER-BEAT topic matching, direct user request
+    // after watching a real render: "the icon shouldnt be the same
+    // icon throughout the vid, the icon should be based on the audio
+    // script in that specific scene." The earlier whole-video version
+    // existed specifically to fix a real low-hit-rate problem (most
+    // individual beats' own narration never happened to contain one of
+    // TOPIC_ICON_KEYWORDS' words) by reusing one recurring icon for the
+    // whole video - but that traded away per-beat RELEVANCE for
+    // coverage, and a viewer watching the SAME icon persist through
+    // beats about completely different sub-topics reads as wrong, not
+    // as a deliberate motif. Accepting the lower coverage (some beats
+    // legitimately get no icon at all when nothing in THAT beat's own
+    // text matches) is the correct tradeoff here - a missing icon on
+    // one beat is a much smaller problem than a wrong one on several.
     sceneJSON.scenes.forEach((beat, i) => {
       if (!isPlainObject(beat)) return;
+      const beatText = isPlainObject(beat.visual) && Array.isArray(beat.visual.layers)
+        ? beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && typeof l.text === 'string').map((l) => l.text).join(' ')
+        : '';
+      const narrationText = isPlainObject(beat.params) && typeof beat.params.narration === 'string' ? beat.params.narration : '';
+      const beatTopic = pickTopicIcon(`${beatText} ${narrationText}`);
       // Order matters: each call unshift()s to the FRONT of the layers
       // array, and later entries draw ON TOP of earlier ones - calling
       // the icon first, swoosh second, means swoosh's own unshift lands
       // it BEFORE (behind) the icon in the final array, so the icon
       // still reads on top of the soft background band, not buried
       // under it.
-      ensureActiveBackgroundElement(beat, i, videoTopic);
+      ensureActiveBackgroundElement(beat, i, beatTopic);
       ensureBackgroundSwoosh(beat, i);
     });
   }

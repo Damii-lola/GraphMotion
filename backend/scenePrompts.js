@@ -1390,8 +1390,7 @@ Beat:
 {
   "params": {
     "duration": number,     // seconds, REQUIRED - overridden automatically to match the real measured narration length, treat as an estimate. 2-5s is typical.
-    "narration": string,    // REQUIRED, every beat - see NARRATION below
-    "imagePrompt": string   // OPTIONAL - see BEATIMAGE below
+    "narration": string     // REQUIRED, every beat - see NARRATION below
   },
   "visual": { "layers": [ TextLayer | ImageLayer, ... ] }  // REQUIRED, at least one TextLayer with real non-empty words
 }
@@ -1406,12 +1405,10 @@ TextLayer:
 - No two layers in the same beat may share identical "text".
 This engine automatically adds real per-word reveal motion, a drop shadow on your dominant headline, and ambient background decoration (an icon, a soft accent line) to every beat on its own - you do NOT need to author any animation, effects, or decorative shapes yourself. Focus entirely on writing the right words and giving them sensible layout.
 
-ImageLayer (OPTIONAL, only when a real icon or photo genuinely fits):
+ImageLayer (OPTIONAL, only when a real icon genuinely fits):
 { "type": "image", "icon": "prefix:name", "width": number, "height": number, "position": [x,y], "iconColor": "#rrggbb" }
 - "icon" MUST be a real Iconify icon (api.iconify.design, free, no key) - "mdi:" for general concepts (e.g. "mdi:rocket-launch", "mdi:cash-multiple"), "simple-icons:" for real brand logos (e.g. "simple-icons:youtube"). Never invent a plausible-sounding name.
-- OR use "src":"beatImage" instead of "icon" (never both, never neither) - see BEATIMAGE below.
-
-BEATIMAGE - a real AI-generated photo, genuinely free capability, use it for at least one beat per video: set THIS beat's own "params.imagePrompt" to a real, descriptive text-to-image prompt naming the subject/setting/lighting/shot-type (e.g. "macro product photography of a gold luxury watch, studio lighting, shallow depth of field" - not a bare topic word), AND add a real "image" layer with "src":"beatImage" (not "icon") in this SAME beat's "visual.layers" to actually display it, sized 250-300px. The two fields are a pair - "imagePrompt" alone generates a photo nothing shows; "src":"beatImage" alone with no "imagePrompt" displays nothing. Use this on whichever beat's narration centers on a real, physical, photographable thing (a product, cash, food, a person, a place).
+- There is no AI-generated photo capability - "icon" is the only real image source. Never use "src":"beatImage" or set "imagePrompt" - direct user request, real photos are not wanted in this project.
 
 =====================================================================
 NARRATION - WRITE FOR THE EAR, NOT THE EYE
