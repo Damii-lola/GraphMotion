@@ -23,7 +23,11 @@ function fetchOnce(prompt, { width, height }) {
 
   return fetch(url, { signal: controller.signal })
     .then(async (res) => {
-      if (!res.ok) throw new Error(`Pollinations returned ${res.status}`);
+      if (!res.ok) {
+        const err = new Error(`Pollinations returned ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
       const buf = await res.buffer();
       if (!buf || buf.length < 500) throw new Error('Pollinations returned a suspiciously small response');
       return buf;
@@ -31,26 +35,42 @@ function fetchOnce(prompt, { width, height }) {
     .finally(() => clearTimeout(timeout));
 }
 
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
 /**
- * Generates one image, with a single retry - mirrors the retry shape
- * geminiClient.js already uses for its own external-API call, for
- * consistency. Throws on total failure; imagePrefetch.js is the layer
- * that turns that into a silent per-beat fallback, not this one.
+ * Generates one image, retrying up to 2 more times (3 attempts total)
+ * specifically on a 429 - real, direct production evidence this
+ * matters: a live job's own log ("beat 2 image failed, falling back
+ * to procedural: Pollinations returned 429") and the resulting rendered
+ * video confirmed missing its hero photo as a direct result (the
+ * "src":"beatImage" layer was correctly paired with a real
+ * "imagePrompt", it just had nothing to draw once the fetch failed).
+ * The ORIGINAL single retry fired IMMEDIATELY with no delay - for a
+ * 429 specifically (the server explicitly saying "you're going too
+ * fast"), retrying at the exact same instant is close to useless, it
+ * hits the same rate-limit window again. A short, real backoff (1.5s,
+ * then 3s) gives the free, unauthenticated endpoint's own rate-limit
+ * window an actual chance to clear before trying again. A non-429
+ * failure (timeout, malformed response) still gets exactly one
+ * immediate retry, same as before - no reason to slow those down with
+ * a backoff a rate limit doesn't apply to.
  */
-// The composited photo card (imageComposite.js) only ever displays at
-// ~605x563px (0.84*WIDTH x 0.44*HEIGHT of a 720x1280 frame) - requesting
-// the full 720x1280 frame size decoded roughly 3x more pixel data than
-// ever gets drawn. On a memory-constrained host (confirmed: the
-// production deploy is capped at 512MB) that's real, avoidable decoded-
-// buffer weight held for a whole chunk's render, not a rounding error.
-// 640x800 comfortably covers the display box without upscaling while
-// cutting decode memory by roughly half.
 async function generateImage(prompt, { width = 640, height = 800 } = {}) {
-  try {
-    return await fetchOnce(prompt, { width, height });
-  } catch (err) {
-    return await fetchOnce(prompt, { width, height });
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await fetchOnce(prompt, { width, height });
+    } catch (err) {
+      lastErr = err;
+      if (err.status === 429 && attempt < 2) {
+        await sleep(attempt === 0 ? 1500 : 3000);
+        continue;
+      }
+      if (attempt === 0) continue; // non-429: exactly one immediate retry, as before
+      break;
+    }
   }
+  throw lastErr;
 }
 
 module.exports = { generateImage };
