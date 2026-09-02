@@ -89,17 +89,39 @@ function ensurePauseTags(text) {
 }
 
 /**
- * Strips every [emotion tag] AND every inserted ellipsis, then
- * collapses whitespace - what a tagged string's actual WORDS reduce
- * to, for comparing against the original plain text. Ellipsis has to
- * be stripped here too now that pauses are real punctuation added to
- * the text rather than a bracket tag - otherwise every correctly-
- * tagged (not hallucinated) response would falsely trip the
- * hallucination guard below just for containing the "..." this file
- * itself asked the model to add.
+ * Strips every [emotion tag] and every piece of PURE punctuation
+ * (ellipsis, comma, semicolon, colon, em/en dash), replacing each with
+ * a single space before collapsing whitespace - what a tagged string's
+ * actual SPOKEN WORDS reduce to, for comparing against the original
+ * plain text. This function had real, confirmed-live bugs of its own,
+ * found chasing a "the voice sounds robotic" report that turned out to
+ * be caused by this guard's own false positives, not the voice itself:
+ * (1) Only ellipsis was stripped, and to a SPACE - fine when the
+ * removed text already sat between two spaced words, but a false
+ * mismatch whenever a pause got inserted directly against punctuation
+ * with no surrounding space of its own (e.g. an em-dash written with
+ * no spaces: "better—dogs" -> tagged "better...—dogs" -> stripped
+ * became "better —dogs", a phantom space the original never had).
+ * (2) Commas/semicolons/colons/dashes were never stripped at all -
+ * real, observed behavior: this project's tagging model reliably
+ * REPLACES the original comma/dash with "..." (e.g. "cues, picking" ->
+ * "cues... picking", or drops an em-dash entirely) instead of keeping
+ * both as instructed. Punctuation is never a spoken word, so it should
+ * never have been part of this comparison at all.
+ * Fixed by replacing EVERY one of these with a plain space (not
+ * removing outright, which caused its own asymmetry when the original
+ * text had no surrounding whitespace) and letting the whitespace-
+ * collapse pass normalize the result either way. Together the old
+ * bugs meant nearly every real generation fell back to mechanical-only
+ * tagging (losing ALL comma/dash-pause judgment on every beat) even
+ * when the model's actual output was perfectly safe - confirmed
+ * directly against 5 real failing cases from production logs, all 5
+ * now correctly match; a genuine hallucination (an entire extra
+ * sentence never in the original) still correctly fails to match and
+ * still correctly falls back to mechanical tagging.
  */
 function stripTagsAndNormalize(text) {
-  return text.replace(/\[[^\]]*\]/g, ' ').replace(/\.{2,}/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  return text.replace(/\[[^\]]*\]/g, ' ').replace(/\.{2,}/g, ' ').replace(/[,;:—–]/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 /**
