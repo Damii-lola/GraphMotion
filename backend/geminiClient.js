@@ -49,9 +49,20 @@ const KEYS = loadKeys();
 // every one of generateWholeSceneJSON's own retries, ending in a hard
 // failure the user actually saw ("failed" status, not just a retry).
 // flash-lite has never produced a hard parse failure like this in any
-// real generation this project has run. Back to the known-reliable
-// model; a stronger model is worth revisiting later, but not this one.
-const MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
+// real generation this project has run.
+//
+// TESTING gemini-2.5-pro (2026-09-02): direct user request to try an
+// OLDER, more established Gemini tier rather than another bleeding-edge
+// 3.x model - 3.8-flash's break was plausibly its own "thinking"
+// behavior interfering with strict JSON output, a risk newer/flashier
+// models carry more of, not less. 2.5-pro is Google's strongest
+// reasoning-tier model, free-tier per Google's own docs (~50 requests/
+// day, more than enough for this project's real generation volume), and
+// has a long track record for structured output specifically. If this
+// hits a parse failure like 3.8-flash or a quota wall like 3.6-flash,
+// try 'gemini-2.5-flash' next (1,500 req/day, more mature than the 3.x
+// line) before reverting to flash-lite.
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-pro';
 
 if (KEYS.length === 0) {
   console.warn('[geminiClient] No GEMINI_API_KEYS/GEMINI_API_KEY_N configured');
