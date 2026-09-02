@@ -5,36 +5,35 @@ const {
 } = require('./scenePrompts');
 const { callGroqRaw } = require('./groqClient');
 const { callMistralRaw } = require('./mistralClient');
+const { callGeminiRaw } = require('./geminiClient');
 
 /**
- * Scene generation, entirely Gemini-free - removed per direct user
- * request, after a real incident where all three configured Gemini
- * keys hit repeated timeouts/503s in the same window (Google's own
- * infrastructure having a bad stretch). Split across two independent
- * free providers, matched to each call's real size: Groq for the
- * smaller treatment-planning call (~2185-token prompt, fits Groq's
- * flat 8000 TPM ceiling), Mistral for the big JSON-encoding call
- * (~16,923-token prompt).
- *
- * OpenRouter (MiniMax) was tried here first and REMOVED after a real
- * production failure: its mandatory reasoning (couldn't be disabled,
- * only capped) still meant 4+ minutes per attempt on the actual
- * production-sized prompt, and a real job hit the 8-minute hard
- * timeout and died. Mistral's free tier (500,000 TPM, confirmed no
- * reasoning tax) is fast per-call (3.5-24s on the real prompt) but
- * mistral-small-latest (the only tier this account can reach -
- * mistral-large-latest returns a hard 403) only fully encodes every
- * beat about 1 attempt in 3 - the retry loop below is what makes that
- * survivable, not a one-shot guarantee. See mistralClient.js for the
- * full reasoning.
+ * Scene generation, split across THREE providers matched to what each
+ * is actually good at:
+ * - Groq: the smaller treatment-planning call (~2185-token prompt,
+ *   fits Groq's flat 8000 TPM ceiling).
+ * - Gemini: the big JSON-encoding call (~16,923-token prompt) -
+ *   PRIMARY again per direct user request. History: removed entirely
+ *   after a real incident where all three Gemini keys hit repeated
+ *   timeouts/503s in one window; replaced with OpenRouter (MiniMax),
+ *   removed after mandatory reasoning caused a real 8-minute-timeout
+ *   job death; replaced with Mistral, which worked but needed FAR more
+ *   retries than Gemini ever did on this task (a real, measured
+ *   capability gap, not a bug - Mistral's small/free tier genuinely
+ *   struggles to hold this many simultaneous hard constraints across
+ *   one large generation, averaging 300s+ with many retries vs
+ *   Gemini's normal 18-28s per call). The original Gemini outage is
+ *   now survivable - the retry-on-abort bug that let it hard-fail the
+ *   whole job is already fixed (see geminiClient.js's own history).
+ * - Mistral: kept as FALLBACK for the JSON-encoding call - if Gemini's
+ *   transport genuinely fails (not a validation retry, an actual
+ *   transport failure), Mistral gets a real shot at finishing the job
+ *   rather than the whole generation dying outright.
  *
  * This file is a fork of what used to live in geminiClient.js - the
  * provider-agnostic orchestration (JSON extraction/repair, schema-
  * validation retry loop, beat-count checking, creative-angle variation,
- * the hard timeout) is unchanged, just pointed at these transports
- * instead of Gemini's. geminiClient.js itself is left fully intact,
- * still usable (with its own separate API key) for audio-understanding
- * diagnostics - it's just no longer part of the live generation path.
+ * the hard timeout) is unchanged, just pointed at these transports.
  */
 
 // Real, precisely diagnosed failure mode carried over unchanged from
@@ -73,11 +72,23 @@ function extractJson(text) {
 
 // The big JSON-encoding call - mechanically translates the treatment
 // Groq already planned into real scene JSON, no creative judgment of
-// its own. Moved OpenRouter -> Mistral (see mistralClient.js's own doc
-// comment for why). Groq stays in use elsewhere in this file for the
+// its own. Gemini primary (fast, capable, needs far fewer retries on
+// this task than Mistral's free tier), Mistral as a real fallback if
+// Gemini's TRANSPORT itself fails (not a validation retry - Gemini's
+// own retry/timeout/multi-key resilience already lives inside
+// callGeminiRaw). Groq stays in use elsewhere in this file for the
 // smaller treatment call.
-async function callMistralForJSON(systemPrompt, userMessage, retriesLeft, onRetry) {
-  const rawText = await callMistralRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 28000 });
+async function callSceneJSONTransport(systemPrompt, userMessage, maxTokens) {
+  try {
+    return await callGeminiRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens });
+  } catch (err) {
+    console.warn(`[sceneGenClient] Gemini failed (${err.message}), falling back to Mistral`);
+    return callMistralRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens });
+  }
+}
+
+async function callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, onRetry) {
+  const rawText = await callSceneJSONTransport(systemPrompt, userMessage, 28000);
   try {
     return extractJson(rawText);
   } catch (err) {
@@ -135,7 +146,7 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
     userMessage += `\n\nThe treatment above contains EXACTLY ${beatHeaders.length} beats:\n${beatHeaders.join('\n')}\n\nYour "scenes" array MUST contain EXACTLY ${beatHeaders.length} entries, one per beat above, in this same order - not fewer, not merged, not summarized. Before you finish, go down this list one at a time and confirm each has its own real entry in "scenes".`;
   }
 
-  const result = await callMistralForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: nextRetriesLeft, priorErrors }));
+  const result = await callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: nextRetriesLeft, priorErrors }));
 
   const { valid, errors } = validateSceneJSON(result);
   const expectedBeats = beatHeaders.length;
@@ -168,7 +179,7 @@ async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targe
   let userMessage = `Current JSON:\n${JSON.stringify(previousSceneJSON)}\n\nInstruction: ${editInstruction}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON.`;
 
-  const result = await callMistralForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds, { retriesLeft: nextRetriesLeft, priorErrors }));
+  const result = await callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds, { retriesLeft: nextRetriesLeft, priorErrors }));
 
   const { valid, errors } = validateSceneJSON(result);
   if (!valid) {
