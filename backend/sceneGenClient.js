@@ -4,7 +4,7 @@ const {
   buildTreatmentSystemPrompt, buildGenerationSystemPrompt, buildEditSystemPrompt, listTreatmentBeatHeaders,
 } = require('./scenePrompts');
 const { callGroqRaw } = require('./groqClient');
-const { callOpenRouterRaw } = require('./openRouterClient');
+const { callMistralRaw } = require('./mistralClient');
 
 /**
  * Scene generation, entirely Gemini-free - removed per direct user
@@ -13,16 +13,25 @@ const { callOpenRouterRaw } = require('./openRouterClient');
  * infrastructure having a bad stretch). Split across two independent
  * free providers, matched to each call's real size: Groq for the
  * smaller treatment-planning call (~2185-token prompt, fits Groq's
- * flat 8000 TPM ceiling), OpenRouter for the big JSON-encoding call
- * (~16,923-token prompt - more than double Groq's ceiling, but
- * OpenRouter's free tier caps on request COUNT, not tokens, so a
- * single large request is fine). See groqClient.js and
- * openRouterClient.js for the full reasoning behind each.
+ * flat 8000 TPM ceiling), Mistral for the big JSON-encoding call
+ * (~16,923-token prompt).
+ *
+ * OpenRouter (MiniMax) was tried here first and REMOVED after a real
+ * production failure: its mandatory reasoning (couldn't be disabled,
+ * only capped) still meant 4+ minutes per attempt on the actual
+ * production-sized prompt, and a real job hit the 8-minute hard
+ * timeout and died. Mistral's free tier (500,000 TPM, confirmed no
+ * reasoning tax) is fast per-call (3.5-24s on the real prompt) but
+ * mistral-small-latest (the only tier this account can reach -
+ * mistral-large-latest returns a hard 403) only fully encodes every
+ * beat about 1 attempt in 3 - the retry loop below is what makes that
+ * survivable, not a one-shot guarantee. See mistralClient.js for the
+ * full reasoning.
  *
  * This file is a fork of what used to live in geminiClient.js - the
  * provider-agnostic orchestration (JSON extraction/repair, schema-
  * validation retry loop, beat-count checking, creative-angle variation,
- * the hard timeout) is unchanged, just pointed at these two transports
+ * the hard timeout) is unchanged, just pointed at these transports
  * instead of Gemini's. geminiClient.js itself is left fully intact,
  * still usable (with its own separate API key) for audio-understanding
  * diagnostics - it's just no longer part of the live generation path.
@@ -62,13 +71,13 @@ function extractJson(text) {
   }
 }
 
-// Renamed from callGroqForJSON - the big JSON-encoding call moved to
-// OpenRouter (see openRouterClient.js's own doc comment for why: the
-// full scene-JSON system prompt, ~16,923 tokens, is more than double
-// Groq's flat 8000 TPM ceiling, confirmed by direct testing). Groq
-// stays in use elsewhere in this file for the smaller treatment call.
-async function callOpenRouterForJSON(systemPrompt, userMessage, retriesLeft, onRetry) {
-  const rawText = await callOpenRouterRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 28000 });
+// The big JSON-encoding call - mechanically translates the treatment
+// Groq already planned into real scene JSON, no creative judgment of
+// its own. Moved OpenRouter -> Mistral (see mistralClient.js's own doc
+// comment for why). Groq stays in use elsewhere in this file for the
+// smaller treatment call.
+async function callMistralForJSON(systemPrompt, userMessage, retriesLeft, onRetry) {
+  const rawText = await callMistralRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 28000 });
   try {
     return extractJson(rawText);
   } catch (err) {
@@ -126,7 +135,7 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
     userMessage += `\n\nThe treatment above contains EXACTLY ${beatHeaders.length} beats:\n${beatHeaders.join('\n')}\n\nYour "scenes" array MUST contain EXACTLY ${beatHeaders.length} entries, one per beat above, in this same order - not fewer, not merged, not summarized. Before you finish, go down this list one at a time and confirm each has its own real entry in "scenes".`;
   }
 
-  const result = await callOpenRouterForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: nextRetriesLeft, priorErrors }));
+  const result = await callMistralForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: nextRetriesLeft, priorErrors }));
 
   const { valid, errors } = validateSceneJSON(result);
   const expectedBeats = beatHeaders.length;
@@ -159,7 +168,7 @@ async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targe
   let userMessage = `Current JSON:\n${JSON.stringify(previousSceneJSON)}\n\nInstruction: ${editInstruction}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON.`;
 
-  const result = await callOpenRouterForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds, { retriesLeft: nextRetriesLeft, priorErrors }));
+  const result = await callMistralForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds, { retriesLeft: nextRetriesLeft, priorErrors }));
 
   const { valid, errors } = validateSceneJSON(result);
   if (!valid) {
