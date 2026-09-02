@@ -58,11 +58,20 @@ const KEYS = loadKeys();
 // models carry more of, not less. 2.5-pro is Google's strongest
 // reasoning-tier model, free-tier per Google's own docs (~50 requests/
 // day, more than enough for this project's real generation volume), and
-// has a long track record for structured output specifically. If this
-// hits a parse failure like 3.8-flash or a quota wall like 3.6-flash,
-// try 'gemini-2.5-flash' next (1,500 req/day, more mature than the 3.x
-// line) before reverting to flash-lite.
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-pro';
+// has a long track record for structured output specifically.
+//
+// REVERTED same day: a real live job's own logs showed every single
+// call 404ing outright - "This model models/gemini-2.5-pro is no
+// longer available to new users" - a THIRD distinct failure mode from
+// the other two Gemini attempts (not a quota wall, not a parse
+// failure - the model is simply retired for any API key created after
+// some cutoff). Every call falling back to Mistral also hammered
+// Mistral with real, wasted 429-retry storms for the whole job, a real
+// resource cost, not just a clean "try again" - reverted immediately
+// rather than burn more real API calls guessing at yet another Gemini
+// tier name blind. flash-lite remains the only Gemini model confirmed
+// to actually work reliably in this project, full stop.
+const MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
 
 if (KEYS.length === 0) {
   console.warn('[geminiClient] No GEMINI_API_KEYS/GEMINI_API_KEY_N configured');
