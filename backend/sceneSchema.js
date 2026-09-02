@@ -4236,6 +4236,8 @@ function validateSceneJSON(sceneJSON) {
 
   varyHeadlinePositions(sceneJSON);
   ensureSustainedWordMotion(sceneJSON);
+  ensureDropShadowOnDominant(sceneJSON);
+  requireAtLeastOneRealPhoto(sceneJSON, errors);
 
   return { valid: errors.length === 0, errors };
 }
@@ -4436,6 +4438,70 @@ function ensureSustainedWordMotion(sceneJSON) {
       properties: { color: accentColor },
     });
   });
+}
+
+/**
+ * Real, direct measurement, not a guess: a live generation audited
+ * beat-by-beat came back with "effects" completely absent on EVERY
+ * layer of every beat - despite AE TECHNIQUE PATTERN #6 above calling
+ * dropShadow "NOT OPTIONAL" on a beat's dominant headline, in the same
+ * document the model was given. Same lesson as ensureSustainedWordMotion
+ * just above and the narration cap before it: prose telling the model
+ * something is mandatory doesn't reliably make it happen once it's one
+ * more instruction competing for attention inside a ~19K-token prompt -
+ * so this is now mechanical. Purely additive (a shadow behind already-
+ * visible text can never make a layer invisible, break layout, or
+ * collide with a sibling the way an injected position/opacity animator
+ * could), so unlike ensureSustainedWordMotion this applies to EVERY
+ * beat's dominant text layer unconditionally, no minimum-duration gate
+ * needed - even a very short beat's headline benefits from real depth.
+ */
+function ensureDropShadowOnDominant(sceneJSON) {
+  const scenes = sceneJSON.scenes;
+  if (!Array.isArray(scenes)) return;
+  scenes.forEach((beat) => {
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
+    if (textLayers.length === 0) return;
+    const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+    const hasDropShadow = Array.isArray(dominant.effects) && dominant.effects.some((e) => isPlainObject(e) && e.type === 'dropShadow');
+    if (hasDropShadow) return;
+    if (!Array.isArray(dominant.effects)) dominant.effects = [];
+    dominant.effects.push({ type: 'dropShadow', params: { color: '#000000', opacity: 0.4, blur: 8, offsetX: 0, offsetY: 6 } });
+  });
+}
+
+/**
+ * Real, direct measurement: analyzed 9 real reference videos spanning 5
+ * distinct visual styles - every one leans on real photographic/
+ * rendered imagery as a genuine visual anchor. A live GraphMotion
+ * generation on "why rolex watches are so expensive" (about as
+ * physically photographable a topic as exists - an actual product)
+ * came back with "params.imagePrompt" set on ZERO of its 5 beats, even
+ * after scenePrompts.js's own BEATIMAGE section was added specifically
+ * documenting it. Same lesson yet again: this can't be an auto-repair
+ * (unlike dropShadow, a genuinely GOOD image prompt needs real content
+ * understanding of what this specific video is about - fabricating one
+ * mechanically from raw narration text risks a worse result than no
+ * photo at all, and injecting a brand-new image LAYER at a safe,
+ * non-overlapping position without understanding the beat's existing
+ * composition risks creating the exact "layers overlap" failure
+ * validateBeatVisual already guards against elsewhere). So this is a
+ * real, retry-triggering VALIDATION requirement instead - the model
+ * gets the feedback and has full context to pick where a real photo
+ * actually belongs, same mechanism as the narration-length cap.
+ * Requires at least ONE beat (not every beat - plenty of legitimate
+ * abstract-idea beats have nothing physical to depict) across the
+ * whole video, and only once there are enough beats for that to be a
+ * reasonable ask (under 3, every beat may genuinely be abstract).
+ */
+function requireAtLeastOneRealPhoto(sceneJSON, errors) {
+  const scenes = sceneJSON.scenes;
+  if (!Array.isArray(scenes) || scenes.length < 3) return;
+  const hasRealPhoto = scenes.some((beat) => isPlainObject(beat) && isPlainObject(beat.params) && typeof beat.params.imagePrompt === 'string' && beat.params.imagePrompt.trim().length > 0);
+  if (!hasRealPhoto) {
+    errors.push('scenes: NONE of these beats set "params.imagePrompt" - this video has zero real photographic/rendered imagery anywhere, relying on vector icons/shapes only. Real reference footage in this format always leans on at least one real hero image. Pick the beat whose narration centers most on a real, physical, photographable thing, and give it a real "params.imagePrompt" plus a matching "src":"beatImage" image layer (see scenePrompts.js\'s own BEATIMAGE section for exactly how the two fields work together).');
+  }
 }
 
 module.exports = {
