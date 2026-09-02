@@ -230,17 +230,19 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
     assembledPath = paddedPath;
   }
 
-  // Loudness-only normalization (see its own doc comment above) -
-  // applied ONCE here on the whole assembled track, not per-clip.
-  const loudnessNormalizedPath = path.join(workDir, `${jobId}-loudness-narration.mp3`);
-  await applyLoudnessNormalization(assembledPath, loudnessNormalizedPath);
-
+  // Loudness normalization REMOVED per direct user request, based on a
+  // real staged A/B listening test: it was the specific step where
+  // "unnaturalness" became noticeable, worse than the plain assembled
+  // track. The earlier -29.5dB "too quiet" finding that motivated
+  // adding this back is a real, separate tradeoff being knowingly
+  // accepted here - Deepgram's raw, unboosted loudness is what actually
+  // sounds right, even if it reads quieter than modern platform norms.
+  // assembledPath goes straight into the final mux now.
   const outputPath = videoPath.replace(/\.mp4$/, '-narrated.mp4');
-  await run(['-y', '-i', videoPath, '-i', loudnessNormalizedPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest', outputPath]);
+  await run(['-y', '-i', videoPath, '-i', assembledPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest', outputPath]);
 
   fs.unlink(listPath, () => {});
   fs.unlink(assembledPath, () => {});
-  fs.unlink(loudnessNormalizedPath, () => {});
   cleanupPaths.forEach((p) => fs.unlink(p, () => {}));
 
   return outputPath;
@@ -258,14 +260,27 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
 // free, but that's what was asked for. Matches the SAME encode
 // settings (libx264 ultrafast/yuv420p, aac 128k) the rest of this file
 // already uses, for consistent output characteristics.
-// Lowered from 1.2 to 1.1 per direct user request. Note this also
-// slightly changes the real inter-beat pause length: the 0.65s buffer
-// in narrationPrefetch.js was sized against 1.2x compression (landing
-// ~0.54s post-speedup) - at 1.1x the same buffer lands closer to
-// ~0.59s, a bit longer, not shorter.
-const SPEED_FACTOR = 1.1;
+// Speed-up REMOVED (1.0 = no-op) per direct user request, based on a
+// real staged A/B listening test isolating the exact 1.1x atempo pass -
+// it read as fine in complete isolation (raw clip + atempo only), but
+// contributed to the "unnatural" quality once combined with the rest
+// of the real pipeline. Went 1.2 -> 1.1 -> 1.0 across this project's
+// own history; kept as a named constant (not deleted) rather than
+// ripping the feature out, in case it's revisited later.
+const SPEED_FACTOR = 1.0;
 
+/**
+ * At SPEED_FACTOR=1.0 this would be a mathematically-inert setpts/
+ * atempo pass - but ffmpeg would still burn real time on a full video+
+ * audio re-encode to produce byte-different output that's functionally
+ * identical to the input. Short-circuits to a plain file copy instead,
+ * so "no speed-up" genuinely costs nothing rather than a wasted pass.
+ */
 function speedUpVideo(inputPath, outputPath) {
+  if (SPEED_FACTOR === 1.0) {
+    fs.copyFileSync(inputPath, outputPath);
+    return Promise.resolve();
+  }
   return run([
     '-y', '-i', inputPath,
     '-filter_complex', `[0:v]setpts=PTS/${SPEED_FACTOR}[v];[0:a]atempo=${SPEED_FACTOR}[a]`,
