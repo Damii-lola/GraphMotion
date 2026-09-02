@@ -43,6 +43,11 @@ const OPENROUTER_MODEL = 'minimax/minimax-m2.7:free';
 // call so far was 84.8s, and 90s left almost no margin above that
 // before falsely aborting a call that was actually still working.
 const OPENROUTER_TIMEOUT_MS = 150000;
+// See the reasoning param's own comment at the call site - a small,
+// fixed cap on the model's mandatory internal reasoning, well under
+// any real maxTokens this file is called with, so real content always
+// has guaranteed room regardless of how much the model reasons.
+const REASONING_MAX_TOKENS = 3000;
 
 /**
  * Single call, no retry of its own - sceneGenClient.js's own
@@ -75,6 +80,21 @@ async function callOpenRouterRaw(systemPrompt, userMessage, { jsonMode = true, m
         ],
         temperature,
         max_tokens: maxTokens,
+        // Real, confirmed-live production failure: this model's free
+        // endpoint has MANDATORY reasoning (confirmed directly - a
+        // request with reasoning:{effort:'none'} gets a hard 400,
+        // "Reasoning is mandatory for this endpoint and cannot be
+        // disabled") - and reasoning tokens draw from the SAME
+        // max_tokens budget as real content. A real production job
+        // failed outright when reasoning apparently consumed the
+        // entire 28000-token budget before ever writing the actual
+        // JSON answer (finish_reason:"length" with EMPTY message
+        // content). Capping reasoning's own budget (confirmed working
+        // live, unlike the disable attempt) guarantees real headroom
+        // is always left for content regardless of how much the model
+        // wants to "think" - REASONING_MAX_TOKENS is deliberately a
+        // small fraction of the overall maxTokens.
+        reasoning: { max_tokens: REASONING_MAX_TOKENS },
         ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
       }),
     });
