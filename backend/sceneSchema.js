@@ -4238,6 +4238,29 @@ function validateSceneJSON(sceneJSON) {
   ensureSustainedWordMotion(sceneJSON);
   ensureDropShadowOnDominant(sceneJSON);
   requireAtLeastOneRealPhoto(sceneJSON, errors);
+  if (Array.isArray(sceneJSON.scenes)) {
+    // Picked ONCE from the WHOLE video's combined text, not per-beat -
+    // real, direct finding from testing per-beat matching first: most
+    // individual beats' own narration ("Rolex builds every component
+    // itself", "Everything is produced in their own Swiss factories")
+    // never happens to contain one of TOPIC_ICON_KEYWORDS' specific
+    // words even when the video's own subject clearly does (only the
+    // beat that literally said "costs" matched, 1 of 5) - and more
+    // importantly, real reference footage reuses the SAME icon as a
+    // recurring motif across a whole video (one crown, over and over),
+    // not a different, independently-matched icon per beat. Whole-video
+    // text gives a far higher match rate AND produces the right
+    // "recurring motif" behavior for free.
+    const wholeVideoText = sceneJSON.scenes
+      .filter((b) => isPlainObject(b) && isPlainObject(b.visual) && Array.isArray(b.visual.layers))
+      .flatMap((b) => b.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && typeof l.text === 'string').map((l) => l.text))
+      .concat(sceneJSON.scenes.filter((b) => isPlainObject(b) && isPlainObject(b.params) && typeof b.params.narration === 'string').map((b) => b.params.narration))
+      .join(' ');
+    const videoTopic = pickTopicIcon(wholeVideoText);
+    sceneJSON.scenes.forEach((beat, i) => {
+      if (isPlainObject(beat)) ensureActiveBackgroundElement(beat, i, videoTopic);
+    });
+  }
 
   return { valid: errors.length === 0, errors };
 }
@@ -4437,6 +4460,106 @@ function ensureSustainedWordMotion(sceneJSON) {
       },
       properties: { color: accentColor },
     });
+  });
+}
+
+// Four corner "bleed" anchors - the icon's own CENTER sits AT the
+// corner point, so roughly a quarter of it naturally bleeds off two
+// canvas edges at once, matching real reference footage (a giant
+// watermark icon/silhouette cropped by the frame, not a clean fully-
+// on-canvas graphic) rather than a neat little accent floating free in
+// open space.
+const BG_WATERMARK_CORNERS = [[0, 0], [CANVAS_WIDTH, 0], [0, CANVAS_HEIGHT], [CANVAS_WIDTH, CANVAS_HEIGHT]];
+
+/**
+ * Real, direct user feedback with an annotated reference screenshot:
+ * "their bg isnt plain...see that line in the background see the
+ * crownnsss...I want our backgrounds to be as active...these objects
+ * aint linked to the text...they are linked to the background" (a
+ * large, faded, topic-relevant icon bleeding off a canvas corner,
+ * NOT grouped with the headline the way ensureDecorativeAccent's own
+ * card-composition icon is - a completely separate compositional
+ * role, ambient texture behind everything rather than content tightly
+ * paired with one specific piece of text) "and these objects werent
+ * just plain and on screen from the very beginning...they were
+ * animated into the screen."
+ *
+ * Reuses pickTopicIcon (above) for the SAME reason ensureDecorativeAccent
+ * does - a real, content-relevant icon reads as designed; a random one
+ * reads as arbitrary clutter (confirmed live, see that function's own
+ * doc comment). Runs on EVERY beat with a topic match (not gated on
+ * "beat has zero decoration" the way ensureDecorativeAccent is - this
+ * serves a different role and can coexist with a near-text card), and
+ * skips outright rather than force an overlap: tries the beat index's
+ * own preferred corner first, falls back to the diagonally opposite
+ * corner if the first would collide with the dominant text layer's own
+ * bounding box, and skips entirely if BOTH would collide (a missed
+ * watermark on one beat is a far smaller loss than genuinely
+ * overlapping, unreadable text). Also skips if this exact icon is
+ * already used elsewhere in the beat (e.g. by ensureDecorativeAccent's
+ * own card) - the SAME icon appearing twice in one frame reads as a
+ * mistake, not a deliberate motif.
+ */
+function ensureActiveBackgroundElement(beat, beatIndex, topic) {
+  if (!topic) return;
+  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  const layers = beat.visual.layers;
+
+  const alreadyUsed = layers.some((l) => isPlainObject(l) && l.type === 'image' && l.icon === topic.icon);
+  if (alreadyUsed) return;
+
+  const textLayers = layers.filter((l) => isPlainObject(l) && l.type === 'text' && typeof l.fontSize === 'number');
+  const textRects = textLayers.map((l) => {
+    const p = representativePosition(l.position);
+    if (!p) return null;
+    const s = estimateTextEffectiveSize(l);
+    const w = (s.actualWidth || s.width) * 1.15;
+    const h = s.height * 1.15;
+    return { left: p[0] - w / 2, right: p[0] + w / 2, top: p[1] - h / 2, bottom: p[1] + h / 2 };
+  }).filter(Boolean);
+
+  const WATERMARK_SIZE = 320;
+  const overlapsAnyText = (cx, cy) => {
+    const half = WATERMARK_SIZE / 2;
+    const wmRect = { left: cx - half, right: cx + half, top: cy - half, bottom: cy + half };
+    return textRects.some((r) => wmRect.left < r.right && wmRect.right > r.left && wmRect.top < r.bottom && wmRect.bottom > r.top);
+  };
+
+  const preferredCorner = BG_WATERMARK_CORNERS[beatIndex % BG_WATERMARK_CORNERS.length];
+  const oppositeCorner = BG_WATERMARK_CORNERS[(beatIndex + 2) % BG_WATERMARK_CORNERS.length];
+  let corner = null;
+  if (!overlapsAnyText(preferredCorner[0], preferredCorner[1])) corner = preferredCorner;
+  else if (!overlapsAnyText(oppositeCorner[0], oppositeCorner[1])) corner = oppositeCorner;
+  if (!corner) return;
+
+  const [cx, cy] = corner;
+  // Slides in from further past its own resting corner (still centered
+  // on the same corner point, just displaced outward along the
+  // diagonal toward canvas center at rest, further out at the start) -
+  // a real, visible entrance rather than present from frame 0. Faint
+  // rotation (seeded, not random-per-render) adds the same kind of
+  // deliberate-not-static feel real reference watermarks have.
+  const dirX = cx === 0 ? 1 : -1;
+  const dirY = cy === 0 ? 1 : -1;
+  const startOffset = 50;
+  const seed = hashString(topic.icon + beatIndex);
+  const rotation = ((seed % 30) - 15);
+
+  beat.visual.layers.unshift({
+    type: 'image',
+    icon: topic.icon,
+    iconColor: '#9A9A9A',
+    width: WATERMARK_SIZE,
+    height: WATERMARK_SIZE,
+    rotation,
+    position: { keyframes: [
+      { time: 0, value: [cx + dirX * startOffset, cy + dirY * startOffset] },
+      { time: 0.7, value: [cx, cy], easing: 'easeOutCubic', interpolation: 'easing' },
+    ] },
+    opacity: { keyframes: [
+      { time: 0, value: 0 },
+      { time: 0.6, value: 0.22, easing: 'easeOutCubic', interpolation: 'easing' },
+    ] },
   });
 }
 
