@@ -806,6 +806,16 @@ function ensureDecorativeAccent(beat) {
         contents: [
           { type: 'path', shape: { kind: 'rectangle', params: { width: cardWidth, height: cardHeight, roundness: 20 } } },
           { type: 'fill', color: accentColor },
+          // Real reference-video finding (2026-09-03): 2+ of the 9
+          // videos use a genuine glassmorphism look for their card/panel
+          // elements - a soft translucent fill PLUS a crisp light edge,
+          // not just a flat tint. This card already had the fill; the
+          // stroke was the missing half. A stroke content item carries
+          // its OWN "opacity" independent of the layer's 0.14 (see
+          // SHAPE_CONTENT_TYPES docs), so the edge can read distinctly
+          // crisper than the translucent fill behind it, the real
+          // "glass edge" look, not just a slightly-less-faint fill.
+          { type: 'stroke', color: '#FFFFFF', width: 1.5, opacity: 0.35 },
         ],
       });
       layers.push({
@@ -4387,8 +4397,12 @@ function validateSceneJSON(sceneJSON) {
   stripSecondaryTextLayers(sceneJSON);
   varyHeadlinePositions(sceneJSON);
   ensureSustainedWordMotion(sceneJSON);
+  ensureEmphasisWordScale(sceneJSON);
+  ensureHighlightChip(sceneJSON);
   ensureModestTextSize(sceneJSON);
   ensureDropShadowOnDominant(sceneJSON);
+  ensureNeonGlowText(sceneJSON);
+  ensureSparkleAccents(sceneJSON);
   // requireAtLeastOneRealPhoto/ensureVisibleHeroImage REMOVED per direct
   // user request: "i dont want actual imagess" - the prompt (both
   // scenePrompts.js's minimal and rich versions) no longer tells the
@@ -4461,6 +4475,16 @@ function validateSceneJSON(sceneJSON) {
   // would silently skip every icon (still under the 200px threshold at
   // that point) and only ever wiggle the text.
   ensureSustainedAmbientMotion(sceneJSON);
+  // Also runs LAST, same reasoning as ensureSustainedAmbientMotion just
+  // above but for z-order rather than content: this file's own
+  // convention is unshift() = drawn further back, and the per-beat loop
+  // above (ensureActiveBackgroundElement/ensureCurvedAccentLine/
+  // ensureBackgroundSwoosh) ALSO unshifts - calling this any earlier
+  // would let those later unshifts push the grid texture back IN FRONT
+  // of the watermark icon/swoosh/curve, backwards from the "deepest
+  // background layer" this is meant to be.
+  ensureGridTexture(sceneJSON);
+  ensureRippleHook(sceneJSON);
 
   return { valid: errors.length === 0, errors };
 }
@@ -4669,6 +4693,123 @@ function ensureSustainedWordMotion(sceneJSON) {
       },
       properties: { color: accentColor },
     });
+  });
+}
+
+/**
+ * Direct reference-video analysis finding (2026-09-03, explicit follow-
+ * up: "implement all the things yet to be implemented"): 4+ of the 9
+ * videos use genuine editorial kinetic typography - different WORDS on
+ * the same line rendered at different sizes, not one uniform fontSize
+ * per line the way every real generation this project has ever produced
+ * has looked. This engine's schema has no notion of a per-word fontSize
+ * on a text LAYER (one "fontSize" per layer, always), but
+ * renderAnimatedText's own per-character animator loop already supports
+ * a real "scale" property multiplier per selected run (confirmed
+ * reading textAnimator.js directly - `scaleMul *= lerp(1, p.scale,
+ * strength)`), the exact mechanism ensureSustainedWordMotion (above)
+ * already uses for its own word-color sweep, just never used for size
+ * before. A `range` selector with basedOn:'words', shape:'square',
+ * smoothness:0 gives a clean, non-blended full-strength gate on exactly
+ * ONE word (by index) - `invert:false` keeps that strength as-authored
+ * (this is a static per-word BOOST, not a time-based reveal, so the
+ * usual reveal-animator inversion convention doesn't apply here).
+ *
+ * Deliberately modest (1.22x) - characters scale around their own
+ * individual anchor point (real per-character rendering, not a
+ * word-level reflow), so a much larger bump risks visible glyph overlap
+ * within the emphasized word itself; this is confirmed safe at 1.22x by
+ * local render, not assumed.
+ */
+function ensureEmphasisWordScale(sceneJSON) {
+  const scenes = sceneJSON.scenes;
+  if (!Array.isArray(scenes)) return;
+  const EMPHASIS_SCALE = 1.22;
+  scenes.forEach((beat, beatIndex) => {
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
+    if (textLayers.length === 0) return;
+    const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+
+    const words = dominant.text.trim().split(/\s+/).filter(Boolean);
+    if (words.length < 2) return; // nothing to contrast a single word against
+
+    const hasEmphasis = Array.isArray(dominant.animators)
+      && dominant.animators.some((a) => isPlainObject(a) && isPlainObject(a.properties) && typeof a.properties.scale === 'number');
+    if (hasEmphasis) return;
+
+    const seed = hashString(`emphasis${beatIndex}${dominant.text}`);
+    const wordIndex = seed % words.length;
+    const lo = (wordIndex / words.length) * 100;
+    const hi = ((wordIndex + 1) / words.length) * 100;
+
+    if (!Array.isArray(dominant.animators)) dominant.animators = [];
+    dominant.animators.push({
+      selector: {
+        type: 'range', start: lo, end: hi, basedOn: 'words', shape: 'square', smoothness: 0,
+      },
+      invert: false,
+      properties: { scale: EMPHASIS_SCALE },
+    });
+  });
+}
+
+/**
+ * Direct reference-video finding, same source as ensureEmphasisWordScale
+ * above: 3+ of the 9 videos highlight one keyword with a real colored
+ * background chip behind it (this schema's own "highlights" field,
+ * fully real and rendered - drawHighlights in textAnimator.js - but
+ * never mechanically used anywhere in this project before, only ever
+ * available for a model to hand-author, which the minimal prompt
+ * doesn't mention exists at all). Targets a DIFFERENT word than
+ * ensureEmphasisWordScale when both land on the same beat (own
+ * independent seed) - two separate emphasis techniques stacked on the
+ * exact same word would visually compete rather than read as two
+ * distinct, deliberate design choices.
+ */
+function ensureHighlightChip(sceneJSON) {
+  const scenes = sceneJSON.scenes;
+  if (!Array.isArray(scenes)) return;
+  scenes.forEach((beat, beatIndex) => {
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
+    if (textLayers.length === 0) return;
+    const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+
+    const words = dominant.text.trim().split(/\s+/).filter(Boolean);
+    if (words.length < 2) return;
+
+    if (Array.isArray(dominant.highlights) && dominant.highlights.length > 0) return;
+
+    const emphasisWordIndex = Array.isArray(dominant.animators)
+      ? (() => {
+        const emphasisAnim = dominant.animators.find((a) => isPlainObject(a) && isPlainObject(a.properties) && typeof a.properties.scale === 'number' && isPlainObject(a.selector));
+        if (!emphasisAnim) return null;
+        return Math.round((emphasisAnim.selector.start / 100) * words.length);
+      })() : null;
+
+    const seed = hashString(`highlight${beatIndex}${dominant.text}`);
+    let wordIndex = seed % words.length;
+    // Real, direct measurement while verifying this: stacking a
+    // highlight chip AND a scale bump on the identical word looked like
+    // two effects fighting each other, not one deliberate choice - if
+    // the seeds collide, shift to the next word instead of skipping the
+    // beat's highlight entirely.
+    if (emphasisWordIndex !== null && wordIndex === emphasisWordIndex) wordIndex = (wordIndex + 1) % words.length;
+
+    const lo = (wordIndex / words.length) * 100;
+    const hi = ((wordIndex + 1) / words.length) * 100;
+    const color = ACCENT_PALETTE[seed % ACCENT_PALETTE.length];
+
+    dominant.highlights = [{
+      selector: {
+        type: 'range', start: lo, end: hi, basedOn: 'words', shape: 'square', smoothness: 0,
+      },
+      color,
+      paddingX: 8,
+      paddingY: 4,
+      cornerRadius: 8,
+    }];
   });
 }
 
@@ -5345,6 +5486,214 @@ function ensureDropShadowOnDominant(sceneJSON) {
     if (!Array.isArray(dominant.effects)) dominant.effects = [];
     dominant.effects.push({ type: 'dropShadow', params: { color: '#000000', opacity: 0.4, blur: 8, offsetX: 0, offsetY: 6 } });
   });
+}
+
+/**
+ * Direct reference-video finding (2026-09-03): a real neon/gradient text
+ * glow shows up in at least 2 of the 9 videos - not a stylistic guess,
+ * "outerGlow" is already a real, working effect in this engine (reused
+ * verbatim from attachLineRevealSparks' own leading-spark glow, which
+ * genuinely renders - see its own params shape). Never previously
+ * applied to TEXT anywhere in this project. A whole-VIDEO choice, same
+ * reasoning as ensureCurvedAccentLine/the swoosh - a glow that only
+ * shows up on some beats of one video would read as broken, not
+ * deliberate. Layered UNDERNEATH the existing mandatory dropShadow
+ * (pushed first, so it's drawn/composited before the shadow in the
+ * effects stack) - the shadow keeps the text anchored/legible against
+ * the background, the glow adds real color bloom around it; verified
+ * together via local render, not assumed to compose safely.
+ */
+function ensureNeonGlowText(sceneJSON) {
+  if (!Array.isArray(sceneJSON.scenes)) return;
+  const videoSeed = hashString(`glow${sceneJSON.scenes
+    .map((s) => (isPlainObject(s) && isPlainObject(s.params) && typeof s.params.narration === 'string' ? s.params.narration : ''))
+    .join('|')}`);
+  const useGlow = videoSeed % 3 === 0; // real but not overused - roughly 1 in 3 generations
+  if (!useGlow) return;
+
+  sceneJSON.scenes.forEach((beat, beatIndex) => {
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
+    if (textLayers.length === 0) return;
+    const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+    if (Array.isArray(dominant.effects) && dominant.effects.some((e) => isPlainObject(e) && e.type === 'outerGlow')) return;
+
+    const seed = hashString(`glowcolor${beatIndex}`);
+    const glowColor = ACCENT_PALETTE[seed % ACCENT_PALETTE.length];
+    if (!Array.isArray(dominant.effects)) dominant.effects = [];
+    dominant.effects.unshift({ type: 'outerGlow', params: { color: glowColor, opacity: 0.85, blur: 18, blendMode: 'screen' } });
+  });
+}
+
+// Corner-ish resting spots, well clear of the canvas center where the
+// headline almost always sits - deliberately not the SAME 8-anchor set
+// BG_WATERMARK_ANCHORS uses (that set is tuned for a 240px watermark's
+// own bleed-off-edge look; these are small, fully-on-canvas decorative
+// sparkles, a different job).
+const SPARKLE_SPOTS = [
+  [70, 130], [470, 130], [70, 830], [470, 830], [470, 480], [70, 480],
+];
+
+/**
+ * Direct reference-video finding (2026-09-03): small 4-pointed sparkle/
+ * asterisk accents scattered as ambient texture show up in 2+ of the 9
+ * videos - genuinely different from this project's own single large
+ * topic-matched watermark icon (ensureActiveBackgroundElement, unrelated
+ * function). A whole-video choice (same consistency reasoning as
+ * ensureCurvedAccentLine/ensureNeonGlowText) - 2 small sparkles per beat
+ * when active, at fixed, small, low-opacity, corner-ish spots chosen to
+ * stay clear of where the headline and watermark icon actually sit.
+ */
+function ensureSparkleAccents(sceneJSON) {
+  if (!Array.isArray(sceneJSON.scenes)) return;
+  const videoSeed = hashString(`sparkle${sceneJSON.scenes
+    .map((s) => (isPlainObject(s) && isPlainObject(s.params) && typeof s.params.narration === 'string' ? s.params.narration : ''))
+    .join('|')}`);
+  const useSparkles = videoSeed % 3 === 1; // a real, different third of generations than ensureNeonGlowText's own choice
+  if (!useSparkles) return;
+
+  sceneJSON.scenes.forEach((beat, beatIndex) => {
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    const layers = beat.visual.layers;
+    if (layers.some((l) => isPlainObject(l) && typeof l.id === 'string' && l.id.startsWith('__sparkle_'))) return;
+
+    const seed = hashString(`sparklepick${beatIndex}`);
+    const spotA = SPARKLE_SPOTS[seed % SPARKLE_SPOTS.length];
+    const spotB = SPARKLE_SPOTS[(seed + 3) % SPARKLE_SPOTS.length];
+    [spotA, spotB].forEach((spot, i) => {
+      if (spot === spotA && spot === spotB) return; // degenerate collision, skip the duplicate
+      const size = 14 + (hashString(`sparklesize${beatIndex}${i}`) % 10);
+      const rotation = hashString(`sparklerot${beatIndex}${i}`) % 45;
+      const color = ACCENT_PALETTE[hashString(`sparklecolor${beatIndex}${i}`) % ACCENT_PALETTE.length];
+      const delay = 0.1 + i * 0.15;
+      layers.push({
+        id: `__sparkle_${i}__`,
+        type: 'shape',
+        width: size,
+        height: size,
+        position: spot,
+        rotation,
+        opacity: 0.4,
+        scale: {
+          keyframes: [
+            { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+            { time: delay + 0.35, value: [1, 1] },
+          ],
+        },
+        contents: [
+          { type: 'path', shape: { kind: 'star', params: { points: 4, outerRadius: size / 2, innerRadius: size / 6 } } },
+          { type: 'fill', color },
+        ],
+      });
+    });
+  });
+}
+
+/**
+ * Direct reference-video finding (2026-09-03): 2 of the 9 videos use a
+ * faint technical/blueprint dot-grid texture behind their content.
+ * This engine's real "grid" GENERATE_KIND draws evenly-spaced LINES
+ * (AE's own Grid effect - see generateEffects.js), not literal dots -
+ * genuinely close enough in spirit (the same "technical graph-paper"
+ * texture read) to use as-is rather than build a brand-new dot-grid
+ * primitive from scratch (a real render-engine change, the exact kind
+ * of thing that turned up a genuine new bug with the curved accent
+ * line earlier this same session - safer to reuse a proven primitive
+ * here). A whole-video choice, own independent seed from
+ * ensureNeonGlowText/ensureSparkleAccents (not unified into one style
+ * picker - accepted tradeoff given time, occasional overlap with those
+ * is minor since all three are deliberately subtle/low-opacity).
+ * "generate" layers are NOT centered on their own position the way
+ * "image" now is (see buildImageDraw's own doc comment for why that ONE
+ * type changed and "generate" deliberately didn't) - position [0,0] is
+ * the correct top-left-anchored value to cover the whole canvas here,
+ * not a placeholder.
+ */
+function ensureGridTexture(sceneJSON) {
+  if (!Array.isArray(sceneJSON.scenes)) return;
+  const videoSeed = hashString(`grid${sceneJSON.scenes
+    .map((s) => (isPlainObject(s) && isPlainObject(s.params) && typeof s.params.narration === 'string' ? s.params.narration : ''))
+    .join('|')}`);
+  const useGrid = videoSeed % 4 === 0; // real but not overused
+  if (!useGrid) return;
+
+  sceneJSON.scenes.forEach((beat) => {
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    const layers = beat.visual.layers;
+    if (layers.some((l) => isPlainObject(l) && l.id === '__bg_grid__')) return;
+    layers.unshift({
+      id: '__bg_grid__',
+      type: 'generate',
+      width: CANVAS_WIDTH,
+      height: CANVAS_HEIGHT,
+      position: [0, 0],
+      opacity: 0.08,
+      generate: {
+        kind: 'grid',
+        params: { cellWidth: 44, cellHeight: 44, lineColor: '#FFFFFF', lineWidth: 1 },
+      },
+    });
+  });
+}
+
+/**
+ * Direct reference-video finding (2026-09-03): one video's own "STOP
+ * SCROLLING" opener uses expanding concentric ripple rings as a real
+ * attention-grabbing hook effect on its very first beat - a genuinely
+ * different technique from anything this project has built for beat 0
+ * so far (the hook-signal narration check is about the WORDS, this is
+ * about the MOTION). Beat-0-only (a hook device on every later beat
+ * would read as noise, not a hook) and a whole-video choice like the
+ * other optional accents above, own independent seed. 3 concentric
+ * ellipse rings (stroke only, no fill - a real ring, not a filled
+ * disc), staggered starts, each expanding outward while fading - the
+ * classic "pulse" read. Centered on the canvas, behind the headline
+ * text (unshift, same convention as every other background pass here).
+ */
+function ensureRippleHook(sceneJSON) {
+  if (!Array.isArray(sceneJSON.scenes) || sceneJSON.scenes.length === 0) return;
+  const videoSeed = hashString(`ripple${sceneJSON.scenes
+    .map((s) => (isPlainObject(s) && isPlainObject(s.params) && typeof s.params.narration === 'string' ? s.params.narration : ''))
+    .join('|')}`);
+  const useRipple = videoSeed % 4 === 1; // own bucket, distinct from ensureGridTexture's mod-4 pick
+  if (!useRipple) return;
+
+  const beat = sceneJSON.scenes[0];
+  if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  const layers = beat.visual.layers;
+  if (layers.some((l) => isPlainObject(l) && typeof l.id === 'string' && l.id.startsWith('__ripple_'))) return;
+
+  const color = ACCENT_PALETTE[videoSeed % ACCENT_PALETTE.length];
+  const center = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
+  const RING_COUNT = 3;
+  for (let i = RING_COUNT - 1; i >= 0; i--) {
+    const startDelay = i * 0.18;
+    const startSize = 40;
+    const endSize = 340;
+    layers.unshift({
+      id: `__ripple_${i}__`,
+      type: 'shape',
+      width: endSize,
+      height: endSize,
+      position: center,
+      opacity: {
+        keyframes: [
+          { time: startDelay, value: 0.5, interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: startDelay + 0.9, value: 0 },
+        ],
+      },
+      scale: {
+        keyframes: [
+          { time: startDelay, value: [startSize / endSize, startSize / endSize], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: startDelay + 0.9, value: [1, 1] },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: endSize, height: endSize } } },
+        { type: 'stroke', color, width: 2.5 },
+      ],
+    });
+  }
 }
 
 /**
