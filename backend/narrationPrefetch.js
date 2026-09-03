@@ -288,6 +288,16 @@ function applyRealWordTimingToText(scene, wordTimings) {
   }
   if (!bestLayer || bestDiff > 1) return;
 
+  // Real, previously-uncaught bug found auditing this function
+  // (2026-09-03): typewriter-mode beats (sceneSchema.js's own
+  // ensureTypewriterReveal) intentionally want a FIXED, independent
+  // typing-speed reveal, never real audio timing - a terminal-style
+  // typing effect is a deliberate visual device, not meant to track
+  // spoken word boundaries. Marked via a real, checkable id
+  // ('__typewriter_text__') rather than inferred from animator shape,
+  // so this stays a simple, explicit opt-out.
+  if (bestLayer.id === '__typewriter_text__') return;
+
   const layerWordCount = bestLayer.text.trim().split(/\s+/).filter(Boolean).length;
   const usedCount = Math.min(layerWordCount, narrationWordCount);
   const keyframes = [];
@@ -301,10 +311,34 @@ function applyRealWordTimingToText(scene, wordTimings) {
   }
   if (keyframes.length === 0) return;
 
-  bestLayer.animators = [{
-    selector: { type: 'range', start: 0, end: { keyframes }, basedOn: 'words' },
-    properties: { opacity: -1 },
-  }];
+  // Real, previously-uncaught bug found the same audit
+  // (2026-09-03): this used to REPLACE bestLayer.animators wholesale
+  // (`bestLayer.animators = [...]`) - correct for swapping the OLD
+  // estimated word-reveal sweep (ensureSustainedWordMotion's own
+  // color-sweep animator, the only thing that used to live here when
+  // this was written) for the real-audio-timed one, but sceneSchema.js
+  // has since grown OTHER animators on the same dominant layer that
+  // have nothing to do with the reveal at all - ensureEmphasisWordScale's
+  // own static per-word "scale" boost, most notably - and a wholesale
+  // overwrite would have silently deleted those in every real
+  // production job (every local render test this session verified
+  // these features against called renderTimelineRange directly,
+  // bypassing this real-audio-timing step entirely, so this never
+  // actually got exercised until this audit). Fixed to remove ONLY the
+  // old reveal-type animator (identified by "properties.color" - the
+  // one and only property ensureSustainedWordMotion's own sweep ever
+  // sets on this layer, confirmed by reading that function directly)
+  // and preserve everything else.
+  const preservedAnimators = Array.isArray(bestLayer.animators)
+    ? bestLayer.animators.filter((a) => !(isPlainObject(a) && isPlainObject(a.properties) && a.properties.color !== undefined))
+    : [];
+  bestLayer.animators = [
+    ...preservedAnimators,
+    {
+      selector: { type: 'range', start: 0, end: { keyframes }, basedOn: 'words' },
+      properties: { opacity: -1 },
+    },
+  ];
 }
 
 function isPlainObject(v) { return typeof v === 'object' && v !== null && !Array.isArray(v); }

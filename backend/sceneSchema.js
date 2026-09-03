@@ -428,6 +428,57 @@ function simulateWrap(text, maxWidth, estCharWidth) {
   return { lines, maxLineWidth };
 }
 
+/**
+ * Extends simulateWrap's own per-word greedy-wrap estimate down to real,
+ * approximate PER-CHARACTER positions - built specifically for
+ * ensureTypewriterReveal's own cursor, which needs to know roughly
+ * WHERE on canvas each character lands so a companion cursor shape can
+ * jump there in sync with the reveal. Same estCharWidth-per-character
+ * convention as simulateWrap/estimateTextEffectiveSize (never a real
+ * ctx.measureText call - this runs at JSON-generation time, no canvas
+ * available) - "roughly right" is the explicit bar here too, same as
+ * everywhere else in this file that estimates layout ahead of the real
+ * renderer; a cursor a few pixels off its exact glyph edge still reads
+ * correctly as "tracking the text," this was never meant to need
+ * pixel-perfect precision. Returns one {x,y} PER CHARACTER, as offsets
+ * from the text block's own center (NOT absolute canvas coordinates -
+ * the caller adds the real layer position), walking the SAME greedy-
+ * wrap line decisions simulateWrap makes but keeping each line's word
+ * list around afterward to walk its individual characters.
+ */
+function buildCharacterCursorTrack(text, maxWidth, estCharWidth, lineHeight) {
+  const words = text.split(' ').filter((w) => w.length > 0);
+  const lines = [];
+  let currentWords = [];
+  let currentWidth = 0;
+  for (const word of words) {
+    const wordWidth = (word.length + 1) * estCharWidth;
+    if (currentWidth + wordWidth > maxWidth && currentWords.length > 0) {
+      lines.push({ words: currentWords, width: currentWidth });
+      currentWords = [];
+      currentWidth = 0;
+    }
+    currentWidth += wordWidth;
+    currentWords.push(word);
+  }
+  if (currentWords.length > 0) lines.push({ words: currentWords, width: currentWidth });
+
+  const totalLines = lines.length;
+  const positions = [];
+  lines.forEach((line, lineIdx) => {
+    const lineY = (lineIdx - (totalLines - 1) / 2) * lineHeight;
+    let cursorX = -line.width / 2;
+    line.words.forEach((word, wordIdx) => {
+      if (wordIdx > 0) cursorX += estCharWidth;
+      for (let c = 0; c < word.length; c++) {
+        cursorX += estCharWidth;
+        positions.push({ x: cursorX, y: lineY });
+      }
+    });
+  });
+  return positions;
+}
+
 // ---------------------------------------------------------------------
 // Explicit product rule (not a schema quirk): a beat's background may
 // NEVER be a single flat color - always a real 2-stop gradient. Small,
@@ -4394,8 +4445,17 @@ function validateSceneJSON(sceneJSON) {
     }
   }
 
+  ensureCumulativeListBeats(sceneJSON);
   stripSecondaryTextLayers(sceneJSON);
   varyHeadlinePositions(sceneJSON);
+  // Runs AFTER varyHeadlinePositions (needs the dominant text layer's
+  // FINAL settled position to compute the cursor's own absolute
+  // coordinates against) but BEFORE ensureSustainedWordMotion (which
+  // already checks for - and correctly steps aside for - any EXISTING
+  // words/characters reveal animator on the dominant layer, so calling
+  // this first means that check finds the typewriter reveal already in
+  // place and never overwrites it with its own word-color sweep).
+  ensureTypewriterReveal(sceneJSON);
   ensureSustainedWordMotion(sceneJSON);
   ensureEmphasisWordScale(sceneJSON);
   ensureHighlightChip(sceneJSON);
@@ -4730,6 +4790,16 @@ function ensureEmphasisWordScale(sceneJSON) {
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+    // Real, direct visual bug found via local render (2026-09-03): a
+    // scale-emphasis animator (keyed to word POSITION strength, not
+    // time) plays at full strength from frame 0 regardless of the
+    // typewriter reveal's own per-character timing - the emphasized
+    // word visibly renders at its BIGGER size before it's even finished
+    // being "typed," which reads as broken, not stylistic. Simplest
+    // correct fix: these two effects don't compose safely without real
+    // coordination work neither is worth blocking on, so a typewriter
+    // beat just skips this one instead.
+    if (dominant.id === '__typewriter_text__') return;
 
     const words = dominant.text.trim().split(/\s+/).filter(Boolean);
     if (words.length < 2) return; // nothing to contrast a single word against
@@ -4775,6 +4845,13 @@ function ensureHighlightChip(sceneJSON) {
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+    // Real, direct visual bug found via local render (2026-09-03): the
+    // highlight chip fades in on its OWN fixed ~0.3s schedule,
+    // completely independent of the typewriter reveal's own per-
+    // character timing - it visibly appears behind text that hasn't
+    // been "typed" yet. See ensureEmphasisWordScale's own matching fix
+    // for the fuller reasoning; same call here.
+    if (dominant.id === '__typewriter_text__') return;
 
     const words = dominant.text.trim().split(/\s+/).filter(Boolean);
     if (words.length < 2) return;
@@ -5694,6 +5771,218 @@ function ensureRippleHook(sceneJSON) {
       ],
     });
   }
+}
+
+/**
+ * Direct follow-up request (2026-09-03): "the things that u couldnt
+ * build/finish, build them" - this is the cumulative list-building
+ * pattern from one reference video (items staying on screen while more
+ * get added), previously flagged as the session's biggest remaining
+ * gap because this engine's whole camera/board architecture treats
+ * each beat as an independent 540x960 canvas the camera pans between -
+ * genuinely persisting rendered CONTENT across separate beats sounded
+ * like it needed a structural change to that system.
+ *
+ * It doesn't, on reflection: the board/camera system only cares about
+ * where each BEAT is positioned, never what's inside a beat's own
+ * "visual.layers" - so a beat can simply be given STATIC copies of
+ * EARLIER beats' own text as part of its own layer array, with no
+ * camera/board change needed at all. That's what this does: for a
+ * chosen contiguous run of "list beats" (skipping beat 0, the hook, and
+ * the final beat, the payoff/close - neither is a "list item"), each
+ * beat gets small, numbered, already-visible recap lines for every
+ * PRIOR list item stacked above its own full-size current item, which
+ * still gets its own normal entrance/reveal/real-audio-sync untouched.
+ *
+ * Deliberately does NOT touch the current beat's own dominant text
+ * layer (no number prefix, no layout change) - prefixing it would add
+ * characters to the text that aren't in the actual spoken
+ * "params.narration", breaking applyRealWordTimingToText's own word-
+ * count match (narrationPrefetch.js) and silently losing real-audio
+ * word sync on every list beat. The recap lines are separate, static,
+ * unspoken labels - numbering lives there instead, where it can't
+ * interfere with anything.
+ *
+ * A whole-video choice (own seed bucket, same consistency reasoning as
+ * every other optional accent in this file) - a partial/inconsistent
+ * list only some beats participate in would read as broken, not
+ * deliberate. Requires at least 4 beats (a hook + at least 2 list items
+ * + a close) to even consider firing.
+ */
+function ensureCumulativeListBeats(sceneJSON) {
+  const scenes = sceneJSON.scenes;
+  if (!Array.isArray(scenes) || scenes.length < 4) return;
+  const videoSeed = hashString(`list${scenes
+    .map((s) => (isPlainObject(s) && isPlainObject(s.params) && typeof s.params.narration === 'string' ? s.params.narration : ''))
+    .join('|')}`);
+  const useList = videoSeed % 4 === 2; // own bucket, distinct from ensureGridTexture/ensureRippleHook's own picks
+  if (!useList) return;
+
+  const listStart = 1;
+  const listEnd = Math.min(scenes.length - 2, listStart + 3); // cap at 4 list items even on a long video
+  if (listEnd <= listStart) return; // fewer than 2 real list items - not a real list
+
+  const RECAP_FONT_SIZE = 16;
+  const RECAP_LINE_HEIGHT = 26;
+  const RECAP_TOP_Y = 170;
+  const priorItemTexts = [];
+
+  for (let i = listStart; i <= listEnd; i++) {
+    const beat = scenes[i];
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) { priorItemTexts.push(null); continue; }
+    const layers = beat.visual.layers;
+    const textLayers = layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
+    if (textLayers.length === 0) { priorItemTexts.push(null); continue; }
+    const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+
+    // Recap lines for every REAL prior item, in order, above this
+    // beat's own current item - unshift so they sit behind the current
+    // item's own layers (same "earlier in array = further back" rule
+    // this whole file already uses), a quick uniform fade-in rather
+    // than each item's own original entrance (they're old news by now,
+    // recapping fast reads better than replaying a slow reveal).
+    const realPriorItems = priorItemTexts.filter((t) => typeof t === 'string');
+    realPriorItems.forEach((text, idx) => {
+      layers.unshift({
+        id: `__list_recap_${idx}__`,
+        type: 'text',
+        text: `${idx + 1}. ${text}`,
+        fontFamily: 'Poppins Medium',
+        fontSize: RECAP_FONT_SIZE,
+        position: [CANVAS_WIDTH / 2, RECAP_TOP_Y + idx * RECAP_LINE_HEIGHT],
+        textAlign: 'center',
+        maxWidth: 440,
+        fillStyle: '#FFFFFF',
+        opacity: {
+          keyframes: [
+            { time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+            { time: 0.25, value: 0.6 },
+          ],
+        },
+      });
+    });
+
+    priorItemTexts.push(dominant.text);
+  }
+}
+
+// Fast enough to read as "typing," slow enough to actually be watched -
+// tuned against this project's own 3-8 word narration cap (a typical
+// 25-35 character line types out in ~1.6-2.2s, comfortably inside a
+// real beat's own duration).
+const TYPEWRITER_CHARS_PER_SECOND = 16;
+
+/**
+ * Direct follow-up request (2026-09-03): "the things that u couldnt
+ * build/finish, build them" - the terminal/typewriter character-by-
+ * character reveal from one reference video's own aesthetic, previously
+ * flagged as deferred specifically because a cursor that ACCURATELY
+ * tracks the reveal position across wrapped lines needed real text-
+ * layout estimation this session didn't have time to safely build.
+ * buildCharacterCursorTrack (above) is that missing piece - the same
+ * "roughly right, not pixel-perfect" estimation approach this file
+ * already trusts elsewhere (simulateWrap/estimateTextEffectiveSize),
+ * just extended to per-character granularity.
+ *
+ * A whole-video choice (own seed bucket), same consistency reasoning as
+ * every other optional accent in this file. Marks the dominant text
+ * layer with a real, checkable id ('__typewriter_text__') for two
+ * reasons: this function's own idempotent re-entry guard, and (more
+ * importantly) narrationPrefetch.js's applyRealWordTimingToText checks
+ * for this exact id and skips real-audio retiming entirely for it - a
+ * terminal-typing effect is a deliberate FIXED-pace visual device, not
+ * meant to track spoken word boundaries the way the normal reveal is.
+ *
+ * The cursor blinks a few times after typing finishes, then fades out
+ * permanently (bounded to a fixed window after the typing itself, not
+ * tied to the beat's own real final duration, which isn't known yet at
+ * JSON-generation time) - a cursor blinking forever if the real beat
+ * runs long would read as broken, not stylistic.
+ */
+function ensureTypewriterReveal(sceneJSON) {
+  const scenes = sceneJSON.scenes;
+  if (!Array.isArray(scenes)) return;
+  const videoSeed = hashString(`typewriter${scenes
+    .map((s) => (isPlainObject(s) && isPlainObject(s.params) && typeof s.params.narration === 'string' ? s.params.narration : ''))
+    .join('|')}`);
+  const useTypewriter = videoSeed % 5 === 3; // own bucket, distinct from every other optional accent's own pick
+  if (!useTypewriter) return;
+
+  scenes.forEach((beat) => {
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    const layers = beat.visual.layers;
+    if (layers.some((l) => isPlainObject(l) && l.id === '__typewriter_cursor__')) return;
+    const textLayers = layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
+    if (textLayers.length === 0) return;
+    const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+
+    const text = dominant.text.trim();
+    const chars = text.length;
+    if (chars === 0) return;
+
+    const fontSize = dominant.fontSize;
+    const maxWidth = typeof dominant.maxWidth === 'number' ? dominant.maxWidth : DEFAULT_TEXT_MAX_WIDTH;
+    const estCharWidth = fontSize * 0.62;
+    const lineHeightEst = fontSize * 1.15;
+    const totalTypeDuration = chars / TYPEWRITER_CHARS_PER_SECOND;
+
+    // Real per-character hold-reveal (a genuine snap per character, not
+    // a smooth sweep - matches how a real typewriter/terminal actually
+    // looks, one character at a time with no interpolation between).
+    const revealKeyframes = [];
+    for (let i = 0; i <= chars; i++) {
+      revealKeyframes.push({
+        time: (i / chars) * totalTypeDuration,
+        value: Math.round((i / chars) * 10000) / 100,
+        interpolation: 'hold',
+      });
+    }
+    dominant.id = '__typewriter_text__';
+    dominant.animators = [{
+      selector: { type: 'range', start: 0, end: { keyframes: revealKeyframes }, basedOn: 'characters' },
+      properties: { opacity: -1 },
+    }];
+
+    // Cursor: one shape layer, jumping (hold interpolation) to each
+    // character's own estimated position in exact sync with the reveal
+    // above - track[i] is the position right after typing character i
+    // (0-indexed), so the cursor's OWN keyframe times line up with
+    // revealKeyframes[i+1], not revealKeyframes[i] (which is the
+    // "before this character" moment).
+    const pos = representativePosition(dominant.position) || [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
+    const track = buildCharacterCursorTrack(text, maxWidth, estCharWidth, lineHeightEst);
+    const cursorStartPos = track.length > 0 ? [pos[0] + track[0].x - estCharWidth, pos[1] + track[0].y] : pos;
+    const cursorPositionKeyframes = [{ time: 0, value: cursorStartPos, interpolation: 'hold' }];
+    track.forEach((p, i) => {
+      cursorPositionKeyframes.push({
+        time: ((i + 1) / chars) * totalTypeDuration,
+        value: [pos[0] + p.x, pos[1] + p.y],
+        interpolation: 'hold',
+      });
+    });
+
+    const BLINK_INTERVAL_S = 0.4;
+    const BLINK_CYCLES = 3;
+    const cursorOpacityKeyframes = [{ time: 0, value: 1, interpolation: 'hold' }];
+    for (let b = 0; b < BLINK_CYCLES * 2; b++) {
+      cursorOpacityKeyframes.push({ time: totalTypeDuration + b * BLINK_INTERVAL_S, value: b % 2 === 0 ? 0 : 1, interpolation: 'hold' });
+    }
+    cursorOpacityKeyframes.push({ time: totalTypeDuration + BLINK_CYCLES * 2 * BLINK_INTERVAL_S, value: 0 });
+
+    const cursorColor = typeof dominant.fillStyle === 'string' && HEX_COLOR_RE.test(dominant.fillStyle) ? dominant.fillStyle : '#FFFFFF';
+    layers.push({
+      id: '__typewriter_cursor__',
+      type: 'shape',
+      width: Math.max(2, fontSize * 0.1),
+      height: fontSize * 0.85,
+      position: { keyframes: cursorPositionKeyframes },
+      opacity: { keyframes: cursorOpacityKeyframes },
+      contents: [
+        { type: 'path', shape: { kind: 'rectangle', params: { width: Math.max(2, fontSize * 0.1), height: fontSize * 0.85 } } },
+        { type: 'fill', color: cursorColor },
+      ],
+    });
+  });
 }
 
 /**
