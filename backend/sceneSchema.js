@@ -4315,6 +4315,7 @@ function validateSceneJSON(sceneJSON) {
     }
   }
 
+  stripSecondaryTextLayers(sceneJSON);
   varyHeadlinePositions(sceneJSON);
   ensureSustainedWordMotion(sceneJSON);
   ensureModestTextSize(sceneJSON);
@@ -4995,6 +4996,59 @@ function ensureVisibleHeroImage(sceneJSON) {
 // already smaller than this cap is left untouched, only ever a
 // downward clamp, never a forced increase.
 const MAX_TEXT_FONT_SIZE = 32;
+
+/**
+ * Direct user request (2026-09-03), pointed at real screenshots: extra
+ * caption-style text layers the model sometimes adds alongside a beat's
+ * own dominant narration line ("Oxygenrich flow", "Musclefuelled
+ * circulation", "Hemocyanin is thick") - "remove these text that
+ * usually appear under the main text, they aint meant to be there." The
+ * schema used to explicitly ALLOW this ("a short secondary/supporting
+ * label... is still fine alongside it" - scenePrompts.js), so the model
+ * reaching for it wasn't misbehaving, just following a design call that
+ * didn't hold up once seen live. Fixed in both places, same "mechanical
+ * enforcement beats prompt guidance alone" lesson as everywhere else in
+ * this file: the prompt no longer offers this as an option, and this
+ * pass strips any survivor anyway.
+ *
+ * Distinguishes an unwanted AI-authored caption from this engine's OWN
+ * mechanically-injected text layers (__kicker_text__, a real, deliberate
+ * "REVEALED" badge treatment - a completely different UI element
+ * positioned near the topic icon, not a caption under the headline) by
+ * id: every mechanical text layer this file injects carries its own
+ * "__xxx__" id; anything with no id is something the model wrote itself.
+ * The DOMINANT text layer (closest word-count match to the beat's own
+ * narration - same matching logic narrationPrefetch.js's
+ * applyRealWordTimingToText uses, so the two stay in agreement about
+ * which layer is "the" headline) is always kept even though it has no
+ * id either; every OTHER id-less text layer is removed outright.
+ */
+function stripSecondaryTextLayers(sceneJSON) {
+  const scenes = sceneJSON.scenes;
+  if (!Array.isArray(scenes)) return;
+  scenes.forEach((beat) => {
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    const narration = isPlainObject(beat.params) && typeof beat.params.narration === 'string' ? beat.params.narration.trim() : '';
+    const candidateTextLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && typeof l.text === 'string' && !l.id);
+    if (candidateTextLayers.length <= 1) return;
+
+    let dominant = null;
+    if (narration) {
+      const narrationWordCount = narration.split(/\s+/).filter(Boolean).length;
+      let bestDiff = Infinity;
+      for (const layer of candidateTextLayers) {
+        const diff = Math.abs(layer.text.trim().split(/\s+/).filter(Boolean).length - narrationWordCount);
+        if (diff < bestDiff) { bestDiff = diff; dominant = layer; }
+      }
+    } else {
+      // No narration on this beat to match against - keep the longest
+      // text (most likely the intended headline) rather than guess wrong.
+      dominant = candidateTextLayers.reduce((longest, l) => (l.text.length > (longest ? longest.text.length : -1) ? l : longest), null);
+    }
+
+    beat.visual.layers = beat.visual.layers.filter((l) => !(isPlainObject(l) && l.type === 'text' && typeof l.text === 'string' && !l.id && l !== dominant));
+  });
+}
 
 function ensureModestTextSize(sceneJSON) {
   const scenes = sceneJSON.scenes;
