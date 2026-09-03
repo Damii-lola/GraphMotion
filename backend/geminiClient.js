@@ -491,13 +491,13 @@ module.exports = {
   // rather than re-implemented for a call that isn't generating scene
   // JSON at all.
   callGeminiRaw: withHardTimeout(callGeminiRaw, 'callGeminiRaw'),
-  // Not used by the production pipeline itself (narration's own AI
-  // audio judge was removed - see narrationPrefetch.js's own doc
-  // comment for why), but kept and exported deliberately: same low-
-  // level primitive split as callGeminiRaw, just for inline audio
-  // instead of a text prompt, and genuinely useful on its own for
-  // transcribing/verifying TTS output during debugging - reach for
-  // this instead of guessing at an audio-quality fix blind.
+  // Direct user request (2026-09-03): re-add a real audio-vs-script
+  // verification step, this time as a transcribe-and-DIFF-in-code check
+  // (narrationPrefetch.js) rather than the old ask-an-AI-to-judge-and-
+  // decide design this project tried and removed once already (see git
+  // history) - transcription is a task Gemini is genuinely reliable at;
+  // judging its own transcription's "closeness" was the fragile part
+  // last time, not the transcription itself.
   callGeminiWithAudio: withHardTimeout(callGeminiWithAudio, 'callGeminiWithAudio'),
   buildTreatmentSystemPrompt,
   buildGenerationSystemPrompt,

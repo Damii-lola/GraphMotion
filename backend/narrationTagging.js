@@ -171,4 +171,13 @@ async function annotateNarrationTags(plainText, feedback = '') {
   }
 }
 
-module.exports = { annotateNarrationTags, ensurePauseTags };
+module.exports = {
+  annotateNarrationTags,
+  ensurePauseTags,
+  // Exported for narrationPrefetch.js's own audio-vs-script verification
+  // (Gemini transcribes the FINAL generated clip, this same normalization
+  // is applied to both sides before comparing) - same "only compare real
+  // spoken words, not punctuation" logic this file already relies on for
+  // its own hallucination guard, reused rather than duplicated.
+  stripTagsAndNormalize,
+};
