@@ -1404,6 +1404,7 @@ TextLayer:
 - "maxWidth" controls wrapping, default ${COMP_WIDTH - 60}px if omitted.
 - No two layers in the same beat may share identical "text".
 This engine automatically adds real per-word reveal motion, a drop shadow on your dominant headline, and ambient background decoration (an icon, a soft accent line) to every beat on its own - you do NOT need to author any animation, effects, or decorative shapes yourself. Focus entirely on writing the right words and giving them sensible layout.
+- YOUR BEAT'S DOMINANT TEXT LAYER SHOULD BE THIS BEAT'S OWN "narration" LINE, WORD FOR WORD - direct requirement, not a suggestion: this engine measures the REAL audio timing of the narration once it's spoken and reveals THAT SAME on-screen text one word at a time in perfect sync with the actual voice (word appears exactly as it's said, like a karaoke lyric) - this only works when the words match. A dominant text layer with different wording than its own beat's narration cannot be synced this way. A short secondary/supporting label with different, shorter text is still fine alongside it.
 
 ImageLayer (OPTIONAL, only when a real icon genuinely fits):
 { "type": "image", "icon": "prefix:name", "width": number, "height": number, "position": [x,y], "iconColor": "#rrggbb" }
@@ -1414,10 +1415,12 @@ ImageLayer (OPTIONAL, only when a real icon genuinely fits):
 NARRATION - WRITE FOR THE EAR, NOT THE EYE
 =====================================================================
 REQUIRED on every single beat, real spoken text a human narrator would
-actually say out loud - never a copy-pasted echo of the on-screen text
-(that produces a mechanical, list-reading cadence once a TTS voice
-reads it), and never skipped (a beat with no narration renders
-completely silent).
+actually say out loud, and never skipped (a beat with no narration
+renders completely silent). Direct project requirement: this SAME line
+is also what your dominant on-screen text layer's own "text" should be,
+word for word (see TEXTLAYER above) - the two are the SAME words here,
+not separate jobs, so the real spoken audio and the on-screen text can
+be revealed in perfect word-by-word sync.
 
 Concretely:
 - Use contractions constantly ("it's", "they're", "you're", "don't") -
@@ -1431,12 +1434,17 @@ Concretely:
   voiceover script read start to finish, later beats building on
   earlier ones ("but here's where it gets interesting"), not a
   disconnected list of isolated captions.
-- NATURAL DOES NOT MEAN LONG. HARD CAP: 14 words per beat, enforced (a
-  longer line fails validation and forces a retry). ONE SENTENCE PER
-  BEAT, no exceptions - two short sentences crammed into one beat is
-  still wrong even if each individually is under the cap; that's two
-  beats' worth of narration, split it. If a natural line needs "and"/
-  "but" to connect two ideas, that's usually two beats written as one.
+- EXTREMELY SHORT, always - direct reference-video finding: real
+  footage in this style uses just a handful of very short lines for an
+  ENTIRE video (as few as 4 total). HARD CAP: 8 words per beat,
+  enforced (a longer line fails validation and forces a retry) - most
+  beats should be well under that, a short fragment rather than a full
+  sentence when the idea allows it ("Only five thousand a year." not
+  "Rolex produces only five thousand units of this watch every year.").
+  ONE SENTENCE PER BEAT, no exceptions - two short sentences crammed
+  into one beat is still wrong even if each individually is under the
+  cap; that's two beats' worth, split it. If a line needs "and"/"but" to
+  connect two ideas, that's usually two beats written as one.
 - HOOK THE FIRST LINE, HARD - never open on a neutral scene-setting
   line ("Today we're going to talk about..."). Open with a direct
   command ("Stop scrolling."), a flat confident claim ("This is the

@@ -219,6 +219,75 @@ function trimTrailingArtifact(inputPath, outputPath) {
 }
 
 /**
+ * Real, direct user request after watching a reference video: "the
+ * on-screen text matches the audio one to one, like as the voice is
+ * saying it, the text is appearing." Everything built before this
+ * point (sceneSchema.js's ensureSustainedWordMotion) only ever had an
+ * ESTIMATED word-reveal timing to work with - a fraction of the beat's
+ * own AUTHORED duration, computed during JSON generation, before any
+ * narration audio exists at all. Real, per-word timing (wordTiming.js,
+ * via Deepgram STT on the actual final clip) only becomes available
+ * HERE, after narration is generated - this is the real version of
+ * that same idea, replacing whatever generic reveal timing the beat's
+ * matching text layer already has with the REAL moment each word is
+ * actually spoken.
+ *
+ * Only applies when a text layer's own word count is within 1 of the
+ * narration's real spoken word count - scenePrompts.js's own minimal
+ * prompt now directly asks for the dominant text layer to BE the
+ * narration line, word for word, specifically so this can work, but a
+ * mismatch is still possible (a differently-worded secondary label, a
+ * model that didn't follow the instruction). Applying a sync built for
+ * one word count to a DIFFERENTLY-worded layer would desync almost
+ * immediately - worse than the generic estimate it would replace - so
+ * this skips cleanly rather than guess, leaving the existing mechanical
+ * reveal in place.
+ *
+ * Builds real "hold" keyframes (a genuine AE-style step interpolation,
+ * not an eased ramp - each word's own reveal percentage holds constant
+ * from the instant that word starts until the next one does, then
+ * jumps) rather than the smooth continuous sweep ensureSustainedWordMotion
+ * uses - real speech pacing is NOT constant word-to-word, so only a
+ * per-word step function can actually track it.
+ */
+function applyRealWordTimingToText(scene, wordTimings) {
+  if (!Array.isArray(wordTimings) || wordTimings.length === 0) return;
+  if (!isPlainObject(scene.visual) || !Array.isArray(scene.visual.layers)) return;
+  const textLayers = scene.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && typeof l.text === 'string');
+  if (textLayers.length === 0) return;
+
+  const narrationWordCount = wordTimings.length;
+  let bestLayer = null;
+  let bestDiff = Infinity;
+  for (const layer of textLayers) {
+    const layerWordCount = layer.text.trim().split(/\s+/).filter(Boolean).length;
+    const diff = Math.abs(layerWordCount - narrationWordCount);
+    if (diff < bestDiff) { bestDiff = diff; bestLayer = layer; }
+  }
+  if (!bestLayer || bestDiff > 1) return;
+
+  const layerWordCount = bestLayer.text.trim().split(/\s+/).filter(Boolean).length;
+  const usedCount = Math.min(layerWordCount, narrationWordCount);
+  const keyframes = [];
+  if (wordTimings[0].start > 0.02) keyframes.push({ time: 0, value: 0, interpolation: 'hold' });
+  for (let i = 0; i < usedCount; i++) {
+    keyframes.push({
+      time: Math.max(0, wordTimings[i].start),
+      value: Math.round(((i + 1) / usedCount) * 10000) / 100,
+      interpolation: 'hold',
+    });
+  }
+  if (keyframes.length === 0) return;
+
+  bestLayer.animators = [{
+    selector: { type: 'range', start: 0, end: { keyframes }, basedOn: 'words' },
+    properties: { opacity: -1 },
+  }];
+}
+
+function isPlainObject(v) { return typeof v === 'object' && v !== null && !Array.isArray(v); }
+
+/**
  * Generates narration audio for every beat that has one, IN PARALLEL
  * across beats (like imagePrefetch.js) - was sequential when the only
  * engine was msedge-tts's single-connection-per-call websocket, but
@@ -346,7 +415,10 @@ async function prefetchNarration(sceneJSON, jobId) {
       // disk rather than reusing `buf` above since `buf` is the PRE-trim
       // TTS output; this needs to match the exact audio that ships.
       const wordTimings = await getWordTimings(fs.readFileSync(filePath));
-      if (wordTimings) renderScenes[index].params.wordTimings = wordTimings;
+      if (wordTimings) {
+        renderScenes[index].params.wordTimings = wordTimings;
+        applyRealWordTimingToText(renderScenes[index], wordTimings);
+      }
       // Buffer so the visual doesn't cut away the instant speech ends -
       // a beat that's ONLY as long as the narration reads as clipped,
       // not intentional. This gap is also the actual audible pause

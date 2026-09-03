@@ -4134,10 +4134,16 @@ function validateBeat(beat, path = 'beat') {
     // not just advice. 14 words is generous for a single short sentence
     // or fragment at natural pace but firmly excludes stacking a second
     // clause on top of one.
+    // Cap tightened 14 -> 8, direct user request after watching a real
+    // reference video: "the audio script was extremely short like
+    // seriously it was just 4 extremely short sentences" for the whole
+    // video. 8 words is close to that reference's own real per-line
+    // length while still leaving room for a real sentence/fragment, not
+    // just a bare word or two.
     const wordCount = beat.params.narration.trim().split(/\s+/).length;
-    const MAX_NARRATION_WORDS = 14;
+    const MAX_NARRATION_WORDS = 8;
     if (wordCount > MAX_NARRATION_WORDS) {
-      errors.push(`${path}.params.narration: "${beat.params.narration.trim()}" is ${wordCount} words - too long for one beat (cap is ${MAX_NARRATION_WORDS}). This reads as two ideas stacked into one narration line. Split it into two separate beats instead, each with its own short line, matching this project's fast-paced reference style - not one long sentence with a trailing clause tacked on.`);
+      errors.push(`${path}.params.narration: "${beat.params.narration.trim()}" is ${wordCount} words - too long for one beat (cap is ${MAX_NARRATION_WORDS}). Real reference footage uses EXTREMELY short lines - cut this down to a short fragment, or split it into two separate beats, each with its own short line.`);
     }
   }
   // Real, confirmed-live silent failure mode this closes: "src":"beatImage"
