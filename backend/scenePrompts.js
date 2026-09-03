@@ -1435,18 +1435,19 @@ accurate. Simple, short words - never reach for a fancier word when a
 plainer one says the same thing just as well; elegance here means
 nothing wasted, not ornate vocabulary.
 
-EVERY LINE SHOULD RHYME - a real, deliberate stylistic choice for this
-project, not optional. Pair beats into rhyming couplets (beat 1 rhymes
-with beat 2, beat 3 rhymes with beat 4, and so on) - the LAST word of
-each line in a pair should genuinely rhyme, real end-rhyme, the same
-way a song lyric or a nursery rhyme actually rhymes, not just a loose
-similar sound. If the total beat count is odd, the final unpaired beat
-can stand alone rather than force a bad rhyme. A rhyme is worth
-bending word choice for, but never at the cost of a real idea landing
-clearly - a clean, clear line beats a forced, confusing rhyme.
-Example pair: "The price will make you gasp." / "Behind it: real
-craft." Keep every line inside the word cap below even while rhyming -
-cut words, don't stretch a line just to land a rhyme.
+RHYME IS OPTIONAL, NEVER FORCED - direct user reversal of an earlier
+version of this rule (2026-09-03): mandatory rhyming was live-tested and
+produced exactly the failure this whole NARRATION section exists to
+prevent - lazy, repeated-word "rhymes" ("...an octopus has three
+hearts!" / "...the other two hearts") and contorted, unnatural phrasing
+that only exists to land a rhyme ("Copper blood needs push, keeping
+beats each hour" - nobody actually talks like that; "hour" is only
+there to rhyme with "power"). Natural, plain spoken phrasing ALWAYS
+wins over a rhyme - if a genuinely good rhyme falls out naturally while
+writing a line, keep it, but never bend word choice, add filler, or
+twist sentence structure just to land one. A script with zero rhymes
+that reads naturally is strictly better than one with forced or
+repeated-word rhymes. When in doubt, don't rhyme.
 
 Concretely:
 - Use contractions constantly ("it's", "they're", "you're", "don't") -
