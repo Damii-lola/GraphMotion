@@ -1497,6 +1497,10 @@ Concretely:
   ambiguous for a TTS voice to read aloud.
 - Write "narration" as PLAIN spoken text ONLY - no bracket tags, no
   [anything] here at all; that's a separate later step.
+- NEVER a website, domain, or social handle - a real generated line
+  once ended in "...not just a watch—Rolex.com", which a TTS voice
+  reads aloud as literal nonsense ("dot com"). Narration is spoken
+  language only, checked and rejected outright if it contains one.
 
 =====================================================================
 FINAL CHECKLIST

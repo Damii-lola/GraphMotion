@@ -4145,6 +4145,15 @@ function validateBeat(beat, path = 'beat') {
     if (wordCount > MAX_NARRATION_WORDS) {
       errors.push(`${path}.params.narration: "${beat.params.narration.trim()}" is ${wordCount} words - too long for one beat (cap is ${MAX_NARRATION_WORDS}). Real reference footage uses EXTREMELY short lines - cut this down to a short fragment, or split it into two separate beats, each with its own short line.`);
     }
+    // Real, direct user report on a live render: a beat's narration
+    // came back as "...not just a watch—Rolex.com" - the model
+    // hallucinated a literal website domain onto the end of a spoken
+    // line, which a TTS voice then reads aloud as nonsense ("dot com").
+    // No real spoken narration in this project should ever contain a
+    // URL/domain/handle - checked and rejected outright.
+    if (/\b[a-z0-9-]+\.(com|net|org|io|co|app|watch)\b|www\.|https?:\/\/|@[a-z0-9_]+/i.test(beat.params.narration)) {
+      errors.push(`${path}.params.narration: "${beat.params.narration.trim()}" contains what looks like a website/domain/handle - a real TTS voice would read this aloud as nonsense ("dot com"). Narration is spoken language only, never a URL, brand website, or social handle. Remove it.`);
+    }
   }
   // Real, confirmed-live silent failure mode this closes: "src":"beatImage"
   // on an image layer resolves to nothing at all (sceneBuilder.js's
@@ -4630,35 +4639,45 @@ function isBeatAlreadyDecorated(beat) {
 // crown for Rolex, a factory for production, gears for assembly), the
 // only real problem was their size and position, not their relevance.
 const SMALL_ICON_MAX_SIZE = 100;
-function findExistingSmallIcon(layers) {
-  return layers.find((l) => isPlainObject(l) && l.type === 'image' && typeof l.icon === 'string'
+function findExistingSmallIcons(layers) {
+  return layers.filter((l) => isPlainObject(l) && l.type === 'image' && typeof l.icon === 'string'
     && typeof l.width === 'number' && l.width <= SMALL_ICON_MAX_SIZE);
 }
 
 function ensureActiveBackgroundElement(beat, beatIndex, topic) {
   if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
-  const existingIcon = findExistingSmallIcon(layers);
+  const existingIcons = findExistingSmallIcons(layers);
 
   // Fallback path (no icon of its own at all): behaves exactly as
   // before - inject one via keyword-matching, skip outright if nothing
   // matches or if this beat already reads as busy.
-  if (!existingIcon) {
+  if (existingIcons.length === 0) {
     if (!topic) return;
     if (isBeatAlreadyDecorated(beat)) return;
     const alreadyUsed = layers.some((l) => isPlainObject(l) && l.type === 'image' && l.icon === topic.icon);
     if (alreadyUsed) return;
-    return injectWatermarkIcon(beat, beatIndex, topic.icon, 0.22);
+    return injectWatermarkIcon(beat, beatIndex, topic.icon, 0.22, new Set());
   }
 
-  // Primary path: enlarge/reposition the model's OWN icon in place -
-  // keeps its already-relevant icon choice and color, just fixes size/
-  // position. A real, visible opacity (not the old faint 0.22) since
-  // this is now the beat's own real content, not pure ambient texture.
-  transformIconIntoWatermark(beat, beatIndex, existingIcon, 0.55);
+  // Primary path: enlarge/reposition EVERY one of the model's OWN small
+  // icons in place, not just the first - real, direct follow-up user
+  // report with screenshots after the first version shipped: a beat
+  // with 2+ small icons (a wrench + a gem, a gear + a small flag) only
+  // ever got ONE of them transformed, leaving the rest small/near-text,
+  // exactly the "aint in their correct positions... small" complaint,
+  // just on the icons this function skipped rather than the ones it
+  // already fixed. takenAnchors tracks which of the 8 corner/edge spots
+  // this SAME beat's own icons have already claimed, so multiple real
+  // icons in one beat spread across different anchors instead of
+  // stacking on top of each other.
+  const takenAnchors = new Set();
+  existingIcons.forEach((iconLayer) => {
+    transformIconIntoWatermark(beat, beatIndex, iconLayer, 0.55, takenAnchors);
+  });
 }
 
-function transformIconIntoWatermark(beat, beatIndex, iconLayer, targetOpacity) {
+function transformIconIntoWatermark(beat, beatIndex, iconLayer, targetOpacity, takenAnchors = new Set()) {
   const layers = beat.visual.layers;
   const textLayers = layers.filter((l) => isPlainObject(l) && l.type === 'text' && typeof l.fontSize === 'number');
   const textRects = textLayers.map((l) => {
@@ -4698,18 +4717,20 @@ function transformIconIntoWatermark(beat, beatIndex, iconLayer, targetOpacity) {
   const seedKey = iconLayer.icon || 'icon';
   const baseSeed = hashString(seedKey + beatIndex);
   const order = BG_WATERMARK_ANCHORS
-    .map((a, idx) => ({ a, key: hashString(seedKey + beatIndex + idx) }))
-    .sort((p, q) => p.key - q.key)
-    .map((p) => p.a);
+    .map((a, idx) => ({ a, idx, key: hashString(seedKey + beatIndex + idx) }))
+    .sort((p, q) => p.key - q.key);
 
   let anchor = null;
+  let anchorIdx = -1;
   let restX = 0; let restY = 0;
   for (const cand of order) {
-    const rx = cand.x + cand.bleedX * INSET;
-    const ry = cand.y + cand.bleedY * INSET;
-    if (!overlapsAnyText(rx, ry)) { anchor = cand; restX = rx; restY = ry; break; }
+    if (takenAnchors.has(cand.idx)) continue;
+    const rx = cand.a.x + cand.a.bleedX * INSET;
+    const ry = cand.a.y + cand.a.bleedY * INSET;
+    if (!overlapsAnyText(rx, ry)) { anchor = cand.a; anchorIdx = cand.idx; restX = rx; restY = ry; break; }
   }
   if (!anchor) return false;
+  takenAnchors.add(anchorIdx);
 
   const [cx, cy] = [restX, restY];
   // Slides in from further past its own resting spot (same bleed
@@ -4750,12 +4771,12 @@ function transformIconIntoWatermark(beat, beatIndex, iconLayer, targetOpacity) {
 // "layers" at its default (unset) position would leave a stray,
 // un-animated tiny icon at the canvas origin instead of cleanly
 // skipping like every other "no room for it" case in this file does.
-function injectWatermarkIcon(beat, beatIndex, icon, targetOpacity) {
+function injectWatermarkIcon(beat, beatIndex, icon, targetOpacity, takenAnchors = new Set()) {
   beat.visual.layers.unshift({
     type: 'image', icon, iconColor: '#9A9A9A', width: 40, height: 40,
   });
   const injected = beat.visual.layers[0];
-  const ok = transformIconIntoWatermark(beat, beatIndex, injected, targetOpacity);
+  const ok = transformIconIntoWatermark(beat, beatIndex, injected, targetOpacity, takenAnchors);
   if (!ok) beat.visual.layers.shift();
 }
 
