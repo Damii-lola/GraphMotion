@@ -17,11 +17,25 @@ const fs = require('fs');
  * registered fonts.
  */
 const FONTS_DIR = path.join(__dirname, '..', 'assets', 'fonts');
+// Playfair Display added (2026-09-03) after a direct reference-video
+// analysis request - a real, recurring pattern across at least 3 of the
+// 9 reference videos: an elegant serif (italic for a soft kicker line,
+// bold/black for an emphasized brand word) paired against a heavy
+// grotesque sans for the punchy main headline, never the same single
+// typeface family doing both jobs the way this project's own output
+// always has (Poppins-only, every weight). The font FILES were already
+// sitting in assets/fonts/ (OFL-licensed, same as Poppins) but never
+// actually registered here or added to sceneSchema.js's
+// AVAILABLE_FONT_FAMILIES - this finishes wiring them in.
 const FONT_REGISTRATIONS = [
   ['Poppins-Black.ttf', 'Poppins Black'],
   ['Poppins-Bold.ttf', 'Poppins Bold'],
   ['Poppins-Medium.ttf', 'Poppins Medium'],
   ['Poppins-Italic.ttf', 'Poppins Italic'],
+  ['PlayfairDisplay-Black.ttf', 'Playfair Display Black'],
+  ['PlayfairDisplay-Bold.ttf', 'Playfair Display Bold'],
+  ['PlayfairDisplay-Regular.ttf', 'Playfair Display Regular'],
+  ['PlayfairDisplay-Italic.ttf', 'Playfair Display Italic'],
 ];
 for (const [file, alias] of FONT_REGISTRATIONS) {
   const fontPath = path.join(FONTS_DIR, file);

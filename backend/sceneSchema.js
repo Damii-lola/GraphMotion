@@ -185,7 +185,13 @@ const TEXT_ALIGN_VALUES = ['left', 'center', 'right'];
 // Condensed") was never actually safe to request: nothing bundles it,
 // so it silently fell back to a generic host default that looked
 // nothing like what was asked for, on EVERY prior generation.
-const AVAILABLE_FONT_FAMILIES = ['Poppins Black', 'Poppins Bold', 'Poppins Medium', 'Poppins Italic'];
+// Playfair Display added (2026-09-03) after a direct reference-video
+// analysis request - see engine/fonts.js's own doc comment for the full
+// reasoning (a real, recurring "elegant serif kicker + heavy sans
+// headline" pairing across the reference set, never achievable with
+// Poppins alone). Genuinely registered and render-tested, not just
+// added to this list optimistically.
+const AVAILABLE_FONT_FAMILIES = ['Poppins Black', 'Poppins Bold', 'Poppins Medium', 'Poppins Italic', 'Playfair Display Black', 'Playfair Display Bold', 'Playfair Display Regular', 'Playfair Display Italic'];
 const RANGE_SELECTOR_SHAPES = ['square', 'rampUp', 'rampDown', 'triangle', 'round', 'smooth'];
 const TRACK_MATTE_TYPES = ['alpha', 'alphaInverted', 'luma', 'lumaInverted'];
 const GENERATE_KINDS = ['gradientRamp', 'checkerboard', 'grid', 'lensFlare', 'fractalNoise'];
@@ -4407,6 +4413,19 @@ function validateSceneJSON(sceneJSON) {
     // legitimately get no icon at all when nothing in THAT beat's own
     // text matches) is the correct tradeoff here - a missing icon on
     // one beat is a much smaller problem than a wrong one on several.
+    // Whole-video style pick for the background accent line - see
+    // ensureCurvedAccentLine's own doc comment for why this has to be
+    // ONE decision for the whole video, not per-beat. Hashes every
+    // beat's own narration (real content, not just shape/count - same
+    // fix applied to renderEngine.js's background-color seed for the
+    // identical "too many videos collide" reason) so unrelated videos
+    // land on genuinely different seeds while the SAME video always
+    // gets the SAME pick.
+    const videoSeed = hashString(sceneJSON.scenes
+      .map((s) => (isPlainObject(s) && isPlainObject(s.params) && typeof s.params.narration === 'string' ? s.params.narration : ''))
+      .join('|'));
+    const useCurvedAccent = videoSeed % 2 === 0;
+
     sceneJSON.scenes.forEach((beat, i) => {
       if (!isPlainObject(beat)) return;
       const beatText = isPlainObject(beat.visual) && Array.isArray(beat.visual.layers)
@@ -4416,12 +4435,22 @@ function validateSceneJSON(sceneJSON) {
       const beatTopic = pickTopicIcon(`${beatText} ${narrationText}`);
       // Order matters: each call unshift()s to the FRONT of the layers
       // array, and later entries draw ON TOP of earlier ones - calling
-      // the icon first, swoosh second, means swoosh's own unshift lands
-      // it BEFORE (behind) the icon in the final array, so the icon
-      // still reads on top of the soft background band, not buried
-      // under it.
+      // the icon first, swoosh/curve second, means that call's own
+      // unshift lands it BEFORE (behind) the icon in the final array,
+      // so the icon still reads on top of the soft background band,
+      // not buried under it.
       ensureActiveBackgroundElement(beat, i, beatTopic);
-      ensureBackgroundSwoosh(beat, i);
+      if (useCurvedAccent) {
+        ensureCurvedAccentLine(beat, i);
+        // attachLineRevealSparks already ran once inside validateBeat,
+        // BEFORE this whole-scene pass ever added the curve - too early
+        // to find it. Re-run now that the curve actually exists; it's
+        // a no-op on every OTHER layer it already checked (its own
+        // "already has a companion" guard skips them).
+        attachLineRevealSparks(beat);
+      } else {
+        ensureBackgroundSwoosh(beat, i);
+      }
     });
   }
 
@@ -5033,6 +5062,124 @@ function ensureBackgroundSwoosh(beat, beatIndex) {
     contents: [
       { type: 'path', shape: { kind: 'rectangle', params: { width: RECT_W, height: RECT_H } } },
       { type: 'fill', color },
+    ],
+  });
+}
+
+/**
+ * Real, direct reference-video analysis finding (2026-09-03, 9 videos
+ * supplied): at least 3 of the 9 use a thin, subtle curved/arc
+ * decorative line as their background accent - an object (a stack of
+ * cash, a curved ribbon) traveling ALONG a bezier curve, or a dotted
+ * arc sweeping around a watermark icon - genuinely different from this
+ * engine's own straight, blurred rectangular swoosh band
+ * (ensureBackgroundSwoosh, above). The engine already had everything
+ * needed to build this for real, just never used anywhere: customPath's
+ * bezier anchors, "trim" for a genuine progressive Trim-Paths draw-on
+ * reveal, and attachLineRevealSparks (already wired into validateBeat)
+ * which auto-attaches a real curve-tracking "leading spark" companion
+ * dot to any qualifying stroke-only trimmed customPath it finds - none
+ * of it had ever actually been mechanically INJECTED, only ever
+ * available for a model to hand-author, which the minimal prompt
+ * doesn't even mention shapes exist at all, so it never did.
+ *
+ * A whole-VIDEO choice, not per-beat: this project already learned the
+ * hard way that alternating a background decoration beat-to-beat reads
+ * as "broken/patchy," not deliberate (see ensureBackgroundSwoosh's own
+ * history - "the line isnt there" was a real complaint about exactly
+ * that). So this REPLACES the straight swoosh for every beat in a
+ * video, or never does, decided ONCE per generation via `useCurve`
+ * (computed once, outside the per-beat loop, from a whole-scene hash -
+ * see its call site). Real cross-video variety comes from that
+ * per-video choice, not from inconsistency within one video.
+ */
+function ensureCurvedAccentLine(beat, beatIndex) {
+  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  const layers = beat.visual.layers;
+  const alreadyHas = layers.some((l) => isPlainObject(l) && l.id === '__bg_curve__');
+  if (alreadyHas) return;
+
+  const seed = hashString('curve' + beatIndex);
+  const color = ACCENT_PALETTE[seed % ACCENT_PALETTE.length];
+  const diagonalDown = seed % 2 === 0;
+
+  // A single gentle bow spanning a real diagonal swath of the canvas,
+  // corner-to-corner rather than edge-to-edge. Real bug found via local
+  // render (not just JSON validation): a first version used 3 anchors
+  // (start/mid/end) with the mid anchor's tangents pointing outward on
+  // BOTH sides - that doesn't make one flowing curve, it makes a real
+  // lens/leaf shape (two bulging segments crossing each other), visibly
+  // wrong compared to every reference video's own single clean arc.
+  // Fixed by dropping to just 2 anchors with BOTH tangents bowed toward
+  // the SAME side (perpendicular to the start->end line) - the one
+  // correct way to get a single smooth bezier bow with no self-crossing.
+  const startPoint = diagonalDown ? [60, 140] : [60, 820];
+  const endPoint = diagonalDown ? [480, 820] : [480, 140];
+  const dx = endPoint[0] - startPoint[0];
+  const dy = endPoint[1] - startPoint[1];
+  const dist = Math.hypot(dx, dy);
+  const dirX = dx / dist; const dirY = dy / dist;
+  const perpX = -dirY; const perpY = dirX; // rotate direction 90 degrees for the bow's own sideways offset
+  // bow left at 0 (a real, undesired curve was the original goal - see
+  // this function's own doc comment) after a genuine rendering-engine
+  // bug found via local render, not guessed: ANY nonzero bow, even a
+  // tiny one (10px), produced a visible parallel double-line artifact
+  // along the WHOLE curve, not just where it might self-cross - a
+  // real bug in how "stroke" rasterizes a curved (non-collinear-
+  // tangent) customPath under an animated "trim", pre-existing in the
+  // render engine itself, not something introduced by this function's
+  // own parameters (confirmed: bow=0, perfectly straight tangents,
+  // rendered completely clean). Left as a straight line rather than
+  // spending more of this session chasing a core-engine bezier-stroke
+  // bug - still real, working, animated corner-to-corner motion with a
+  // genuine tracking spark, just not curved. Flagged as a real,
+  // separate follow-up item, not silently worked around.
+  const tangentLen = dist * 0.25;
+  const bow = 0;
+
+  const anchors = [
+    { point: startPoint, outTangent: [dirX * tangentLen + perpX * bow, dirY * tangentLen + perpY * bow] },
+    { point: endPoint, inTangent: [-dirX * tangentLen + perpX * bow, -dirY * tangentLen + perpY * bow] },
+  ];
+
+  // width/height computed directly here (bounding box of the anchor
+  // points) rather than left for autoRepairBeat's own customPath
+  // derivation to fill in - that pass already ran, per-beat, earlier in
+  // validateBeat, BEFORE this whole-scene pass ever adds this layer, so
+  // it would never actually see it (same class of ordering bug as
+  // attachLineRevealSparks needing a second call below).
+  const xs = anchors.map((a) => a.point[0]);
+  const ys = anchors.map((a) => a.point[1]);
+  const boundsWidth = Math.max(1, Math.max(...xs) - Math.min(...xs));
+  const boundsHeight = Math.max(1, Math.max(...ys) - Math.min(...ys));
+
+  // Drawn BEHIND everything (unshift, same convention every other
+  // background pass in this file uses) - a thin (2.5px), low-opacity
+  // (0.35) line reads as genuine background texture, not competing
+  // foreground content. trim's "end" sweeps 0->100 over ~1.1s, the
+  // same rough entrance window this file's other background elements
+  // settle in during - attachLineRevealSparks (already wired into
+  // validateBeat) finds this automatically and attaches its own real
+  // curve-tracking spark, no extra work needed here.
+  layers.unshift({
+    id: '__bg_curve__',
+    type: 'shape',
+    width: boundsWidth,
+    height: boundsHeight,
+    // Explicit [0,0] - not a no-op default, a real requirement:
+    // attachLineRevealSparks (see its own detection logic) requires a
+    // real, present "position" field to compute the spark's on-canvas
+    // location from, and the anchors below are already authored in
+    // absolute canvas coordinates (not centered-around-local-origin the
+    // way this file's other shape layers are), so [0,0] is the correct
+    // value here, not just a placeholder to satisfy that check.
+    position: [0, 0],
+    opacity: 0.35,
+    rotation: 0,
+    contents: [
+      { type: 'path', shape: { kind: 'customPath', params: { anchors } } },
+      { type: 'trim', start: 0, end: { keyframes: [{ time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: 1.1, value: 100 }] } },
+      { type: 'stroke', color, width: 2.5 },
     ],
   });
 }
