@@ -4255,6 +4255,32 @@ function validateSceneJSON(sceneJSON) {
     errors.push(...beatErrors);
   });
 
+  // Real, direct user complaint after prompt-only "hook the first line"
+  // guidance clearly wasn't enough: a real generated opening line
+  // ("Only one in ten thousand sells at retail") read as flat documentary
+  // narration, not a hook - "NOBODY CARES FOR A DOCUMENTARY... PPL WILL
+  // SWIPE." Same lesson as everywhere else this session - prose asking
+  // for something doesn't reliably produce it, so the opening line now
+  // has to show at least ONE real, checkable hook signal: a direct
+  // address to the viewer ("you"/"your"), a genuine question, an
+  // imperative/attention-grabbing opener (stop/imagine/picture/wait/
+  // ever), or an exclamation - not a bare, flat statement of fact. This
+  // doesn't guarantee a GOOD hook, but a plain declarative sentence with
+  // none of these is a false-negative-free signal of exactly the
+  // "documentary" failure mode reported live.
+  if (sceneJSON.scenes.length > 0) {
+    const firstBeat = sceneJSON.scenes[0];
+    const firstNarration = isPlainObject(firstBeat) && isPlainObject(firstBeat.params) && typeof firstBeat.params.narration === 'string' ? firstBeat.params.narration.trim() : '';
+    if (firstNarration) {
+      const hasHookSignal = /\b(you|your|you're|yours)\b/i.test(firstNarration)
+        || /[?!]\s*$/.test(firstNarration)
+        || /^(stop|imagine|picture|wait|ever|guess|what if|never)\b/i.test(firstNarration);
+      if (!hasHookSignal) {
+        errors.push(`scenes[0].params.narration: "${firstNarration}" reads as a flat, documentary-style statement of fact - no direct address ("you"/"your"), no question, no exclamation, no attention-grabbing opener (stop/imagine/wait/ever/guess/what if/never). Real short-form footage never opens this way - a viewer swipes past a museum-placard fact in under a second. Rewrite the FIRST beat's narration to genuinely hook: talk straight at the viewer, ask a real question, or open with a bold, punchy claim - not a neutral fact.`);
+      }
+    }
+  }
+
   varyHeadlinePositions(sceneJSON);
   ensureSustainedWordMotion(sceneJSON);
   ensureModestTextSize(sceneJSON);

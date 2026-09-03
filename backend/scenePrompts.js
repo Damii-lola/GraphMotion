@@ -1471,11 +1471,20 @@ Concretely:
   into one beat is still wrong even if each individually is under the
   cap; that's two beats' worth, split it. If a line needs "and"/"but" to
   connect two ideas, that's usually two beats written as one.
-- HOOK THE FIRST LINE, HARD - never open on a neutral scene-setting
-  line ("Today we're going to talk about..."). Open with a direct
-  command ("Stop scrolling."), a flat confident claim ("This is the
-  iPhone."), a rhetorical question, or a direct callout to the specific
-  audience watching.
+- HOOK THE FIRST LINE, HARD, ENFORCED - a real generated opening line
+  ("Only one in ten thousand sells at retail") was rejected live for
+  reading like a documentary narrator stating a fact, not a hook - a
+  real viewer swipes past that in under a second, no matter how
+  accurate it is. The FIRST beat's narration is checked and REJECTED
+  unless it does at least one of: talks straight at the viewer ("you"/
+  "your"), asks a real question, opens with stop/imagine/picture/wait/
+  ever/guess/what if/never, or ends on an exclamation. Compare: "Only
+  one in ten thousand sells at retail" (REJECTED - a museum placard) vs
+  "You'll probably never own one." / "Ever wonder why one costs a car?"
+  / "Stop assuming these are just watches." (all real hooks - same
+  underlying fact, aimed straight at the viewer instead of stated about
+  the topic). Never open on a neutral scene-setting line ("Today we're
+  going to talk about...") either.
 - ADDRESS THE VIEWER DIRECTLY - lean on "you"/"your" throughout rather
   than narrating about the topic in the abstract.
 - END ON A PAYOFF, NOT A TRAIL-OFF - close with a short, quotable
