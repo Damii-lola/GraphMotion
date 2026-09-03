@@ -154,9 +154,9 @@ A script that survives this test is shocking, surprising, funny, or makes a real
 
 You will be given a numbered list of narration lines, one per beat, meant to be read in order as ONE continuous script. Respond in EXACTLY this format and nothing else, no other commentary:
 VERDICT: PASS or FAIL
-REASON: <if FAIL, name the SPECIFIC line number(s) that would cause a scroll-away and exactly why they're boring - blunt and specific, never vague. If PASS, write "N/A".>
+REASON: <if FAIL, ONE short sentence, under 15 words, no quoting the line back verbatim - just the line number(s) and the core problem (e.g. "Line 1 is a cliche did-you-know question, no real stakes"). If PASS, write "N/A".>
 
-Be harsh. Most scripts you see should FAIL this test on a real first read. Only PASS a script that is genuinely gripping start to finish, not merely "fine" or "informative."`;
+Be harsh. Most scripts you see should FAIL this test on a real first read. Only PASS a script that is genuinely gripping start to finish, not merely "fine" or "informative." Keep REASON short - it gets fed back into a token-constrained rewrite step, not read by a human.`;
 
 function buildNumberedScript(sceneJSON) {
   if (!sceneJSON || !Array.isArray(sceneJSON.scenes)) return '';
@@ -171,7 +171,14 @@ async function judgeNarrationScript(sceneJSON) {
   const numberedScript = buildNumberedScript(sceneJSON);
   if (!numberedScript) return { pass: true, reason: '' };
   try {
-    const raw = await callGroqRaw(SCRIPT_JUDGE_SYSTEM_PROMPT, numberedScript, { jsonMode: false, maxTokens: 400, temperature: 0.6 });
+    // maxTokens capped hard at 80 (was 400) - not just the system
+    // prompt's own "under 15 words" request, a real ceiling. The prompt
+    // instruction alone doesn't guarantee brevity (this session's own
+    // "mechanical enforcement beats prompt guidance" lesson again) and
+    // this reason text gets re-injected into the NEXT encode round's
+    // user message - see generateWholeSceneJSON's own doc comment for
+    // the real 413 this caused live when it was allowed to run long.
+    const raw = await callGroqRaw(SCRIPT_JUDGE_SYSTEM_PROMPT, numberedScript, { jsonMode: false, maxTokens: 80, temperature: 0.6 });
     const verdictMatch = raw.match(/VERDICT:\s*(PASS|FAIL)/i);
     const reasonMatch = raw.match(/REASON:\s*([\s\S]*)/i);
     const pass = verdictMatch ? verdictMatch[1].toUpperCase() === 'PASS' : true;
@@ -232,7 +239,19 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
   // the SCRIPT ITSELF wasn't good enough" - a real, different kind of
   // problem, worth its own clear framing so the model doesn't confuse
   // a content note for a syntax one).
-  if (judgeFeedback) userMessage += `\n\nA separate, extremely harsh judge reviewed your PREVIOUS narration script (it was structurally valid JSON, this is NOT a syntax problem) and REJECTED it as boring - a real viewer would have scrolled away. The judge's own words: "${judgeFeedback}"\n\nRewrite the narration lines (and the on-screen text that mirrors them) to genuinely fix what the judge called out - still encoding the same treatment and beat count, same schema, just a script that would actually stop someone from scrolling.`;
+  //
+  // Real, live-confirmed bug (2026-09-03): this used to be a full
+  // paragraph wrapping the judge's own (previously unbounded) reason
+  // text - harmless-looking, but Groq's flat 8000 TPM per-request
+  // ceiling has almost no slack once the base prompt (system + treatment
+  // + beat headers) is already accounted for (measured live: round 1,
+  // no feedback, fits; round 2/3, WITH this paragraph added, hit a real
+  // 413 "Requested 8143, Limit 8000" - a ~143 token overage that lines
+  // up almost exactly with how much this wrapping text plus a verbose
+  // judge reason used to cost). Trimmed to the essentials - the judge's
+  // OWN reason is now also capped short (see SCRIPT_JUDGE_SYSTEM_PROMPT)
+  // so this stays cheap on every round, not just the first one.
+  if (judgeFeedback) userMessage += `\n\nA brutal judge rejected your last script as boring: "${judgeFeedback}" Rewrite the narration (and matching on-screen text) to fix this - same treatment, same beat count.`;
   if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON - still encoding the treatment above.`;
   if (beatHeaders.length > 0) {
     userMessage += `\n\nThe treatment above contains EXACTLY ${beatHeaders.length} beats:\n${beatHeaders.join('\n')}\n\nYour "scenes" array MUST contain EXACTLY ${beatHeaders.length} entries, one per beat above, in this same order - not fewer, not merged, not summarized. Before you finish, go down this list one at a time and confirm each has its own real entry in "scenes".`;

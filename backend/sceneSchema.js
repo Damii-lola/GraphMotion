@@ -4273,19 +4273,44 @@ function validateSceneJSON(sceneJSON) {
   // has to show at least ONE real, checkable hook signal: a direct
   // address to the viewer ("you"/"your"), a genuine question, an
   // imperative/attention-grabbing opener (stop/imagine/picture/wait/
-  // ever), or an exclamation - not a bare, flat statement of fact. This
+  // guess), or an exclamation - not a bare, flat statement of fact. This
   // doesn't guarantee a GOOD hook, but a plain declarative sentence with
   // none of these is a false-negative-free signal of exactly the
   // "documentary" failure mode reported live.
+  //
+  // SECOND real bug found the same way (live production logs, real user
+  // report, 2026-09-03): the check above is a false-negative-free floor,
+  // not a "this is actually good" guarantee - and it was letting an
+  // entire cliché CATEGORY straight through, because "Did you know cats
+  // purr while breathing in?" trivially contains "you" AND ends in "?".
+  // A real live 3-round Groq script judge (a SEPARATE brutal AI grader -
+  // see sceneGenClient.js) independently flagged this exact line as
+  // "bland, generic... reads like a textbook teaser" on all 3 of its own
+  // attempts, and the user's own report the same day was blunter still:
+  // "IN THE FIRST 0.5SEC I WILL SCROLL OFF." "Did you know", "have you
+  // ever wondered", "ever wonder", "ever heard" are the single most
+  // overused trivia-video openers that exist - a viewer clocks the
+  // pattern instantly regardless of what fact follows it, the same
+  // museum-placard swipe-away as a flat statement, just wearing a "?".
+  // Rejected outright now, BEFORE the generic positive-signal check even
+  // runs, rather than trusting "contains you/ends in ?" to catch this -
+  // exactly the "mechanical enforcement beats prompt guidance alone"
+  // lesson this session already learned the hard way everywhere else.
+  const CLICHE_OPENER_PATTERN = /^(did you know|have you (ever )?wonder(ed)?|ever wonder(ed)?|ever heard|did you ever|do you know|have you noticed)\b/i;
   if (sceneJSON.scenes.length > 0) {
     const firstBeat = sceneJSON.scenes[0];
     const firstNarration = isPlainObject(firstBeat) && isPlainObject(firstBeat.params) && typeof firstBeat.params.narration === 'string' ? firstBeat.params.narration.trim() : '';
     if (firstNarration) {
-      const hasHookSignal = /\b(you|your|you're|yours)\b/i.test(firstNarration)
+      const isClicheOpener = CLICHE_OPENER_PATTERN.test(firstNarration);
+      const hasHookSignal = !isClicheOpener && (
+        /\b(you|your|you're|yours)\b/i.test(firstNarration)
         || /[?!]\s*$/.test(firstNarration)
-        || /^(stop|imagine|picture|wait|ever|guess|what if|never)\b/i.test(firstNarration);
-      if (!hasHookSignal) {
-        errors.push(`scenes[0].params.narration: "${firstNarration}" reads as a flat, documentary-style statement of fact - no direct address ("you"/"your"), no question, no exclamation, no attention-grabbing opener (stop/imagine/wait/ever/guess/what if/never). Real short-form footage never opens this way - a viewer swipes past a museum-placard fact in under a second. Rewrite the FIRST beat's narration to genuinely hook: talk straight at the viewer, ask a real question, or open with a bold, punchy claim - not a neutral fact.`);
+        || /^(stop|imagine|picture|wait|guess|what if|never)\b/i.test(firstNarration)
+      );
+      if (isClicheOpener) {
+        errors.push(`scenes[0].params.narration: "${firstNarration}" opens with an overused trivia-video cliché ("did you know"/"ever wonder"/"have you ever"/"ever heard") - real viewers clock this pattern instantly and swipe, regardless of the fact that follows it. Rewrite the FIRST beat as a bold direct claim ("You'll probably never own one."), a blunt second-person callout, a command, or a shocking specific stated flatly as fact - not a rhetorical trivia question.`);
+      } else if (!hasHookSignal) {
+        errors.push(`scenes[0].params.narration: "${firstNarration}" reads as a flat, documentary-style statement of fact - no direct address ("you"/"your"), no question, no exclamation, no attention-grabbing opener (stop/imagine/wait/guess/what if/never). Real short-form footage never opens this way - a viewer swipes past a museum-placard fact in under a second. Rewrite the FIRST beat's narration to genuinely hook: talk straight at the viewer, ask a real question, or open with a bold, punchy claim - not a neutral fact.`);
       }
     }
   }

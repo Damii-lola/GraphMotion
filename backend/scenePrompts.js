@@ -1478,13 +1478,27 @@ Concretely:
   accurate it is. The FIRST beat's narration is checked and REJECTED
   unless it does at least one of: talks straight at the viewer ("you"/
   "your"), asks a real question, opens with stop/imagine/picture/wait/
-  ever/guess/what if/never, or ends on an exclamation. Compare: "Only
+  guess/what if/never, or ends on an exclamation. Compare: "Only
   one in ten thousand sells at retail" (REJECTED - a museum placard) vs
-  "You'll probably never own one." / "Ever wonder why one costs a car?"
-  / "Stop assuming these are just watches." (all real hooks - same
-  underlying fact, aimed straight at the viewer instead of stated about
-  the topic). Never open on a neutral scene-setting line ("Today we're
-  going to talk about...") either.
+  "You'll probably never own one." / "Stop assuming these are just
+  watches." (real hooks - same underlying fact, aimed straight at the
+  viewer instead of stated about the topic). Never open on a neutral
+  scene-setting line ("Today we're going to talk about...") either.
+  BANNED, literally, no exceptions, checked and REJECTED even though
+  it technically "asks a question": "Did you know...", "Have you ever
+  wondered...", "Ever wonder...", "Ever heard...", "Do you know...".
+  These are the single most overused openers in every trivia/documentary
+  short-form video ever made - a real, live 3-round brutal AI script
+  judge independently flagged one of these ("Did you know cats purr
+  while breathing in?") as "bland, generic... reads like a textbook
+  teaser" on EVERY attempt, and the user's own next words were "IN THE
+  FIRST 0.5SEC I WILL SCROLL OFF." A viewer clocks this exact phrasing
+  pattern within a syllable and swipes, no matter how good the fact
+  underneath it is - a "?" at the end does not make it a hook. If your
+  first instinct is "did you know" or "ever wonder", that is the signal
+  to rewrite it as a flat, bold, second-person CLAIM instead of a
+  question: "You've never noticed cats purr while breathing in." not
+  "Did you know cats purr while breathing in?".
 - ADDRESS THE VIEWER DIRECTLY - lean on "you"/"your" throughout rather
   than narrating about the topic in the abstract.
 - END ON A PAYOFF, NOT A TRAIL-OFF - close with a short, quotable
