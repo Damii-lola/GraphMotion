@@ -339,6 +339,22 @@ function applyRealWordTimingToText(scene, wordTimings) {
       properties: { opacity: -1 },
     },
   ];
+
+  // Real, confirmed bug found via a production render (2026-09-03):
+  // ensureHighlightChip (sceneSchema.js) can only ESTIMATE when its
+  // target word lands, since real audio timing doesn't exist yet at
+  // JSON-generation time - but this function has the ACTUAL per-word
+  // start time right here (wordTimings), so replace the estimate with
+  // the exact real value for the word the highlight is anchored to.
+  if (Array.isArray(bestLayer.highlights) && bestLayer.highlights.length > 0) {
+    const hl = bestLayer.highlights[0];
+    if (isPlainObject(hl) && isPlainObject(hl.selector) && typeof hl.selector.start === 'number') {
+      const hlWordIndex = Math.round((hl.selector.start / 100) * usedCount);
+      if (hlWordIndex >= 0 && hlWordIndex < usedCount) {
+        hl.appearAt = Math.max(0, wordTimings[hlWordIndex].start);
+      }
+    }
+  }
 }
 
 function isPlainObject(v) { return typeof v === 'object' && v !== null && !Array.isArray(v); }

@@ -307,6 +307,12 @@ function buildHighlight(highlightDef) {
     paddingX: highlightDef.paddingX,
     paddingY: highlightDef.paddingY,
     cornerRadius: highlightDef.cornerRadius,
+    // See render-worker/sceneBuilder.js's own copy of this function for
+    // the full real-bug writeup - this whitelist used to silently drop
+    // appearAt/fadeInDuration, the fields the real-audio-sync fix relies
+    // on entirely.
+    appearAt: highlightDef.appearAt,
+    fadeInDuration: highlightDef.fadeInDuration,
   };
 }
 

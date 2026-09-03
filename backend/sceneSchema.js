@@ -4878,6 +4878,17 @@ function ensureHighlightChip(sceneJSON) {
     const hi = ((wordIndex + 1) / words.length) * 100;
     const color = ACCENT_PALETTE[seed % ACCENT_PALETTE.length];
 
+    // Estimated fallback timing (no real audio timing exists yet at
+    // JSON-generation time) - proportional to this word's position in
+    // the sentence, same shape of estimate ensureSustainedWordMotion's
+    // own reveal sweep uses. narrationPrefetch's applyRealWordTimingToText
+    // overwrites this with the WORD'S ACTUAL spoken start time once real
+    // audio timing is available (the precise fix); this stays as the
+    // fallback for any path that renders without going through real
+    // audio timing at all (e.g. a raw preview).
+    const durationEstimate = isPlainObject(beat.params) && typeof beat.params.duration === 'number' ? beat.params.duration : 2;
+    const estimatedAppearAt = (wordIndex / words.length) * Math.max(0.3, durationEstimate * 0.75);
+
     dominant.highlights = [{
       selector: {
         type: 'range', start: lo, end: hi, basedOn: 'words', shape: 'square', smoothness: 0,
@@ -4886,6 +4897,7 @@ function ensureHighlightChip(sceneJSON) {
       paddingX: 8,
       paddingY: 4,
       cornerRadius: 8,
+      appearAt: estimatedAppearAt,
     }];
   });
 }
@@ -5085,7 +5097,26 @@ function transformIconIntoWatermark(beat, beatIndex, iconLayer, targetOpacity, t
   if (!anchor) return false;
   takenAnchors.add(anchorIdx);
 
-  const [cx, cy] = [restX, restY];
+  // Compensates for renderEngine.js's own per-beat Ken Burns zoom
+  // (BEAT_ZOOM_AMOUNT, scales the WHOLE frame around canvas center as
+  // the beat plays). That zoom pushes anything far from center further
+  // OUTWARD the later in the beat it's sampled - and this icon settles
+  // at its resting spot by t=0.68s then sits there statically for the
+  // rest of the beat, so by late-beat it was drifting well past the
+  // ~2/3-visible framing INSET was tuned for, into "unrecognizable
+  // cropped blob at the frame edge" territory (real, confirmed via a
+  // production render's own frames, not a hypothetical). Pre-pulling
+  // the rest position toward center by the same factor the zoom will
+  // apply at its OWN maximum (end of beat, zoom = 1+BEAT_ZOOM_AMOUNT)
+  // means the WORST-CASE displayed position lands back on the original
+  // tuned spot instead of past it; earlier in the beat (zoom closer to
+  // 1) the icon reads as slightly MORE on-canvas than that, never less.
+  const BEAT_ZOOM_AMOUNT = 0.15;
+  const zoomCompensate = (x, y) => [
+    CANVAS_WIDTH / 2 + (x - CANVAS_WIDTH / 2) / (1 + BEAT_ZOOM_AMOUNT),
+    CANVAS_HEIGHT / 2 + (y - CANVAS_HEIGHT / 2) / (1 + BEAT_ZOOM_AMOUNT),
+  ];
+  const [cx, cy] = zoomCompensate(restX, restY);
   // Slides in from further past its own resting spot (same bleed
   // direction, just displaced further out at the start) - a real,
   // visible entrance rather than present from frame 0. Faint rotation

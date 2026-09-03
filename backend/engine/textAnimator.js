@@ -114,12 +114,28 @@ function drawHighlights(ctx, chars, fontSize, highlights, t, totalChars, totalWo
     const {
       selector, color, gradient, paddingX = 8, paddingY = 4, cornerRadius = 6,
     } = hl;
+    // Real, confirmed bug found via a production render (2026-09-03):
+    // this selector is a static word-position top-hat with no time
+    // component at all, so a highlight chip used to be fully visible
+    // for the ENTIRE beat regardless of whether the word it's behind
+    // has actually been revealed yet - on a real beat where the
+    // highlighted word lands late in the sentence, that showed up as a
+    // fully opaque colored box floating with no text under it for over
+    // a second. appearAt (sceneSchema.js's ensureHighlightChip, backed
+    // by narrationPrefetch's real per-word audio timing once available)
+    // says when the target word actually lands; defaults to 0 so a
+    // hand-authored highlight with no appearAt behaves exactly as
+    // before.
+    const appearAt = typeof hl.appearAt === 'number' ? hl.appearAt : 0;
+    const fadeInDuration = typeof hl.fadeInDuration === 'number' && hl.fadeInDuration > 0 ? hl.fadeInDuration : 0.25;
+    const timeGate = clamp01((t - appearAt) / fadeInDuration);
     let run = null;
     let strengthSum = 0;
 
     const flush = () => {
       if (!run) return;
-      const alpha = clamp01(strengthSum / run.count);
+      const alpha = clamp01(strengthSum / run.count) * timeGate;
+      if (alpha <= 0) { run = null; strengthSum = 0; return; }
       const left = run.minX - paddingX;
       const right = run.maxX + paddingX;
       const top = run.y - fontSize * 0.55 - paddingY;

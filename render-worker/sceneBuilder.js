@@ -307,6 +307,18 @@ function buildHighlight(highlightDef) {
     paddingX: highlightDef.paddingX,
     paddingY: highlightDef.paddingY,
     cornerRadius: highlightDef.cornerRadius,
+    // Real, confirmed bug found via a production render (2026-09-03):
+    // this whitelist silently dropped appearAt/fadeInDuration (the
+    // real-audio-synced reveal-timing fields sceneSchema.js's
+    // ensureHighlightChip and narrationPrefetch.js's
+    // applyRealWordTimingToText set on every highlight) - the chip
+    // rendered fully opaque for the WHOLE beat regardless, showing as a
+    // floating colored box with no text under it whenever its word
+    // landed late in the sentence. drawHighlights (textAnimator.js)
+    // defaults both to safe values when absent, so passing them through
+    // here is the only change needed.
+    appearAt: highlightDef.appearAt,
+    fadeInDuration: highlightDef.fadeInDuration,
   };
 }
 
