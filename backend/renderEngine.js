@@ -131,8 +131,30 @@ const MOTION_BLUR_CONFIG = { enabled: true, shutterAngle: 180, shutterPhase: -90
  * vary between different videos while staying perfectly reproducible
  * for the same one.
  */
+// Real bug found tracing a live "we're just reusing one single color -
+// no two videos should have the same bg color" complaint (2026-09-03):
+// this hash only ever depended on each beat's own duration and layer
+// COUNT - never anything about what the video actually is. Two totally
+// different topics routinely land on near-identical beat durations
+// (narration length drives duration, and most beats cluster in the same
+// 2-3s range) and the same small layer count (2-4 layers is the normal
+// case for almost every beat this engine produces) - meaning two
+// unrelated real videos could (and, per this complaint, evidently did)
+// hash to the EXACT SAME seed, and therefore the exact same background
+// AND camera pan pattern. Fixed by hashing real content instead - every
+// beat's own narration text plus each layer's own text/icon - which
+// only repeats across two videos that are actually near-duplicates of
+// each other, not just similarly-shaped. Still 100% deterministic per
+// sceneJSON (same content -> same hash), which is the one property this
+// function actually needs to preserve - see this function's own callers
+// for why (chunk-to-chunk consistency within ONE video's render).
 function hashSceneJSONToSeed(sceneJSON) {
-  const s = (sceneJSON.scenes || []).map((sc) => `${sc.params?.duration || 0}|${(sc.visual?.layers || []).length}`).join(';');
+  const s = (sceneJSON.scenes || []).map((sc) => {
+    const layerSig = (sc.visual?.layers || [])
+      .map((l) => `${l?.type || ''}:${l?.text || l?.icon || ''}`)
+      .join(',');
+    return `${sc.params?.duration || 0}|${sc.params?.narration || ''}|${layerSig}`;
+  }).join(';');
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
@@ -185,7 +207,28 @@ function adjustLightness(hex, factor) {
 // emerald/amber/teal instead of near-black navy/maroon/forest, still
 // dark enough for white/light text to stay legible, but genuinely
 // vivid instead of muddy.
-const BOARD_BACKGROUND_HUES = ['#13529A', '#50198F', '#9C165E', '#158450', '#B35B0F', '#177875'];
+//
+// Second, real complaint (2026-09-03, with a reference video attached):
+// "the bg color is supposed to be random, sometimes light eg cream
+// sometimes dark, sometimes another gradient... I WANT UNIQUENESS."
+// EVERY one of the 6 entries above is a medium-dark saturated jewel
+// tone - a light/cream background (the reference video's own look) was
+// mathematically impossible to land on, no matter how the seed rolled.
+// Added a real LIGHT/CREAM category alongside the existing dark jewel
+// tones and a couple of muted pastels, so the actual reachable range
+// spans what was asked for. ensureTextContrastAgainstBackground (below)
+// is the reason this is safe to do at all - light entries would
+// otherwise make every white-text layer unreadable; that pass darkens
+// text/icon colors at render time whenever the picked background turns
+// out light, exactly the case these new entries introduce.
+const BOARD_BACKGROUND_HUES = [
+  // dark jewel tones (original palette)
+  '#13529A', '#50198F', '#9C165E', '#158450', '#B35B0F', '#177875',
+  // light / cream
+  '#EDE4D3', '#F2ECE1', '#E8DCC8',
+  // muted pastel
+  '#D9C7B8', '#C9D6D3', '#D6C9E0',
+];
 
 /**
  * Explicit product direction: ONE continuous background for the whole
@@ -251,6 +294,66 @@ function buildBoardLayoutAndBackground(sceneJSON, beatRanges) {
   const shape = rand() < 0.25 ? 'linear' : 'radial';
 
   return { positions, background: { startColor, endColor, shape } };
+}
+
+// Perceptual luma (ITU-R BT.601 weights) - standard "how bright does
+// this actually look to a human eye" measure, not a flat RGB average
+// (green reads far brighter than blue at the same channel value).
+function relativeLuma([r, g, b]) {
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+const LIGHT_BACKGROUND_LUMA_THRESHOLD = 150; // out of 255
+const LIGHT_TEXT_COLOR_LUMA_THRESHOLD = 150; // out of 255
+
+/**
+ * Direct consequence of BOARD_BACKGROUND_HUES' own new light/cream
+ * entries (see its doc comment): every text/icon color this engine
+ * produces was authored - by the model, or by sceneSchema.js's own
+ * mechanical passes - with an unconditional assumption baked in that
+ * the background would always be dark (near-white fill colors,
+ * confirmed via real production JSON - #ffffff, #FFD700, light accent
+ * tones). That assumption was even true before this fix. It is no
+ * longer true: background color is picked HERE, at render time, from a
+ * seed - nothing upstream of this file (scene JSON generation) has any
+ * way to know what background a given video will actually land on, so
+ * light text authored blind would go invisible outright on a newly-
+ * possible light/cream background. Fixed by checking the ACTUAL picked
+ * background's real perceptual lightness after buildBoardLayoutAndBackground
+ * runs, and - only when it turns out light - darkening any light text
+ * fill/icon color/reveal-sweep color found in the scene (keeping each
+ * color's own hue via adjustLightness rather than flattening everything
+ * to one neutral, so beat-to-beat accent variety survives). Completely
+ * inert (zero behavior change) on a dark background - the historical,
+ * previously-only-possible case - since nothing here fires unless
+ * isLightBackground is true.
+ */
+function ensureTextContrastAgainstBackground(sceneJSON, boardBackgroundDef) {
+  const startLuma = relativeLuma(hexToRgbLocal(boardBackgroundDef.startColor));
+  const endLuma = relativeLuma(hexToRgbLocal(boardBackgroundDef.endColor));
+  const isLightBackground = (startLuma + endLuma) / 2 > LIGHT_BACKGROUND_LUMA_THRESHOLD;
+  if (!isLightBackground) return;
+
+  const fixColor = (color) => {
+    if (typeof color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(color)) return color;
+    const luma = relativeLuma(hexToRgbLocal(color));
+    if (luma < LIGHT_TEXT_COLOR_LUMA_THRESHOLD) return color; // already dark enough against a light bg - leave its own hue alone
+    return adjustLightness(color, -0.65);
+  };
+
+  for (const scene of sceneJSON.scenes || []) {
+    const layers = scene?.visual?.layers;
+    if (!Array.isArray(layers)) continue;
+    for (const layer of layers) {
+      if (!layer || typeof layer !== 'object') continue;
+      if (typeof layer.fillStyle === 'string') layer.fillStyle = fixColor(layer.fillStyle);
+      if (typeof layer.iconColor === 'string') layer.iconColor = fixColor(layer.iconColor);
+      if (Array.isArray(layer.animators)) {
+        for (const a of layer.animators) {
+          if (a?.properties && typeof a.properties.color === 'string') a.properties.color = fixColor(a.properties.color);
+        }
+      }
+    }
+  }
 }
 
 /** Standard ease-in-out-cubic - explicitly requested ("MAKE SURE THE MOVEMENT IS CUBIC") for the camera pan, smooth acceleration then deceleration rather than a linear/robotic glide. */
@@ -341,6 +444,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
 
   const { beatRanges } = buildTimeline(sceneJSON);
   const { positions: boardPositions, background: boardBackgroundDef } = buildBoardLayoutAndBackground(sceneJSON, beatRanges);
+  ensureTextContrastAgainstBackground(sceneJSON, boardBackgroundDef);
 
   // The ONE shared background, logically covering every position the
   // camera can ever be parked at (each beat's own WIDTHxHEIGHT

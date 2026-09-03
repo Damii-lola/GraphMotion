@@ -445,7 +445,37 @@ function adjustLightness(hex, factor) {
   return rgbToHexLocal([mix(r), mix(g), mix(b)]);
 }
 
-const DEFAULT_BACKGROUND_HUES = ['#0A2435', '#1A1035', '#2A0A1F', '#0A2A1A', '#241A0A', '#1A2A24'];
+// Real, direct user complaint with a reference video attached
+// (2026-09-03): "we are just reusing one single color... the bg color
+// is supposed to be random, sometimes light eg cream sometimes dark,
+// sometimes another gradient... I WANT UNIQUENESS." Root cause found by
+// tracing the actual live code path, not guessed: the MINIMAL generation
+// prompt (buildMinimalGenerationSystemPrompt, the one Groq actually uses
+// in production) never even tells the model a "background" field
+// exists on a Beat at all - so beat.visual.background is undefined on
+// essentially every real beat, meaning extractBaseColor's random
+// fallback below (not the model's own choice) picks EVERY background
+// color in EVERY real generation. The fallback list used to be just 6
+// hex values, and all 6 were dark, low-saturation navy/wine/forest
+// tones clustered in a narrow range - even with enforceGradientBackground's
+// own per-beat lighten/darken jitter on top, every real video came out
+// some shade of "dark moody gradient," never anything light, warm, or
+// vibrant, exactly matching the complaint. Expanded to a genuinely
+// varied bank spanning four real categories - light/cream (the
+// reference video's own look, previously impossible to land on at
+// all), dark/rich (the old palette, kept), vibrant/saturated, and muted
+// pastel - so a random pick can land anywhere in that real range
+// instead of only ever picking a variation on "dark."
+const DEFAULT_BACKGROUND_HUES = [
+  // light / cream
+  '#EDE4D3', '#F2ECE1', '#E8DCC8', '#F5EEE3',
+  // dark / rich (original palette)
+  '#0A2435', '#1A1035', '#2A0A1F', '#0A2A1A', '#241A0A',
+  // vibrant / saturated
+  '#7A1F3D', '#1B4B8C', '#0F5C4A', '#8C2F1B', '#4A1B7A',
+  // muted pastel
+  '#D9C7B8', '#C9D6D3', '#D6C9E0', '#D8C4C4',
+];
 
 /** Sum of per-channel absolute differences - cheap and good enough to distinguish "a real, visible gradient" from "technically two different hex strings that render as indistinguishable on screen". */
 function colorDistance(hexA, hexB) {
@@ -2612,15 +2642,30 @@ function autoRepairBeat(beat) {
       // layers in the same real video ("VOLUME 1", "1 in 5 ocean
       // species") had zero animated properties, confirmed directly in
       // their own JSON. Rather than argue with the model harder about
-      // it, inject a real default entrance mechanically: a scale
-      // pop-in (0.7->1, easeOutCubic) plus an opacity fade (0->1) over
-      // the first ~0.3s of the layer's own life - matches the already-
-      // documented SCALE POP-IN pattern, so this is the same motion the
-      // model is told to reach for anyway, just guaranteed instead of
-      // hoped for. Only fires when truly nothing animated exists at
-      // all; any real entrance the model DID author (any one of these
-      // four fields, or a real animators array) is left completely
-      // alone.
+      // it, inject a real default entrance mechanically - matches the
+      // already-documented SCALE POP-IN pattern, so this is the same
+      // motion the model is told to reach for anyway, just guaranteed
+      // instead of hoped for. Only fires when truly nothing animated
+      // exists at all; any real entrance the model DID author (any one
+      // of these four fields, or a real animators array) is left
+      // completely alone.
+      //
+      // Since the MINIMAL generation prompt (the one actually in
+      // production use - see buildMinimalGenerationSystemPrompt) never
+      // even tells the model scale/opacity/animators fields exist on a
+      // TextLayer at all, this fallback is not really a rare safety
+      // net - it is the entrance for essentially every real text layer
+      // in every real generation. That made a real user complaint land
+      // squarely on it: a reference video from an earlier version of
+      // this project had visibly "cleaner," springier motion - "the
+      // cubic transition, cubic back and forth" - while this flat
+      // 0.7->1.0 single-ease pop reads static and mechanical by
+      // comparison. Changed to a real overshoot-and-settle: scale pops
+      // PAST 1.0 (1.06, a snappy easeOutCubic) then eases back down to
+      // 1.0 (easeInOutCubic) - genuine back-and-forth motion built from
+      // ONLY this schema's three legal cubic easings (no easeOutBack/
+      // spring exists in this engine - see CUBIC_EASING_NAMES), not a
+      // literal spring simulation, but the same visual idea.
       if (layer.type === 'text') {
         const hasAnimators = Array.isArray(layer.animators) && layer.animators.length > 0;
         const hasKeyframedTransform = ['position', 'scale', 'opacity', 'rotation']
@@ -2629,7 +2674,8 @@ function autoRepairBeat(beat) {
           layer.scale = {
             keyframes: [
               { time: 0, value: [0.7, 0.7] },
-              { time: 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' },
+              { time: 0.22, value: [1.06, 1.06], interpolation: 'easing', easing: 'easeOutCubic' },
+              { time: 0.34, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
             ],
           };
           layer.opacity = {
@@ -4773,12 +4819,31 @@ function transformIconIntoWatermark(beat, beatIndex, iconLayer, targetOpacity, t
   // already chose, only size/position/motion change. Left where it
   // already sits in "layers" (z-order relative to text is whatever the
   // model intended), not moved to the front/back.
+  //
+  // Direct user request (2026-09-03, referencing an older version of
+  // this project's own footage): "the cubic transition, cubic back and
+  // forth... I want you to do for everything, not just the text." This
+  // was a flat single-ease slide-in (start offset -> resting point,
+  // easeOutCubic, done) - same "back and forth" overshoot-and-settle
+  // treatment as the text entrance fallback just above, applied here:
+  // the slide now overshoots slightly PAST its resting point before
+  // easing back to it, plus a real scale pop (this layer had no scale
+  // animation at all before) using only this schema's legal cubic
+  // easings.
+  const overshootPastX = dirX * (WATERMARK_SIZE * 0.05);
+  const overshootPastY = dirY * (WATERMARK_SIZE * 0.05);
   iconLayer.width = WATERMARK_SIZE;
   iconLayer.height = WATERMARK_SIZE;
   iconLayer.rotation = rotation;
   iconLayer.position = { keyframes: [
     { time: 0, value: [cx + dirX * startOffset, cy + dirY * startOffset] },
-    { time: 0.7, value: [cx, cy], easing: 'easeOutCubic', interpolation: 'easing' },
+    { time: 0.5, value: [cx - overshootPastX, cy - overshootPastY], easing: 'easeOutCubic', interpolation: 'easing' },
+    { time: 0.68, value: [cx, cy], easing: 'easeInOutCubic', interpolation: 'easing' },
+  ] };
+  iconLayer.scale = { keyframes: [
+    { time: 0, value: [0.75, 0.75] },
+    { time: 0.5, value: [1.08, 1.08], easing: 'easeOutCubic', interpolation: 'easing' },
+    { time: 0.68, value: [1, 1], easing: 'easeInOutCubic', interpolation: 'easing' },
   ] };
   iconLayer.opacity = { keyframes: [
     { time: 0, value: 0 },
