@@ -4781,6 +4781,35 @@ function ensureSustainedWordMotion(sceneJSON) {
  * within the emphasized word itself; this is confirmed safe at 1.22x by
  * local render, not assumed.
  */
+// Real, confirmed bug found via a frame-by-frame brutal review of a
+// production render (2026-09-03, direct user follow-up demanding a
+// deeper pass than the first one): both ensureEmphasisWordScale and
+// ensureHighlightChip below used to pick `seed % words.length` with NO
+// regard for what that word actually IS - on one real beat this landed
+// on "a" (a single-letter article), rendering a big pink highlight chip
+// around the word "a" in "You'll treasure [a] watch...". Mechanically
+// "working" (the selector did select a word) but reads as flatly
+// broken to a viewer - emphasis on a throwaway word conveys nothing and
+// looks like a mistake, not a design choice. Restricts the candidate
+// pool to real content words (3+ letters, not a common stopword) when
+// any exist in the sentence; falls back to every word only for the
+// pathological case where a beat's whole line is short function words.
+const EMPHASIS_STOPWORDS = new Set([
+  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'am',
+  'to', 'of', 'in', 'on', 'at', 'it', 'as', 'so', 'if', 'or', 'and', 'but',
+  'that', 'this', 'you', 'your', 'i', 'we', 'they', 'he', 'she', 'its',
+  'for', 'with', 'not', 'no', 'do', 'does', 'did', 'has', 'have', 'had',
+  'up', 'out', 'by', 'my', 'our', 'us', 'them', 'his', 'her',
+]);
+function significantWordIndices(words) {
+  const indices = [];
+  words.forEach((w, i) => {
+    const clean = w.replace(/[^a-zA-Z']/g, '').toLowerCase();
+    if (clean.length >= 3 && !EMPHASIS_STOPWORDS.has(clean)) indices.push(i);
+  });
+  return indices.length > 0 ? indices : words.map((_, i) => i);
+}
+
 function ensureEmphasisWordScale(sceneJSON) {
   const scenes = sceneJSON.scenes;
   if (!Array.isArray(scenes)) return;
@@ -4809,7 +4838,8 @@ function ensureEmphasisWordScale(sceneJSON) {
     if (hasEmphasis) return;
 
     const seed = hashString(`emphasis${beatIndex}${dominant.text}`);
-    const wordIndex = seed % words.length;
+    const pool = significantWordIndices(words);
+    const wordIndex = pool[seed % pool.length];
     const lo = (wordIndex / words.length) * 100;
     const hi = ((wordIndex + 1) / words.length) * 100;
 
@@ -4866,13 +4896,19 @@ function ensureHighlightChip(sceneJSON) {
       })() : null;
 
     const seed = hashString(`highlight${beatIndex}${dominant.text}`);
-    let wordIndex = seed % words.length;
+    const pool = significantWordIndices(words);
+    let wordIndex = pool[seed % pool.length];
     // Real, direct measurement while verifying this: stacking a
     // highlight chip AND a scale bump on the identical word looked like
     // two effects fighting each other, not one deliberate choice - if
-    // the seeds collide, shift to the next word instead of skipping the
-    // beat's highlight entirely.
-    if (emphasisWordIndex !== null && wordIndex === emphasisWordIndex) wordIndex = (wordIndex + 1) % words.length;
+    // the seeds collide, shift to the NEXT SIGNIFICANT word (not just
+    // +1, which could bounce straight into a throwaway word the pool
+    // above was just built to avoid) instead of skipping the beat's
+    // highlight entirely.
+    if (emphasisWordIndex !== null && wordIndex === emphasisWordIndex) {
+      const altPool = pool.filter((i) => i !== emphasisWordIndex);
+      wordIndex = altPool.length > 0 ? altPool[seed % altPool.length] : (wordIndex + 1) % words.length;
+    }
 
     const lo = (wordIndex / words.length) * 100;
     const hi = ((wordIndex + 1) / words.length) * 100;
@@ -5955,7 +5991,28 @@ function ensureTypewriterReveal(sceneJSON) {
     const maxWidth = typeof dominant.maxWidth === 'number' ? dominant.maxWidth : DEFAULT_TEXT_MAX_WIDTH;
     const estCharWidth = fontSize * 0.62;
     const lineHeightEst = fontSize * 1.15;
-    const totalTypeDuration = chars / TYPEWRITER_CHARS_PER_SECOND;
+    // Real, confirmed bug found via a frame-by-frame brutal review
+    // (2026-09-03): the fixed 16 chars/sec typing rate has NO awareness
+    // of the beat's own duration at all - real beat duration is set to
+    // match real spoken audio length (narrationPrefetch.js), which runs
+    // close enough to this same ~16 cps pace that a longer-than-average
+    // sentence (more words per second than typical, or just a longer
+    // line) can genuinely never finish typing before the beat cuts away
+    // - confirmed directly: a real render left "is" as the last visible
+    // word of "Your gym membership is a monthly donation." with a
+    // dangling cursor, the back half of the sentence never shown at
+    // all. Speeds up (never slows down) the typing rate so the full
+    // line always finishes within the first 85% of the beat, leaving a
+    // little room for the blink - the fixed 16 cps stays exactly as
+    // authored for every beat that already comfortably fits it.
+    const beatDuration = isPlainObject(beat.params) && typeof beat.params.duration === 'number' ? beat.params.duration : null;
+    let effectiveCharsPerSecond = TYPEWRITER_CHARS_PER_SECOND;
+    if (beatDuration) {
+      const available = beatDuration * 0.85;
+      const neededRate = chars / Math.max(0.3, available);
+      if (neededRate > effectiveCharsPerSecond) effectiveCharsPerSecond = neededRate;
+    }
+    const totalTypeDuration = chars / effectiveCharsPerSecond;
 
     // Real per-character hold-reveal (a genuine snap per character, not
     // a smooth sweep - matches how a real typewriter/terminal actually
@@ -6065,6 +6122,28 @@ function ensureSustainedAmbientMotion(sceneJSON) {
         watermarkIcon.position = { expression: 'wiggle(0.4, 8)', base: watermarkIcon.position ?? [0, 0] };
       }
     }
+
+    // Real, confirmed gap found via a frame-by-frame brutal review
+    // (2026-09-03, direct user follow-up: "there are way more problems,
+    // check frame by frame"): ensureSparkleAccents' own stars pop in
+    // once (a 0.35s scale-in) then sit COMPLETELY frozen for the rest
+    // of the beat - on a beat with no watermark icon (plenty of real
+    // beats have none), that pop-in was the ONLY non-text motion
+    // anywhere on screen, then nothing for 1-2+ remaining seconds.
+    // Wraps the existing pop-in scale keyframes in a wiggle (same
+    // additive-on-top-of-a-keyframed-base shape already proven above
+    // for the icon's own position) for a genuine ongoing twinkle, plus
+    // a slow rotational drift - a static star reads as a sticker, a
+    // gently pulsing/turning one reads as alive.
+    layers.forEach((l) => {
+      if (!isPlainObject(l) || typeof l.id !== 'string' || !l.id.startsWith('__sparkle_')) return;
+      if (isPlainObject(l.scale) && Array.isArray(l.scale.keyframes) && l.scale.expression === undefined) {
+        l.scale = { expression: 'wiggle(1.5, 0.12)', base: l.scale };
+      }
+      if (typeof l.rotation === 'number') {
+        l.rotation = { expression: 'wiggle(0.3, 25)', base: l.rotation };
+      }
+    });
   });
 }
 
