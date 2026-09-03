@@ -186,6 +186,26 @@ function trimClipSilence(inputPath, outputPath) {
  * clip is left untouched instead (a missed artifact is a much smaller
  * loss than a discarded sentence).
  */
+// Real, direct user report: "the audio for the script sometimes feels
+// incomplete and cut off" - reported right after narration lines
+// shrank to 3-8 words (see the new MAX_NARRATION_WORDS cap). This
+// function's own thresholds (a 0.6s+ gap after 40% of the clip) were
+// tuned against the OLD, longer 8-14 word narration, where a genuine
+// sentence-final pause sits well past 40% and a hallucinated tail is
+// still a small fraction of a long clip. For a short 1-2s clip, a
+// perfectly normal end-of-sentence pause (from the mandatory trailing
+// "..." every sentence gets - see narrationTagging.js) is now a much
+// BIGGER relative fraction of the whole clip, and this project already
+// has direct evidence elsewhere this session that this TTS engine's
+// own pause length has real per-call variance - raising real risk of
+// misfiring on a short clip's own legitimate ending, not just on an
+// actual hallucinated artifact. Hallucinated trailing content is also
+// a real ARTICLE of complexity - a short, simple 3-8 word utterance is
+// inherently less likely to trigger it than a longer, more complex one
+// this function was originally built for. Skipped entirely under this
+// duration - the risk/reward no longer favors trying.
+const MIN_DURATION_FOR_TAIL_TRIM_S = 2.5;
+
 function trimTrailingArtifact(inputPath, outputPath) {
   const ARTIFACT_GAP_THRESHOLD_S = 0.6;
   const MIN_FRACTION_OF_CLIP = 0.4;
@@ -198,6 +218,7 @@ function trimTrailingArtifact(inputPath, outputPath) {
       const durationMatch = stderr.match(/Duration:\s*(\d+):(\d+):(\d+\.\d+)/);
       if (!durationMatch) { fs.copyFileSync(inputPath, outputPath); resolve(); return; }
       const totalDuration = (+durationMatch[1]) * 3600 + (+durationMatch[2]) * 60 + parseFloat(durationMatch[3]);
+      if (totalDuration < MIN_DURATION_FOR_TAIL_TRIM_S) { fs.copyFileSync(inputPath, outputPath); resolve(); return; }
       const starts = [...stderr.matchAll(/silence_start:\s*(-?\d+(?:\.\d+)?)/g)].map((m) => parseFloat(m[1]));
       const qualifying = starts.filter((s) => s > totalDuration * MIN_FRACTION_OF_CLIP);
       const cutPoint = qualifying.length > 0 ? qualifying[qualifying.length - 1] : undefined;

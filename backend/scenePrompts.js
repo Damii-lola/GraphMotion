@@ -1422,6 +1422,32 @@ word for word (see TEXTLAYER above) - the two are the SAME words here,
 not separate jobs, so the real spoken audio and the on-screen text can
 be revealed in perfect word-by-word sync.
 
+SIMPLICITY WITH ELEGANCE, not a dry fact dump - direct project
+requirement: a real, confirmed complaint was that generated scripts
+"mainly talk about things the user doesn't give a fuck about." Before
+writing a single line, ask what a REAL VIEWER actually cares about
+here - a feeling, a surprise, a stake, something that touches THEM -
+not the most obviously "informative" fact about the topic. "Only five
+thousand made a year" is a fact; "You'll probably never own one" is
+why a viewer cares. Prefer the angle that makes someone feel something
+(envy, curiosity, validation, surprise) over the angle that's merely
+accurate. Simple, short words - never reach for a fancier word when a
+plainer one says the same thing just as well; elegance here means
+nothing wasted, not ornate vocabulary.
+
+EVERY LINE SHOULD RHYME - a real, deliberate stylistic choice for this
+project, not optional. Pair beats into rhyming couplets (beat 1 rhymes
+with beat 2, beat 3 rhymes with beat 4, and so on) - the LAST word of
+each line in a pair should genuinely rhyme, real end-rhyme, the same
+way a song lyric or a nursery rhyme actually rhymes, not just a loose
+similar sound. If the total beat count is odd, the final unpaired beat
+can stand alone rather than force a bad rhyme. A rhyme is worth
+bending word choice for, but never at the cost of a real idea landing
+clearly - a clean, clear line beats a forced, confusing rhyme.
+Example pair: "The price will make you gasp." / "Behind it: real
+craft." Keep every line inside the word cap below even while rhyming -
+cut words, don't stretch a line just to land a rhyme.
+
 Concretely:
 - Use contractions constantly ("it's", "they're", "you're", "don't") -
   a script with none anywhere reads as stiff and formal.
@@ -1469,12 +1495,12 @@ FINAL CHECKLIST
 - "fontFamily" is ALWAYS EXACTLY one of ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')}.
 - No two layers in the same beat share identical "text".
 - Every beat: at least one real, non-empty "text" layer (REJECTED
-  outright otherwise) and a non-empty "params.narration" under 14
-  words, one sentence only.
-- Every "image" layer: a real "icon" OR "src":"beatImage" - never both,
-  never neither (REJECTED otherwise).
-- "params.imagePrompt" and an "src":"beatImage" layer always travel
-  together in the SAME beat.
+  outright otherwise) and a non-empty "params.narration" under 8 words,
+  one sentence only, rhyming with its paired beat.
+- Every "image" layer: a real "icon" (REJECTED otherwise if missing).
+- The dominant text layer's own "text" matches its beat's own
+  "narration" word for word - that's what makes the real audio-synced,
+  word-by-word reveal possible.
 - Encode EVERY beat the treatment planned, none skipped, merged, or
   summarized away - exact count, exact order.
 
