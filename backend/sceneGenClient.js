@@ -123,6 +123,66 @@ async function callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, onRe
   }
 }
 
+// Real, direct user request: a second AI acting as an EXTREMELY BRUTAL
+// judge of the narration script's own actual entertainment value - not
+// JSON validity (already covered by validateSceneJSON), a genuine
+// content-quality gate. Direct user instruction: "get another AI... It
+// can be the Grok, or it can be the Gemini... preferably Grok" -
+// checked Grok's real current API pricing (paid, same category as
+// Claude/OpenAI, no free tier) before committing to anything, then the
+// user's own immediate follow-up: "WE FUCKINGGGG ALREADYYYY HVE groq
+// implemented so just extend from that one" - Groq for BOTH roles,
+// zero new provider/key setup, reusing the exact same proven-reliable
+// callGroqRaw this file already leans on everywhere else.
+//
+// Judged separately from JSON-encoding retries (a different failure
+// axis - a script can be perfectly valid JSON and still be a boring
+// documentary read) and capped at its own small budget
+// (MAX_JUDGE_ROUNDS) - each round costs a real extra Groq call, and an
+// infinitely-harsh judge could otherwise loop forever chasing a verdict
+// that never comes; after the cap, the LAST attempt ships regardless
+// rather than block the whole generation on taste forever.
+const MAX_JUDGE_ROUNDS = 3;
+
+const SCRIPT_JUDGE_SYSTEM_PROMPT = `You are an EXTREMELY BRUTAL, non-sugarcoating short-form video script judge. You judge exactly ONE thing: would a 10-year-old with severe ADHD, scrolling TikTok, watch this ENTIRE video without swiping away?
+
+Specifically:
+1. Would they swipe away within the first 3 seconds? Judge the FIRST line alone against this - it has to be a genuine scroll-stopper, not a neutral setup.
+2. Would they stay for the WHOLE video, or get bored and swipe partway through?
+
+A script that survives this test is shocking, surprising, funny, or makes a real personal/emotional stake obvious immediately - NOT dry facts, NOT documentary narration, NOT a generic statement that could sit in a Wikipedia article unchanged.
+
+You will be given a numbered list of narration lines, one per beat, meant to be read in order as ONE continuous script. Respond in EXACTLY this format and nothing else, no other commentary:
+VERDICT: PASS or FAIL
+REASON: <if FAIL, name the SPECIFIC line number(s) that would cause a scroll-away and exactly why they're boring - blunt and specific, never vague. If PASS, write "N/A".>
+
+Be harsh. Most scripts you see should FAIL this test on a real first read. Only PASS a script that is genuinely gripping start to finish, not merely "fine" or "informative."`;
+
+function buildNumberedScript(sceneJSON) {
+  if (!sceneJSON || !Array.isArray(sceneJSON.scenes)) return '';
+  return sceneJSON.scenes
+    .map((s, i) => (s && s.params && typeof s.params.narration === 'string' ? `${i + 1}. ${s.params.narration.trim()}` : null))
+    .filter(Boolean)
+    .join('\n');
+}
+
+/** Returns { pass: boolean, reason: string } - fails OPEN (pass:true) on any transport/parse problem, since a judge that can't be reached should never be the reason a whole generation dies. */
+async function judgeNarrationScript(sceneJSON) {
+  const numberedScript = buildNumberedScript(sceneJSON);
+  if (!numberedScript) return { pass: true, reason: '' };
+  try {
+    const raw = await callGroqRaw(SCRIPT_JUDGE_SYSTEM_PROMPT, numberedScript, { jsonMode: false, maxTokens: 400, temperature: 0.6 });
+    const verdictMatch = raw.match(/VERDICT:\s*(PASS|FAIL)/i);
+    const reasonMatch = raw.match(/REASON:\s*([\s\S]*)/i);
+    const pass = verdictMatch ? verdictMatch[1].toUpperCase() === 'PASS' : true;
+    const reason = reasonMatch ? reasonMatch[1].trim() : '';
+    return { pass, reason };
+  } catch (err) {
+    console.warn(`[sceneGenClient] script judge call failed (${err.message}) - passing this round open rather than block the generation on a judge that couldn't be reached`);
+    return { pass: true, reason: '' };
+  }
+}
+
 // Direct user request: real, structural creative variation across
 // repeated generations of the same prompt - see geminiClient.js's git
 // history for the original reasoning (temperature alone wasn't enough).
@@ -160,16 +220,25 @@ async function generateCreativeTreatment(userPrompt, targetDurationSeconds) {
   return callGroqRaw(systemPrompt, userPrompt, { jsonMode: false, maxTokens: 5500, temperature: 0.85 });
 }
 
-async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft = 16, priorErrors = null } = {}) {
+async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft = 16, priorErrors = null, judgeFeedback = null } = {}) {
   const systemPrompt = buildMinimalGenerationSystemPrompt(targetDurationSeconds);
   const beatHeaders = listTreatmentBeatHeaders(treatment);
   let userMessage = `CREATIVE TREATMENT (already planned by a senior director - encode this EXACTLY and FAITHFULLY, missing nothing; every real beat/idea below must become its own real text layer, never simplified or dropped to something generic. The treatment may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead (a hard hit, a flash, a snap into place) rather than inventing a nonexistent field. Only use real fields from the schema above - never invent new ones. Motion, effects, and background decoration are already handled automatically - focus entirely on real words and layout.):\n${treatment}\n\nOriginal request: ${userPrompt}`;
+  // Real, direct-user-requested feedback loop: a SEPARATE brutal judge
+  // model already reviewed a PREVIOUS attempt's narration script and
+  // rejected it as boring - this is that judge's own specific critique,
+  // framed distinctly from priorErrors below (that one means "your JSON
+  // was structurally invalid"; this one means "your JSON was valid but
+  // the SCRIPT ITSELF wasn't good enough" - a real, different kind of
+  // problem, worth its own clear framing so the model doesn't confuse
+  // a content note for a syntax one).
+  if (judgeFeedback) userMessage += `\n\nA separate, extremely harsh judge reviewed your PREVIOUS narration script (it was structurally valid JSON, this is NOT a syntax problem) and REJECTED it as boring - a real viewer would have scrolled away. The judge's own words: "${judgeFeedback}"\n\nRewrite the narration lines (and the on-screen text that mirrors them) to genuinely fix what the judge called out - still encoding the same treatment and beat count, same schema, just a script that would actually stop someone from scrolling.`;
   if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON - still encoding the treatment above.`;
   if (beatHeaders.length > 0) {
     userMessage += `\n\nThe treatment above contains EXACTLY ${beatHeaders.length} beats:\n${beatHeaders.join('\n')}\n\nYour "scenes" array MUST contain EXACTLY ${beatHeaders.length} entries, one per beat above, in this same order - not fewer, not merged, not summarized. Before you finish, go down this list one at a time and confirm each has its own real entry in "scenes".`;
   }
 
-  const result = await callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: nextRetriesLeft, priorErrors }), callMinimalSceneJSONTransport);
+  const result = await callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: nextRetriesLeft, priorErrors, judgeFeedback }), callMinimalSceneJSONTransport);
 
   const { valid, errors } = validateSceneJSON(result);
   const expectedBeats = beatHeaders.length;
@@ -183,18 +252,47 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
     const allErrors = [...errors, ...completenessError];
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] generated scene JSON ${!valid ? 'failed validation' : 'was too short'} (${allErrors.length} error(s)), retrying: ${allErrors.slice(0, 3).join('; ')}`);
-      return generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: retriesLeft - 1, priorErrors: allErrors });
+      return generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: retriesLeft - 1, priorErrors: allErrors, judgeFeedback });
     }
     throw new Error(`Groq-generated scene JSON failed schema validation after retries: ${allErrors.join('; ')}`);
   }
   return result;
 }
 
+// Real, direct user request: "the first AI will be generated and give
+// it to this new AI, the new ai will make corrections and give it back
+// to the first ai to regenerate... the cycle will repeat over and over
+// till we get a VERY NICE INTERESTING EYECATCHING SCROLLSTOPPING
+// script." Wired as its own outer loop, separate from
+// generateWholeSceneJSON's own schema-validation retries (a script can
+// be perfectly valid JSON on the first try and still fail the judge,
+// or vice versa) - capped at MAX_JUDGE_ROUNDS total attempts; if the
+// judge still hasn't passed by then, ships the LAST attempt anyway
+// rather than block the whole generation on taste forever.
 async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
   console.log('[sceneGenClient] planning creative treatment...');
   const treatment = await generateCreativeTreatment(userPrompt, targetDurationSeconds);
-  console.log('[sceneGenClient] encoding whole scene in one pass...');
-  return generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment);
+
+  let sceneJSON = null;
+  let judgeFeedback = null;
+  for (let round = 1; round <= MAX_JUDGE_ROUNDS; round++) {
+    console.log(`[sceneGenClient] encoding whole scene (script round ${round}/${MAX_JUDGE_ROUNDS})...`);
+    sceneJSON = await generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { judgeFeedback });
+
+    console.log('[sceneGenClient] judging narration script...');
+    const verdict = await judgeNarrationScript(sceneJSON);
+    if (verdict.pass) {
+      console.log(`[sceneGenClient] script judge: PASS (round ${round})`);
+      break;
+    }
+    console.log(`[sceneGenClient] script judge: FAIL (round ${round}) - ${verdict.reason}`);
+    if (round === MAX_JUDGE_ROUNDS) {
+      console.warn(`[sceneGenClient] script judge still failing after ${MAX_JUDGE_ROUNDS} rounds - shipping the last attempt rather than block the job further`);
+      break;
+    }
+    judgeFeedback = verdict.reason;
+  }
+  return sceneJSON;
 }
 
 async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds = 12, { retriesLeft = 4, priorErrors = null } = {}) {
