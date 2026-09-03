@@ -333,11 +333,24 @@ function ensureTextContrastAgainstBackground(sceneJSON, boardBackgroundDef) {
   const isLightBackground = (startLuma + endLuma) / 2 > LIGHT_BACKGROUND_LUMA_THRESHOLD;
   if (!isLightBackground) return;
 
+  // Real, direct follow-up complaint after this first shipped
+  // (2026-09-03): "the text color is just disgusting and doesnt
+  // match." adjustLightness(-0.65) took whatever ARBITRARY hue the
+  // model/mechanical passes happened to pick for a dark background
+  // (gold, teal, whatever) and mechanically darkened THAT hue - which
+  // reliably produces a muddy, muted, accidental-looking color (an
+  // olive-brown squashed out of a bright gold, for instance), not a
+  // deliberate design choice. A flat, confident dark neutral reads as
+  // intentional against any light background regardless of what hue it
+  // started from - swapped the per-color darkening formula for one
+  // fixed, genuinely good charcoal instead of algorithmically muddying
+  // whatever arbitrary color was already there.
+  const DARK_TEXT_COLOR = '#262220';
   const fixColor = (color) => {
     if (typeof color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(color)) return color;
     const luma = relativeLuma(hexToRgbLocal(color));
     if (luma < LIGHT_TEXT_COLOR_LUMA_THRESHOLD) return color; // already dark enough against a light bg - leave its own hue alone
-    return adjustLightness(color, -0.65);
+    return DARK_TEXT_COLOR;
   };
 
   for (const scene of sceneJSON.scenes || []) {
@@ -398,8 +411,19 @@ const DEFAULT_PAN_DURATION_SECONDS = 0.6;
  * not a quick pulse) reads as "the camera is alive", not as motion
  * competing with the content - confirmed via direct real-render
  * inspection before shipping (see the render call sites below).
+ *
+ * 0.05 -> 0.15 (2026-09-03): direct, extremely emphatic user complaint
+ * against a reference video ("they were FUCKING still moving around
+ * while they were on screen... make it extremely dynamic") - 5% growth
+ * spread across a whole 2-3s beat is real motion but reads as close to
+ * imperceptible next to reference footage's own energy. This is one of
+ * two fixes for the same complaint - see sceneSchema.js's
+ * ensureSustainedAmbientMotion for the other (real per-LAYER wiggle, not
+ * just the shared camera), since a uniform camera zoom alone still
+ * reads as "the camera is moving," not "the elements themselves are
+ * alive," which is closer to what was actually being asked for.
  */
-const BEAT_ZOOM_AMOUNT = 0.05;
+const BEAT_ZOOM_AMOUNT = 0.15;
 function withBeatZoom(drawFn, beatDuration, width, height) {
   return (ctx, t) => {
     const progress = beatDuration > 0 ? Math.min(1, Math.max(0, t / beatDuration)) : 0;

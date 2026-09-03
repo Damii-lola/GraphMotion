@@ -355,6 +355,32 @@ function buildGenerateDraw(layerDef, w, h) {
   };
 }
 
+/**
+ * Real, severe bug found via direct user report + local reproduction
+ * (2026-09-03): "the icons are not appearing... the watermark is so
+ * faint that it's barely noticeable." Root cause: this drew from local
+ * (0,0) extending only right/down - the layer's own TOP-LEFT corner
+ * lands at "position", not its center. EVERY other layer type in this
+ * engine (text, shape) draws its content CENTERED on local (0,0), and
+ * the prompt/schema's entire documented contract - "position is ALWAYS
+ * the layer's own center" (scenePrompts.js's TextLayer docs; every
+ * collision/bounding-box helper in sceneSchema.js computes
+ * left/right/top/bottom as position +/- width/2,height/2) - assumes
+ * this universally. "image" was the one silent exception, and every
+ * piece of code that ever placed an icon (transformIconIntoWatermark's
+ * whole anchor system included) was computing a CENTER position that
+ * this function then treated as a TOP-LEFT corner - for a 240px
+ * watermark, a real 120px silent offset, enough to push the "visible"
+ * remainder down/right until only a tiny corner sliver survived
+ * on-canvas. Confirmed directly: a local repro render with this exact
+ * bug showed nothing but a sliver at the frame edge; adding an explicit
+ * center anchor (or, as fixed here, drawing centered by default the
+ * same way text/shape already do) made the SAME icon render correctly
+ * sized and positioned. Fixed at the source instead of patching every
+ * icon-placement call site - draws from (-w/2,-h/2) so "position" means
+ * the same thing for an image layer as it already does for everything
+ * else in this engine.
+ */
 function buildImageDraw(layerDef, beatContext) {
   const srcPath = layerDef.src === 'beatImage' ? beatContext.imagePath : layerDef.src;
   return (ctx) => {
@@ -362,7 +388,7 @@ function buildImageDraw(layerDef, beatContext) {
     const img = beatContext.loadedImages.get(srcPath);
     const w = layerDef.width || img.width;
     const h = layerDef.height || img.height;
-    ctx.drawImage(img, 0, 0, w, h);
+    ctx.drawImage(img, -w / 2, -h / 2, w, h);
   };
 }
 
@@ -413,12 +439,12 @@ async function loadBeatImages(visual, beatContext) {
 
 /** Wraps any raw draw function with this layer's own effects stack (if any) - renders to an offscreen buffer sized to the layer's own content bounds, applies effects in order, draws the result. A layer with no effects skips the extra buffer entirely (drawn directly), so this costs nothing for the common case. */
 /**
- * `centered` must be true for "shape"/"text" layers and false/omitted
- * for "image"/"generate" - it's NOT a style choice, it has to match
- * where each layer type actually draws its content. Real, severe bug
- * found via live frame inspection: the buffer this function creates
- * for effects processing is a PLAIN canvas whose own origin is its
- * top-left corner, but "shape"/"text" content is drawn CENTERED on
+ * `centered` must be true for "shape"/"text"/"image" layers and
+ * false/omitted only for "generate" - it's NOT a style choice, it has
+ * to match where each layer type actually draws its content. Real,
+ * severe bug found via live frame inspection: the buffer this function
+ * creates for effects processing is a PLAIN canvas whose own origin is
+ * its top-left corner, but "shape"/"text" content is drawn CENTERED on
  * local (0,0) (the whole engine's established convention - see
  * matrix2d.js/sceneSchema.js's anchor docs), spanning NEGATIVE as well
  * as positive local coordinates. Canvas pixels don't exist at negative
@@ -431,10 +457,25 @@ async function loadBeatImages(visual, beatContext) {
  * negative-coordinate content has somewhere real to land - exactly
  * matching how the SAME layer already rendered correctly whenever it
  * had no effects at all (and therefore no buffer indirection to get
- * this wrong). "image"/"generate" content, by contrast, draws
- * TOP-LEFT-anchored already fitting the buffer's native [0,w]x[0,h]
- * range, so centering them would incorrectly shift their content by
- * half their own size - `centered` must stay false there.
+ * this wrong).
+ *
+ * "image" used to be top-left-anchored too (grouped with "generate"
+ * here) - a SEPARATE, much worse bug fixed the same day this comment
+ * was updated: buildImageDraw's own top-left `drawImage(img,0,0,w,h)`
+ * meant "position" never actually meant this layer's CENTER for an
+ * image the way it does for literally everything else in this engine
+ * (every collision/bounding-box helper in sceneSchema.js, every real
+ * icon-placement function) - real, live-confirmed user report ("the
+ * icons are not appearing... barely noticeable") traced to a 240px
+ * watermark icon rendering with only a tiny corner sliver on-canvas,
+ * the rest silently shifted off-frame by its own half-size. Fixed at
+ * buildImageDraw itself (now draws from (-w/2,-h/2), matching
+ * shape/text's own convention) - this file's own `centered:true` now
+ * has to move in lockstep for "image" too, for the exact same clipping
+ * reason described above, or a shadowed/blurred icon would clip in half
+ * even though a plain one renders correctly. "generate" is the one
+ * remaining real exception - its own content still fills [0,w]x[0,h]
+ * exactly as before, untouched by this fix.
  */
 // Memory note: this closure runs once per motion-blur SAMPLE (4, by
 // default) for every single output frame that layer appears in - with
@@ -539,7 +580,13 @@ function build2DLayer(layerDef, beatContext, idMap) {
   } else if (layerDef.type === 'generate') {
     node = new Node({ ...commonNodeOpts(layerDef), draw: withEffects(buildGenerateDraw(layerDef, w, h), layerDef, w, h) });
   } else if (layerDef.type === 'image') {
-    node = new Node({ ...commonNodeOpts(layerDef), draw: withEffects(buildImageDraw(layerDef, beatContext), layerDef, w, h) });
+    // centered:true (was omitted/false) - buildImageDraw now draws
+    // centered on local (0,0) too (see its own doc comment for the real
+    // bug this fixes), so its effects buffer needs the SAME recentering
+    // offset text/shape already get - otherwise an image layer that
+    // also has "effects" would have its now-centered content clipped by
+    // a buffer still sized for the OLD top-left-anchored assumption.
+    node = new Node({ ...commonNodeOpts(layerDef), draw: withEffects(buildImageDraw(layerDef, beatContext), layerDef, w, h, true) });
   } else if (layerDef.type === 'precomp') {
     const childNodes = layerDef.layers.map((l) => build2DLayer(l, beatContext, idMap));
     const inner = new Composition({

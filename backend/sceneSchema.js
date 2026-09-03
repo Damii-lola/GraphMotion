@@ -2284,8 +2284,16 @@ function attachLineRevealSparks(beat) {
       opacity: {
         keyframes: [
           { time: startTime, value: 1 },
-          { time: fadeStart, value: 1 },
-          { time: endTime, value: 0, interpolation: 'easing', easing: 'easeInCubic' },
+          // easing belongs on the SOURCE keyframe of the segment it
+          // describes (engine/keyframes.js reads it off the EARLIER
+          // keyframe of each pair, matching real AE convention) - this
+          // was on `endTime` (the destination), silently falling back
+          // to linear for the whole fade-out. Real, systemic bug found
+          // across this file while chasing a "motion feels static"
+          // complaint - see ensureSustainedWordMotion's own fix for the
+          // most-hit instance of this same mistake.
+          { time: fadeStart, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+          { time: endTime, value: 0 },
         ],
       },
       contents: [
@@ -2671,17 +2679,26 @@ function autoRepairBeat(beat) {
         const hasKeyframedTransform = ['position', 'scale', 'opacity', 'rotation']
           .some((f) => isPlainObject(layer[f]) && Array.isArray(layer[f].keyframes) && layer[f].keyframes.length > 0);
         if (!hasAnimators && !hasKeyframedTransform) {
+          // Real bug of my own found via local render repro (2026-09-03):
+          // Property.valueAt (engine/keyframes.js) reads interpolation/
+          // easing off the EARLIER keyframe of each bracketing pair, not
+          // the one being eased INTO - putting easeOutCubic/easeInOutCubic
+          // on kf1/kf2 (as this originally shipped) meant the FIRST
+          // segment silently fell back to 'linear' (kf0 had neither field
+          // set), undermining the whole "cubic back and forth" point.
+          // Moved each easing onto the keyframe whose OWN outgoing segment
+          // it's meant to describe.
           layer.scale = {
             keyframes: [
-              { time: 0, value: [0.7, 0.7] },
-              { time: 0.22, value: [1.06, 1.06], interpolation: 'easing', easing: 'easeOutCubic' },
-              { time: 0.34, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+              { time: 0, value: [0.7, 0.7], interpolation: 'easing', easing: 'easeOutCubic' },
+              { time: 0.22, value: [1.06, 1.06], interpolation: 'easing', easing: 'easeInOutCubic' },
+              { time: 0.34, value: [1, 1] },
             ],
           };
           layer.opacity = {
             keyframes: [
-              { time: 0, value: 0 },
-              { time: 0.2, value: 1, interpolation: 'easing', easing: 'easeOutCubic' },
+              { time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+              { time: 0.2, value: 1 },
             ],
           };
         }
@@ -2790,8 +2807,8 @@ function autoRepairBeat(beat) {
           if (typeof end === 'number') {
             a.selector.end = {
               keyframes: [
-                { time: 0, value: 0 },
-                { time: need, value: 100, interpolation: 'easing', easing: 'easeOutCubic' },
+                { time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+                { time: need, value: 100 },
               ],
             };
             const neededDuration = need + POST_REVEAL_READ_BUFFER;
@@ -4408,6 +4425,14 @@ function validateSceneJSON(sceneJSON) {
     });
   }
 
+  // Runs LAST, after ensureActiveBackgroundElement/transformIconIntoWatermark
+  // above - it needs to see the FINAL watermark icon (240px, real
+  // position keyframes), not whatever small icon the model may have
+  // authored before that pass upgrades it. Calling this any earlier
+  // would silently skip every icon (still under the 200px threshold at
+  // that point) and only ever wiggle the text.
+  ensureSustainedAmbientMotion(sceneJSON);
+
   return { valid: errors.length === 0, errors };
 }
 
@@ -4601,7 +4626,16 @@ function ensureSustainedWordMotion(sceneJSON) {
       selector: {
         type: 'range',
         start: 0,
-        end: { keyframes: [{ time: 0, value: 0 }, { time: targetEndTime, value: 100, easing: 'easeOutCubic', interpolation: 'easing' }] },
+        // Real, high-impact bug: easing belongs on the SOURCE keyframe
+        // of the segment it governs (engine/keyframes.js reads it off
+        // the EARLIER keyframe of each pair) - this was on the LATER
+        // one, so this word-color sweep (the primary reveal motion on
+        // essentially every real beat that doesn't author its own) was
+        // silently running at flat linear speed instead of easeOutCubic
+        // this whole time. Found auditing every eased-keyframe call site
+        // in this file while chasing a real "motion feels static"
+        // complaint.
+        end: { keyframes: [{ time: 0, value: 0, easing: 'easeOutCubic', interpolation: 'easing' }, { time: targetEndTime, value: 100 }] },
         basedOn: 'words',
       },
       properties: { color: accentColor },
@@ -4835,19 +4869,23 @@ function transformIconIntoWatermark(beat, beatIndex, iconLayer, targetOpacity, t
   iconLayer.width = WATERMARK_SIZE;
   iconLayer.height = WATERMARK_SIZE;
   iconLayer.rotation = rotation;
+  // easing placed on the SOURCE keyframe of each segment (engine/
+  // keyframes.js reads it off the EARLIER keyframe of a pair) - see
+  // ensureSustainedWordMotion's own fix for the full explanation of
+  // this same mistake found across this file.
   iconLayer.position = { keyframes: [
-    { time: 0, value: [cx + dirX * startOffset, cy + dirY * startOffset] },
-    { time: 0.5, value: [cx - overshootPastX, cy - overshootPastY], easing: 'easeOutCubic', interpolation: 'easing' },
-    { time: 0.68, value: [cx, cy], easing: 'easeInOutCubic', interpolation: 'easing' },
+    { time: 0, value: [cx + dirX * startOffset, cy + dirY * startOffset], easing: 'easeOutCubic', interpolation: 'easing' },
+    { time: 0.5, value: [cx - overshootPastX, cy - overshootPastY], easing: 'easeInOutCubic', interpolation: 'easing' },
+    { time: 0.68, value: [cx, cy] },
   ] };
   iconLayer.scale = { keyframes: [
-    { time: 0, value: [0.75, 0.75] },
-    { time: 0.5, value: [1.08, 1.08], easing: 'easeOutCubic', interpolation: 'easing' },
-    { time: 0.68, value: [1, 1], easing: 'easeInOutCubic', interpolation: 'easing' },
+    { time: 0, value: [0.75, 0.75], easing: 'easeOutCubic', interpolation: 'easing' },
+    { time: 0.5, value: [1.08, 1.08], easing: 'easeInOutCubic', interpolation: 'easing' },
+    { time: 0.68, value: [1, 1] },
   ] };
   iconLayer.opacity = { keyframes: [
-    { time: 0, value: 0 },
-    { time: 0.6, value: targetOpacity, easing: 'easeOutCubic', interpolation: 'easing' },
+    { time: 0, value: 0, easing: 'easeOutCubic', interpolation: 'easing' },
+    { time: 0.6, value: targetOpacity },
   ] };
   return true;
 }
@@ -4982,8 +5020,12 @@ function ensureBackgroundSwoosh(beat, beatIndex) {
     width: RECT_W + PAD * 2,
     height: RECT_H + PAD * 2,
     position: { keyframes: [
-      { time: 0, value: [startX, startY] },
-      { time: 0.7, value: [restX, restY], easing: 'easeOutCubic', interpolation: 'easing' },
+      // easing on the SOURCE keyframe (see ensureSustainedWordMotion's
+      // own fix for the full explanation) - this swoosh runs on
+      // essentially every beat, so it was silently sliding in at flat
+      // linear speed instead of easeOutCubic this whole time.
+      { time: 0, value: [startX, startY], easing: 'easeOutCubic', interpolation: 'easing' },
+      { time: 0.7, value: [restX, restY] },
     ] },
     rotation,
     opacity: 0.1,
@@ -5155,6 +5197,58 @@ function ensureDropShadowOnDominant(sceneJSON) {
     if (hasDropShadow) return;
     if (!Array.isArray(dominant.effects)) dominant.effects = [];
     dominant.effects.push({ type: 'dropShadow', params: { color: '#000000', opacity: 0.4, blur: 8, offsetX: 0, offsetY: 6 } });
+  });
+}
+
+/**
+ * Direct, extremely emphatic user complaint against a reference video
+ * (2026-09-03): "they were FUCKING still moving around while they were
+ * on screen, they DIDNT just appear on screen and stop... make it
+ * extremely dynamic." Every entrance this session has built (this file's
+ * own scale pop-ins, the watermark icon's slide-in) is real motion, but
+ * it's all front-loaded into the first ~0.3-0.7s of a beat that can run
+ * 2-3+ seconds - renderEngine.js's own "PowerPoint slide" finding
+ * (nothing moves once the entrance and camera pan finish) applies just
+ * as much to individual layers as it does to the whole frame. Adds a
+ * real, CONTINUOUS ambient wiggle (engine/expressions.js's wiggle() - a
+ * smooth Perlin-noise oscillation, not literal per-frame jitter) to the
+ * two most visually prominent elements: the dominant headline (a subtle
+ * rotational sway only - position/scale stay exactly as designed, since
+ * a headline drifting position would hurt readability) and the
+ * watermark icon (rotation AND a small position drift - a decorative,
+ * translucent element has real room to move without costing legibility,
+ * and "the icons... werent just plain and on screen... they were
+ * animated" was a real, separate direct complaint earlier this session).
+ * wiggle() is ADDITIVE on top of whatever keyframed entrance already
+ * exists (see buildAnimatable's own `value + wiggle(...)` semantics) -
+ * the entrance still plays out exactly as authored, this just keeps
+ * things gently alive for as long as the layer stays on screen
+ * afterward, instead of freezing solid the moment it finishes.
+ */
+function ensureSustainedAmbientMotion(sceneJSON) {
+  const scenes = sceneJSON.scenes;
+  if (!Array.isArray(scenes)) return;
+  scenes.forEach((beat) => {
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    const layers = beat.visual.layers;
+
+    const textLayers = layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
+    if (textLayers.length > 0) {
+      const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+      if (!isPlainObject(dominant.rotation) || dominant.rotation.expression === undefined) {
+        dominant.rotation = { expression: 'wiggle(0.7, 1.3)', base: dominant.rotation ?? 0 };
+      }
+    }
+
+    const watermarkIcon = layers.find((l) => isPlainObject(l) && l.type === 'image' && typeof l.width === 'number' && l.width >= 200);
+    if (watermarkIcon) {
+      if (!isPlainObject(watermarkIcon.rotation) || watermarkIcon.rotation.expression === undefined) {
+        watermarkIcon.rotation = { expression: 'wiggle(0.5, 5)', base: watermarkIcon.rotation ?? 0 };
+      }
+      if (!isPlainObject(watermarkIcon.position) || watermarkIcon.position.expression === undefined) {
+        watermarkIcon.position = { expression: 'wiggle(0.4, 8)', base: watermarkIcon.position ?? [0, 0] };
+      }
+    }
   });
 }
 
