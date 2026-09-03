@@ -5,19 +5,20 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 // From the canvas-free timeline module, not renderEngine.js directly -
-// this file runs in the PARENT process (renderWorker.js), which never
-// draws a frame itself for a long/chunked video (that's exclusively done
-// in forked chunk-worker processes) - requiring renderEngine.js here
-// unconditionally would load @napi-rs/canvas into the parent for every
-// job regardless of whether it ever takes the short-video direct-render
-// branch below. See engine/timeline.js's own doc comment for the real,
-// measured cost this avoids; renderJobToFile is required lazily, only
-// inside that branch, so the cost is paid solely when it's actually used.
+// this file runs in the PARENT process (renderWorker.js), which NEVER
+// draws a frame itself, for a short video or a long/chunked one - every
+// actual render happens in a forked chunk-worker process (see
+// renderSingleChunk below), always with --expose-gc, even for a video
+// short enough to be "one chunk." Requiring renderEngine.js here would
+// load @napi-rs/canvas into this long-lived parent for no reason, since
+// this file itself never calls into it directly. See engine/timeline.js's
+// own doc comment for the real, measured cost this avoids.
 const { buildTimeline } = require('./engine/timeline');
 
-// Below this, render directly in this process - the common case
-// (most videos are short), no chunking overhead/complexity at all.
-// Above it, split into CHUNK_SIZE_SECONDS pieces, each rendered by a
+// Below this, still forked (see renderLongFormVideo's own doc comment
+// for the real memory-safety bug that used to skip the fork here), just
+// as a single chunk rather than several - no concatChunks/multi-chunk
+// bookkeeping needed. Above it, split into CHUNK_SIZE_SECONDS pieces, each rendered by a
 // FRESH forked process - measured, verified necessary: this Skia
 // binding accumulates native memory under long sustained renders in
 // a way that survives canvas recycling and per-frame yielding within
@@ -106,17 +107,52 @@ function computeChunkRanges(sceneJSON) {
  * mid-chunk: chunks are already small (CHUNK_SIZE_SECONDS, a few
  * seconds of video each), so the worst case is finishing one chunk
  * already in flight before actually stopping, not a real delay. The
- * short-video direct-render branch below (renderJobToFile) has no
- * chunk boundaries to check at all - cancelling mid-render there isn't
- * supported, but those renders are fast enough that this is a low-
- * impact gap, not a real one.
+ * short-video branch below is now just a single chunk covering the
+ * whole video, so it gets the same one cancel-check the multi-chunk
+ * loop gives each of its own chunks.
+ *
+ * Real, live production memory-safety bug fixed here (2026-09-03,
+ * direct user report: "the memory problem... that is very dangerous"):
+ * this used to call renderJobToFile DIRECTLY, in-process, for any video
+ * <= CHUNK_THRESHOLD_SECONDS - meaning it ran inside the SAME long-lived
+ * render-worker server process that handles every job, with no
+ * --expose-gc. renderEngine.js's own periodic global.gc() call is a
+ * silent no-op without that flag (see its own doc comment), so native
+ * Skia pixel memory piled up UNRECLAIMED for the whole render. Confirmed
+ * directly, not assumed: identical content measured a flat ~150MB RSS
+ * with --expose-gc present versus climbing past 2.4GB without it, for
+ * literally the same 5-second, 2-beat render. Worse than a one-off
+ * spike: because this ran in the SHARED, PERSISTENT process rather than
+ * a disposable fork, that unreclaimed memory never came back down when
+ * the job finished - it permanently raised the server's own baseline,
+ * compounding with every short video rendered over the process's
+ * uptime, a real path to eventually OOM-killing the whole service
+ * regardless of any single job's size. This file's own top-of-file
+ * comment already documented the INTENDED architecture ("this file...
+ * never draws a frame itself... that's exclusively done in forked
+ * chunk-worker processes") - the short-video branch was the one
+ * violation of it. Fixed by routing it through the exact same
+ * renderSingleChunk fork (--expose-gc included) the long-video path
+ * already uses and trusts, treating a short video as a single chunk
+ * spanning its own whole [0, totalDuration) - concatChunks isn't needed
+ * for just one file, so this renames it straight to the final path.
  */
 async function renderLongFormVideo(jobId, sceneJSON, onProgress, isCancelled) {
   const { totalDuration } = buildTimeline(sceneJSON);
 
   if (totalDuration <= CHUNK_THRESHOLD_SECONDS) {
-    const { renderJobToFile } = require('./renderEngine');
-    return renderJobToFile(jobId, sceneJSON, onProgress);
+    if (isCancelled && isCancelled()) throw new RenderCancelledError(jobId);
+    const workDir = path.join(os.tmpdir(), 'shortform-renders', `${jobId}-chunks`);
+    fs.mkdirSync(workDir, { recursive: true });
+    const chunkPath = path.join(workDir, 'chunk-0.mp4');
+    await renderSingleChunk(jobId, sceneJSON, 0, totalDuration, chunkPath, 0, (pct) => {
+      if (onProgress) onProgress(Math.min(99, pct)); // hold at 99 until the rename below actually finishes, matching the multi-chunk path's own convention
+    });
+    const finalOutputPath = path.join(os.tmpdir(), 'shortform-renders', `${jobId}.mp4`);
+    fs.renameSync(chunkPath, finalOutputPath);
+    fs.rm(workDir, { recursive: true, force: true }, () => {});
+    if (onProgress) onProgress(100);
+    return finalOutputPath;
   }
 
   const chunkRanges = computeChunkRanges(sceneJSON);
