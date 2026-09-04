@@ -232,6 +232,42 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
  * rendered locally as a fallback (slower than the happy path, but
  * still correct - a flaky sibling should never lose real chunks).
  */
+// Real, severe, confirmed-live bug fixed here (2026-09-04, direct user
+// report with the actual video attached: a watermark icon rendering
+// fine for the first several seconds of a beat then vanishing outright
+// mid-beat, never to return, while everything else - text, highlight
+// chip, sparkles - kept going completely normally). Root-caused by
+// reading this file's own doc comments against what iconFetch.js
+// actually does, not by guessing: this function used to receive
+// sceneJSON with icons ALREADY resolved (handleRenderJob called
+// prefetchIconsIsolated before ever calling this) - fine for the solo
+// path, but the moment a sibling gets involved, `requestHelp` forwards
+// that SAME already-resolved sceneJSON to the sibling, whose own icon
+// layers had their "icon" field already DELETED by THIS worker's
+// resolution pass (iconFetch.js deletes it once resolved, leaving only
+// a local "src" file path) - a path that only exists on THIS worker's
+// disk. The sibling's own prefetchIconsIsolated call (in
+// handleRenderChunksRequest below) finds zero icon layers left to
+// resolve and renders the scene exactly as received, complete with a
+// "src" pointing at a file that doesn't exist on ITS filesystem -
+// silently producing an invisible icon for every frame it renders.
+// Confirmed directly: a 7-chunk video splits primary/sibling exactly
+// at chunk 4 (t=12s at 3s/chunk) - precisely where the reported video's
+// icon disappeared. This file's own doc comment on
+// handleRenderChunksRequest even said redundant re-fetching across
+// primary and sibling "costs a little duplicate network time, never
+// correctness" - true for hero images (imagePrefetch.js never deletes
+// "imagePrompt", so a sibling harmlessly redoes that work), but NOT
+// true for icons once the delete was added - an assumption that held
+// for one prefetch step silently stopped holding for its neighbor.
+//
+// Fixed by deferring icon resolution until AFTER the split decision:
+// `sceneJSON` here stays icon-RAW (the "icon" field intact) all the way
+// through until it's actually needed. The sibling gets the raw
+// version and resolves its own copy on its own disk exactly as
+// designed; this worker resolves its own separate local copy
+// (`renderSceneJSON`) just for its own chunks, right where it used to
+// resolve the one shared copy.
 async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled) {
   const chunkRanges = computeChunkRanges(sceneJSON);
 
@@ -239,12 +275,14 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
     // Not even chunked (CHUNK_THRESHOLD_SECONDS not exceeded) - nothing
     // to split, renderLongFormVideo's own short-video direct-render
     // path handles this exactly as before.
-    return renderLongFormVideo(jobId, sceneJSON, onProgress, isCancelled);
+    const renderSceneJSON = await prefetchIconsIsolated(sceneJSON, jobId);
+    return renderLongFormVideo(jobId, renderSceneJSON, onProgress, isCancelled);
   }
 
   const siblingUrl = await getAvailableSibling();
   if (!siblingUrl) {
-    return renderLongFormVideo(jobId, sceneJSON, onProgress, isCancelled);
+    const renderSceneJSON = await prefetchIconsIsolated(sceneJSON, jobId);
+    return renderLongFormVideo(jobId, renderSceneJSON, onProgress, isCancelled);
   }
 
   console.log(`[chunkDispatch] job ${jobId} splitting ${chunkRanges.length} chunks with ${siblingUrl}`);
@@ -255,10 +293,19 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
   const workDir = path.join(os.tmpdir(), 'shortform-renders', `${jobId}-chunks`);
   fs.mkdirSync(workDir, { recursive: true });
 
+  // Icon-RAW sceneJSON, deliberately - see this function's own doc
+  // comment above for why the sibling must resolve icons itself rather
+  // than inherit this worker's already-resolved (and since-deleted)
+  // copy.
   const helperPromise = requestHelp(siblingUrl, jobId, sceneJSON, helperRanges).catch((err) => {
     console.warn(`[chunkDispatch] job ${jobId} sibling ${siblingUrl} failed, rendering its ${helperRanges.length} chunk(s) locally instead: ${err.message}`);
     return null;
   });
+
+  // This worker's OWN resolved copy, used only for myRanges/the local
+  // fallback below - kept separate from the icon-raw `sceneJSON` above,
+  // which the sibling still needs unresolved.
+  const renderSceneJSON = await prefetchIconsIsolated(sceneJSON, jobId);
 
   const myChunkPaths = [];
   for (let i = 0; i < myRanges.length; i++) {
@@ -269,7 +316,7 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
     }
     const { start, end, index } = myRanges[i];
     const chunkPath = path.join(workDir, `chunk-${index}.mp4`);
-    await renderSingleChunk(jobId, sceneJSON, start, end, chunkPath, index, (chunkPct) => {
+    await renderSingleChunk(jobId, renderSceneJSON, start, end, chunkPath, index, (chunkPct) => {
       // My own half's progress only, scaled into the first ~50% of the
       // overall bar - the second half jumps in once the sibling's
       // result (or the local fallback for it) is actually in hand.
@@ -291,7 +338,8 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
     }
   } else {
     // Sibling failed entirely - render its assigned ranges myself,
-    // sequentially, exactly like the ordinary solo path would.
+    // sequentially, exactly like the ordinary solo path would. Uses
+    // this worker's own resolved copy, same reasoning as myRanges above.
     for (const { start, end, index } of helperRanges) {
       if (isCancelled && isCancelled()) {
         for (const p of [...myChunkPaths, ...helperChunkPaths]) fs.unlink(p, () => {});
@@ -299,7 +347,7 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
         throw new RenderCancelledError(jobId);
       }
       const chunkPath = path.join(workDir, `chunk-${index}.mp4`);
-      await renderSingleChunk(jobId, sceneJSON, start, end, chunkPath, index, () => {});
+      await renderSingleChunk(jobId, renderSceneJSON, start, end, chunkPath, index, () => {});
       helperChunkPaths.push(chunkPath);
     }
   }
@@ -351,10 +399,15 @@ async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
   const PROGRESS_UPDATE_MIN_INTERVAL_MS = 1500;
 
   try {
+    // Icons deliberately NOT resolved here anymore - see
+    // renderWithPossibleHelp's own doc comment for the real, confirmed-
+    // live bug this fixes. Hero images stay resolved this early since
+    // imagePrefetch.js never deletes "imagePrompt", so a sibling
+    // worker's own redundant re-resolution of it is harmless (just a
+    // little duplicate work), unlike icons.
     const imageResolvedSceneJSON = await prefetchBeatImages(sceneJSON, jobId);
-    const renderSceneJSON = await prefetchIconsIsolated(imageResolvedSceneJSON, jobId);
 
-    const renderedPath = await withRenderLock(() => renderWithPossibleHelp(jobId, renderSceneJSON, (pct) => {
+    const renderedPath = await withRenderLock(() => renderWithPossibleHelp(jobId, imageResolvedSceneJSON, (pct) => {
       const now = Date.now();
       const isFinal = pct >= 100;
       if (isFinal || now - lastProgressUpdateAt >= PROGRESS_UPDATE_MIN_INTERVAL_MS) {
@@ -366,7 +419,13 @@ async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
       }
     }, () => cancelledJobs.has(jobId)));
 
-    const muxedPath = await muxNarrationOntoVideo(renderedPath, renderSceneJSON, audioFiles, jobId, os.tmpdir());
+    // imageResolvedSceneJSON, not any icon-resolved copy - confirmed
+    // muxNarrationOntoVideo never reads per-beat image/icon fields at
+    // all (only narration/duration timing), so the icon-raw version is
+    // exactly as good here and there's no single "the" resolved copy
+    // anymore now that the primary and a possible sibling each hold
+    // their own.
+    const muxedPath = await muxNarrationOntoVideo(renderedPath, imageResolvedSceneJSON, audioFiles, jobId, os.tmpdir());
 
     // Direct user request: speed up the finished video (video + audio
     // together, staying in sync) before it's ever uploaded or shown to
