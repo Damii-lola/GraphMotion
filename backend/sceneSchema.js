@@ -5649,7 +5649,23 @@ function ensureModestTextSize(sceneJSON) {
     if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     beat.visual.layers.forEach((l) => {
       if (!isPlainObject(l) || l.type !== 'text' || typeof l.fontSize !== 'number') return;
-      if (l.fontSize > MAX_TEXT_FONT_SIZE) l.fontSize = MAX_TEXT_FONT_SIZE;
+      if (l.fontSize > MAX_TEXT_FONT_SIZE) {
+        // Real, confirmed bug found via local render (2026-09-04):
+        // ensureEmphasisWordScale (which runs before this) sets an
+        // ABSOLUTE lineHeight in pixels, computed from whatever
+        // fontSize the layer had AT THAT TIME - clamping fontSize down
+        // afterward without touching lineHeight leaves the ratio
+        // between them stale, and since MAX_TEXT_FONT_SIZE is often a
+        // meaningful cut from the model's own oversized choice, the
+        // result was clearly-too-loose line spacing (confirmed
+        // directly: lines with nearly double the normal gap). Rescale
+        // lineHeight by the SAME factor fontSize just shrank by, so
+        // whatever ratio was already set (plain default, or emphasis-
+        // widened) survives the clamp intact instead of going stale.
+        const ratio = MAX_TEXT_FONT_SIZE / l.fontSize;
+        if (typeof l.lineHeight === 'number') l.lineHeight *= ratio;
+        l.fontSize = MAX_TEXT_FONT_SIZE;
+      }
     });
   });
 }
