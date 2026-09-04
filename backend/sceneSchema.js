@@ -4590,6 +4590,20 @@ function varyHeadlinePositions(sceneJSON) {
   scenes.forEach((beat, i) => {
     if (i === 0 || i === scenes.length - 1) return;
     if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    // Real, confirmed bug found via local render (2026-09-04): this
+    // only ever shifts type:'text' layers - fine for a bare headline,
+    // but ensureDecorativeAccent's content-card composition (which runs
+    // earlier) surrounds the headline with real 'shape'/'image' layers
+    // (the card background, kicker pill, topic icon) that this
+    // function has no idea exist, so a shift here moves the headline
+    // AND its own '__kicker_text__' sibling but leaves the card/pill/
+    // icon exactly where they were - the kicker label visibly drifts
+    // off-center from the pill it's supposed to sit on. The card is
+    // already a deliberately-centered, self-contained composition (the
+    // whole reason it exists is to stop a headline reading as "just
+    // floating text"), so it has no need for this pass's own left/right
+    // variance - skip beats that already have one entirely.
+    if (beat.visual.layers.some((l) => isPlainObject(l) && l.id === '__content_card__')) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
