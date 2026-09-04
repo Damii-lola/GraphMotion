@@ -7,7 +7,7 @@ const { renderContents } = require('./engine/shapeLayer');
 const {
   rectanglePath, ellipsePath, polygonPath, starPath, customPath,
 } = require('./engine/shapePrimitives');
-const { renderAnimatedText } = require('./engine/textAnimator');
+const { renderAnimatedText, layoutText } = require('./engine/textAnimator');
 const { renderAnimatedTextOnPath } = require('./engine/textPath');
 const { rangeSelector, wigglySelector } = require('./engine/selectors');
 const { applyTextAnimationPresets } = require('./engine/textAnimationPresets');
@@ -626,6 +626,96 @@ function wireTrackMattesAndParents(layerDefs, idMap) {
   }
 }
 
+// Real, confirmed bug found via local render (2026-09-04): the
+// typewriter cursor's position track is built by sceneSchema.js's
+// buildCharacterCursorTrack, which has to ESTIMATE where line breaks
+// land (fontSize * 0.62 per character) because sceneSchema.js
+// deliberately has no real canvas/font access - it validates JSON
+// structurally, long before rendering. That estimate can genuinely
+// disagree with the real wrap decision (confirmed directly: "Your
+// phone bill is a scam." was estimated to need 2 lines, the real
+// renderer fits it on 1), which visibly misplaces the cursor - it hangs
+// at the wrong line entirely, not just a few pixels off.
+//
+// This file DOES have real canvas/font access (that's the whole reason
+// buildTextDraw calls the real layoutText, not an estimate) - so
+// rather than trying to make the estimate more accurate (a losing
+// game: any fixed per-character width is wrong for SOME font/string,
+// and sceneSchema.js has no way to verify against real glyphs), this
+// throws the estimated track away entirely and rebuilds it from
+// layoutText's own real per-character positions, once per beat, right
+// before the layers it depends on get built.
+function recomputeTypewriterCursorTrack(layers, beatContext) {
+  if (!Array.isArray(layers)) return;
+  const textLayer = layers.find((l) => l && l.id === '__typewriter_text__');
+  const cursor = layers.find((l) => l && l.id === '__typewriter_cursor__');
+  if (!textLayer || !cursor || typeof textLayer.text !== 'string') return;
+  if (!cursor.position || !Array.isArray(cursor.position.keyframes) || cursor.position.keyframes.length === 0) return;
+  const reveal = Array.isArray(textLayer.animators)
+    ? textLayer.animators.find((a) => a && a.selector && a.selector.basedOn === 'characters' && a.selector.end && Array.isArray(a.selector.end.keyframes))
+    : null;
+  if (!reveal) return;
+
+  const textPos = Array.isArray(textLayer.position) ? textLayer.position
+    : (textLayer.position && Array.isArray(textLayer.position.keyframes) && textLayer.position.keyframes.length > 0
+      ? textLayer.position.keyframes[textLayer.position.keyframes.length - 1].value
+      : null);
+  if (!Array.isArray(textPos)) return;
+
+  const rawText = textLayer.text.trim();
+  if (rawText.length === 0) return;
+  const fontSize = textLayer.fontSize || 48;
+  const canvas = createCanvas(8, 8);
+  const ctx = canvas.getContext('2d');
+  ctx.font = `${textLayer.fontWeight || '700'} ${fontSize}px ${textLayer.fontFamily || 'sans-serif'}`;
+  const { chars } = layoutText(ctx, rawText, {
+    fontFamily: textLayer.fontFamily || 'sans-serif',
+    fontWeight: textLayer.fontWeight || '700',
+    fontSize,
+    lineHeight: textLayer.lineHeight || fontSize * 1.15,
+    maxWidth: textLayer.maxWidth || Math.max(100, beatContext.width - 60),
+    centerX: 0,
+    centerY: 0,
+    textAlign: textLayer.textAlign || 'center',
+  });
+  if (chars.length === 0) return;
+
+  // Real, confirmed SECOND bug found verifying the position fix above:
+  // the cursor's own keyframe TIMES (not just positions) were already
+  // wrong before this function ever ran - ensureTypewriterReveal builds
+  // them as `(i+1)/chars_RAW * totalTypeDuration` where chars_RAW
+  // COUNTS SPACES, but `i` only ever iterates the non-space track (a
+  // space advances the estimated cursorX but gets no entry of its own)
+  // - so the cursor's last keyframe lands at
+  // `nonSpaceCount/chars_RAW * totalTypeDuration`, well BEFORE
+  // totalTypeDuration itself whenever the line has any spaces (every
+  // real sentence). Confirmed directly: the cursor visibly finished
+  // moving - and sat AHEAD of the actually-revealed text - before
+  // typing was really done. The reveal's own keyframes (read off
+  // `reveal` above) are the correct, authoritative time grid - one
+  // entry per RAW character including spaces - so this rebuilds the
+  // cursor's keyframes to match that grid exactly, one keyframe per
+  // raw character, reusing the last real (non-space) position on any
+  // keyframe that lands on a space (nothing new to point at yet).
+  const revealKfs = reveal.selector.end.keyframes;
+  const newKfs = [{ time: 0, value: [textPos[0] + chars[0].x - chars[0].w / 2, textPos[1] + chars[0].y], interpolation: 'hold' }];
+  let nonSpaceIdx = -1;
+  let lastValue = newKfs[0].value;
+  for (let i = 0; i < rawText.length; i++) {
+    if (!/\s/.test(rawText[i])) {
+      nonSpaceIdx += 1;
+      const c = chars[Math.min(nonSpaceIdx, chars.length - 1)];
+      // Right edge of the character just typed - matches the ORIGINAL
+      // estimate's own convention (cursorX accumulated to sit AFTER
+      // each typed character, not centered on it).
+      lastValue = [textPos[0] + c.x + c.w / 2, textPos[1] + c.y];
+    }
+    const kfTime = i + 1 < revealKfs.length ? revealKfs[i + 1].time : revealKfs[revealKfs.length - 1].time;
+    newKfs.push({ time: kfTime, value: lastValue, interpolation: 'hold' });
+  }
+  cursor.position.keyframes = newKfs;
+}
+
 // ---------------------------------------------------------------------
 // Top-level: one beat's whole visual
 // ---------------------------------------------------------------------
@@ -639,6 +729,7 @@ function wireTrackMattesAndParents(layerDefs, idMap) {
 function buildBeatVisual(visual, beatContext) {
   const { width, height, duration } = beatContext;
   const idMap = new Map();
+  recomputeTypewriterCursorTrack(visual.layers, beatContext);
 
   // Mutates visual.layers in place, expanding any layer.textAnimation
   // preset spec into real keyframes/animators (and auto-assigning a

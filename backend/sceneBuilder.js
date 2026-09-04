@@ -7,7 +7,7 @@ const { renderContents } = require('./engine/shapeLayer');
 const {
   rectanglePath, ellipsePath, polygonPath, starPath, customPath,
 } = require('./engine/shapePrimitives');
-const { renderAnimatedText } = require('./engine/textAnimator');
+const { renderAnimatedText, layoutText } = require('./engine/textAnimator');
 const { renderAnimatedTextOnPath } = require('./engine/textPath');
 const { rangeSelector, wigglySelector } = require('./engine/selectors');
 const { applyTextAnimationPresets } = require('./engine/textAnimationPresets');
@@ -615,6 +615,60 @@ function wireTrackMattesAndParents(layerDefs, idMap) {
   }
 }
 
+// See render-worker/sceneBuilder.js's own copy of this function for the
+// full real-bug writeup (found + fixed there first, mirrored here for
+// consistency since both copies build beats from the same JSON shape).
+function recomputeTypewriterCursorTrack(layers, beatContext) {
+  if (!Array.isArray(layers)) return;
+  const textLayer = layers.find((l) => l && l.id === '__typewriter_text__');
+  const cursor = layers.find((l) => l && l.id === '__typewriter_cursor__');
+  if (!textLayer || !cursor || typeof textLayer.text !== 'string') return;
+  if (!cursor.position || !Array.isArray(cursor.position.keyframes) || cursor.position.keyframes.length === 0) return;
+  const reveal = Array.isArray(textLayer.animators)
+    ? textLayer.animators.find((a) => a && a.selector && a.selector.basedOn === 'characters' && a.selector.end && Array.isArray(a.selector.end.keyframes))
+    : null;
+  if (!reveal) return;
+
+  const textPos = Array.isArray(textLayer.position) ? textLayer.position
+    : (textLayer.position && Array.isArray(textLayer.position.keyframes) && textLayer.position.keyframes.length > 0
+      ? textLayer.position.keyframes[textLayer.position.keyframes.length - 1].value
+      : null);
+  if (!Array.isArray(textPos)) return;
+
+  const rawText = textLayer.text.trim();
+  if (rawText.length === 0) return;
+  const fontSize = textLayer.fontSize || 48;
+  const canvas = createCanvas(8, 8);
+  const ctx = canvas.getContext('2d');
+  ctx.font = `${textLayer.fontWeight || '700'} ${fontSize}px ${textLayer.fontFamily || 'sans-serif'}`;
+  const { chars } = layoutText(ctx, rawText, {
+    fontFamily: textLayer.fontFamily || 'sans-serif',
+    fontWeight: textLayer.fontWeight || '700',
+    fontSize,
+    lineHeight: textLayer.lineHeight || fontSize * 1.15,
+    maxWidth: textLayer.maxWidth || Math.max(100, beatContext.width - 60),
+    centerX: 0,
+    centerY: 0,
+    textAlign: textLayer.textAlign || 'center',
+  });
+  if (chars.length === 0) return;
+
+  const revealKfs = reveal.selector.end.keyframes;
+  const newKfs = [{ time: 0, value: [textPos[0] + chars[0].x - chars[0].w / 2, textPos[1] + chars[0].y], interpolation: 'hold' }];
+  let nonSpaceIdx = -1;
+  let lastValue = newKfs[0].value;
+  for (let i = 0; i < rawText.length; i++) {
+    if (!/\s/.test(rawText[i])) {
+      nonSpaceIdx += 1;
+      const c = chars[Math.min(nonSpaceIdx, chars.length - 1)];
+      lastValue = [textPos[0] + c.x + c.w / 2, textPos[1] + c.y];
+    }
+    const kfTime = i + 1 < revealKfs.length ? revealKfs[i + 1].time : revealKfs[revealKfs.length - 1].time;
+    newKfs.push({ time: kfTime, value: lastValue, interpolation: 'hold' });
+  }
+  cursor.position.keyframes = newKfs;
+}
+
 // ---------------------------------------------------------------------
 // Top-level: one beat's whole visual
 // ---------------------------------------------------------------------
@@ -628,6 +682,7 @@ function wireTrackMattesAndParents(layerDefs, idMap) {
 function buildBeatVisual(visual, beatContext) {
   const { width, height, duration } = beatContext;
   const idMap = new Map();
+  recomputeTypewriterCursorTrack(visual.layers, beatContext);
 
   // Mutates visual.layers in place, expanding any layer.textAnimation
   // preset spec into real keyframes/animators (and auto-assigning a
