@@ -4837,16 +4837,6 @@ function ensureEmphasisWordScale(sceneJSON) {
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
-    // Real, direct visual bug found via local render (2026-09-03): a
-    // scale-emphasis animator (keyed to word POSITION strength, not
-    // time) plays at full strength from frame 0 regardless of the
-    // typewriter reveal's own per-character timing - the emphasized
-    // word visibly renders at its BIGGER size before it's even finished
-    // being "typed," which reads as broken, not stylistic. Simplest
-    // correct fix: these two effects don't compose safely without real
-    // coordination work neither is worth blocking on, so a typewriter
-    // beat just skips this one instead.
-    if (dominant.id === '__typewriter_text__') return;
 
     const words = dominant.text.trim().split(/\s+/).filter(Boolean);
     if (words.length < 2) return; // nothing to contrast a single word against
@@ -4869,6 +4859,22 @@ function ensureEmphasisWordScale(sceneJSON) {
       invert: false,
       properties: { scale: EMPHASIS_SCALE },
     });
+
+    // Real, confirmed bug found via local render (2026-09-04): layoutText
+    // computes each line's Y position from the UNSCALED lineHeight, but
+    // a scaled-up word renders taller than that reservation - on any
+    // headline that wraps to 2+ lines, an emphasized word sitting near
+    // the end of one line visibly overlaps INTO the line below it
+    // (confirmed directly: "habit" scaled 1.22x rendered its bottom
+    // edge overlapping "machine." on the next line). Widening lineHeight
+    // by the same factor whenever this animator is active gives every
+    // line enough vertical clearance for the tallest thing that could
+    // land on it, regardless of which word the seed picks - cheap
+    // insurance against a real, ugly collision, not just a typewriter-
+    // mode fix (this risk exists on every multi-line headline that uses
+    // emphasis-scale, not something specific to that one mode).
+    const baseLineHeight = typeof dominant.lineHeight === 'number' ? dominant.lineHeight : dominant.fontSize * 1.15;
+    dominant.lineHeight = baseLineHeight * EMPHASIS_SCALE;
   });
 }
 
@@ -4893,13 +4899,6 @@ function ensureHighlightChip(sceneJSON) {
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
-    // Real, direct visual bug found via local render (2026-09-03): the
-    // highlight chip fades in on its OWN fixed ~0.3s schedule,
-    // completely independent of the typewriter reveal's own per-
-    // character timing - it visibly appears behind text that hasn't
-    // been "typed" yet. See ensureEmphasisWordScale's own matching fix
-    // for the fuller reasoning; same call here.
-    if (dominant.id === '__typewriter_text__') return;
 
     const words = dominant.text.trim().split(/\s+/).filter(Boolean);
     if (words.length < 2) return;
@@ -4932,16 +4931,52 @@ function ensureHighlightChip(sceneJSON) {
     const hi = ((wordIndex + 1) / words.length) * 100;
     const color = ACCENT_PALETTE[seed % ACCENT_PALETTE.length];
 
-    // Estimated fallback timing (no real audio timing exists yet at
-    // JSON-generation time) - proportional to this word's position in
-    // the sentence, same shape of estimate ensureSustainedWordMotion's
-    // own reveal sweep uses. narrationPrefetch's applyRealWordTimingToText
-    // overwrites this with the WORD'S ACTUAL spoken start time once real
-    // audio timing is available (the precise fix); this stays as the
-    // fallback for any path that renders without going through real
-    // audio timing at all (e.g. a raw preview).
-    const durationEstimate = isPlainObject(beat.params) && typeof beat.params.duration === 'number' ? beat.params.duration : 2;
-    const estimatedAppearAt = (wordIndex / words.length) * Math.max(0.3, durationEstimate * 0.75);
+    // Real, direct visual bug found via local render (2026-09-03),
+    // fixed properly here rather than by disabling the chip on
+    // typewriter beats entirely (the original fix, and the reason this
+    // whole video style used to render with zero color anywhere at all
+    // - typewriter beats skip highlights AND emphasis AND real-audio
+    // retiming never touches them either, so a whole typewriter-style
+    // video had NOTHING but plain text and one flat-colored icon,
+    // confirmed directly via a live generation that looked exactly that
+    // flat): a typewriter beat's own character-by-character reveal
+    // (ensureTypewriterReveal, which runs before this function) has a
+    // real, EXACT, fully-known completion time for every character -
+    // used directly here instead of the proportional estimate below,
+    // since narrationPrefetch's applyRealWordTimingToText deliberately
+    // never touches typewriter beats (their pace is fixed-by-design,
+    // not meant to track real speech), so this value is never corrected
+    // later and has to be right the first time.
+    const typewriterReveal = dominant.id === '__typewriter_text__' && Array.isArray(dominant.animators)
+      ? dominant.animators.find((a) => isPlainObject(a) && isPlainObject(a.selector) && a.selector.basedOn === 'characters' && isPlainObject(a.selector.end) && Array.isArray(a.selector.end.keyframes))
+      : null;
+
+    let appearAt;
+    if (typewriterReveal) {
+      // words[] (Boolean-filtered on a pre-trimmed string) reconstructs
+      // the real text as words.join(' ') in every real case - single-
+      // space-separated narration, which is all this project ever
+      // produces - so a direct running sum over words[] gives the exact
+      // same character offsets ensureTypewriterReveal's own `chars =
+      // dominant.text.trim().length` used to build these keyframes.
+      let charPos = 0;
+      for (let w = 0; w < wordIndex; w++) charPos += words[w].length + 1;
+      const endCharIndex = charPos + words[wordIndex].length - 1;
+      const kfs = typewriterReveal.selector.end.keyframes;
+      const revealKf = kfs[Math.min(endCharIndex + 1, kfs.length - 1)];
+      appearAt = isPlainObject(revealKf) && typeof revealKf.time === 'number' ? revealKf.time : 0;
+    } else {
+      // Estimated fallback timing (no real audio timing exists yet at
+      // JSON-generation time) - proportional to this word's position in
+      // the sentence, same shape of estimate ensureSustainedWordMotion's
+      // own reveal sweep uses. narrationPrefetch's applyRealWordTimingToText
+      // overwrites this with the WORD'S ACTUAL spoken start time once real
+      // audio timing is available (the precise fix); this stays as the
+      // fallback for any path that renders without going through real
+      // audio timing at all (e.g. a raw preview).
+      const durationEstimate = isPlainObject(beat.params) && typeof beat.params.duration === 'number' ? beat.params.duration : 2;
+      appearAt = (wordIndex / words.length) * Math.max(0.3, durationEstimate * 0.75);
+    }
 
     dominant.highlights = [{
       selector: {
@@ -4951,7 +4986,7 @@ function ensureHighlightChip(sceneJSON) {
       paddingX: 8,
       paddingY: 4,
       cornerRadius: 8,
-      appearAt: estimatedAppearAt,
+      appearAt,
     }];
   });
 }
