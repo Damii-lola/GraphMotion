@@ -5204,6 +5204,23 @@ function transformIconIntoWatermark(beat, beatIndex, iconLayer, targetOpacity, t
   // reference footage has - not a fully on-canvas graphic, not a
   // mostly-invisible one either.
   const INSET = WATERMARK_SIZE * 0.34;
+  // Real, confirmed-live gap found via a frame-by-frame review (direct
+  // user report with the actual video attached, 2026-09-04): a CORNER
+  // anchor (bleedX AND bleedY both nonzero) bleeds off TWO edges at
+  // once, and the two axes compound - pulled in by the SAME INSET as an
+  // edge-midpoint anchor (which only bleeds off ONE edge), a corner
+  // icon's visible AREA works out to (INSET+half)/WATERMARK_SIZE
+  // SQUARED (~71% at this INSET), not the ~84% an edge-midpoint anchor
+  // actually shows (that axis has zero crop at all), even though both
+  // were "tuned" against the same INSET value. Confirmed directly: a
+  // calendar icon at a corner anchor read as a barely-recognizable
+  // rotated-square fragment. CORNER_INSET solves for the pull-in that
+  // gives a corner anchor the SAME visible AREA an edge-midpoint anchor
+  // already has (per-axis fraction = sqrt of the edge-midpoint's own
+  // fraction, since a corner's area is the PRODUCT of both axes) - real
+  // math against the actual formula, not a guessed bump.
+  const edgeMidpointVisibleFraction = (INSET + WATERMARK_SIZE / 2) / WATERMARK_SIZE;
+  const CORNER_INSET = WATERMARK_SIZE * Math.sqrt(edgeMidpointVisibleFraction) - WATERMARK_SIZE / 2;
   const overlapsAnyText = (cx, cy) => {
     const half = WATERMARK_SIZE / 2;
     const wmRect = { left: cx - half, right: cx + half, top: cy - half, bottom: cy + half };
@@ -5229,8 +5246,10 @@ function transformIconIntoWatermark(beat, beatIndex, iconLayer, targetOpacity, t
   let restX = 0; let restY = 0;
   for (const cand of order) {
     if (takenAnchors.has(cand.idx)) continue;
-    const rx = cand.a.x + cand.a.bleedX * INSET;
-    const ry = cand.a.y + cand.a.bleedY * INSET;
+    const isCorner = cand.a.bleedX !== 0 && cand.a.bleedY !== 0;
+    const inset = isCorner ? CORNER_INSET : INSET;
+    const rx = cand.a.x + cand.a.bleedX * inset;
+    const ry = cand.a.y + cand.a.bleedY * inset;
     if (!overlapsAnyText(rx, ry)) { anchor = cand.a; anchorIdx = cand.idx; restX = rx; restY = ry; break; }
   }
   if (!anchor) return false;
