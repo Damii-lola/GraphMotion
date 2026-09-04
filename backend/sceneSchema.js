@@ -4697,6 +4697,24 @@ function ensureSustainedWordMotion(sceneJSON) {
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
+    // Real, confirmed bug found via a live production test (2026-09-04):
+    // this function's own "already has a reveal, just stretch its last
+    // keyframe out to fill the beat" branch below doesn't check WHAT
+    // KIND of reveal it found - ensureTypewriterReveal's own character-
+    // by-character animator matches its exact search criteria
+    // (basedOn:'characters'), so this ran on typewriter beats too and
+    // rewrote the LAST keyframe's time out to duration*0.75, without
+    // touching the second-to-last one. Since interpolation is 'hold',
+    // the result was the second-to-last character's percentage held for
+    // that whole stretched gap, then a sudden jump to 100% right at the
+    // end - confirmed directly on a live render: "$150 a month" got
+    // stuck on-screen as "$150 a mont" for over a second before the
+    // final "h" ever appeared, nothing broken about typing pace itself,
+    // just this function overwriting where typing was ever meant to
+    // finish. Typewriter beats compute their own correct, duration-
+    // aware pacing entirely on their own (ensureTypewriterReveal, which
+    // runs before this function) and need no help here.
+    if (dominant.id === '__typewriter_text__') return;
     const targetEndTime = Math.max(0.3, duration * SUSTAIN_FRACTION);
 
     const wordReveal = Array.isArray(dominant.animators)
