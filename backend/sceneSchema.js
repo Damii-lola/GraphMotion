@@ -4889,6 +4889,29 @@ function ensureEmphasisWordScale(sceneJSON) {
     // emphasis-scale, not something specific to that one mode).
     const baseLineHeight = typeof dominant.lineHeight === 'number' ? dominant.lineHeight : dominant.fontSize * 1.15;
     dominant.lineHeight = baseLineHeight * EMPHASIS_SCALE;
+
+    // Real, confirmed bug found via local render (2026-09-04): the
+    // typewriter cursor's own position track (ensureTypewriterReveal,
+    // which runs before this function) is built from lineHeight AS IT
+    // STOOD AT THAT TIME - the lineHeight widening just above makes
+    // that track stale exactly the same way it made the content card's
+    // sizing stale (same root cause, different symptom) - confirmed
+    // directly: the cursor visibly hung well below the actual text
+    // line whenever this landed on a beat that also had the typewriter
+    // running. Every cursor Y offset is a plain multiple of lineHeight
+    // (see buildCharacterCursorTrack: `lineY = ... * lineHeight`), so
+    // rescaling each keyframe's Y by the exact same ratio lineHeight
+    // just widened by reproduces what a fresh build would have
+    // produced, without needing to rebuild the whole character track.
+    const cursor = beat.visual.layers.find((l) => isPlainObject(l) && l.id === '__typewriter_cursor__');
+    if (cursor && isPlainObject(cursor.position) && Array.isArray(cursor.position.keyframes)) {
+      const pos = representativePosition(dominant.position) || [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
+      cursor.position.keyframes.forEach((kf) => {
+        if (isPlainObject(kf) && isNumberArray(kf.value, 2)) {
+          kf.value = [kf.value[0], pos[1] + (kf.value[1] - pos[1]) * EMPHASIS_SCALE];
+        }
+      });
+    }
   });
 }
 
