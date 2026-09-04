@@ -5093,9 +5093,22 @@ function isBeatAlreadyDecorated(beat) {
 // crown for Rolex, a factory for production, gears for assembly), the
 // only real problem was their size and position, not their relevance.
 const SMALL_ICON_MAX_SIZE = 100;
+// Real, severe, confirmed bug found via local render (2026-09-04):
+// ensureDecorativeAccent's own '__topic_icon__' (a deliberately small,
+// deliberately positioned icon that's part of a designed kicker+icon+
+// headline+divider card composition) is exactly the kind of "small
+// image layer" this function exists to find and hand off to
+// transformIconIntoWatermark - which did exactly that, blowing it up
+// to a 240px corner watermark and relocating it to a wiggling watermark
+// anchor point, completely destroying the card layout it was built
+// for (confirmed directly: the icon ended up floating alone near the
+// bottom of the canvas, nowhere near the card it was supposed to sit
+// inside). Any icon this file already deliberately placed and sized
+// itself is exempt - only genuinely model-authored small icons (no
+// id) should ever be considered for the watermark transform.
 function findExistingSmallIcons(layers) {
   return layers.filter((l) => isPlainObject(l) && l.type === 'image' && typeof l.icon === 'string'
-    && typeof l.width === 'number' && l.width <= SMALL_ICON_MAX_SIZE);
+    && typeof l.width === 'number' && l.width <= SMALL_ICON_MAX_SIZE && !l.id);
 }
 
 function ensureActiveBackgroundElement(beat, beatIndex, topic) {
