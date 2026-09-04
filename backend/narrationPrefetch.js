@@ -359,6 +359,49 @@ function applyRealWordTimingToText(scene, wordTimings) {
 
 function isPlainObject(v) { return typeof v === 'object' && v !== null && !Array.isArray(v); }
 
+// Real, confirmed bug found via a frame-by-frame brutal review of a
+// production render (2026-09-03, second direct follow-up demanding an
+// even deeper pass: "check frame by frame, go extremely indepth"):
+// a beat's decorative layers (an icon or shape the MODEL itself hand-
+// authored an opacity fade-out for) are written against the model's
+// own ESTIMATED duration - but real spoken audio frequently runs
+// longer than that estimate, and only the dominant headline's own
+// reveal gets retimed to the real, now-longer duration (see
+// applyRealWordTimingToText above). Everything else keeps the
+// original timeline, so a decorative element that was meant to fade
+// out near the END of a ~1.5s estimated beat instead fades out mid-way
+// through the REAL, longer beat - confirmed directly via a real
+// render: a chart-line accent vanished abruptly (a hard cut, not a
+// graceful fade - its own fade-out keyframe simply landed early) with
+// over a second of the beat still left to play, no motion, nothing
+// filling the gap it left. Stretches the LAST leg of any such layer's
+// own opacity animation (the segment ending at invisible) out to the
+// real duration instead, so it stays on screen for the beat it's
+// actually going to be shown in rather than the one the model guessed.
+// __ripple_ rings and the typewriter cursor are excluded - both fade
+// out on a deliberately short, fixed schedule by design (a hook flash,
+// a "typing is done" cue), not a duration guess gone wrong.
+const PREMATURE_FADEOUT_EXCLUDED_ID_PREFIXES = ['__ripple_', '__typewriter_cursor__'];
+function extendPrematureLayerFadeOuts(scene, realDuration) {
+  if (!isPlainObject(scene.visual) || !Array.isArray(scene.visual.layers)) return;
+  const FADE_OUT_LATE_ENOUGH_FRACTION = 0.75;
+  const NEAR_ZERO = 0.05;
+  scene.visual.layers.forEach((layer) => {
+    if (!isPlainObject(layer)) return;
+    if (layer.id === '__typewriter_text__') return;
+    if (typeof layer.id === 'string' && PREMATURE_FADEOUT_EXCLUDED_ID_PREFIXES.some((p) => layer.id.startsWith(p))) return;
+    const opacityProp = isPlainObject(layer.opacity) ? layer.opacity : null;
+    if (!opacityProp) return;
+    const base = isPlainObject(opacityProp.base) ? opacityProp.base : opacityProp;
+    if (!Array.isArray(base.keyframes) || base.keyframes.length < 2) return;
+    const last = base.keyframes[base.keyframes.length - 1];
+    if (typeof last.time !== 'number' || typeof last.value !== 'number') return;
+    if (last.value > NEAR_ZERO) return; // doesn't end invisible - nothing premature to fix
+    if (last.time >= realDuration * FADE_OUT_LATE_ENOUGH_FRACTION) return; // already lands late enough
+    last.time = Math.max(last.time, realDuration - 0.3);
+  });
+}
+
 /**
  * Direct user request (2026-09-03): "integrate the gemini audio ai to
  * compare the generated audio and the audio script to check if they
@@ -591,6 +634,7 @@ async function prefetchNarration(sceneJSON, jobId) {
       // no multiply-by-speed-factor derivation needed while that stays
       // at 1.0 (see audioMux.js's own comment if that ever changes).
       renderScenes[index].params.duration = duration + 0.5;
+      extendPrematureLayerFadeOuts(renderScenes[index], duration + 0.5);
     } catch (err) {
       console.warn(`[narrationPrefetch] beat ${index} narration failed, keeping authored duration: ${err.message}`);
     }
