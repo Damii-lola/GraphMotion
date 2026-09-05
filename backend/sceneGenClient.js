@@ -112,8 +112,26 @@ async function callSceneJSONTransport(systemPrompt, userMessage, maxTokens) {
 // transport failure is caught there the same way a validation failure
 // already was, not left to throw uncaught) to outlast a rate-limit
 // window rather than escalate to a second provider.
+//
+// jsonMode (Groq's response_format:{type:"json_object"}) turned OFF
+// here, direct fix for a real, confirmed-live, repeat failure: two
+// separate production runs both hit "json_validate_failed" with a
+// completely EMPTY failed_generation - Groq's OWN server-side JSON
+// validator rejecting the response with nothing recoverable, not a
+// truncation (finish_reason wasn't "length") and not a rate limit
+// (no 429 involved). generateCreativeTreatment, right above in this
+// same file, has been 100% reliable across every real test today - the
+// one difference is it never sets jsonMode at all, just asks for JSON
+// as plain text and leans on extractJson's own robust extraction
+// (finds the outermost {...}) plus jsonrepair as a fallback for minor
+// syntax slips. Matching that proven-reliable approach here instead of
+// continuing to fight openai/gpt-oss-120b's apparent occasional
+// instability under Groq's separate json_object constrained-decoding
+// path - the system prompt already tells the model to output ONLY a
+// compact JSON object either way, so this only removes the extra Groq-
+// side validation layer that kept failing, not the instruction itself.
 async function callBeatJSONTransport(systemPrompt, userMessage, maxTokens) {
-  return callGroqRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens });
+  return callGroqRaw(systemPrompt, userMessage, { jsonMode: false, maxTokens });
 }
 
 async function callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, onRetry, transport = callSceneJSONTransport) {
@@ -287,18 +305,24 @@ async function generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, 
   if (judgeFeedback) userMessage += `\n\nA brutal judge rejected the previous full script as boring: "${judgeFeedback}" Make THIS beat's narration genuinely sharper and more hooked, not generic - keep the same core idea.`;
   if (priorErrors) userMessage += `\n\nYour previous attempt at this beat was invalid:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected single Beat object.`;
 
-  // maxTokens cut 1500 -> 1000: real, gpt-tokenizer-measured worst case
-  // (a maxed-out 6-item connectorList's full JSON) is only ~120 tokens,
-  // but openai/gpt-oss-120b is a reasoning model - real testing found a
-  // more aggressive 600 cap occasionally starved it into a genuine
-  // json_validate_failed (empty failed_generation, not a truncation),
-  // most likely leaving no room for its own internal reasoning before
-  // it needs to emit the actual JSON answer. 1000 keeps a real cut from
-  // 1500 (shrinking this call's own fixed footprint against Groq's per-
-  // key TPM ceiling) while leaving that reasoning headroom back.
+  // maxTokens history on this call, real measured evidence at each
+  // step, not guesses: 1500 (original) -> 600 (real json_validate_failed,
+  // jsonMode:true) -> 1000 (still real json_validate_failed under load)
+  // -> now 1000 with jsonMode OFF hit REPEATED real truncation instead
+  // ("hit max_tokens=1000 before completing") - openai/gpt-oss-120b's
+  // own reasoning tokens (see callBeatJSONTransport's own doc comment
+  // for why jsonMode is off) count against this SAME budget, and
+  // apparently need real room on their own before any JSON gets
+  // written, regardless of how small the actual JSON answer is (a
+  // maxed-out beat's real JSON is only ~120 tokens by itself). Raised to
+  // 2200 - a genuine, confirmed-necessary increase, not a reversion to
+  // guessing small - still a real cut from the original 1500 in
+  // intent/footprint terms is no longer the safe move here; reliability
+  // (this call actually completing) matters more than shaving this
+  // specific number down further.
   let raw;
   try {
-    raw = await callBeatJSONTransport(systemPrompt, userMessage, 1000);
+    raw = await callBeatJSONTransport(systemPrompt, userMessage, 2200);
   } catch (err) {
     // Real, direct consequence of removing the Gemini fallback (user
     // instruction: "I DONT WANT IT TO EVER FALL BACK TO GEMINI, I WANT
