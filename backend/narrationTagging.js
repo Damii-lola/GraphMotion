@@ -1,4 +1,4 @@
-const { callGroqRaw } = require('./groqClient');
+const { callOpenRouterRaw } = require('./openRouterClient');
 
 /**
  * Second-pass narration tagging - deliberately split from scene JSON
@@ -141,29 +141,22 @@ function stripTagsAndNormalize(text) {
  * minor loss; sending hallucinated content to TTS is not something to
  * risk.
  */
-// Real, confirmed-live bug found via production logs (2026-09-05): this
-// used to call Groq directly, moved to Mistral because this file fires
-// one call per beat IN PARALLEL (narrationPrefetch.js's Promise.all)
-// right after the treatment call already spent Groq's 8000 TPM budget
-// for that minute - some beats got real LLM comma-pause judgment,
-// others 429'd straight to mechanical-only tagging, an inconsistent-
-// pacing bug even though no single beat outright broke.
-//
-// Moved BACK to Groq, direct user instruction: Mistral's API keys were
-// removed from the project entirely ("we aint meant to be using mistral
-// atalll... we are meant to use groq as the main ai"). The original
-// 429-storm this was moved to Mistral to avoid predates groqClient.js's
-// own per-key adaptive round-robin queue (added later - see that
-// file's own doc comment) - multiple keys with built-in inter-call
-// spacing now absorb this file's own burst of parallel calls the way
-// Mistral's single much-larger budget used to, without a second
-// provider.
+// Moved to OpenRouter/MiniMax (sceneGenClient.js's own provider now),
+// direct user instruction (2026-09-05): Groq removed entirely ("just
+// remove it completely"), everything unified onto one provider. Real,
+// known consequence worth remembering: this file fires one call per
+// beat IN PARALLEL (narrationPrefetch.js's Promise.all), so a multi-beat
+// video draws several requests from OpenRouter's shared 50/day free-tier
+// budget in a single burst, on top of the scene-generation calls that
+// already happened for the same video. This call already fails soft
+// (see the catch block below) - a quota-exhausted day degrades to
+// mechanical-only pause tagging per beat, not a broken video.
 async function annotateNarrationTags(plainText, feedback = '') {
   const userMessage = feedback
     ? `${plainText}\n\n(A previous take of this exact script was reviewed by an audio QA judge and rejected - apply this specific feedback this time: ${feedback})`
     : plainText;
   try {
-    const tagged = (await callGroqRaw(TAGGING_SYSTEM_PROMPT, userMessage, { jsonMode: false, maxTokens: 1000, temperature: 0.4 })).trim();
+    const tagged = (await callOpenRouterRaw(TAGGING_SYSTEM_PROMPT, userMessage, { jsonMode: false, maxTokens: 1000, temperature: 0.4 })).trim();
     if (stripTagsAndNormalize(tagged) !== stripTagsAndNormalize(plainText)) {
       console.warn(`[narrationTagging] tagged text changed the actual words (likely hallucinated content) - using mechanical pause tags only. Original: "${plainText}" | Got: "${tagged}"`);
       return ensurePauseTags(plainText);

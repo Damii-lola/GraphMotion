@@ -2,14 +2,24 @@ const fetch = require('node-fetch');
 
 /**
  * Text generation via OpenRouter's OpenAI-compatible chat completions
- * API - used for sceneGenClient.js's BIG JSON-encoding call, the one
- * step that structurally could not fit Groq's free tier (the full
+ * API - now the SOLE AI provider for this whole backend, direct user
+ * instruction (2026-09-05): both Groq (organization-wide daily quota
+ * stayed exhausted) and Gemini (its own real 503 outage, hit live in
+ * production the same day) got removed entirely rather than layering
+ * in a third fallback. Used by sceneGenClient.js for every real call it
+ * makes (treatment planning, whole-scene JSON encoding, script judging,
+ * edits) and by narrationTagging.js for its own per-beat tag pass.
+ *
+ * Originally brought in for JUST the big JSON-encoding step (the full
  * scene-JSON system prompt alone is ~16,923 tokens - more than double
  * Groq's flat 8000 TPM ceiling, confirmed by direct testing across
- * multiple models). OpenRouter's free tier has no per-request token
- * cap at all - the limit is purely request COUNT (20/min, 50/day
- * before any $10 lifetime purchase, 1000/day after) - which is exactly
- * the shape this call needs: one large request, not many small ones.
+ * multiple models) - OpenRouter's free tier has no per-request token
+ * cap at all, the limit is purely request COUNT (20/min, 50/day before
+ * any $10 lifetime purchase, 1000/day after). That request-count
+ * ceiling now matters more broadly than it used to: every call this
+ * whole backend makes (scene generation AND narration tagging) draws
+ * from the SAME shared daily budget, worth remembering if generations
+ * start failing in a way that smells like a quota wall.
  *
  * Model: minimax/minimax-m2.7:free - chosen after real, direct A/B
  * testing across 4 candidates, not from documentation:
