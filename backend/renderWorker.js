@@ -14,7 +14,17 @@ const { prefetchBeatImages, cleanupBeatImages } = require('./imagePrefetch');
 const { prefetchNarration, cleanupNarration } = require('./narrationPrefetch');
 const { muxNarrationOntoVideo } = require('./audioMux');
 const { dispatchToWorker } = require('./renderDispatch');
-const { harmonizeSceneColors } = require('./renderEngine');
+// Deliberately NOT required at top level - see the iconFetch comment
+// just below for the exact same reasoning. renderEngine.js pulls in
+// @napi-rs/canvas (a heavy native module) at ITS OWN top level, which
+// this file previously never loaded at all (longVideoOrchestrator.js
+// forks a separate renderChunkWorker.js process for the actual Skia
+// rendering specifically so this process never needs it). Requiring it
+// eagerly here would load that native module into EVERY job's forked
+// process, including the common case that dispatches to a remote
+// worker and never touches the local-fallback render path below at
+// all - loaded lazily, right where harmonizeSceneColors is actually
+// used, instead.
 
 // Deliberately NOT `require('./iconFetch')` here - that file requires
 // @resvg/resvg-js at its own top level, a real native SVG rasterizer
@@ -157,7 +167,10 @@ process.on('message', async ({ jobId, prompt, targetDurationSeconds, parentScene
     // effect end up harmonized to two different colors. The dispatched-
     // to-worker path above doesn't need this call here - render-worker's
     // own handleRenderJob does it on its side - this only covers the
-    // local-fallback path taken when no worker was available.
+    // local-fallback path taken when no worker was available. Required
+    // lazily (see the top-of-file comment by the other requires) so the
+    // common dispatched case above never pays for loading it.
+    const { harmonizeSceneColors } = require('./renderEngine');
     harmonizeSceneColors(narratedSceneJSON);
 
     const imageResolvedSceneJSON = await prefetchBeatImages(narratedSceneJSON, jobId);
