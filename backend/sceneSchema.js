@@ -776,7 +776,7 @@ function pickTopicIcon(allText) {
  * built.
  */
 function ensureDecorativeAccent(beat) {
-  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  if (isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   const hasDecoration = layers.some((l) => isPlainObject(l) && l.id !== '__bg_grain__'
     && (l.type === 'shape' || l.type === 'image' || l.type === 'generate'));
@@ -1830,7 +1830,7 @@ function validateTransition(transition, path, errors) {
   }
 }
 
-function validateBeatVisual(visual, path, errors, knownIds) {
+function validateBeatVisual(visual, path, errors, knownIds, opts = {}) {
   if (!isPlainObject(visual)) { errors.push(`${path}: is required and must be an object`); return; }
   if (visual.background) validateLayer(visual.background, `${path}.background`, errors, knownIds);
   if (!Array.isArray(visual.layers)) { errors.push(`${path}.layers: is required and must be an array`); return; }
@@ -1853,7 +1853,7 @@ function validateBeatVisual(visual, path, errors, knownIds) {
   // content - a beat conveying no actual words is never a deliberate
   // "visual breather" here, it's a generation gap same as the zero-
   // layer case, just one this narrower check didn't catch.
-  if (visual.layers.length > 0 && !visual.layers.some((l) => isPlainObject(l) && l.type === 'text')) {
+  if (!opts.skipTextRequirement && visual.layers.length > 0 && !visual.layers.some((l) => isPlainObject(l) && l.type === 'text')) {
     errors.push(`${path}.layers: must contain at least one text layer - a beat with only shapes/icons and no text conveys no actual information for its entire duration.`);
   }
   visual.layers.forEach((layer, i) => validateLayer(layer, `${path}.layers[${i}]`, errors, knownIds));
@@ -2295,7 +2295,7 @@ function pointAtArcFraction(table, totalLength, frac) {
  * model itself could ever approximate that by hand.
  */
 function attachLineRevealSparks(beat) {
-  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  if (isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   const additions = [];
   layers.forEach((layer, i) => {
@@ -4320,7 +4320,15 @@ function validateBeat(beat, path = 'beat') {
   }
 
   const knownIds = new Set();
-  validateBeatVisual(beat.visual, `${path}.visual`, errors, knownIds);
+  // Mograph beats (see buildMographBeatVisual, compiled from
+  // beat.mograph BEFORE this function ever runs) are mechanically
+  // constructed, trusted JSON, not free-form model output - the "must
+  // have a real text layer" check below exists to catch the MODEL
+  // silently forgetting to say anything, which doesn't apply here the
+  // same way: a nodeCluster beat's own icon choreography (matching the
+  // reference video's own opening, confirmed via a real local render
+  // before this was wired in) is deliberately, correctly text-free.
+  validateBeatVisual(beat.visual, `${path}.visual`, errors, knownIds, { skipTextRequirement: isPlainObject(beat.mograph) });
   return { valid: errors.length === 0, errors };
 }
 
@@ -4330,6 +4338,363 @@ function validateBeat(beat, path = 'beat') {
  * do with a non-empty errors list (geminiClient.js retries generation
  * with the errors fed back as context; a test fixture just asserts on it).
  */
+// =====================================================================
+// MOTION GRAPHICS BEAT CONSTRUCTORS (mograph)
+// =====================================================================
+// Direct pivot (2026-09-05): extremely emphatic, repeated user demand
+// after watching real generated output ("I DONT WANT TEXT... I WANT
+// MOTION GRAPHICSSS"), with a real reference video attached showing
+// the exact target visual language - clusters of small icon-nodes
+// converging/expanding, a flowing connector line threading a vertical
+// list of icon+label pairs, a phone silhouette swapping its own
+// on-screen content. This is the SAME "mechanical enforcement beats
+// prompt guidance" lesson this whole file already leans on everywhere
+// else, just applied to an entire beat's composition instead of one
+// decorative pass: the model writes a tiny SEMANTIC spec (which icons,
+// which one is the focus, what the list items are) and these functions
+// compile it into full, real layer JSON - no pixel geometry, keyframe
+// timing, or engine vocabulary for the model to get wrong, the same
+// way it never has to compute a watermark icon's own resting position.
+//
+// Real engine capabilities confirmed directly (not assumed) before any
+// of this was written: real track-matte support (engine/node.js) for
+// masked reveals, and attachLineRevealSparks - already proven this
+// session - for the traveling-dot connector line, both reused as-is
+// rather than rebuilt.
+
+function computeZigzagPositions(count) {
+  const marginTop = CANVAS_HEIGHT * 0.2;
+  const marginBottom = CANVAS_HEIGHT * 0.18;
+  const usableHeight = CANVAS_HEIGHT - marginTop - marginBottom;
+  const positions = [];
+  for (let i = 0; i < count; i++) {
+    const y = marginTop + (count > 1 ? (i / (count - 1)) * usableHeight : usableHeight / 2);
+    const x = i % 2 === 0 ? CANVAS_WIDTH * 0.38 : CANVAS_WIDTH * 0.62;
+    positions.push([x, y]);
+  }
+  return positions;
+}
+
+/**
+ * Opening/focus beat: several small icon-nodes pop in around a ring,
+ * then all but one fade away while the "chosen" one grows into a big
+ * hero circle at center - the reference video's own opening move,
+ * confirmed via a real local render before this was wired into
+ * generation at all.
+ */
+function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
+  const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
+  const RING_RADIUS = 150;
+  const NODE_SIZE = 70;
+  const layers = [];
+  icons.forEach((icon, i) => {
+    const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
+    const x = CENTER[0] + Math.cos(angle) * RING_RADIUS;
+    const y = CENTER[1] + Math.sin(angle) * RING_RADIUS;
+    const delay = 0.05 * i;
+    const isChosen = i === chosenIndex;
+    const posKf = isChosen
+      ? { keyframes: [
+        { time: delay, value: [x, y], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: 1.0, value: [x, y], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.6, value: CENTER },
+      ] }
+      : { keyframes: [
+        { time: delay, value: CENTER, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.4, value: [x, y] },
+      ] };
+    const opacityKf = isChosen
+      ? { keyframes: [{ time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: delay + 0.25, value: 1 }] }
+      : { keyframes: [
+        { time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.25, value: 1 },
+        { time: 1.0, value: 1 },
+        { time: 1.3, value: 0 },
+      ] };
+    layers.push({
+      id: `__node_bg_${i}__`,
+      type: 'shape',
+      width: NODE_SIZE,
+      height: NODE_SIZE,
+      position: posKf,
+      scale: isChosen
+        ? { keyframes: [
+          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.7, value: [4.3, 4.3] },
+        ] }
+        : { keyframes: [
+          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.0, value: [1, 1] },
+          { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
+        ] },
+      opacity: opacityKf,
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
+        isChosen ? { type: 'fill', color: accentColor } : { type: 'stroke', color: '#FFFFFF', width: 2 },
+      ],
+    });
+    layers.push({
+      id: `__node_icon_${i}__`,
+      type: 'image',
+      icon,
+      iconColor: isChosen ? '#FFFFFF' : '#E9E4FF',
+      width: NODE_SIZE * 0.5,
+      height: NODE_SIZE * 0.5,
+      position: posKf,
+      scale: isChosen
+        ? { keyframes: [
+          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.7, value: [3.6, 3.6] },
+        ] }
+        : { keyframes: [
+          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.0, value: [1, 1] },
+          { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
+        ] },
+      opacity: opacityKf,
+    });
+  });
+  return layers;
+}
+
+/**
+ * List/roadmap beat: a connecting line "draws" itself down a zigzag of
+ * icon+label pairs, each one popping in as the line's own leading edge
+ * reaches it - the reference video's own "VALUABLE / RELEVANT /
+ * CONSISTENT" sequence. Reuses the exact customPath+trim+stroke shape
+ * attachLineRevealSparks (already wired into validateBeat elsewhere in
+ * this file) recognizes on sight, so the traveling spark dot is
+ * automatic, not rebuilt here. Deliberately STRAIGHT segments between
+ * points (zero perpendicular bow) - see ensureCurvedAccentLine's own
+ * doc comment for the confirmed, real render-engine bug (a parallel
+ * double-line artifact) any sideways bow on this exact shape triggers;
+ * a straight zigzag is a known-safe choice, a smoothly bowed one is not.
+ */
+function buildConnectorListLayers({ items, accentColor }) {
+  const NODE_SIZE = 90;
+  const positions = computeZigzagPositions(items.length);
+  const layers = [];
+
+  const anchors = positions.map((p, i) => {
+    const prev = positions[i - 1];
+    const next = positions[i + 1];
+    const anchor = { point: p };
+    if (next) {
+      const dx = next[0] - p[0]; const dy = next[1] - p[1];
+      const dist = Math.hypot(dx, dy) || 1;
+      const len = dist * 0.33;
+      anchor.outTangent = [(dx / dist) * len, (dy / dist) * len];
+    }
+    if (prev) {
+      const dx = p[0] - prev[0]; const dy = p[1] - prev[1];
+      const dist = Math.hypot(dx, dy) || 1;
+      const len = dist * 0.33;
+      anchor.inTangent = [(-dx / dist) * len, (-dy / dist) * len];
+    }
+    return anchor;
+  });
+  const xs = positions.map((p) => p[0]);
+  const ys = positions.map((p) => p[1]);
+  const boundsWidth = Math.max(1, Math.max(...xs) - Math.min(...xs));
+  const boundsHeight = Math.max(1, Math.max(...ys) - Math.min(...ys));
+  const totalRevealTime = 0.5 + items.length * 0.5;
+
+  layers.push({
+    id: '__connector_line__',
+    type: 'shape',
+    width: boundsWidth,
+    height: boundsHeight,
+    // Explicit [0,0], not a no-op - anchors above are already authored
+    // in absolute canvas coordinates, matching ensureCurvedAccentLine's
+    // own established convention (and attachLineRevealSparks' own
+    // detection requires a real position field to compute from).
+    position: [0, 0],
+    opacity: 0.75,
+    rotation: 0,
+    contents: [
+      { type: 'path', shape: { kind: 'customPath', params: { anchors } } },
+      { type: 'trim', start: 0, end: { keyframes: [{ time: 0.2, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: totalRevealTime, value: 100 }] } },
+      { type: 'stroke', color: accentColor, width: 3 },
+    ],
+  });
+
+  items.forEach((item, i) => {
+    const [x, y] = positions[i];
+    const appearAt = 0.3 + i * (totalRevealTime / items.length);
+    const nodeKf = { keyframes: [
+      { time: appearAt, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: appearAt + 0.35, value: [1.15, 1.15], interpolation: 'easing', easing: 'easeInOutCubic' },
+      { time: appearAt + 0.5, value: [1, 1] },
+    ] };
+    const opacityKf = { keyframes: [{ time: appearAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.25, value: 1 }] };
+    layers.push({
+      id: `__list_node_${i}__`,
+      type: 'shape',
+      width: NODE_SIZE,
+      height: NODE_SIZE,
+      position: [x, y],
+      scale: nodeKf,
+      opacity: opacityKf,
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
+        { type: 'fill', color: accentColor },
+      ],
+    });
+    layers.push({
+      id: `__list_icon_${i}__`,
+      type: 'image',
+      icon: item.icon,
+      iconColor: '#FFFFFF',
+      width: NODE_SIZE * 0.5,
+      height: NODE_SIZE * 0.5,
+      position: [x, y],
+      scale: nodeKf,
+      opacity: opacityKf,
+    });
+    layers.push({
+      id: `__list_label_${i}__`,
+      type: 'text',
+      text: item.label,
+      fontFamily: 'Poppins Bold',
+      fontWeight: '700',
+      fontSize: 20,
+      fillStyle: '#FFFFFF',
+      textAlign: 'center',
+      maxWidth: 180,
+      position: [x, y + NODE_SIZE / 2 + 34],
+      opacity: { keyframes: [{ time: appearAt + 0.1, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.35, value: 1 }] },
+    });
+  });
+  return layers;
+}
+
+/**
+ * Phone-mockup beat: a phone silhouette holds a short headline that
+ * crossfades into a real icon on the same spot - the reference video's
+ * own "CONTENT MARKETING" text becoming a megaphone icon. A crossfade
+ * (opacity swap), not a true vector morph - this engine has no point-
+ * correspondence shape-morph primitive, and the reference itself very
+ * likely used the same trick (After Effects doesn't have a built-in
+ * icon-to-icon morph either without hand-built shape interpolation).
+ */
+function buildPhoneSwapLayers({ text, icon, accentColor }) {
+  const PHONE_WIDTH = 260;
+  const PHONE_HEIGHT = 520;
+  const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
+  return [
+    {
+      id: '__phone_body__',
+      type: 'shape',
+      width: PHONE_WIDTH,
+      height: PHONE_HEIGHT,
+      position: CENTER,
+      scale: { keyframes: [{ time: 0, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.4, value: [1, 1] }] },
+      opacity: { keyframes: [{ time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.3, value: 1 }] },
+      contents: [
+        { type: 'path', shape: { kind: 'rectangle', params: { width: PHONE_WIDTH, height: PHONE_HEIGHT, roundness: 36 } } },
+        { type: 'fill', color: '#F5F3FF' },
+        { type: 'stroke', color: accentColor, width: 4 },
+      ],
+    },
+    {
+      id: '__phone_notch__',
+      type: 'shape',
+      width: 56,
+      height: 8,
+      position: [CENTER[0], CENTER[1] - PHONE_HEIGHT / 2 + 22],
+      opacity: { keyframes: [{ time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.3, value: 1 }] },
+      contents: [
+        { type: 'path', shape: { kind: 'rectangle', params: { width: 56, height: 8, roundness: 4 } } },
+        { type: 'fill', color: accentColor },
+      ],
+    },
+    {
+      id: '__phone_text__',
+      type: 'text',
+      text,
+      fontFamily: 'Poppins Black',
+      fontWeight: '900',
+      fontSize: 30,
+      fillStyle: accentColor,
+      textAlign: 'center',
+      maxWidth: PHONE_WIDTH - 40,
+      position: CENTER,
+      opacity: { keyframes: [
+        { time: 0.4, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: 0.65, value: 1 },
+        { time: 1.3, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+        { time: 1.55, value: 0 },
+      ] },
+    },
+    {
+      id: '__phone_icon__',
+      type: 'image',
+      icon,
+      iconColor: accentColor,
+      width: 110,
+      height: 110,
+      position: CENTER,
+      scale: { keyframes: [
+        { time: 1.4, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: 1.7, value: [1.1, 1.1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.85, value: [1, 1] },
+      ] },
+      opacity: { keyframes: [{ time: 1.4, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: 1.6, value: 1 }] },
+    },
+  ];
+}
+
+const MOGRAPH_ICON_RE = /^[a-z0-9-]+:[a-z0-9-]+$/i;
+
+/**
+ * Dispatcher: compiles a beat's tiny `mograph` spec into real
+ * `visual.layers`, called once per beat very early in validateSceneJSON
+ * - BEFORE the "drop beats with no real visual" filter just below (a
+ * mograph-only beat has no `visual` of its own at all until this runs),
+ * and before every other mechanical pass in this file, all of which
+ * assume a text-headline-centric beat and have no idea what a
+ * `mograph` beat even is. Malformed/incomplete specs are left alone
+ * deliberately (not force-repaired into something wrong) - the beat
+ * then has no real `visual`, gets dropped by the filter below exactly
+ * like any other unusable beat, and geminiClient.js's own beat-count
+ * check catches the shortfall and retries, the same fallback path
+ * every other "couldn't safely repair this" case in this file already
+ * relies on.
+ */
+function buildMographBeatVisual(beat) {
+  if (!isPlainObject(beat) || !isPlainObject(beat.mograph)) return;
+  if (isPlainObject(beat.visual) && Array.isArray(beat.visual.layers) && beat.visual.layers.length > 0) return;
+  const spec = beat.mograph;
+  const accentColor = typeof spec.accentColor === 'string' && HEX_COLOR_RE.test(spec.accentColor)
+    ? spec.accentColor
+    : ACCENT_PALETTE[hashString(JSON.stringify(spec)) % ACCENT_PALETTE.length];
+  let layers = null;
+
+  if (spec.type === 'nodeCluster' && Array.isArray(spec.icons)) {
+    const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 8);
+    if (icons.length >= 3) {
+      const chosenIndex = Number.isInteger(spec.chosenIndex) && spec.chosenIndex >= 0 && spec.chosenIndex < icons.length ? spec.chosenIndex : 0;
+      layers = buildNodeClusterLayers({ icons, chosenIndex, accentColor });
+    }
+  } else if (spec.type === 'connectorList' && Array.isArray(spec.items)) {
+    const items = spec.items
+      .filter((it) => isPlainObject(it) && typeof it.icon === 'string' && MOGRAPH_ICON_RE.test(it.icon) && typeof it.label === 'string' && it.label.trim())
+      .slice(0, 6)
+      .map((it) => ({ icon: it.icon, label: it.label.trim().toUpperCase().slice(0, 18) }));
+    if (items.length >= 2) layers = buildConnectorListLayers({ items, accentColor });
+  } else if (spec.type === 'phoneSwap' && typeof spec.text === 'string' && spec.text.trim() && typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon)) {
+    layers = buildPhoneSwapLayers({ text: spec.text.trim().toUpperCase().slice(0, 26), icon: spec.icon, accentColor });
+  }
+
+  if (layers) beat.visual = { layers };
+}
+
 function validateSceneJSON(sceneJSON) {
   const errors = [];
   if (!isPlainObject(sceneJSON) || !Array.isArray(sceneJSON.scenes)) {
@@ -4387,6 +4752,12 @@ function validateSceneJSON(sceneJSON) {
   // check, comparing actual vs the treatment's planned beat count)
   // fires cleanly instead of being buried under noise about a beat
   // that was already known to be missing.
+  // Compiles every beat's own "mograph" spec (if any) into real
+  // "visual.layers" BEFORE the filter just below - see
+  // buildMographBeatVisual's own doc comment for why this has to run
+  // first, not folded into the per-beat loop further down.
+  if (Array.isArray(sceneJSON.scenes)) sceneJSON.scenes.forEach(buildMographBeatVisual);
+
   sceneJSON.scenes = sceneJSON.scenes.filter((beat) => isPlainObject(beat) && isPlainObject(beat.visual));
 
   sceneJSON.scenes.forEach((beat, i) => {
@@ -4589,7 +4960,7 @@ function varyHeadlinePositions(sceneJSON) {
   const CENTER_THRESHOLD = CANVAS_WIDTH * 0.05;
   scenes.forEach((beat, i) => {
     if (i === 0 || i === scenes.length - 1) return;
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     // Real, confirmed bug found via local render (2026-09-04): this
     // only ever shifts type:'text' layers - fine for a bare headline,
     // but ensureDecorativeAccent's content-card composition (which runs
@@ -4707,7 +5078,7 @@ function ensureSustainedWordMotion(sceneJSON) {
     if (!isPlainObject(beat) || !isPlainObject(beat.params) || typeof beat.params.duration !== 'number') return;
     const duration = beat.params.duration;
     if (duration < MIN_BEAT_DURATION_FOR_SWEEP) return;
-    if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
@@ -4847,7 +5218,7 @@ function ensureEmphasisWordScale(sceneJSON) {
   if (!Array.isArray(scenes)) return;
   const EMPHASIS_SCALE = 1.22;
   scenes.forEach((beat, beatIndex) => {
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
@@ -4932,7 +5303,7 @@ function ensureHighlightChip(sceneJSON) {
   const scenes = sceneJSON.scenes;
   if (!Array.isArray(scenes)) return;
   scenes.forEach((beat, beatIndex) => {
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
@@ -5149,7 +5520,7 @@ function findExistingSmallIcons(layers) {
 }
 
 function ensureActiveBackgroundElement(beat, beatIndex, topic) {
-  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  if (isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   const existingIcons = findExistingSmallIcons(layers);
 
@@ -5385,7 +5756,7 @@ function ensureBackgroundSwoosh(beat, beatIndex) {
   // already far cheaper (the smaller buffer/radius below), EVERY beat
   // gets one again - 5 cheap instances cost meaningfully less than the
   // 2-3 expensive ones this was working around before.
-  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  if (isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   const alreadyHasSwoosh = layers.some((l) => isPlainObject(l) && l.id === '__bg_swoosh__');
   if (alreadyHasSwoosh) return;
@@ -5501,7 +5872,7 @@ function ensureBackgroundSwoosh(beat, beatIndex) {
  * per-video choice, not from inconsistency within one video.
  */
 function ensureCurvedAccentLine(beat, beatIndex) {
-  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  if (isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   const alreadyHas = layers.some((l) => isPlainObject(l) && l.id === '__bg_curve__');
   if (alreadyHas) return;
@@ -5624,7 +5995,7 @@ function ensureVisibleHeroImage(sceneJSON) {
   if (!Array.isArray(scenes)) return;
   const MIN_HERO_OPACITY = 0.85;
   scenes.forEach((beat) => {
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     beat.visual.layers.forEach((l) => {
       if (!isPlainObject(l) || l.type !== 'image' || l.src !== 'beatImage') return;
       if (typeof l.opacity === 'number' && l.opacity < MIN_HERO_OPACITY) l.opacity = MIN_HERO_OPACITY;
@@ -5688,7 +6059,7 @@ function stripSecondaryTextLayers(sceneJSON) {
   const scenes = sceneJSON.scenes;
   if (!Array.isArray(scenes)) return;
   scenes.forEach((beat) => {
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const narration = isPlainObject(beat.params) && typeof beat.params.narration === 'string' ? beat.params.narration.trim() : '';
     const candidateTextLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && typeof l.text === 'string' && !l.id);
     if (candidateTextLayers.length <= 1) return;
@@ -5715,7 +6086,7 @@ function ensureModestTextSize(sceneJSON) {
   const scenes = sceneJSON.scenes;
   if (!Array.isArray(scenes)) return;
   scenes.forEach((beat) => {
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     beat.visual.layers.forEach((l) => {
       if (!isPlainObject(l) || l.type !== 'text' || typeof l.fontSize !== 'number') return;
       if (l.fontSize > MAX_TEXT_FONT_SIZE) {
@@ -5759,7 +6130,7 @@ function ensureDropShadowOnDominant(sceneJSON) {
   const scenes = sceneJSON.scenes;
   if (!Array.isArray(scenes)) return;
   scenes.forEach((beat) => {
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
@@ -5794,7 +6165,7 @@ function ensureNeonGlowText(sceneJSON) {
   if (!useGlow) return;
 
   sceneJSON.scenes.forEach((beat, beatIndex) => {
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
@@ -5835,7 +6206,7 @@ function ensureSparkleAccents(sceneJSON) {
   if (!useSparkles) return;
 
   sceneJSON.scenes.forEach((beat, beatIndex) => {
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const layers = beat.visual.layers;
     if (layers.some((l) => isPlainObject(l) && typeof l.id === 'string' && l.id.startsWith('__sparkle_'))) return;
 
@@ -5900,7 +6271,7 @@ function ensureGridTexture(sceneJSON) {
   if (!useGrid) return;
 
   sceneJSON.scenes.forEach((beat) => {
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const layers = beat.visual.layers;
     if (layers.some((l) => isPlainObject(l) && l.id === '__bg_grid__')) return;
     layers.unshift({
@@ -5941,7 +6312,7 @@ function ensureRippleHook(sceneJSON) {
   if (!useRipple) return;
 
   const beat = sceneJSON.scenes[0];
-  if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   if (layers.some((l) => isPlainObject(l) && typeof l.id === 'string' && l.id.startsWith('__ripple_'))) return;
 
@@ -6034,7 +6405,7 @@ function ensureCumulativeListBeats(sceneJSON) {
 
   for (let i = listStart; i <= listEnd; i++) {
     const beat = scenes[i];
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) { priorItemTexts.push(null); continue; }
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) { priorItemTexts.push(null); continue; }
     const layers = beat.visual.layers;
     const textLayers = layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) { priorItemTexts.push(null); continue; }
@@ -6114,7 +6485,7 @@ function ensureTypewriterReveal(sceneJSON) {
   if (!useTypewriter) return;
 
   scenes.forEach((beat) => {
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const layers = beat.visual.layers;
     if (layers.some((l) => isPlainObject(l) && l.id === '__typewriter_cursor__')) return;
     const textLayers = layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
@@ -6240,7 +6611,7 @@ function ensureSustainedAmbientMotion(sceneJSON) {
   const scenes = sceneJSON.scenes;
   if (!Array.isArray(scenes)) return;
   scenes.forEach((beat) => {
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const layers = beat.visual.layers;
 
     const textLayers = layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
@@ -6309,299 +6680,6 @@ function ensureSustainedAmbientMotion(sceneJSON) {
  * whole video, and only once there are enough beats for that to be a
  * reasonable ask (under 3, every beat may genuinely be abstract).
  */
-// =====================================================================
-// Motion-graphics beat construction (2026-09-05)
-// =====================================================================
-// Direct user pivot, reference video attached: the text-headline-plus-
-// decorative-icon beat this whole file builds isn't what was actually
-// wanted - real motion graphics (icon-nodes orbiting and merging into a
-// hero circle, a flowing connector line threading a vertical list of
-// icon+label pairs, content crossfading inside a phone silhouette).
-// Confirmed via three separate real local renders, each independently
-// verified against the reference before this generalized version was
-// written, that the render engine's own existing primitives (shape +
-// image layers, keyframed position/scale/opacity, customPath+trim+
-// stroke, track mattes, outerGlow) already support this whole visual
-// language - nothing new needed at the engine level, only new
-// CONSTRUCTION logic up here.
-//
-// Same architectural lesson this entire file already learned the hard
-// way for headline beats, applied to a new visual vocabulary from the
-// start rather than relearned: the model is reliably bad at precise
-// geometry and keyframe timing, reliably good at picking topic-relevant
-// CONTENT. So these functions take plain semantic input (which icons,
-// which label goes with which, which one is the "hero") and own 100%
-// of the actual positions/keyframes/anchors themselves - nothing here
-// depends on the model getting a single coordinate or timing value
-// right.
-
-/**
- * A ring of small icon-nodes around a center point, one of which
- * ("chosenIndex") is selected and grows into a big hero circle while
- * the rest fade away - the reference video's own opening move.
- * Verified via a real local render against exactly this function's own
- * math (not just the hand-authored prototype it was generalized from).
- */
-function buildNodeClusterLayers({
-  icons, chosenIndex = 0, center = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42],
-  ringRadius = 150, nodeSize = 70, accentColor = '#8B5CF6', heroScale = 4.3,
-}) {
-  const layers = [];
-  icons.forEach((icon, i) => {
-    const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
-    const x = center[0] + Math.cos(angle) * ringRadius;
-    const y = center[1] + Math.sin(angle) * ringRadius;
-    const delay = 0.05 * i;
-    const isChosen = i === chosenIndex;
-    const bgScaleHero = heroScale * (nodeSize / (nodeSize + 30));
-    const iconScaleHero = heroScale * 0.72;
-
-    layers.push({
-      id: `__node_bg_${i}__`,
-      type: 'shape',
-      width: nodeSize,
-      height: nodeSize,
-      position: isChosen
-        ? { keyframes: [
-          { time: delay, value: [x, y], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: 1.0, value: [x, y], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.6, value: center },
-        ] }
-        : { keyframes: [
-          { time: delay, value: center, interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.4, value: [x, y] },
-        ] },
-      scale: isChosen
-        ? { keyframes: [
-          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.7, value: [bgScaleHero, bgScaleHero] },
-        ] }
-        : { keyframes: [
-          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.0, value: [1, 1] },
-          { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
-        ] },
-      opacity: isChosen
-        ? { keyframes: [{ time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: delay + 0.25, value: 1 }] }
-        : { keyframes: [
-          { time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.25, value: 1 },
-          { time: 1.0, value: 1 },
-          { time: 1.3, value: 0 },
-        ] },
-      contents: [
-        { type: 'path', shape: { kind: 'ellipse', params: { width: nodeSize, height: nodeSize } } },
-        isChosen ? { type: 'fill', color: accentColor } : { type: 'stroke', color: '#FFFFFF', width: 2 },
-      ],
-    });
-
-    layers.push({
-      id: `__node_icon_${i}__`,
-      type: 'image',
-      icon,
-      iconColor: isChosen ? '#FFFFFF' : '#E9E4FF',
-      width: nodeSize * 0.5,
-      height: nodeSize * 0.5,
-      position: isChosen
-        ? { keyframes: [
-          { time: delay, value: [x, y], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: 1.0, value: [x, y], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.6, value: center },
-        ] }
-        : { keyframes: [
-          { time: delay, value: center, interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.4, value: [x, y] },
-        ] },
-      scale: isChosen
-        ? { keyframes: [
-          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.7, value: [iconScaleHero, iconScaleHero] },
-        ] }
-        : { keyframes: [
-          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.0, value: [1, 1] },
-          { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
-        ] },
-      opacity: isChosen
-        ? { keyframes: [{ time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: delay + 0.25, value: 1 }] }
-        : { keyframes: [
-          { time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.25, value: 1 },
-          { time: 1.0, value: 1 },
-          { time: 1.3, value: 0 },
-        ] },
-    });
-  });
-  return layers;
-}
-
-/**
- * A flowing connector line threading through a vertical zigzag list of
- * icon+label nodes, each node revealing as the line's leading edge
- * reaches it. Straight polyline segments deliberately, never bezier
- * tangents - this file already has a confirmed, unresolved render-
- * engine bug where any nonzero bezier bow on a trimmed stroke path
- * produces a parallel double-line artifact (see ensureCurvedAccentLine's
- * own doc comment); enough zigzag points reads as "flowing" without
- * needing true curves, and this shape is exactly what attachLineRevealSparks
- * (already wired into every beat) needs to attach its own real leading-
- * spark dot with zero extra work here.
- */
-function buildConnectorListLayers({
-  items, lineDuration = 2.6, accentColor = '#8B5CF6',
-  nodeSize = 90, iconSize = 48, labelFontSize = 22,
-}) {
-  const layers = [];
-  const anchors = items.map((it) => ({ point: it.pos }));
-
-  const dists = [0];
-  let total = 0;
-  for (let i = 1; i < items.length; i++) {
-    const [x1, y1] = items[i - 1].pos;
-    const [x2, y2] = items[i].pos;
-    total += Math.hypot(x2 - x1, y2 - y1);
-    dists.push(total);
-  }
-  const fractions = dists.map((d) => (total > 0 ? d / total : 0));
-
-  layers.push({
-    id: '__connector_line__',
-    type: 'shape',
-    width: CANVAS_WIDTH,
-    height: CANVAS_HEIGHT,
-    position: [0, 0],
-    opacity: 0.9,
-    contents: [
-      { type: 'path', shape: { kind: 'customPath', params: { anchors, closed: false } } },
-      { type: 'trim', start: 0, end: { keyframes: [{ time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: lineDuration, value: 100 }] } },
-      { type: 'stroke', color: accentColor, width: 3 },
-    ],
-  });
-
-  items.forEach((it, i) => {
-    const appearAt = Math.max(0.1, fractions[i] * lineDuration - 0.15);
-    layers.push({
-      id: `__list_node_bg_${i}__`,
-      type: 'shape',
-      width: nodeSize,
-      height: nodeSize,
-      position: it.pos,
-      opacity: { keyframes: [{ time: appearAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.25, value: 1 }] },
-      scale: { keyframes: [{ time: appearAt, value: [0.4, 0.4], interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.3, value: [1, 1] }] },
-      contents: [
-        { type: 'path', shape: { kind: 'ellipse', params: { width: nodeSize, height: nodeSize } } },
-        { type: 'fill', color: accentColor },
-      ],
-    });
-    layers.push({
-      id: `__list_node_icon_${i}__`,
-      type: 'image',
-      icon: it.icon,
-      iconColor: '#FFFFFF',
-      width: iconSize,
-      height: iconSize,
-      position: it.pos,
-      opacity: { keyframes: [{ time: appearAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.25, value: 1 }] },
-      scale: { keyframes: [{ time: appearAt, value: [0.4, 0.4], interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.3, value: [1, 1] }] },
-    });
-    layers.push({
-      id: `__list_node_label_${i}__`,
-      type: 'text',
-      text: it.label,
-      fontFamily: 'Poppins Black',
-      fontWeight: '900',
-      fontSize: labelFontSize,
-      fillStyle: '#FFFFFF',
-      textAlign: 'center',
-      position: [it.pos[0], it.pos[1] + nodeSize / 2 + 30],
-      opacity: { keyframes: [{ time: appearAt + 0.1, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.35, value: 1 }] },
-    });
-  });
-
-  return layers;
-}
-
-/**
- * A phone silhouette whose "screen" content crossfades from a headline
- * into an icon - the reference video's own phone moment. Two separate
- * layers simply crossfading opacity at the same position, not a true
- * vector morph (no evidence the reference itself does real point-
- * correspondence morphing either - AE doesn't do that without heavy
- * manual rigging, a crossfade reads the same at this speed).
- */
-function buildPhoneSwapLayers({
-  text, icon, crossfadeAt = 1.1, accentColor = '#8B5CF6',
-  center = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2], phoneWidth = 260, phoneHeight = 480,
-}) {
-  return [
-    {
-      id: '__phone_body__',
-      type: 'shape',
-      width: phoneWidth,
-      height: phoneHeight,
-      position: center,
-      opacity: { keyframes: [{ time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.4, value: 1 }] },
-      scale: { keyframes: [{ time: 0, value: [0.7, 0.7], interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.5, value: [1, 1] }] },
-      contents: [
-        { type: 'path', shape: { kind: 'rectangle', params: { width: phoneWidth, height: phoneHeight, roundness: 32 } } },
-        { type: 'fill', color: '#F3F0FF' },
-        { type: 'stroke', color: accentColor, width: 4 },
-      ],
-      effects: [{ type: 'outerGlow', params: { color: accentColor, opacity: 0.7, blur: 22, blendMode: 'screen' } }],
-    },
-    {
-      id: '__phone_notch__',
-      type: 'shape',
-      width: 60,
-      height: 8,
-      position: [center[0], center[1] - phoneHeight / 2 + 22],
-      opacity: { keyframes: [{ time: 0.3, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.6, value: 1 }] },
-      contents: [
-        { type: 'path', shape: { kind: 'rectangle', params: { width: 60, height: 8, roundness: 4 } } },
-        { type: 'fill', color: accentColor },
-      ],
-    },
-    {
-      id: '__phone_text__',
-      type: 'text',
-      text,
-      fontFamily: 'Poppins Black',
-      fontWeight: '900',
-      fontSize: 26,
-      fillStyle: accentColor,
-      textAlign: 'center',
-      lineHeight: 32,
-      maxWidth: phoneWidth - 90,
-      position: center,
-      opacity: {
-        keyframes: [
-          { time: 0.5, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: 0.75, value: 1 },
-          { time: crossfadeAt, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
-          { time: crossfadeAt + 0.35, value: 0 },
-        ],
-      },
-    },
-    {
-      id: '__phone_icon__',
-      type: 'image',
-      icon,
-      iconColor: accentColor,
-      width: phoneWidth - 72,
-      height: phoneWidth - 72,
-      position: center,
-      opacity: { keyframes: [{ time: crossfadeAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: crossfadeAt + 0.4, value: 1 }] },
-      scale: { keyframes: [{ time: crossfadeAt, value: [0.6, 0.6], interpolation: 'easing', easing: 'easeOutCubic' }, { time: crossfadeAt + 0.45, value: [1, 1] }] },
-    },
-  ];
-}
-
 function requireAtLeastOneRealPhoto(sceneJSON, errors) {
   const scenes = sceneJSON.scenes;
   if (!Array.isArray(scenes) || scenes.length < 3) return;
