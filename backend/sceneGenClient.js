@@ -260,7 +260,7 @@ function splitTreatmentIntoBeats(treatment) {
 // unboundedly against a fixed ceiling is structurally gone, not just
 // budgeted more carefully around.
 async function generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, systemPrompt, { retriesLeft = 4, priorErrors = null, judgeFeedback = null } = {}) {
-  let userMessage = `Video topic: ${userPrompt}\nThis is beat ${beatIndex + 1} of ${totalBeats} in the video.\nEncode this ONE beat EXACTLY and faithfully as a single Beat object matching the schema above (the top-level object itself, NOT wrapped in a "scenes" array - just {"params":...,"visual":...}). The plan may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead. Only use real fields from the schema above.\n\nThis beat's own plan:\n${beatText}`;
+  let userMessage = `Video topic: ${userPrompt}\nThis is beat ${beatIndex + 1} of ${totalBeats} in the video.\nEncode this ONE beat EXACTLY and faithfully as a single Beat object matching the schema above (the top-level object itself, NOT wrapped in a "scenes" array - just {"params":...,"mograph":...}, with "mograph" a TOP-LEVEL sibling of "params", never nested inside "visual" - leave "visual" out entirely when you set "mograph", it fills in automatically). The plan may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead. Only use real fields from the schema above.\n\nThis beat's own plan:\n${beatText}`;
   if (judgeFeedback) userMessage += `\n\nA brutal judge rejected the previous full script as boring: "${judgeFeedback}" Make THIS beat's narration genuinely sharper and more hooked, not generic - keep the same core idea.`;
   if (priorErrors) userMessage += `\n\nYour previous attempt at this beat was invalid:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected single Beat object.`;
 
@@ -276,7 +276,30 @@ async function generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, 
     throw err;
   }
 
+  const hadMographAttempt = beat && typeof beat === 'object' && beat.mograph && typeof beat.mograph === 'object';
   buildMographBeatVisual(beat);
+  // Real, confirmed-live gap this closes: when a "mograph" spec is
+  // present but malformed (too few icons, bad type name, ...),
+  // buildMographBeatVisual deliberately leaves beat.visual untouched
+  // rather than guessing - validateBeat then fails with a generic
+  // "visual.layers is required" error that never mentions "mograph" at
+  // all, which reads to the model as "you forgot layers", not "your
+  // mograph spec was wrong" - a real production run confirmed this
+  // exact confusion (a beat that DID attempt "mograph" got this generic
+  // error, then gave up on mograph entirely on retry). Detected here by
+  // checking whether a mograph attempt existed but visual.layers still
+  // never materialized, and given its own explicit, actionable error
+  // instead of falling through to the generic one.
+  const mographSilentlyFailed = hadMographAttempt && !(beat.visual && Array.isArray(beat.visual.layers));
+  if (mographSilentlyFailed) {
+    const err = `mograph: your "mograph" spec (type "${beat.mograph.type}") could not be built - check MOGRAPH above for the exact required fields per type (nodeCluster needs 3-8 "icons" + a valid "chosenIndex"; connectorList needs 2-6 "items" each with a real "icon"+"label"; phoneSwap needs real "text"+"icon"). Fix the spec and keep "mograph" as a TOP-LEVEL field - do not fall back to a raw "visual" layers array instead.`;
+    if (retriesLeft > 0) {
+      console.warn(`[sceneGenClient] beat ${beatIndex} mograph spec malformed, retrying: ${err}`);
+      return generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, systemPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [err], judgeFeedback });
+    }
+    throw new Error(`Groq-generated beat ${beatIndex}: ${err}`);
+  }
+
   const { valid, errors } = validateBeat(beat, `beat${beatIndex}`);
   if (!valid) {
     if (retriesLeft > 0) {

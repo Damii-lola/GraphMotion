@@ -71,10 +71,13 @@ position/size you author is in these pixel units, origin (0,0) at the
 top-left for 2D content. Keep primary content within a safe zone
 roughly 45px in from every edge so nothing critical is clipped.
 
-A beat's "visual" is normally { "mograph": MographSpec } - see MOGRAPH
-below for the three real types and their exact shape. The raw
-"layers"-array form (EVERY object needs an explicit "type", one of:
-"text", "shape", "image", "precomp", "generate", "null" - full per-type
+A beat normally has a TOP-LEVEL "mograph": MographSpec field (a sibling
+of "params" and "visual", NOT nested inside "visual") - see MOGRAPH
+below for the three real types and their exact shape. When a beat has a
+real "mograph" field, "visual" is filled in automatically - do not also
+write "visual" yourself on a mograph beat. The raw "visual":{"layers":
+[...]} form (EVERY object needs an explicit "type", one of: "text",
+"shape", "image", "precomp", "generate", "null" - full per-type
 reference: TEXTLAYERDEF, SHAPELAYERDEF, IMAGELAYERDEF, and the
 "precomp"/"generate"/"null" sections, all below) still exists for the
 rare beat that genuinely doesn't fit any mograph type, but reach for
@@ -118,12 +121,14 @@ BEAT
                                // entirely for a beat that uses only icons/
                                // shapes/text, no image layer.
   },
-  "visual": { "mograph": MographSpec }   // see MOGRAPH below for the
-                                          // three real types - this is
-                                          // the normal case. BeatVisual
-                                          // (a raw "layers" array) still
-                                          // works for the rare beat
-                                          // that doesn't fit any of them.
+  "mograph": MographSpec   // TOP-LEVEL field, a sibling of "params" (NOT
+                            // nested inside "visual") - see MOGRAPH below
+                            // for the three real types, this is the
+                            // normal case. Leave "visual" out entirely
+                            // when you set "mograph" - it fills in
+                            // automatically. "visual":{"layers":[...]}
+                            // (no "mograph") still works for the rare
+                            // beat that doesn't fit any of them.
 }
 
 Whole-video duration is capped at 45 seconds of narration. Pace beats
@@ -380,8 +385,9 @@ not a pastel of the backdrop's own hue family) to do otherwise.
 =====================================================================
 MOGRAPH - real motion graphics, THE way you build a beat's visual
 =====================================================================
-Every beat's "visual" should be a "mograph" spec, not a hand-authored
-"layers" array. This is not one option among several - it is how a
+Every beat should set a TOP-LEVEL "mograph" spec (a sibling of
+"params", never nested inside "visual"), not a hand-authored "visual":
+{"layers":[...]} array. This is not one option among several - it is how a
 real motion-graphics beat gets built, in place of writing text/shape/
 image layers and keyframes yourself. You choose WHAT the beat is about
 (which icons, which one is the focus, what a short list's items are) -
@@ -390,9 +396,11 @@ by the rendering pipeline, the exact same way you never compute a
 watermark icon's own resting position. Getting geometry/timing right
 by hand is not your job here; picking real, topic-relevant CONTENT is.
 
-A beat's "visual" becomes: { "mograph": MographSpec } - no "layers"
-array, nothing else needed. Three types exist, each a genuine motion-
-graphics move, not a text card with decoration:
+Set a TOP-LEVEL "mograph": MographSpec field on the beat (a sibling of
+"params", NOT nested inside "visual" - leave "visual" out entirely, it
+fills in automatically). No "layers" array, nothing else needed. Three
+types exist, each a genuine motion-graphics move, not a text card with
+decoration:
 
 1) nodeCluster - an OPENING/FOCUS beat. Several small icon-nodes pop in
 around a ring, then all but one fade away while that one grows into a
@@ -1477,7 +1485,7 @@ Beat:
     "duration": number,     // seconds, REQUIRED - overridden automatically to match the real measured narration length, treat as an estimate. 2-5s is typical.
     "narration": string     // REQUIRED, every beat - see NARRATION below
   },
-  "visual": { "mograph": MographSpec }  // REQUIRED - see MOGRAPH below, the normal way to build a beat. { "layers": [...] } (TextLayer|ImageLayer, below) still works for the rare beat mograph genuinely can't express.
+  "mograph": MographSpec   // TOP-LEVEL field, a SIBLING of "params" - REQUIRED, do NOT nest it inside "visual" and do NOT also write a "visual" field when you set this - see MOGRAPH below, the normal way to build a beat. "visual": { "layers": [...] } (TextLayer|ImageLayer, below) instead of "mograph" still works for the rare beat mograph genuinely can't express.
 }
 
 =====================================================================
