@@ -591,6 +591,87 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
 }
 
 /** Standard ease-in-out-cubic - explicitly requested ("MAKE SURE THE MOVEMENT IS CUBIC") for the camera pan, smooth acceleration then deceleration rather than a linear/robotic glide. */
+/**
+ * Soft, drifting glow "bokeh" particles scattered across the board's own
+ * world-space bounding box - the direct answer to the real, frame-by-
+ * frame reference comparison feedback ("THE TRANSITIONS... AINT
+ * MAJECTIC... RUSHED... NOT CLICKING"): the reference keeps several
+ * blurred, glowing circles visibly drifting at different depths through
+ * every beat, not just during transitions, giving it an atmosphere the
+ * previously-flat gradient board never had. Positions are fixed WORLD-
+ * SPACE points, not animated independently - the camera's own existing
+ * pan across the shared board (see buildBoardLayoutAndBackground's doc
+ * comment) is what makes them drift past at all, exactly like real
+ * parallax, for zero extra per-frame animation cost. Drawn directly onto
+ * the SAME per-camera-position cached background canvas the plain
+ * gradient already uses (see cachedBgCanvas in the frame loop below) -
+ * so, like the gradient itself, this only ever gets (re)computed when
+ * the camera position actually changes, not on every single frame.
+ */
+function generateAmbientOrbs(sceneJSON, boardPositions, backgroundDef) {
+  // Independent stream from both the board-layout rand() (positions/
+  // background hue, seeded plain) and ensureHarmoniousColors' own
+  // ^0x9E3779B1 stream - this one must never perturb either of those
+  // existing deterministic sequences, so it gets its own distinct XOR
+  // constant (a standard MurmurHash3 fmix constant, unrelated to the
+  // golden-ratio one already in use elsewhere in this file).
+  const rand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x85ebca6b);
+  const [bgH] = hexToHsl(backgroundDef.startColor);
+  const isLight = relativeLuma(hexToRgbLocal(backgroundDef.startColor)) > LIGHT_BACKGROUND_LUMA_THRESHOLD;
+  const makeOrb = (x, y) => {
+    const hue = bgH + (rand() * 50 - 25); // analogous - same harmony rule ensureHarmoniousColors already uses
+    const sat = 0.35 + rand() * 0.25; // soft, not a vivid accent - this is atmosphere, not a focal element
+    const light = isLight ? 0.5 + rand() * 0.18 : 0.62 + rand() * 0.2;
+    return {
+      x, y,
+      radius: 50 + rand() * 130,
+      color: hslToHex(hue, sat, light),
+      opacity: 0.05 + rand() * 0.09, // deliberately subtle - this recedes into the background, unlike foreground content
+    };
+  };
+  // Scattering uniformly across the board's full bounding-box AREA (the
+  // first version of this function) badly undercounted in practice: a
+  // multi-beat board is a long, thin zig-zag the camera actually walks,
+  // not a rectangle it fills, so most of that area's bbox is empty space
+  // the camera never visits - directly confirmed on a real 3-beat test
+  // render, several consecutive parked frames showed zero orbs at all.
+  // Clustering instead AROUND each beat's own parked camera position
+  // (plus a couple more near each pan's midpoint) guarantees every beat
+  // - parked or panning - actually has atmosphere nearby, using far
+  // fewer total orbs for a denser-LOOKING result since none are wasted
+  // in bbox regions the camera never crops into.
+  const SPREAD = Math.max(WIDTH, HEIGHT) * 0.85;
+  const orbs = [];
+  for (const pos of boardPositions) {
+    for (let i = 0; i < 6; i++) {
+      orbs.push(makeOrb(pos.x + (rand() * 2 - 1) * SPREAD, pos.y + (rand() * 2 - 1) * SPREAD));
+    }
+  }
+  for (let i = 1; i < boardPositions.length; i++) {
+    const midX = (boardPositions[i - 1].x + boardPositions[i].x) / 2;
+    const midY = (boardPositions[i - 1].y + boardPositions[i].y) / 2;
+    orbs.push(makeOrb(midX + (rand() * 2 - 1) * SPREAD * 0.5, midY + (rand() * 2 - 1) * SPREAD * 0.5));
+    orbs.push(makeOrb(midX + (rand() * 2 - 1) * SPREAD * 0.5, midY + (rand() * 2 - 1) * SPREAD * 0.5));
+  }
+  return orbs;
+}
+
+function drawAmbientOrbs(ctx, orbs, camX, camY, width, height) {
+  for (const orb of orbs) {
+    const cx = orb.x - camX;
+    const cy = orb.y - camY;
+    if (cx < -orb.radius || cx > width + orb.radius || cy < -orb.radius || cy > height + orb.radius) continue;
+    const [r, g, b] = hexToRgbLocal(orb.color);
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, orb.radius);
+    grad.addColorStop(0, `rgba(${r},${g},${b},${orb.opacity})`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, orb.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2;
 }
@@ -600,7 +681,12 @@ function easeInOutCubic(t) {
 // TYPE field, e.g. "crossDissolve"/"linearWipe", is no longer used at
 // all - every beat-to-beat change is now a pan, unconditionally, not
 // just beats that happen to set a transitionIn).
-const DEFAULT_PAN_DURATION_SECONDS = 0.6;
+// Raised from 0.6 - real, direct reference-comparison feedback called
+// the transitions "rushed" and "not majestic." Paired with the new
+// coupled zoom in the pan-compositing step below (drawZoomed) rather
+// than relied on alone - a longer pan with no other change would just
+// be the same flat slide taking longer, not a fix for "flat" itself.
+const DEFAULT_PAN_DURATION_SECONDS = 0.75;
 
 /**
  * Real, root-cause finding behind a persistent brutal vision-judge
@@ -811,6 +897,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   let cachedBgCanvas = null;
   let cachedBgCamX = null;
   let cachedBgCamY = null;
+  const ambientOrbs = generateAmbientOrbs(sceneJSON, boardPositions, boardBackgroundDef);
 
   const canvas = createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext('2d');
@@ -858,13 +945,13 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       // computed ONCE and reused for both the shared background draw
       // and the beat canvas(es) below, so they always agree on exactly
       // what the viewport is looking at.
-      let camX, camY;
+      let camX, camY, panProgress;
       if (inPan) {
-        const progress = easeInOutCubic(Math.min(1, Math.max(0, localT / panDuration)));
+        panProgress = easeInOutCubic(Math.min(1, Math.max(0, localT / panDuration)));
         const prevPos = boardPositions[beatIndex - 1];
         const currPos = boardPositions[beatIndex];
-        camX = prevPos.x + (currPos.x - prevPos.x) * progress;
-        camY = prevPos.y + (currPos.y - prevPos.y) * progress;
+        camX = prevPos.x + (currPos.x - prevPos.x) * panProgress;
+        camY = prevPos.y + (currPos.y - prevPos.y) * panProgress;
       } else {
         camX = boardPositions[beatIndex].x;
         camY = boardPositions[beatIndex].y;
@@ -896,6 +983,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
           shape: boardBackgroundDef.shape,
           dither: false,
         });
+        drawAmbientOrbs(viewportBg.getContext('2d'), ambientOrbs, camX, camY, WIDTH, HEIGHT);
         cachedBgCanvas = viewportBg;
         cachedBgCamX = camX;
         cachedBgCamY = camY;
@@ -920,8 +1008,28 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         // it's the reverse.
         const prevPos = boardPositions[beatIndex - 1];
         const currPos = boardPositions[beatIndex];
-        ctx.drawImage(prevCanvas, prevPos.x - camX, prevPos.y - camY);
-        ctx.drawImage(transitionCurrCanvas, currPos.x - camX, currPos.y - camY);
+
+        // A pure XY slide of two flat, unscaled canvases reads exactly
+        // as the direct reference-video feedback described it: "rushed,"
+        // "not majestic" - real motion-graphics transitions almost never
+        // move on a single flat axis like that, they carry a coupled
+        // scale "push" that reads as camera depth. Outgoing swells
+        // slightly as if the camera is moving THROUGH it on the way
+        // past; incoming swoops in from slightly smaller, landing at
+        // exactly 1:1 right as it finishes arriving. Scaled around each
+        // canvas's own on-screen CENTER (not top-left) so this reads as
+        // a zoom, not an extra drift on top of the pan already happening.
+        const drawZoomed = (image, x, y, scale) => {
+          const w = WIDTH * scale;
+          const h = HEIGHT * scale;
+          const cx = x + WIDTH / 2;
+          const cy = y + HEIGHT / 2;
+          ctx.drawImage(image, cx - w / 2, cy - h / 2, w, h);
+        };
+        const outScale = 1 + panProgress * 0.16;
+        const inScale = 0.86 + panProgress * 0.14;
+        drawZoomed(prevCanvas, prevPos.x - camX, prevPos.y - camY, outScale);
+        drawZoomed(transitionCurrCanvas, currPos.x - camX, currPos.y - camY, inScale);
       } else {
         renderWithMotionBlur(ctx, WIDTH, HEIGHT, localT, FRAME_DURATION, withBeatZoom((c, st) => visualObj.render(c, st), range.duration, WIDTH, HEIGHT), MOTION_BLUR_CONFIG);
       }

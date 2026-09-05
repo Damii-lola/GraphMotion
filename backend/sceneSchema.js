@@ -4506,6 +4506,19 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
         ] },
       opacity: cloneTrack(opacityKf),
     });
+    // Real, direct reference-comparison complaint ("ANIMATIONS ARE
+    // LACKINGGGG FOR EVERYTHINGGGGG"): the chosen icon grows into its
+    // final hero size by ~1.7s and then just sits there, dead still,
+    // for however much of the beat remains. A slow rotational wiggle on
+    // the icon ALONE (not its background circle - a flat-color circle
+    // is radially symmetric, rotating it is a visual no-op) reads as
+    // life with zero risk of the drift/desync issue a position wiggle
+    // would risk elsewhere: both circle and icon are already perfectly
+    // concentric post-settle, and rotation pivots around that same
+    // shared center, so nothing needs to move together here at all.
+    if (isChosen) {
+      layers[layers.length - 1].rotation = { expression: 'wiggle(0.3, 4)', base: 0 };
+    }
   });
   return layers;
 }
@@ -4634,6 +4647,25 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
   const PHONE_WIDTH = 260;
   const PHONE_HEIGHT = 520;
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
+  // Real, direct reference-comparison complaint: "THE PHONE SCENE IS
+  // BLANDDD." Every layer here used to go completely motionless the
+  // instant its own entrance keyframes finished (~1.85s in), then just
+  // sit frozen for however much of the beat's own duration remained -
+  // exactly the "PowerPoint slide" pattern this file's own
+  // ensureSustainedAmbientMotion already fixes for plain text beats, but
+  // that pass explicitly skips every mograph beat (see its own doc
+  // comment), so phoneSwap never got it. Fixed here with a shared,
+  // IDENTICAL wiggle() rotation expression on all four layers - same
+  // expression string, same default seed (0, engine/expressions.js) -
+  // confirmed via a direct isolated render (two shapes sharing this
+  // exact pattern, frame-inspected) to evaluate perfectly in sync, so
+  // the phone reads as one gently swaying rigid object, not four
+  // independently-jittering pieces. Rotation only, no position drift -
+  // each layer's own transform pivots around its OWN center, not the
+  // phone's, so a position wiggle here would visibly separate the notch
+  // from the body's edge; the small ~1.6-degree rotation swing keeps
+  // that drift under a few px, imperceptible at this amplitude.
+  const idleRotation = { expression: 'wiggle(0.35, 1.6)', base: 0 };
   return [
     {
       id: '__phone_body__',
@@ -4643,6 +4675,7 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
       position: CENTER,
       scale: { keyframes: [{ time: 0, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.4, value: [1, 1] }] },
       opacity: { keyframes: [{ time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.3, value: 1 }] },
+      rotation: cloneTrack(idleRotation),
       contents: [
         { type: 'path', shape: { kind: 'rectangle', params: { width: PHONE_WIDTH, height: PHONE_HEIGHT, roundness: 36 } } },
         { type: 'fill', color: '#F5F3FF' },
@@ -4656,6 +4689,7 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
       height: 8,
       position: [CENTER[0], CENTER[1] - PHONE_HEIGHT / 2 + 22],
       opacity: { keyframes: [{ time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.3, value: 1 }] },
+      rotation: cloneTrack(idleRotation),
       contents: [
         { type: 'path', shape: { kind: 'rectangle', params: { width: 56, height: 8, roundness: 4 } } },
         { type: 'fill', color: accentColor },
@@ -4672,6 +4706,7 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
       textAlign: 'center',
       maxWidth: PHONE_WIDTH - 40,
       position: [...CENTER],
+      rotation: cloneTrack(idleRotation),
       opacity: { keyframes: [
         { time: 0.4, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
         { time: 0.65, value: 1 },
@@ -4687,6 +4722,7 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
       width: 110,
       height: 110,
       position: [...CENTER],
+      rotation: cloneTrack(idleRotation),
       scale: { keyframes: [
         { time: 1.4, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutCubic' },
         { time: 1.7, value: [1.1, 1.1], interpolation: 'easing', easing: 'easeInOutCubic' },
@@ -4919,6 +4955,11 @@ function buildMergeClusterLayers({
     width: RESULT_SIZE * 0.5,
     height: RESULT_SIZE * 0.5,
     position: [...CENTER],
+    // Same "hero settles, then goes dead still" gap as nodeCluster's own
+    // chosen icon (see its own doc comment) - rotation only, on the icon
+    // alone, since the result circle behind it is a flat fill and would
+    // show nothing for its own rotation to read as.
+    rotation: { expression: 'wiggle(0.3, 4)', base: 0 },
     scale: { keyframes: [
       { time: CONVERGE_TIME - 0.05, value: [0.2, 0.2], interpolation: 'easing', easing: 'easeOutCubic' },
       { time: CONVERGE_TIME + 0.3, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
