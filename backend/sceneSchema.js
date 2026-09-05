@@ -5191,6 +5191,22 @@ function validateSceneJSON(sceneJSON) {
 
   sceneJSON.scenes = sceneJSON.scenes.filter((beat) => isPlainObject(beat) && isPlainObject(beat.visual));
 
+  // Real, confirmed-live bug (2026-09-05, caught switching to MiniMax
+  // M2.7): the "must contain at least one beat" check above runs BEFORE
+  // this filter, so it only ever catches an array that started empty -
+  // a single-beat response where that one beat has no usable "mograph"
+  // spec and no raw "visual" either gets silently dropped by the filter
+  // above with zero error raised, leaving scenes truly empty AND
+  // errors.length===0 (nothing left to iterate in the per-beat loop
+  // below), so this whole function returned valid:true for a scene that
+  // would render zero frames. Confirmed directly: a real production job
+  // reached the render worker with "0 beat(s) built", crashing ffmpeg
+  // with no input frames at all, despite generateWholeSceneJSON's own
+  // validation gate having passed it through without a single retry.
+  if (sceneJSON.scenes.length === 0 && errors.length === 0) {
+    errors.push('scenes: every beat was dropped as unusable (no valid "mograph" spec and no raw "visual" either) - at least one beat must produce real visual content.');
+  }
+
   sceneJSON.scenes.forEach((beat, i) => {
     const { errors: beatErrors } = validateBeat(beat, `scenes[${i}]`);
     errors.push(...beatErrors);
