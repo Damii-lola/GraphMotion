@@ -6309,6 +6309,299 @@ function ensureSustainedAmbientMotion(sceneJSON) {
  * whole video, and only once there are enough beats for that to be a
  * reasonable ask (under 3, every beat may genuinely be abstract).
  */
+// =====================================================================
+// Motion-graphics beat construction (2026-09-05)
+// =====================================================================
+// Direct user pivot, reference video attached: the text-headline-plus-
+// decorative-icon beat this whole file builds isn't what was actually
+// wanted - real motion graphics (icon-nodes orbiting and merging into a
+// hero circle, a flowing connector line threading a vertical list of
+// icon+label pairs, content crossfading inside a phone silhouette).
+// Confirmed via three separate real local renders, each independently
+// verified against the reference before this generalized version was
+// written, that the render engine's own existing primitives (shape +
+// image layers, keyframed position/scale/opacity, customPath+trim+
+// stroke, track mattes, outerGlow) already support this whole visual
+// language - nothing new needed at the engine level, only new
+// CONSTRUCTION logic up here.
+//
+// Same architectural lesson this entire file already learned the hard
+// way for headline beats, applied to a new visual vocabulary from the
+// start rather than relearned: the model is reliably bad at precise
+// geometry and keyframe timing, reliably good at picking topic-relevant
+// CONTENT. So these functions take plain semantic input (which icons,
+// which label goes with which, which one is the "hero") and own 100%
+// of the actual positions/keyframes/anchors themselves - nothing here
+// depends on the model getting a single coordinate or timing value
+// right.
+
+/**
+ * A ring of small icon-nodes around a center point, one of which
+ * ("chosenIndex") is selected and grows into a big hero circle while
+ * the rest fade away - the reference video's own opening move.
+ * Verified via a real local render against exactly this function's own
+ * math (not just the hand-authored prototype it was generalized from).
+ */
+function buildNodeClusterLayers({
+  icons, chosenIndex = 0, center = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42],
+  ringRadius = 150, nodeSize = 70, accentColor = '#8B5CF6', heroScale = 4.3,
+}) {
+  const layers = [];
+  icons.forEach((icon, i) => {
+    const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
+    const x = center[0] + Math.cos(angle) * ringRadius;
+    const y = center[1] + Math.sin(angle) * ringRadius;
+    const delay = 0.05 * i;
+    const isChosen = i === chosenIndex;
+    const bgScaleHero = heroScale * (nodeSize / (nodeSize + 30));
+    const iconScaleHero = heroScale * 0.72;
+
+    layers.push({
+      id: `__node_bg_${i}__`,
+      type: 'shape',
+      width: nodeSize,
+      height: nodeSize,
+      position: isChosen
+        ? { keyframes: [
+          { time: delay, value: [x, y], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: 1.0, value: [x, y], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.6, value: center },
+        ] }
+        : { keyframes: [
+          { time: delay, value: center, interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.4, value: [x, y] },
+        ] },
+      scale: isChosen
+        ? { keyframes: [
+          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.7, value: [bgScaleHero, bgScaleHero] },
+        ] }
+        : { keyframes: [
+          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.0, value: [1, 1] },
+          { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
+        ] },
+      opacity: isChosen
+        ? { keyframes: [{ time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: delay + 0.25, value: 1 }] }
+        : { keyframes: [
+          { time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.25, value: 1 },
+          { time: 1.0, value: 1 },
+          { time: 1.3, value: 0 },
+        ] },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: nodeSize, height: nodeSize } } },
+        isChosen ? { type: 'fill', color: accentColor } : { type: 'stroke', color: '#FFFFFF', width: 2 },
+      ],
+    });
+
+    layers.push({
+      id: `__node_icon_${i}__`,
+      type: 'image',
+      icon,
+      iconColor: isChosen ? '#FFFFFF' : '#E9E4FF',
+      width: nodeSize * 0.5,
+      height: nodeSize * 0.5,
+      position: isChosen
+        ? { keyframes: [
+          { time: delay, value: [x, y], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: 1.0, value: [x, y], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.6, value: center },
+        ] }
+        : { keyframes: [
+          { time: delay, value: center, interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.4, value: [x, y] },
+        ] },
+      scale: isChosen
+        ? { keyframes: [
+          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.7, value: [iconScaleHero, iconScaleHero] },
+        ] }
+        : { keyframes: [
+          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.0, value: [1, 1] },
+          { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
+        ] },
+      opacity: isChosen
+        ? { keyframes: [{ time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: delay + 0.25, value: 1 }] }
+        : { keyframes: [
+          { time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.25, value: 1 },
+          { time: 1.0, value: 1 },
+          { time: 1.3, value: 0 },
+        ] },
+    });
+  });
+  return layers;
+}
+
+/**
+ * A flowing connector line threading through a vertical zigzag list of
+ * icon+label nodes, each node revealing as the line's leading edge
+ * reaches it. Straight polyline segments deliberately, never bezier
+ * tangents - this file already has a confirmed, unresolved render-
+ * engine bug where any nonzero bezier bow on a trimmed stroke path
+ * produces a parallel double-line artifact (see ensureCurvedAccentLine's
+ * own doc comment); enough zigzag points reads as "flowing" without
+ * needing true curves, and this shape is exactly what attachLineRevealSparks
+ * (already wired into every beat) needs to attach its own real leading-
+ * spark dot with zero extra work here.
+ */
+function buildConnectorListLayers({
+  items, lineDuration = 2.6, accentColor = '#8B5CF6',
+  nodeSize = 90, iconSize = 48, labelFontSize = 22,
+}) {
+  const layers = [];
+  const anchors = items.map((it) => ({ point: it.pos }));
+
+  const dists = [0];
+  let total = 0;
+  for (let i = 1; i < items.length; i++) {
+    const [x1, y1] = items[i - 1].pos;
+    const [x2, y2] = items[i].pos;
+    total += Math.hypot(x2 - x1, y2 - y1);
+    dists.push(total);
+  }
+  const fractions = dists.map((d) => (total > 0 ? d / total : 0));
+
+  layers.push({
+    id: '__connector_line__',
+    type: 'shape',
+    width: CANVAS_WIDTH,
+    height: CANVAS_HEIGHT,
+    position: [0, 0],
+    opacity: 0.9,
+    contents: [
+      { type: 'path', shape: { kind: 'customPath', params: { anchors, closed: false } } },
+      { type: 'trim', start: 0, end: { keyframes: [{ time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: lineDuration, value: 100 }] } },
+      { type: 'stroke', color: accentColor, width: 3 },
+    ],
+  });
+
+  items.forEach((it, i) => {
+    const appearAt = Math.max(0.1, fractions[i] * lineDuration - 0.15);
+    layers.push({
+      id: `__list_node_bg_${i}__`,
+      type: 'shape',
+      width: nodeSize,
+      height: nodeSize,
+      position: it.pos,
+      opacity: { keyframes: [{ time: appearAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.25, value: 1 }] },
+      scale: { keyframes: [{ time: appearAt, value: [0.4, 0.4], interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.3, value: [1, 1] }] },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: nodeSize, height: nodeSize } } },
+        { type: 'fill', color: accentColor },
+      ],
+    });
+    layers.push({
+      id: `__list_node_icon_${i}__`,
+      type: 'image',
+      icon: it.icon,
+      iconColor: '#FFFFFF',
+      width: iconSize,
+      height: iconSize,
+      position: it.pos,
+      opacity: { keyframes: [{ time: appearAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.25, value: 1 }] },
+      scale: { keyframes: [{ time: appearAt, value: [0.4, 0.4], interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.3, value: [1, 1] }] },
+    });
+    layers.push({
+      id: `__list_node_label_${i}__`,
+      type: 'text',
+      text: it.label,
+      fontFamily: 'Poppins Black',
+      fontWeight: '900',
+      fontSize: labelFontSize,
+      fillStyle: '#FFFFFF',
+      textAlign: 'center',
+      position: [it.pos[0], it.pos[1] + nodeSize / 2 + 30],
+      opacity: { keyframes: [{ time: appearAt + 0.1, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.35, value: 1 }] },
+    });
+  });
+
+  return layers;
+}
+
+/**
+ * A phone silhouette whose "screen" content crossfades from a headline
+ * into an icon - the reference video's own phone moment. Two separate
+ * layers simply crossfading opacity at the same position, not a true
+ * vector morph (no evidence the reference itself does real point-
+ * correspondence morphing either - AE doesn't do that without heavy
+ * manual rigging, a crossfade reads the same at this speed).
+ */
+function buildPhoneSwapLayers({
+  text, icon, crossfadeAt = 1.1, accentColor = '#8B5CF6',
+  center = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2], phoneWidth = 260, phoneHeight = 480,
+}) {
+  return [
+    {
+      id: '__phone_body__',
+      type: 'shape',
+      width: phoneWidth,
+      height: phoneHeight,
+      position: center,
+      opacity: { keyframes: [{ time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.4, value: 1 }] },
+      scale: { keyframes: [{ time: 0, value: [0.7, 0.7], interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.5, value: [1, 1] }] },
+      contents: [
+        { type: 'path', shape: { kind: 'rectangle', params: { width: phoneWidth, height: phoneHeight, roundness: 32 } } },
+        { type: 'fill', color: '#F3F0FF' },
+        { type: 'stroke', color: accentColor, width: 4 },
+      ],
+      effects: [{ type: 'outerGlow', params: { color: accentColor, opacity: 0.7, blur: 22, blendMode: 'screen' } }],
+    },
+    {
+      id: '__phone_notch__',
+      type: 'shape',
+      width: 60,
+      height: 8,
+      position: [center[0], center[1] - phoneHeight / 2 + 22],
+      opacity: { keyframes: [{ time: 0.3, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.6, value: 1 }] },
+      contents: [
+        { type: 'path', shape: { kind: 'rectangle', params: { width: 60, height: 8, roundness: 4 } } },
+        { type: 'fill', color: accentColor },
+      ],
+    },
+    {
+      id: '__phone_text__',
+      type: 'text',
+      text,
+      fontFamily: 'Poppins Black',
+      fontWeight: '900',
+      fontSize: 26,
+      fillStyle: accentColor,
+      textAlign: 'center',
+      lineHeight: 32,
+      maxWidth: phoneWidth - 90,
+      position: center,
+      opacity: {
+        keyframes: [
+          { time: 0.5, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: 0.75, value: 1 },
+          { time: crossfadeAt, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+          { time: crossfadeAt + 0.35, value: 0 },
+        ],
+      },
+    },
+    {
+      id: '__phone_icon__',
+      type: 'image',
+      icon,
+      iconColor: accentColor,
+      width: phoneWidth - 72,
+      height: phoneWidth - 72,
+      position: center,
+      opacity: { keyframes: [{ time: crossfadeAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: crossfadeAt + 0.4, value: 1 }] },
+      scale: { keyframes: [{ time: crossfadeAt, value: [0.6, 0.6], interpolation: 'easing', easing: 'easeOutCubic' }, { time: crossfadeAt + 0.45, value: [1, 1] }] },
+    },
+  ];
+}
+
 function requireAtLeastOneRealPhoto(sceneJSON, errors) {
   const scenes = sceneJSON.scenes;
   if (!Array.isArray(scenes) || scenes.length < 3) return;
@@ -6336,4 +6629,7 @@ module.exports = {
   EASING_NAMES,
   EFFECT_TYPES,
   TRANSITION_TYPES,
+  buildNodeClusterLayers,
+  buildConnectorListLayers,
+  buildPhoneSwapLayers,
 };
