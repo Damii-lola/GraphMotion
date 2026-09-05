@@ -1501,8 +1501,8 @@ Pick ONE per beat, vary across the video:
   a phone shows "text" (2-4 words) then crossfades to "icon" - app/tool beat.
 { "type": "splitConverge", "icon": "mdi:bullhorn", "accentColor": "#8B5CF6" }
   one icon splits in half, each half flies in from off-screen and snaps together at center - a strong reveal/impact beat, e.g. "the answer", a single big idea landing.
-{ "type": "mergeCluster", "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload"], "resultIcon": "mdi:movie-open", "accentColor": "#8B5CF6" }
-  small icon-nodes ("icons", 2-5) converge inward and merge into one new bigger circle showing "resultIcon" - "these things COMBINE into this" beats, distinct from nodeCluster (which singles ONE existing icon out, not combines several into something new).
+{ "type": "mergeCluster", "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload"], "resultIcon": "mdi:movie-open", "label": "Content Creation", "accentColor": "#8B5CF6" }
+  small icon-nodes ("icons", 2-5) converge inward and merge into one new bigger circle showing "resultIcon", with "label" (OPTIONAL, 1-3 words) naming it underneath - "these things COMBINE into this" beats, distinct from nodeCluster (which singles ONE existing icon out, not combines several into something new).
 "accentColor" always OPTIONAL, omit to auto-pick. Raw "layers" (below) only for a beat none of these five fit - keep that rare.
 
 TextLayer:

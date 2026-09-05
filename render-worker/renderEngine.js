@@ -521,6 +521,27 @@ function buildHarmoniousAccentPalette(backgroundHex, rand) {
  * internal consistency survives the remap instead of scattering into
  * unrelated replacements.
  */
+// Real, confirmed-live bug found via direct frame inspection (2026-09-05,
+// mograph glow work): outerGlow's default 'screen' blend mode works by
+// ADDING light - genuinely vivid on a dark background (the reference
+// video this whole glow system is modeled on is dark in EVERY frame),
+// but barely visible when the background itself already turns out
+// light (BOARD_BACKGROUND_HUES can land on a light/cream/pastel entry -
+// there's no light already there to brighten further). Confirmed
+// directly: an icon's own outerGlow, unchanged, rendered as an almost
+// imperceptible tint on a light lavender background. Switches to
+// 'multiply' (darkens/saturates instead of adding light - genuinely
+// visible against a light backdrop the same way a soft colored shadow
+// would be) only when the ACTUAL picked background turns out light;
+// completely inert on a dark background, the majority/originally-only
+// case this glow system was built and tuned against.
+function adaptGlowForBackground(effects, isLightBackground) {
+  if (!isLightBackground || !Array.isArray(effects)) return;
+  for (const e of effects) {
+    if (e?.type === 'outerGlow' && e.params) e.params.blendMode = 'multiply';
+  }
+}
+
 function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
   const rand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x9E3779B1);
   const bgRefColor = boardBackgroundDef.startColor;
@@ -536,6 +557,9 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
     }
     return remap.get(key);
   };
+  const startLuma = relativeLuma(hexToRgbLocal(boardBackgroundDef.startColor));
+  const endLuma = relativeLuma(hexToRgbLocal(boardBackgroundDef.endColor));
+  const isLightBackground = (startLuma + endLuma) / 2 > LIGHT_BACKGROUND_LUMA_THRESHOLD;
 
   for (const scene of sceneJSON.scenes || []) {
     const layers = scene?.visual?.layers;
@@ -560,6 +584,7 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
         for (const e of layer.effects) {
           if (e?.params && typeof e.params.color === 'string') e.params.color = harmonize(e.params.color);
         }
+        adaptGlowForBackground(layer.effects, isLightBackground);
       }
     }
   }

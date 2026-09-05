@@ -502,26 +502,55 @@ async function loadBeatImages(visual, beatContext) {
 // strictly sequential (never two overlapping calls to the same
 // closure), and `resetTransform` before each use means a leftover
 // translate from a PRIOR call can never bleed into the next one.
+// Real, confirmed-live bug found via direct frame inspection (2026-09-05,
+// mograph glow work): outerGlow/dropShadow are BOTH meant to extend
+// visibly beyond the raw content's own edges (that's the entire point -
+// a halo or an offset shadow), but the buffer canvas below used to be
+// sized to EXACTLY contentWidth x contentHeight, giving the blur no
+// room to spread into. Confirmed directly: a small icon (a few dozen
+// px) with a 22px-blur outerGlow rendered with a hard, visibly
+// RECTANGULAR cutoff exactly at the icon's own bounding box, instead of
+// a soft halo - the blur kernel had nowhere to expand, so it just got
+// clipped at the canvas edge. innerGlow/innerShadow are NOT affected
+// (they mask the blurred result back inside the ORIGINAL shape by
+// design - see layerStyles.js's own doc comment - so they never needed
+// to extend past the raw bounds in the first place).
+function computeEffectsPadding(effects) {
+  let pad = 0;
+  for (const e of effects || []) {
+    if (!e || (e.type !== 'outerGlow' && e.type !== 'dropShadow')) continue;
+    const params = e.params || {};
+    const blur = typeof params.blur === 'number' ? params.blur : 0;
+    const offset = Math.max(Math.abs(params.offsetX) || 0, Math.abs(params.offsetY) || 0);
+    pad = Math.max(pad, blur * 2.5 + offset);
+  }
+  return Math.ceil(pad);
+}
+
 function withEffects(rawDraw, layerDef, contentWidth, contentHeight, centered = false) {
   if (!layerDef.effects || layerDef.effects.length === 0) return rawDraw;
+  const pad = computeEffectsPadding(layerDef.effects);
+  const bufferW = contentWidth + pad * 2;
+  const bufferH = contentHeight + pad * 2;
   if (!centered) {
-    const buffer = createCanvas(contentWidth, contentHeight);
+    const buffer = createCanvas(bufferW, bufferH);
     const bufferCtx = buffer.getContext('2d');
     return (ctx, t) => {
       bufferCtx.resetTransform();
-      bufferCtx.clearRect(0, 0, contentWidth, contentHeight);
+      bufferCtx.clearRect(0, 0, bufferW, bufferH);
+      bufferCtx.translate(pad, pad);
       rawDraw(bufferCtx, t);
       const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t);
-      ctx.drawImage(finalCanvas, 0, 0);
+      ctx.drawImage(finalCanvas, -pad, -pad);
     };
   }
-  const offsetX = contentWidth / 2;
-  const offsetY = contentHeight / 2;
-  const buffer = createCanvas(contentWidth, contentHeight);
+  const offsetX = contentWidth / 2 + pad;
+  const offsetY = contentHeight / 2 + pad;
+  const buffer = createCanvas(bufferW, bufferH);
   const bufferCtx = buffer.getContext('2d');
   return (ctx, t) => {
     bufferCtx.resetTransform();
-    bufferCtx.clearRect(0, 0, contentWidth, contentHeight);
+    bufferCtx.clearRect(0, 0, bufferW, bufferH);
     bufferCtx.translate(offsetX, offsetY);
     rawDraw(bufferCtx, t);
     const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t);

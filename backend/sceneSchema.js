@@ -4836,7 +4836,9 @@ function buildSplitConvergeLayers({ icon, accentColor }) {
  * reading as several separate things combining into one new whole,
  * not one thing among several being singled out.
  */
-function buildMergeClusterLayers({ icons, resultIcon, accentColor }) {
+function buildMergeClusterLayers({
+  icons, resultIcon, accentColor, label,
+}) {
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
   const NODE_SIZE = 64;
   const START_RADIUS = 190;
@@ -4925,6 +4927,32 @@ function buildMergeClusterLayers({ icons, resultIcon, accentColor }) {
     opacity: { keyframes: [{ time: CONVERGE_TIME - 0.05, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: CONVERGE_TIME + 0.1, value: 1 }] },
   });
 
+  // Real, direct reference-video finding (frame-by-frame comparison,
+  // 2026-09-05): the reference's own equivalent "several things become
+  // one" moment lands with a real text label directly under the result
+  // circle ("Communication Skill") - naming what was just built, not
+  // just showing an icon and moving on. OPTIONAL (a beat that genuinely
+  // has no good short name for its result can omit it), settles in
+  // just after the result circle's own arrival bounce.
+  if (typeof label === 'string' && label.trim()) {
+    layers.push({
+      id: '__merge_result_label__',
+      type: 'text',
+      text: label,
+      fontFamily: 'Poppins Black',
+      fontWeight: '900',
+      fontSize: 30,
+      fillStyle: '#FFFFFF',
+      textAlign: 'center',
+      maxWidth: CANVAS_WIDTH - 100,
+      position: [CENTER[0], CENTER[1] + RESULT_SIZE / 2 + 46],
+      opacity: { keyframes: [
+        { time: CONVERGE_TIME + 0.15, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: CONVERGE_TIME + 0.4, value: 1 },
+      ] },
+    });
+  }
+
   return layers;
 }
 
@@ -4967,6 +4995,59 @@ function truncateAtWordBoundary(text, maxChars) {
  * every other "couldn't safely repair this" case in this file already
  * relies on.
  */
+/**
+ * Real, direct user feedback after comparing a real generated video
+ * against the reference frame by frame: "SOME THINGS ARE TOO FADED TO
+ * EVEN BE SEEN... THE ANIMATIONS ARE LACKINGGGG FOR EVERYTHINGGGGG...
+ * ALLL THE VISUALLLSSS SEEEM BLANDDD." Direct frame-by-frame analysis
+ * of the reference (style/technique only, per this project's own
+ * standing rule about that video) confirmed the single most dominant
+ * technique used throughout - on every icon, every circle, every
+ * result shape, every heart/star/whatever-shape moment - is a genuine,
+ * vivid neon-style OUTER GLOW, not the flat, hard-edged fill every
+ * mograph constructor above builds by default. outerGlow is already a
+ * real, tested engine effect (engine/layerStyles.js) - previously only
+ * ever applied to a beat's dominant TEXT layer (ensureNeonGlowText,
+ * and even then gated to skip mograph beats entirely) - this is a
+ * genuine finishing pass across every mograph beat's own shape/image/
+ * text layers instead.
+ *
+ * Each layer's own glow color is DERIVED from whatever color it's
+ * already using (stroke first, then fill, then iconColor/fillStyle) -
+ * never a separately hardcoded choice - so the glow always matches
+ * whatever ensureHarmoniousColors (renderEngine.js) later coordinates
+ * it to, instead of introducing a third, uncoordinated color source.
+ * Stroke checked BEFORE fill deliberately: a layer with both (the phone
+ * body - a near-white backdrop fill plus a real accentColor stroke) has
+ * its stroke as the actually-meaningful identity color to glow, not the
+ * neutral fill behind it; every other shape in this file only ever has
+ * one or the other, so the ordering is a no-op there.
+ */
+function applyMographGlow(layers) {
+  for (const layer of layers) {
+    if (!isPlainObject(layer)) continue;
+    let glowColor = null;
+    if (layer.type === 'image' && typeof layer.iconColor === 'string') {
+      glowColor = layer.iconColor;
+    } else if (layer.type === 'text' && typeof layer.fillStyle === 'string') {
+      glowColor = layer.fillStyle;
+    } else if (layer.type === 'shape' && Array.isArray(layer.contents)) {
+      const strokeItem = layer.contents.find((c) => isPlainObject(c) && c.type === 'stroke');
+      const fillItem = layer.contents.find((c) => isPlainObject(c) && c.type === 'fill');
+      glowColor = (strokeItem && strokeItem.color) || (fillItem && fillItem.color) || null;
+    }
+    if (!glowColor || !HEX_COLOR_RE.test(glowColor)) continue;
+    if (Array.isArray(layer.effects) && layer.effects.some((e) => isPlainObject(e) && e.type === 'outerGlow')) continue;
+    if (!Array.isArray(layer.effects)) layer.effects = [];
+    // Text gets a smaller, tighter glow (a soft light-shadow, not a
+    // halo swallowing the letterforms) - shapes/icons get the full
+    // vivid bloom radius the reference shows on every circle/icon.
+    const blur = layer.type === 'text' ? 12 : 22;
+    const opacity = layer.type === 'text' ? 0.7 : 0.85;
+    layer.effects.push({ type: 'outerGlow', params: { color: glowColor, opacity, blur, blendMode: 'screen' } });
+  }
+}
+
 function buildMographBeatVisual(beat) {
   if (!isPlainObject(beat) || !isPlainObject(beat.mograph)) return;
   if (isPlainObject(beat.visual) && Array.isArray(beat.visual.layers) && beat.visual.layers.length > 0) return;
@@ -4994,10 +5075,14 @@ function buildMographBeatVisual(beat) {
     layers = buildSplitConvergeLayers({ icon: spec.icon, accentColor });
   } else if (spec.type === 'mergeCluster' && Array.isArray(spec.icons) && typeof spec.resultIcon === 'string' && MOGRAPH_ICON_RE.test(spec.resultIcon)) {
     const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 5);
-    if (icons.length >= 2) layers = buildMergeClusterLayers({ icons, resultIcon: spec.resultIcon, accentColor });
+    const label = typeof spec.label === 'string' && spec.label.trim() ? truncateAtWordBoundary(spec.label.trim().toUpperCase(), 24) : null;
+    if (icons.length >= 2) layers = buildMergeClusterLayers({ icons, resultIcon: spec.resultIcon, accentColor, label });
   }
 
-  if (layers) beat.visual = { layers };
+  if (layers) {
+    applyMographGlow(layers);
+    beat.visual = { layers };
+  }
 }
 
 function validateSceneJSON(sceneJSON) {
