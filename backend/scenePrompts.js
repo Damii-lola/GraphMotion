@@ -25,13 +25,17 @@ const COMP_HEIGHT = 960;
 
 const SCHEMA_REFERENCE = `
 You are directing a REAL motion graphics rendering engine - not writing
-a description of a video. Every field you output maps to an actual,
-already-built function call. Your scope right now is DELIBERATELY
-narrow: real, professionally-animated TEXT - that is the ENTIRE
-toolkit for this task, not a starting point to build on with other
-layer types. The background is handled entirely elsewhere (see
-BEATVISUAL below) - you never author one. Nothing here is decorative
-flavor text: every option below is real and will actually render.
+a description of a video, and not writing a text card with a small
+decorative icon on it either. Every field you output maps to an
+actual, already-built function call. Your job is to choose real,
+topic-relevant CONTENT for one of the real motion-graphics moves this
+engine builds (icon-nodes converging into a hero circle, a connector
+line threading a list of icon+label pairs, a phone silhouette swapping
+its own content - see MOGRAPH below, the primary way you build a
+beat's "visual") - not to compute layout, keyframes, or timing
+yourself. The background is handled entirely elsewhere (see BEATVISUAL
+below) - you never author one. Nothing here is decorative flavor text:
+every option below is real and will actually render.
 
 The output is ALWAYS a single JSON object, no markdown fences, no
 prose outside the JSON: { "scenes": [ Beat, ... ] }
@@ -67,17 +71,14 @@ position/size you author is in these pixel units, origin (0,0) at the
 top-left for 2D content. Keep primary content within a safe zone
 roughly 45px in from every edge so nothing critical is clipped.
 
-EVERY object in a "layers" array MUST include an explicit "type" field,
-one of: "text", "shape", "image", "precomp", "generate", "null" (full
-per-type field reference for each: TEXTLAYERDEF, SHAPELAYERDEF,
-IMAGELAYERDEF, and the "precomp"/"generate"/"null" sections, all
-below). Text is the primary content every beat needs (see the "at
-least one text layer" rule below), but it is NOT the only layer type
-available - lean on "shape" (backgrounds, reveals, color blocks,
-doodles, rings, progress bars) and "image" (real icons via Iconify,
-see ICONS below) just as freely. A beat that only ever uses "text"
-layers, beat after beat, is under-using this schema, not respecting a
-restriction - there is no restriction.
+A beat's "visual" is normally { "mograph": MographSpec } - see MOGRAPH
+below for the three real types and their exact shape. The raw
+"layers"-array form (EVERY object needs an explicit "type", one of:
+"text", "shape", "image", "precomp", "generate", "null" - full per-type
+reference: TEXTLAYERDEF, SHAPELAYERDEF, IMAGELAYERDEF, and the
+"precomp"/"generate"/"null" sections, all below) still exists for the
+rare beat that genuinely doesn't fit any mograph type, but reach for
+MOGRAPH first, every beat, not as a fallback.
 
 JSON STRING ESCAPING - a real, repeated failure: any quote character
 ("), backslash (\\), or literal newline INSIDE a text value (e.g.
@@ -117,7 +118,12 @@ BEAT
                                // entirely for a beat that uses only icons/
                                // shapes/text, no image layer.
   },
-  "visual": BeatVisual
+  "visual": { "mograph": MographSpec }   // see MOGRAPH below for the
+                                          // three real types - this is
+                                          // the normal case. BeatVisual
+                                          // (a raw "layers" array) still
+                                          // works for the rare beat
+                                          // that doesn't fit any of them.
 }
 
 Whole-video duration is capped at 45 seconds of narration. Pace beats
@@ -372,7 +378,81 @@ deliberate reason (a bold accent color chosen for contrast/emphasis,
 not a pastel of the backdrop's own hue family) to do otherwise.
 
 =====================================================================
-TEXTLAYERDEF - one entry in "layers"
+MOGRAPH - real motion graphics, THE way you build a beat's visual
+=====================================================================
+Every beat's "visual" should be a "mograph" spec, not a hand-authored
+"layers" array. This is not one option among several - it is how a
+real motion-graphics beat gets built, in place of writing text/shape/
+image layers and keyframes yourself. You choose WHAT the beat is about
+(which icons, which one is the focus, what a short list's items are) -
+every pixel of position, every keyframe, every timing value is owned
+by the rendering pipeline, the exact same way you never compute a
+watermark icon's own resting position. Getting geometry/timing right
+by hand is not your job here; picking real, topic-relevant CONTENT is.
+
+A beat's "visual" becomes: { "mograph": MographSpec } - no "layers"
+array, nothing else needed. Three types exist, each a genuine motion-
+graphics move, not a text card with decoration:
+
+1) nodeCluster - an OPENING/FOCUS beat. Several small icon-nodes pop in
+around a ring, then all but one fade away while that one grows into a
+big hero circle at center. Use this for an intro, or any beat that
+first PRESENTS a few related ideas before settling on the one this
+beat is actually about.
+{ "type": "nodeCluster",
+  "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload","mdi:note-text","mdi:record-circle"],
+  "chosenIndex": 0,
+  "accentColor": "#8B5CF6" }
+- "icons": 3-8 real Iconify names (see ICONS below for how to pick a
+  real one) - genuinely related to the beat's own topic, not random.
+- "chosenIndex": which one (0-based) becomes the hero circle - the icon
+  that best represents THIS beat's own specific point.
+- "accentColor": OPTIONAL hex color for the hero circle's fill; omit to
+  let the pipeline pick one.
+
+2) connectorList - a LIST/ROADMAP beat. A line draws itself down a
+zigzag of icon+label pairs, each one popping in as the line's leading
+edge reaches it. Use this for "here are the N things" beats - steps,
+traits, features, reasons - 2 to 6 items.
+{ "type": "connectorList",
+  "items": [
+    { "icon": "mdi:hand-heart", "label": "Valuable" },
+    { "icon": "mdi:puzzle", "label": "Relevant" },
+    { "icon": "mdi:cog", "label": "Consistent" }
+  ],
+  "accentColor": "#8B5CF6" }
+- "items": each needs a real Iconify "icon" and a SHORT "label" (one or
+  two words, it's a caption not a sentence - it gets uppercased
+  automatically).
+- "accentColor": OPTIONAL, same as nodeCluster.
+
+3) phoneSwap - a beat centered on an app/tool/tracking idea. A phone
+silhouette shows a short headline, which crossfades into a real icon
+on the same spot.
+{ "type": "phoneSwap",
+  "text": "Content Marketing",
+  "icon": "mdi:bullhorn",
+  "accentColor": "#8B5CF6" }
+- "text": a short phrase (2-4 words) shown on the phone screen before
+  the crossfade.
+- "icon": a real Iconify name the headline crossfades into.
+- "accentColor": OPTIONAL, same as above.
+
+Every beat still needs its own real "params.narration" exactly as
+before (MOGRAPH is a visual spec, narration is still a separate, real
+spoken line - see NARRATION above) - the visual choreography plays
+under whatever this beat's own spoken line says, it doesn't replace it.
+
+Pick whichever of the three types actually fits what THIS beat is
+about - don't force every beat into the same one. A video that opens
+with nodeCluster, lists its main points with connectorList, and closes
+on an app-relevant idea with phoneSwap reads as a real, varied piece,
+not three repeats of one move.
+
+=====================================================================
+TEXTLAYERDEF - one entry in "layers" (RARE - see MOGRAPH above, which
+covers real motion-graphics beats; use raw layers only for a beat that
+genuinely doesn't fit any of the three mograph types)
 =====================================================================
 {
   "id": string,   // optional, only needed if nothing else references it
@@ -1309,13 +1389,18 @@ generation are the ones most likely to slip by the last beat):
   left-margin value - for anything near "maxWidth" wide, keep it within
   roughly maxWidth/2 of ${Math.round(COMP_WIDTH / 2)} or it renders
   clipped off one edge of the canvas for the whole beat.
-- MANDATORY, every single beat, no exceptions: at least one "text" layer
-  with real, non-empty words. A beat with only shapes/icons and no text
-  conveys nothing and is REJECTED outright - this is not a style
-  preference, it is a hard requirement checked on every beat you write.
-- MANDATORY, every "image" layer: a real "icon" (Iconify "prefix:name")
-  or "src":"beatImage" - one of the two, always. An image layer with
-  neither has nothing to draw and is REJECTED outright.
+- MANDATORY, every beat: a real "mograph" spec (see MOGRAPH above) -
+  "nodeCluster", "connectorList", or "phoneSwap", picked deliberately
+  for what THIS beat is actually about, not the same type repeated
+  beat after beat. Only fall back to a raw "layers" array for a beat
+  that genuinely cannot be expressed as one of the three - that should
+  be rare, not the default.
+- If you DO write a raw "layers" array for one of those rare beats: at
+  least one "text" layer with real, non-empty words (a beat with only
+  shapes/icons and no text conveys nothing and is REJECTED outright),
+  and every "image" layer needs a real "icon" (Iconify "prefix:name")
+  or "src":"beatImage" - an image layer with neither has nothing to
+  draw and is REJECTED outright.
 - Every "type":"text" layer should carry its own deliberate
   "textAnimation.in" choice (see TEXTLAYERDEF above for the full preset
   list) - text should never simply BE there from the first frame with
