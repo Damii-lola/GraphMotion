@@ -5207,6 +5207,35 @@ function validateSceneJSON(sceneJSON) {
     errors.push('scenes: every beat was dropped as unusable (no valid "mograph" spec and no raw "visual" either) - at least one beat must produce real visual content.');
   }
 
+  // Direct user requirement (2026-09-05): no fixed beat-count/sequence
+  // driven by target duration any more - instead, the video is built
+  // from between 3 and 6 of the named mograph templates, each used AT
+  // MOST ONCE, in whatever order the treatment chose. Mechanically
+  // enforced here rather than trusted to prompt wording alone - same
+  // "mechanical enforcement beats prompt guidance" lesson this file
+  // already leans on everywhere else (narration length, hook openers,
+  // mandatory mograph itself). Only fires once at least one beat
+  // actually uses a named template - a video that's entirely raw
+  // "layers" beats (rare, and already discouraged elsewhere in the
+  // prompt) isn't newly rejected by this specific check.
+  const mographTypesUsed = sceneJSON.scenes
+    .map((beat) => (isPlainObject(beat) && isPlainObject(beat.mograph) && typeof beat.mograph.type === 'string' ? beat.mograph.type : null))
+    .filter(Boolean);
+  if (mographTypesUsed.length > 0) {
+    const seen = new Set();
+    const repeated = new Set();
+    for (const t of mographTypesUsed) {
+      if (seen.has(t)) repeated.add(t); else seen.add(t);
+    }
+    if (repeated.size > 0) {
+      errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
+    } else if (seen.size < 3) {
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 3 and 6 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster). Add more template beats to reach at least 3.`);
+    } else if (seen.size > 6) {
+      errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 6. Trim beats down to 6 or fewer distinct templates.`);
+    }
+  }
+
   sceneJSON.scenes.forEach((beat, i) => {
     const { errors: beatErrors } = validateBeat(beat, `scenes[${i}]`);
     errors.push(...beatErrors);

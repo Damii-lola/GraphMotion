@@ -1196,9 +1196,6 @@ function buildTreatmentSystemPrompt(targetDurationSeconds, creativeAngle) {
   // exact target (the same midpoint math every downstream consumer
   // already computes) removes the ambiguity at the source instead of
   // discovering the mismatch after a wasted generation.
-  const beatLo = Math.max(3, Math.round(targetDurationSeconds / 3));
-  const beatHi = Math.max(4, Math.round(targetDurationSeconds / 2.5));
-  const targetBeatCount = Math.round((beatLo + beatHi) / 2);
   return `You are a world-class motion graphics director - the kind of
 person clients pay a premium for because every single frame is
 intentional, well-paced, and alive, not just the text but the whole
@@ -1240,8 +1237,7 @@ frame-for-frame:
    than a different color for each - a beat mixing red AND lime-green
    AND teal all at once reads as busier and less "branded" than
    confidently committing to one.
-3. BEAT BY BEAT (beats are typically 2.5-4s each - see the real,
-   confirmed-live pacing note right below before planning how MANY):
+3. BEAT BY BEAT (beats are typically 2.5-4s each):
    keep this section
    clearly structured - start each beat with its own line reading
    "===BEAT n=== duration:X.Xs" (n starting at 0, X.X the beat's own
@@ -1261,17 +1257,37 @@ frame-for-frame:
    impossible. If a beat's whole idea is visual (a logo appearing, an
    icon popping in), pair it with real accompanying text - a name, a
    label, a short line - never leave it wordless.
-   Every beat covering ALL of:
-   REAL, CONFIRMED-LIVE PACING NOTE: prefer FEWER, more complete beats
-   over many rapid-fire ones for a given ${targetDurationSeconds}s total -
-   plan EXACTLY ${targetBeatCount} beats total, not fewer, not more,
-   and NOT 8-10+. This is not a loose suggestion - it's the exact count
-   every later step checks your work against, so treat it as a hard
-   target, not a range to pick freely within. A
-   real user complaint traced directly to this: too many short beats
-   cutting rapidly between each other read as chaotic and low-quality,
-   even when each individual beat was well-made - a viewer never gets
-   time to actually register one idea before the next replaces it.
+
+   TEMPLATE SELECTION - direct user requirement: every beat you plan
+   will be built from one of these named motion-graphics templates (the
+   real rendering engine's own building blocks, not something you
+   describe frame-by-frame yourself):
+   - nodeCluster: icon-nodes ring in together, one grows into a big hero
+     circle at center while the rest fade away - good for introducing
+     or focusing on ONE idea among several options.
+   - connectorList: a line draws itself down a vertical list of icon+
+     label pairs, revealing each as it goes - good for "here are the N
+     things" list/roadmap beats.
+   - phoneSwap: a phone shows a short headline, then crossfades to a
+     real icon on the same screen - good for an app/tool/product beat.
+   - splitConverge: one icon splits into two halves that fly in from
+     opposite off-screen edges and snap together at center - a strong
+     reveal/impact beat, "the answer," one big idea landing.
+   - mergeCluster: several small icons converge inward and merge into
+     one new, bigger icon (optionally labeled underneath) - good for
+     "these things COMBINE into this" beats.
+   Choose between 3 and 6 of these templates for this whole video -
+   never fewer than 3, never more than 6, and EACH TEMPLATE MAY BE USED
+   AT MOST ONCE across the entire video (no repeats - if you've already
+   used connectorList once, do not reach for it again for a later beat,
+   pick a different template even if it fits less perfectly). Use them
+   in WHATEVER ORDER genuinely serves this specific story best - there
+   is no required or expected sequence (you do not need to follow the
+   order listed above, and you do not need to use every template that
+   exists). Plan exactly one beat per chosen template, so your total
+   beat count equals however many distinct templates you chose (between
+   3 and 6) - state which template each beat uses as the FIRST thing in
+   that beat's own description, before anything else.
    Every beat also needs enough of its own duration to let its text
    ACTUALLY finish revealing (a real per-character reveal takes real
    time - roughly 35ms per character at minimum for it to read as a
@@ -1492,7 +1508,16 @@ Beat:
 =====================================================================
 MOGRAPH - THE way you build a beat's visual
 =====================================================================
-Pick ONE per beat, vary across the video:
+Pick ONE per beat. Direct user requirement: the treatment above already
+chose which of these 5 templates this video uses and in what order (it
+states the template first thing in each beat's own description) -
+encode that SAME choice here, do not substitute a different template
+than the one the treatment named for a given beat. Two hard rules
+either way: the WHOLE video uses between 3 and 6 of these templates
+total (never fewer than 3 beats, never more than 6), and EACH TEMPLATE
+IS USED AT MOST ONCE across the whole video - never repeat one, even if
+a later beat would otherwise fit it well. There is no fixed or expected
+order between them.
 { "type": "nodeCluster", "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload"], "chosenIndex": 0, "accentColor": "#8B5CF6" }
   icon-nodes ring in, one grows into a hero circle - intro/focus beat. "icons": 3-8 real Iconify names. "chosenIndex": 0-based, which becomes the hero.
 { "type": "connectorList", "items": [{"icon":"mdi:hand-heart","label":"Valuable"},{"icon":"mdi:puzzle","label":"Relevant"}], "accentColor": "#8B5CF6" }
@@ -1634,12 +1659,15 @@ FINAL CHECKLIST
 =====================================================================
 - "fontFamily" is ALWAYS EXACTLY one of ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')}.
 - No two layers in the same beat share identical "text".
-- Every beat: a real "mograph" spec (see MOGRAPH above) - "nodeCluster",
-  "connectorList", or "phoneSwap". Only fall back to a raw "layers"
-  array for a beat that genuinely cannot be one of the three - if you
-  do, it still needs at least one real, non-empty "text" layer
-  (REJECTED outright otherwise), and every "image" layer needs a real
-  "icon" (REJECTED otherwise if missing).
+- Every beat: a real "mograph" spec (see MOGRAPH above) - one of
+  "nodeCluster", "connectorList", "phoneSwap", "splitConverge", or
+  "mergeCluster". The whole video uses between 3 and 6 of these total,
+  each at most once, in whatever order the treatment chose - never
+  repeat one. Only fall back to a raw "layers" array for a beat that
+  genuinely cannot be any of the five - if you do, it still needs at
+  least one real, non-empty "text" layer (REJECTED outright otherwise),
+  and every "image" layer needs a real "icon" (REJECTED otherwise if
+  missing).
 - Every beat: a non-empty "params.narration" under 8 words, one
   sentence only.
 - If a beat uses a raw "layers" array, its dominant text layer's own
