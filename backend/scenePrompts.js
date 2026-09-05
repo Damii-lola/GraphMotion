@@ -1398,10 +1398,11 @@ generation are the ones most likely to slip by the last beat):
   roughly maxWidth/2 of ${Math.round(COMP_WIDTH / 2)} or it renders
   clipped off one edge of the canvas for the whole beat.
 - MANDATORY, every beat: a real "mograph" spec (see MOGRAPH above) -
-  "nodeCluster", "connectorList", or "phoneSwap", picked deliberately
-  for what THIS beat is actually about, not the same type repeated
-  beat after beat. Only fall back to a raw "layers" array for a beat
-  that genuinely cannot be expressed as one of the three - that should
+  "nodeCluster", "connectorList", "phoneSwap", "splitConverge", or
+  "mergeCluster", picked deliberately for what THIS beat is actually
+  about, not the same type repeated beat after beat. Only fall back to
+  a raw "layers" array for a beat that genuinely cannot be expressed as
+  one of the five - that should
   be rare, not the default.
 - If you DO write a raw "layers" array for one of those rare beats: at
   least one "text" layer with real, non-empty words (a beat with only
@@ -1498,7 +1499,11 @@ Pick ONE per beat, vary across the video:
   a line draws down a list of icon+label pairs - "here are the N things" beats. "items": 2-6, each a real "icon" + SHORT 1-2 word "label".
 { "type": "phoneSwap", "text": "Content Marketing", "icon": "mdi:bullhorn", "accentColor": "#8B5CF6" }
   a phone shows "text" (2-4 words) then crossfades to "icon" - app/tool beat.
-"accentColor" always OPTIONAL, omit to auto-pick. Raw "layers" (below) only for a beat none of these three fit - keep that rare.
+{ "type": "splitConverge", "icon": "mdi:bullhorn", "accentColor": "#8B5CF6" }
+  one icon splits in half, each half flies in from off-screen and snaps together at center - a strong reveal/impact beat, e.g. "the answer", a single big idea landing.
+{ "type": "mergeCluster", "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload"], "resultIcon": "mdi:movie-open", "accentColor": "#8B5CF6" }
+  small icon-nodes ("icons", 2-5) converge inward and merge into one new bigger circle showing "resultIcon" - "these things COMBINE into this" beats, distinct from nodeCluster (which singles ONE existing icon out, not combines several into something new).
+"accentColor" always OPTIONAL, omit to auto-pick. Raw "layers" (below) only for a beat none of these five fit - keep that rare.
 
 TextLayer:
 { "type": "text", "text": string, "fontFamily": one of ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')},

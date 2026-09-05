@@ -4697,7 +4697,260 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
   ];
 }
 
+/**
+ * Beat straight from the user's own original reference video description:
+ * "an icon split in half comes back together ie each half moves from
+ * outside the screen to the middle." Two copies of the SAME icon slide
+ * in from opposite off-screen edges and land exactly overlapped at
+ * center - each one masked via a REAL alpha track-matte (confirmed
+ * engine capability, engine/node.js + engine/layerStack.js, never
+ * exercised by any of this file's other mograph constructors before
+ * now) to a rectangle covering only its own half of the icon's own
+ * bounding box, so only the LEFT copy's left half and the RIGHT copy's
+ * right half are ever visible - together they read as one whole icon
+ * assembling itself from two directions, not two overlapping ghosts.
+ *
+ * Each half's matte rectangle gets its OWN position keyframes, not a
+ * shared reference (see cloneTrack's own doc comment for the real,
+ * confirmed-live bug this avoids) - built by taking that half's icon
+ * position keyframes and offsetting the X by a constant (half the
+ * icon's own width / 4, landing the matte's edge exactly on the icon's
+ * own center line), and given the SAME scale keyframes as its icon (via
+ * cloneTrack) so the mask stays proportional to the icon's own current
+ * rendered size through the settle-bounce at the end, not just at rest.
+ */
+function buildSplitConvergeLayers({ icon, accentColor }) {
+  const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
+  const ICON_SIZE = 170;
+  const START_OFFSET = CANVAS_WIDTH * 0.75 + ICON_SIZE;
+  const ARRIVE_TIME = 0.9;
+
+  const leftPos = [
+    { time: 0, value: [CENTER[0] - START_OFFSET, CENTER[1]], interpolation: 'easing', easing: 'easeOutCubic' },
+    { time: ARRIVE_TIME, value: [...CENTER] },
+  ];
+  const rightPos = [
+    { time: 0, value: [CENTER[0] + START_OFFSET, CENTER[1]], interpolation: 'easing', easing: 'easeOutCubic' },
+    { time: ARRIVE_TIME, value: [...CENTER] },
+  ];
+  const settleScale = { keyframes: [
+    { time: 0, value: [1, 1] },
+    { time: ARRIVE_TIME, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' },
+    { time: ARRIVE_TIME + 0.15, value: [1.16, 1.16], interpolation: 'easing', easing: 'easeInOutCubic' },
+    { time: ARRIVE_TIME + 0.32, value: [1, 1] },
+  ] };
+  const matteOffset = (keyframes, dx) => keyframes.map((kf) => ({ ...kf, value: [kf.value[0] + dx, kf.value[1]] }));
+
+  return [
+    {
+      id: '__split_matte_left__',
+      type: 'shape',
+      width: ICON_SIZE / 2 + 2,
+      height: ICON_SIZE * 1.2,
+      position: { keyframes: matteOffset(leftPos, -ICON_SIZE / 4) },
+      scale: cloneTrack(settleScale),
+      contents: [
+        { type: 'path', shape: { kind: 'rectangle', params: { width: ICON_SIZE / 2 + 2, height: ICON_SIZE * 1.2 } } },
+        { type: 'fill', color: '#FFFFFF' },
+      ],
+    },
+    {
+      id: '__split_icon_left__',
+      type: 'image',
+      icon,
+      iconColor: accentColor,
+      width: ICON_SIZE,
+      height: ICON_SIZE,
+      position: { keyframes: leftPos },
+      scale: cloneTrack(settleScale),
+      trackMatte: { source: '__split_matte_left__', type: 'alpha' },
+    },
+    {
+      id: '__split_matte_right__',
+      type: 'shape',
+      width: ICON_SIZE / 2 + 2,
+      height: ICON_SIZE * 1.2,
+      position: { keyframes: matteOffset(rightPos, ICON_SIZE / 4) },
+      scale: cloneTrack(settleScale),
+      contents: [
+        { type: 'path', shape: { kind: 'rectangle', params: { width: ICON_SIZE / 2 + 2, height: ICON_SIZE * 1.2 } } },
+        { type: 'fill', color: '#FFFFFF' },
+      ],
+    },
+    {
+      id: '__split_icon_right__',
+      type: 'image',
+      icon,
+      iconColor: accentColor,
+      width: ICON_SIZE,
+      height: ICON_SIZE,
+      position: { keyframes: rightPos },
+      scale: cloneTrack(settleScale),
+      trackMatte: { source: '__split_matte_right__', type: 'alpha' },
+    },
+    {
+      id: '__split_ring__',
+      type: 'shape',
+      width: ICON_SIZE * 1.5,
+      height: ICON_SIZE * 1.5,
+      position: [...CENTER],
+      scale: { keyframes: [
+        { time: 0, value: [0.4, 0.4] },
+        { time: ARRIVE_TIME, value: [0.4, 0.4], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: ARRIVE_TIME + 0.4, value: [1, 1] },
+      ] },
+      // Real, confirmed-live bug found via direct frame inspection, TWO
+      // rounds of it: keyframes always ANIMATE between consecutive
+      // points, they don't hold - a first fix adding a single {time:0,
+      // value:0} keyframe still left this interpolating smoothly from 0
+      // up to 0.8 across the ENTIRE 0-to-ARRIVE_TIME span (confirmed by
+      // re-rendering: still visibly present, just fainter, at a frame
+      // well before arrival). What's actually needed is a real HOLD
+      // plateau - the SAME two-consecutive-equal-values pattern this
+      // file's own nodeCluster/connectorList tracks already use
+      // elsewhere: 0 at time 0, STILL 0 immediately before ARRIVE_TIME,
+      // only THEN easing up to 0.8 - so opacity stays flat at zero for
+      // the whole approach instead of gradually leaking in.
+      opacity: { keyframes: [
+        { time: 0, value: 0 },
+        { time: ARRIVE_TIME - 0.01, value: 0 },
+        { time: ARRIVE_TIME, value: 0.8, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: ARRIVE_TIME + 0.4, value: 0 },
+      ] },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: ICON_SIZE * 1.5, height: ICON_SIZE * 1.5 } } },
+        { type: 'stroke', color: accentColor, width: 3 },
+      ],
+    },
+  ];
+}
+
+/**
+ * Beat straight from the user's own original reference video description:
+ * a chosen node "shrank down to be part of other circles in a space
+ * then all comes together to form a big node" - distinct from
+ * nodeCluster (one existing icon grows into the hero, the others just
+ * fade away): here every input icon shrinks and slides inward
+ * TOGETHER, all converging on the exact same center point, and a
+ * genuinely NEW, bigger result circle pops in right as they arrive -
+ * reading as several separate things combining into one new whole,
+ * not one thing among several being singled out.
+ */
+function buildMergeClusterLayers({ icons, resultIcon, accentColor }) {
+  const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
+  const NODE_SIZE = 64;
+  const START_RADIUS = 190;
+  const CONVERGE_TIME = 1.1;
+  const layers = [];
+
+  icons.forEach((icon, i) => {
+    const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
+    const startX = CENTER[0] + Math.cos(angle) * START_RADIUS;
+    const startY = CENTER[1] + Math.sin(angle) * START_RADIUS;
+    const delay = 0.05 * i;
+    const posKf = { keyframes: [
+      { time: delay, value: [startX, startY], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: delay + 0.25, value: [startX, startY] },
+      { time: CONVERGE_TIME, value: [...CENTER], interpolation: 'easing', easing: 'easeInCubic' },
+    ] };
+    const opacityKf = { keyframes: [
+      { time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: delay + 0.2, value: 1 },
+      { time: CONVERGE_TIME - 0.15, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+      { time: CONVERGE_TIME, value: 0 },
+    ] };
+    const scaleKf = { keyframes: [
+      { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: delay + 0.25, value: [1, 1] },
+      { time: CONVERGE_TIME - 0.15, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+      { time: CONVERGE_TIME, value: [0.3, 0.3] },
+    ] };
+    layers.push({
+      id: `__merge_bg_${i}__`,
+      type: 'shape',
+      width: NODE_SIZE,
+      height: NODE_SIZE,
+      position: posKf,
+      scale: cloneTrack(scaleKf),
+      opacity: opacityKf,
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
+        { type: 'stroke', color: '#FFFFFF', width: 2 },
+      ],
+    });
+    layers.push({
+      id: `__merge_icon_${i}__`,
+      type: 'image',
+      icon,
+      iconColor: '#E9E4FF',
+      width: NODE_SIZE * 0.5,
+      height: NODE_SIZE * 0.5,
+      position: cloneTrack(posKf),
+      scale: cloneTrack(scaleKf),
+      opacity: cloneTrack(opacityKf),
+    });
+  });
+
+  const RESULT_SIZE = 150;
+  layers.push({
+    id: '__merge_result_bg__',
+    type: 'shape',
+    width: RESULT_SIZE,
+    height: RESULT_SIZE,
+    position: [...CENTER],
+    scale: { keyframes: [
+      { time: CONVERGE_TIME - 0.05, value: [0.2, 0.2], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: CONVERGE_TIME + 0.3, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
+      { time: CONVERGE_TIME + 0.45, value: [1, 1] },
+    ] },
+    opacity: { keyframes: [{ time: CONVERGE_TIME - 0.05, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: CONVERGE_TIME + 0.1, value: 1 }] },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: RESULT_SIZE, height: RESULT_SIZE } } },
+      { type: 'fill', color: accentColor },
+    ],
+  });
+  layers.push({
+    id: '__merge_result_icon__',
+    type: 'image',
+    icon: resultIcon,
+    iconColor: '#FFFFFF',
+    width: RESULT_SIZE * 0.5,
+    height: RESULT_SIZE * 0.5,
+    position: [...CENTER],
+    scale: { keyframes: [
+      { time: CONVERGE_TIME - 0.05, value: [0.2, 0.2], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: CONVERGE_TIME + 0.3, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
+      { time: CONVERGE_TIME + 0.45, value: [1, 1] },
+    ] },
+    opacity: { keyframes: [{ time: CONVERGE_TIME - 0.05, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: CONVERGE_TIME + 0.1, value: 1 }] },
+  });
+
+  return layers;
+}
+
 const MOGRAPH_ICON_RE = /^[a-z0-9-]+:[a-z0-9-]+$/i;
+
+/**
+ * Real, confirmed-live bug found via a direct visual render inspection
+ * (2026-09-05, cross-provider evaluation): phoneSwap's "text" and
+ * connectorList's "label" were both capped with a blind `.slice(0, N)`
+ * - safe against a wildly long string in the abstract, but a real
+ * generation (Gemini, in this case - wrote "Your brain is actually
+ * glitching", 5 words against the "2-4 words" guidance) got sliced mid-
+ * WORD ("...ACTUALLY GLI"), rendering as a visibly broken, half-cut-off
+ * fragment instead of either the full word or a clean omission. Any
+ * provider that occasionally runs long (not just the one caught here)
+ * hits the exact same bug. Truncates at the last real word boundary
+ * within the limit instead - if the text is already short enough, this
+ * is a no-op; only kicks in for the genuinely-too-long case a length
+ * cap is meant to catch anyway.
+ */
+function truncateAtWordBoundary(text, maxChars) {
+  if (text.length <= maxChars) return text;
+  const cut = text.slice(0, maxChars);
+  const lastSpace = cut.lastIndexOf(' ');
+  return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trim();
+}
 
 /**
  * Dispatcher: compiles a beat's tiny `mograph` spec into real
@@ -4733,10 +4986,15 @@ function buildMographBeatVisual(beat) {
     const items = spec.items
       .filter((it) => isPlainObject(it) && typeof it.icon === 'string' && MOGRAPH_ICON_RE.test(it.icon) && typeof it.label === 'string' && it.label.trim())
       .slice(0, 6)
-      .map((it) => ({ icon: it.icon, label: it.label.trim().toUpperCase().slice(0, 18) }));
+      .map((it) => ({ icon: it.icon, label: truncateAtWordBoundary(it.label.trim().toUpperCase(), 18) }));
     if (items.length >= 2) layers = buildConnectorListLayers({ items, accentColor });
   } else if (spec.type === 'phoneSwap' && typeof spec.text === 'string' && spec.text.trim() && typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon)) {
-    layers = buildPhoneSwapLayers({ text: spec.text.trim().toUpperCase().slice(0, 26), icon: spec.icon, accentColor });
+    layers = buildPhoneSwapLayers({ text: truncateAtWordBoundary(spec.text.trim().toUpperCase(), 26), icon: spec.icon, accentColor });
+  } else if (spec.type === 'splitConverge' && typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon)) {
+    layers = buildSplitConvergeLayers({ icon: spec.icon, accentColor });
+  } else if (spec.type === 'mergeCluster' && Array.isArray(spec.icons) && typeof spec.resultIcon === 'string' && MOGRAPH_ICON_RE.test(spec.resultIcon)) {
+    const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 5);
+    if (icons.length >= 2) layers = buildMergeClusterLayers({ icons, resultIcon: spec.resultIcon, accentColor });
   }
 
   if (layers) beat.visual = { layers };
@@ -6757,5 +7015,7 @@ module.exports = {
   buildNodeClusterLayers,
   buildConnectorListLayers,
   buildPhoneSwapLayers,
+  buildSplitConvergeLayers,
+  buildMergeClusterLayers,
   buildMographBeatVisual,
 };
