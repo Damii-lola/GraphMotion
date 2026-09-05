@@ -1,7 +1,7 @@
 const { jsonrepair } = require('jsonrepair');
-const { validateSceneJSON } = require('./sceneSchema');
+const { validateSceneJSON, validateBeat, buildMographBeatVisual } = require('./sceneSchema');
 const {
-  buildTreatmentSystemPrompt, buildMinimalGenerationSystemPrompt, buildEditSystemPrompt, listTreatmentBeatHeaders,
+  buildTreatmentSystemPrompt, buildMinimalGenerationSystemPrompt, buildEditSystemPrompt,
 } = require('./scenePrompts');
 const { callGroqRaw } = require('./groqClient');
 const { callGeminiRaw } = require('./geminiClient');
@@ -70,48 +70,43 @@ function extractJson(text) {
   }
 }
 
-// The FALLBACK path for the big JSON-encoding call, only reached when
-// Groq's own transport genuinely fails (see callMinimalSceneJSONTransport
+// The FALLBACK path for a beat's own JSON-encoding call, only reached
+// when Groq's own transport genuinely fails (see callBeatJSONTransport
 // below) - Gemini's own retry/timeout/multi-key resilience already
 // lives inside callGeminiRaw. No further fallback past Gemini - Mistral
 // used to sit here but is removed per direct user instruction (its keys
 // no longer exist); if Gemini also fails, the caller's own retry loop
-// (generateWholeSceneJSON) is what gets another shot, not a third
-// provider.
+// (generateOneBeatJSON) is what gets another shot, not a third provider.
 async function callSceneJSONTransport(systemPrompt, userMessage, maxTokens) {
   return callGeminiRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens });
 }
 
 // Real, direct user demand this session: "REDUCE THE FUCKING INPUT" so
-// Groq (free, fast, but a flat ~8000 TPM ceiling per key per request)
-// can actually run the whole-scene JSON-encoding call, not just the
-// small treatment step. buildMinimalGenerationSystemPrompt measures at
-// ~3,350 real tokens (gpt-tokenizer-measured, not estimated) after the
-// MOGRAPH section was added - down from buildGenerationSystemPrompt's
-// ~17,700 - by cutting everything this session's own mechanical passes
-// (ensureSustainedWordMotion/ensureDropShadowOnDominant/
-// ensureActiveBackgroundElement/ensureBackgroundSwoosh/
-// ensureDecorativeAccent/varyHeadlinePositions, all in sceneSchema.js)
-// already guarantee regardless of what the model outputs - see that
-// function's own doc comment for the full reasoning. Groq first (fits
-// comfortably now), Gemini as real fallback if Groq's transport itself
-// fails - same fallback shape as the rich path above, just a different
-// primary.
+// Groq (free, fast, but a flat ~8000 TPM ceiling per key per request,
+// checked against system+user+max_tokens as REQUESTED, not actual
+// usage) can actually run the JSON-encoding step, not just the small
+// treatment step. buildMinimalGenerationSystemPrompt measures at
+// ~3,350 real tokens (gpt-tokenizer-measured) after MOGRAPH was added -
+// a FIXED cost every call pays regardless of video length, since it's
+// the same schema teaching every time.
 //
-// maxTokens cut 5000 -> 3500 specifically when MOGRAPH was added here:
-// Groq's flat 8000 TPM ceiling is checked against system+user+max_tokens
-// as REQUESTED, not actual usage (confirmed live: a real "Requested
-// 10437, Limit 8000" error from this exact failure mode elsewhere in
-// this file's own history) - system alone grew to ~3350 tokens, so the
-// old 5000 left almost no room for the userMessage (treatment text +
-// beat headers) before hitting the ceiling. 3500 is still generous for
-// real output: a mograph spec is far more compact per beat than a raw
-// "layers" array ever was (a maxed-out 6-item connectorList beat is
-// ~100 tokens of JSON), so encouraging mograph should need LESS output
-// budget than before, not more.
-async function callMinimalSceneJSONTransport(systemPrompt, userMessage, maxTokens) {
+// Real, confirmed-live failure this transport exists to prevent
+// (2026-09-05): the OLD design sent the WHOLE video's treatment (every
+// beat's own plan, concatenated) plus every beat's own retry error text
+// in ONE call - both grow with video length AND with how many retries
+// a round needs, so total request size was fundamentally unbounded
+// against a FIXED ceiling. Confirmed live: "Request too large... Limit
+// 8000, Requested 9351" on a completely ordinary 5-beat video, one
+// retry round in. Direct user fix suggestion, implemented here exactly
+// as described: "Split it into small chunks to give to grok" - one
+// Groq call per BEAT (see generateOneBeatJSON below), not one call for
+// the whole video. Each call's own user message is just ONE beat's own
+// treatment text, a near-constant, small size regardless of how many
+// beats the video has - the thing that used to grow unboundedly is
+// gone entirely, not just budgeted more carefully around.
+async function callBeatJSONTransport(systemPrompt, userMessage, maxTokens) {
   try {
-    return await callGroqRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 3500 });
+    return await callGroqRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens });
   } catch (err) {
     console.warn(`[sceneGenClient] Groq failed (${err.message}), falling back to Gemini`);
     return callSceneJSONTransport(systemPrompt, userMessage, maxTokens);
@@ -183,9 +178,9 @@ async function judgeNarrationScript(sceneJSON) {
     // prompt's own "under 15 words" request, a real ceiling. The prompt
     // instruction alone doesn't guarantee brevity (this session's own
     // "mechanical enforcement beats prompt guidance" lesson again) and
-    // this reason text gets re-injected into the NEXT encode round's
-    // user message - see generateWholeSceneJSON's own doc comment for
-    // the real 413 this caused live when it was allowed to run long.
+    // this reason text gets re-injected into every beat's own next
+    // encode round (see generateOneBeatJSON) - a real 413 was caused
+    // live by an unbounded version of this same text once already.
     const raw = await callGroqRaw(SCRIPT_JUDGE_SYSTEM_PROMPT, numberedScript, { jsonMode: false, maxTokens: 80, temperature: 0.6 });
     const verdictMatch = raw.match(/VERDICT:\s*(PASS|FAIL)/i);
     const reasonMatch = raw.match(/REASON:\s*([\s\S]*)/i);
@@ -235,55 +230,121 @@ async function generateCreativeTreatment(userPrompt, targetDurationSeconds) {
   return callGroqRaw(systemPrompt, userPrompt, { jsonMode: false, maxTokens: 5500, temperature: 0.85 });
 }
 
-async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft = 16, priorErrors = null, judgeFeedback = null } = {}) {
-  const systemPrompt = buildMinimalGenerationSystemPrompt(targetDurationSeconds);
-  const beatHeaders = listTreatmentBeatHeaders(treatment);
-  let userMessage = `CREATIVE TREATMENT (already planned by a senior director - encode this EXACTLY and FAITHFULLY, missing nothing; every real beat/idea below must become its own real text layer, never simplified or dropped to something generic. The treatment may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead (a hard hit, a flash, a snap into place) rather than inventing a nonexistent field. Only use real fields from the schema above - never invent new ones. Motion, effects, and background decoration are already handled automatically - focus entirely on real words and layout.):\n${treatment}\n\nOriginal request: ${userPrompt}`;
-  // Real, direct-user-requested feedback loop: a SEPARATE brutal judge
-  // model already reviewed a PREVIOUS attempt's narration script and
-  // rejected it as boring - this is that judge's own specific critique,
-  // framed distinctly from priorErrors below (that one means "your JSON
-  // was structurally invalid"; this one means "your JSON was valid but
-  // the SCRIPT ITSELF wasn't good enough" - a real, different kind of
-  // problem, worth its own clear framing so the model doesn't confuse
-  // a content note for a syntax one).
-  //
-  // Real, live-confirmed bug (2026-09-03): this used to be a full
-  // paragraph wrapping the judge's own (previously unbounded) reason
-  // text - harmless-looking, but Groq's flat 8000 TPM per-request
-  // ceiling has almost no slack once the base prompt (system + treatment
-  // + beat headers) is already accounted for (measured live: round 1,
-  // no feedback, fits; round 2/3, WITH this paragraph added, hit a real
-  // 413 "Requested 8143, Limit 8000" - a ~143 token overage that lines
-  // up almost exactly with how much this wrapping text plus a verbose
-  // judge reason used to cost). Trimmed to the essentials - the judge's
-  // OWN reason is now also capped short (see SCRIPT_JUDGE_SYSTEM_PROMPT)
-  // so this stays cheap on every round, not just the first one.
-  if (judgeFeedback) userMessage += `\n\nA brutal judge rejected your last script as boring: "${judgeFeedback}" Rewrite the narration (and matching on-screen text) to fix this - same treatment, same beat count.`;
-  if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON - still encoding the treatment above.`;
-  if (beatHeaders.length > 0) {
-    userMessage += `\n\nThe treatment above contains EXACTLY ${beatHeaders.length} beats:\n${beatHeaders.join('\n')}\n\nYour "scenes" array MUST contain EXACTLY ${beatHeaders.length} entries, one per beat above, in this same order - not fewer, not merged, not summarized. Before you finish, go down this list one at a time and confirm each has its own real entry in "scenes".`;
-  }
+// Splits a treatment's plain-prose HOOK/PALETTE section off (never sent
+// to the per-beat call - it's director's-notes-to-self, not part of any
+// one beat's own plan) and the rest into one chunk per "===BEAT n==="
+// section, each chunk keeping its own header line. Mirrors
+// listTreatmentBeatHeaders' own BEAT_HEADER_RE exactly (duplicated
+// rather than imported - scenePrompts.js doesn't export the regex
+// itself, just the header-listing function built on it).
+const BEAT_HEADER_RE = /===\s*BEAT\s+\d+\s*===[^\n]*/gi;
+function splitTreatmentIntoBeats(treatment) {
+  const indices = [];
+  let m;
+  const re = new RegExp(BEAT_HEADER_RE.source, BEAT_HEADER_RE.flags);
+  while ((m = re.exec(treatment))) indices.push(m.index);
+  if (indices.length === 0) return [treatment.trim()].filter(Boolean);
+  return indices.map((start, i) => treatment.slice(start, indices[i + 1] ?? treatment.length).trim());
+}
 
-  const result = await callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, (err, nextRetriesLeft) => generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: nextRetriesLeft, priorErrors, judgeFeedback }), callMinimalSceneJSONTransport);
+// Generates and validates exactly ONE beat - the direct fix for a real,
+// confirmed-live failure (2026-09-05): the OLD design sent the WHOLE
+// treatment plus accumulated retry-error text in ONE Groq call, both of
+// which grow with video length/retry count against Groq's FIXED 8000
+// TPM ceiling - confirmed live: "Request too large... Limit 8000,
+// Requested 9351" on an ordinary 5-beat video. Direct user fix
+// suggestion, implemented exactly as described: "Split it into small
+// chunks to give to grok." Each call's own userMessage is just ONE
+// beat's own treatment text - small and essentially CONSTANT size
+// regardless of total video length, so the thing that used to grow
+// unboundedly against a fixed ceiling is structurally gone, not just
+// budgeted more carefully around.
+async function generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, systemPrompt, { retriesLeft = 4, priorErrors = null, judgeFeedback = null } = {}) {
+  let userMessage = `Video topic: ${userPrompt}\nThis is beat ${beatIndex + 1} of ${totalBeats} in the video.\nEncode this ONE beat EXACTLY and faithfully as a single Beat object matching the schema above (the top-level object itself, NOT wrapped in a "scenes" array - just {"params":...,"visual":...}). The plan may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead. Only use real fields from the schema above.\n\nThis beat's own plan:\n${beatText}`;
+  if (judgeFeedback) userMessage += `\n\nA brutal judge rejected the previous full script as boring: "${judgeFeedback}" Make THIS beat's narration genuinely sharper and more hooked, not generic - keep the same core idea.`;
+  if (priorErrors) userMessage += `\n\nYour previous attempt at this beat was invalid:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected single Beat object.`;
 
-  const { valid, errors } = validateSceneJSON(result);
-  const expectedBeats = beatHeaders.length;
-  const actualBeats = valid && Array.isArray(result.scenes) ? result.scenes.length : 0;
-  const isTooShort = valid && expectedBeats > 0 && actualBeats < expectedBeats;
-
-  if (!valid || isTooShort) {
-    const completenessError = isTooShort
-      ? [`scenes: the treatment planned ${expectedBeats} beat(s), but only ${actualBeats} scene(s) were encoded. The treatment's exact beats are:\n${beatHeaders.join('\n')}\n\nEVERY one of these must become its own entry in "scenes", in order, none skipped, merged, or summarized away. Output all ${expectedBeats}.`]
-      : [];
-    const allErrors = [...errors, ...completenessError];
+  const raw = await callBeatJSONTransport(systemPrompt, userMessage, 1500);
+  let beat;
+  try {
+    beat = extractJson(raw);
+  } catch (err) {
     if (retriesLeft > 0) {
-      console.warn(`[sceneGenClient] generated scene JSON ${!valid ? 'failed validation' : 'was too short'} (${allErrors.length} error(s)), retrying: ${allErrors.slice(0, 3).join('; ')}`);
-      return generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: retriesLeft - 1, priorErrors: allErrors, judgeFeedback });
+      console.warn(`[sceneGenClient] beat ${beatIndex} JSON parse failed (${err.message}), retrying...`);
+      return generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, systemPrompt, { retriesLeft: retriesLeft - 1, priorErrors, judgeFeedback });
     }
-    throw new Error(`Groq-generated scene JSON failed schema validation after retries: ${allErrors.join('; ')}`);
+    throw err;
   }
-  return result;
+
+  buildMographBeatVisual(beat);
+  const { valid, errors } = validateBeat(beat, `beat${beatIndex}`);
+  if (!valid) {
+    if (retriesLeft > 0) {
+      console.warn(`[sceneGenClient] beat ${beatIndex} failed validation (${errors.length} error(s)), retrying: ${errors.slice(0, 2).join('; ')}`);
+      return generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, systemPrompt, { retriesLeft: retriesLeft - 1, priorErrors: errors, judgeFeedback });
+    }
+    throw new Error(`Groq-generated beat ${beatIndex} failed schema validation after retries: ${errors.join('; ')}`);
+  }
+  return beat;
+}
+
+// Outer assembly: one generateOneBeatJSON call per beat (fired together -
+// groqClient.js's own per-key adaptive round-robin queue already spaces
+// these out safely, the same mechanism narrationTagging.js's own
+// parallel per-beat calls already rely on), then the FULL
+// validateSceneJSON on the assembled {scenes:[...]} for the whole-
+// video-level checks per-beat validation alone can't do (the opening-
+// hook check, ensureCumulativeListBeats, varyHeadlinePositions, the
+// shared background-decoration seed). Beat COUNT is structurally
+// guaranteed correct by construction now (exactly one call per treatment
+// beat, each retried until individually valid) - the old "beat count
+// came back short" check is gone because there's no longer a way for it
+// to happen.
+//
+// A residual whole-scene-level error (rare - individual beats already
+// passed their own validateBeat) is repaired by regenerating ONLY the
+// specific beat(s) named in the error (parsed from "scenes[N]." prefix),
+// not the whole video - same "small, targeted retry" principle as the
+// per-beat generation itself.
+const MAX_WHOLE_SCENE_REPAIR_ROUNDS = 3;
+async function generateAllBeatsJSON(userPrompt, targetDurationSeconds, treatment, judgeFeedback) {
+  const systemPrompt = buildMinimalGenerationSystemPrompt(targetDurationSeconds);
+  const beatChunks = splitTreatmentIntoBeats(treatment);
+  const beats = await Promise.all(beatChunks.map((chunk, i) => generateOneBeatJSON(userPrompt, chunk, i, beatChunks.length, systemPrompt, { judgeFeedback })));
+
+  for (let round = 0; round <= MAX_WHOLE_SCENE_REPAIR_ROUNDS; round++) {
+    const sceneJSON = { scenes: beats };
+    const { valid, errors } = validateSceneJSON(sceneJSON);
+    if (valid) return sceneJSON;
+    if (round === MAX_WHOLE_SCENE_REPAIR_ROUNDS) {
+      throw new Error(`Groq-generated scene JSON failed whole-scene validation after ${MAX_WHOLE_SCENE_REPAIR_ROUNDS} repair rounds: ${errors.join('; ')}`);
+    }
+    const byBeatIndex = new Map();
+    const unindexed = [];
+    for (const err of errors) {
+      const m = err.match(/^scenes\[(\d+)\]/);
+      if (m) {
+        const idx = Number(m[1]);
+        if (!byBeatIndex.has(idx)) byBeatIndex.set(idx, []);
+        byBeatIndex.get(idx).push(err);
+      } else {
+        unindexed.push(err);
+      }
+    }
+    if (byBeatIndex.size === 0) {
+      // No single beat to blame (a genuinely whole-video-level problem,
+      // e.g. the root object shape itself) - nothing targeted to retry.
+      throw new Error(`Groq-generated scene JSON failed whole-scene validation with no specific beat to repair: ${unindexed.join('; ')}`);
+    }
+    console.warn(`[sceneGenClient] whole-scene validation found ${byBeatIndex.size} beat(s) needing repair (round ${round + 1}/${MAX_WHOLE_SCENE_REPAIR_ROUNDS}): ${[...byBeatIndex.keys()].join(',')}`);
+    await Promise.all([...byBeatIndex.entries()].map(async ([idx, beatErrors]) => {
+      if (idx >= beatChunks.length) return; // stale index from a prior round's now-fixed array shape
+      beats[idx] = await generateOneBeatJSON(userPrompt, beatChunks[idx], idx, beatChunks.length, systemPrompt, { priorErrors: beatErrors, judgeFeedback });
+    }));
+  }
+  // Unreachable (the loop above always returns or throws), kept only to
+  // satisfy control-flow analysis.
+  return { scenes: beats };
 }
 
 // Real, direct user request: "the first AI will be generated and give
@@ -291,7 +352,7 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
 // to the first ai to regenerate... the cycle will repeat over and over
 // till we get a VERY NICE INTERESTING EYECATCHING SCROLLSTOPPING
 // script." Wired as its own outer loop, separate from
-// generateWholeSceneJSON's own schema-validation retries (a script can
+// generateAllBeatsJSON's own schema-validation retries (a script can
 // be perfectly valid JSON on the first try and still fail the judge,
 // or vice versa) - capped at MAX_JUDGE_ROUNDS total attempts; if the
 // judge still hasn't passed by then, ships the LAST attempt anyway
@@ -303,8 +364,8 @@ async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
   let sceneJSON = null;
   let judgeFeedback = null;
   for (let round = 1; round <= MAX_JUDGE_ROUNDS; round++) {
-    console.log(`[sceneGenClient] encoding whole scene (script round ${round}/${MAX_JUDGE_ROUNDS})...`);
-    sceneJSON = await generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { judgeFeedback });
+    console.log(`[sceneGenClient] encoding scene, one beat at a time (script round ${round}/${MAX_JUDGE_ROUNDS})...`);
+    sceneJSON = await generateAllBeatsJSON(userPrompt, targetDurationSeconds, treatment, judgeFeedback);
 
     console.log('[sceneGenClient] judging narration script...');
     const verdict = await judgeNarrationScript(sceneJSON);

@@ -6757,4 +6757,5 @@ module.exports = {
   buildNodeClusterLayers,
   buildConnectorListLayers,
   buildPhoneSwapLayers,
+  buildMographBeatVisual,
 };
