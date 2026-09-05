@@ -4480,6 +4480,59 @@ function computeZigzagPositions(count) {
 // a background-vs-icon relationship.
 const NODE_HUE_OFFSETS = [0, -45, 45, -90, 90, -135, 135, 180];
 
+// Phase 1's own hero settle time (1.7s, a flat cut straight to final
+// size) is where Phase 2's "money shot" transition drama replaces it -
+// direct spec: anticipation squash, explosive overshoot, THEN settle.
+// Pushes the hero's own final-size arrival back to ~2.05s.
+const HERO_ANTICIPATION_TIME = 1.6;
+const HERO_EXPLODE_TIME = 1.85;
+const HERO_SETTLE_TIME = 2.05;
+
+/**
+ * Small glowing shards flung outward from a dissolving outer icon,
+ * timed to its own exit - direct spec: "dissolve into small glowing
+ * particle bursts" rather than a plain fade. Reuses the SAME hold-then-
+ * ease keyframe shape this file's own splitConverge ring already
+ * proved necessary (a plain 2-keyframe opacity track interpolates
+ * smoothly from frame 0, not a real hold - see buildSplitConvergeLayers'
+ * own doc comment for the original bug this avoids).
+ */
+function buildIconBurstParticles(index, x, y, color, burstTime) {
+  const PARTICLE_COUNT = 4;
+  const particles = [];
+  for (let p = 0; p < PARTICLE_COUNT; p++) {
+    const angle = (p / PARTICLE_COUNT) * Math.PI * 2 + index * 0.7;
+    const dist = 16 + (p % 2) * 12;
+    const endX = x + Math.cos(angle) * dist;
+    const endY = y + Math.sin(angle) * dist;
+    particles.push({
+      id: `__node_burst_${index}_${p}__`,
+      type: 'shape',
+      width: 7,
+      height: 7,
+      position: { keyframes: [
+        { time: burstTime, value: [x, y], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: burstTime + 0.28, value: [endX, endY] },
+      ] },
+      scale: { keyframes: [
+        { time: burstTime, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: burstTime + 0.28, value: [0.15, 0.15] },
+      ] },
+      opacity: { keyframes: [
+        { time: 0, value: 0 },
+        { time: burstTime - 0.005, value: 0 },
+        { time: burstTime, value: 0.9, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: burstTime + 0.28, value: 0 },
+      ] },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: 7, height: 7 } } },
+        { type: 'fill', color },
+      ],
+    });
+  }
+  return particles;
+}
+
 function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
   const RING_RADIUS = 150;
@@ -4492,6 +4545,12 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
     const y = CENTER[1] + Math.sin(angle) * RING_RADIUS;
     const delay = 0.05 * i;
     const isChosen = i === chosenIndex;
+    // Non-chosen exit upgraded per direct spec: "slight scale-down while
+    // being pulled a few pixels toward the hero, then dissolve" - was a
+    // flat fade-in-place with zero further movement after arrival.
+    // Pulled 35% of the way toward CENTER, not all the way - a full
+    // pull-to-center would visually collide with the hero's OWN
+    // concurrent explosive overshoot at this same moment.
     const posKf = isChosen
       ? { keyframes: [
         { time: delay, value: [x, y], interpolation: 'easing', easing: 'easeOutCubic' },
@@ -4501,6 +4560,8 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
       : { keyframes: [
         { time: delay, value: CENTER, interpolation: 'easing', easing: 'easeOutCubic' },
         { time: delay + 0.4, value: [x, y] },
+        { time: 1.0, value: [x, y], interpolation: 'easing', easing: 'easeInCubic' },
+        { time: 1.3, value: [x + (CENTER[0] - x) * 0.35, y + (CENTER[1] - y) * 0.35] },
       ] };
     const opacityKf = isChosen
       ? { keyframes: [{ time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: delay + 0.25, value: 1 }] }
@@ -4530,17 +4591,28 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
       width: NODE_SIZE,
       height: NODE_SIZE,
       position: posKf,
+      // Hero scale-up upgraded per direct spec: anticipation squash,
+      // explosive overshoot PAST the final size, then settle - was a
+      // single flat cut straight to 4.3x with no drama at all. Non-hero
+      // arrival gets its own small overshoot + settle bounce ("tiny
+      // scale settle bounce when they lock into the diamond formation")
+      // plus a brief anticipation pop right before it shrinks away.
       scale: isChosen
         ? { keyframes: [
           { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
           { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
           { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.7, value: [4.3, 4.3] },
+          { time: HERO_ANTICIPATION_TIME, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: HERO_ANTICIPATION_TIME + 0.08, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: HERO_EXPLODE_TIME, value: [4.75, 4.75], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: HERO_SETTLE_TIME, value: [4.3, 4.3] },
         ] }
         : { keyframes: [
           { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.0, value: [1, 1] },
+          { time: delay + 0.3, value: [1.18, 1.18], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.42, value: [1, 1] },
+          { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.12, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
           { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
         ] },
       opacity: opacityKf,
@@ -4581,12 +4653,17 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
           { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
           { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
           { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.7, value: [3.6, 3.6] },
+          { time: HERO_ANTICIPATION_TIME, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: HERO_ANTICIPATION_TIME + 0.08, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: HERO_EXPLODE_TIME, value: [3.95, 3.95], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: HERO_SETTLE_TIME, value: [3.6, 3.6] },
         ] }
         : { keyframes: [
           { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.0, value: [1, 1] },
+          { time: delay + 0.3, value: [1.18, 1.18], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.42, value: [1, 1] },
+          { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+          { time: 1.12, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
           { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
         ] },
       opacity: cloneTrack(opacityKf),
@@ -4603,8 +4680,82 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
     // shared center, so nothing needs to move together here at all.
     if (isChosen) {
       layers[layers.length - 1].rotation = { expression: 'wiggle(0.3, 4)', base: 0 };
+      // Priority 3, direct spec: "extremely subtle continuous breathing
+      // scale on the hero circle once it's settled." Identical
+      // expression string on BOTH the circle and its icon, default seed
+      // (0) on each - confirmed via a direct isolated render test
+      // earlier this session that two layers sharing an identical
+      // wiggle expression + seed evaluate in perfect sync, so the logo
+      // breathes exactly in step with its own circle instead of
+      // drifting independently against it.
+      const breatheExpr = 'wiggle(0.15, 0.05)';
+      layers[layers.length - 1].scale = { expression: breatheExpr, base: layers[layers.length - 1].scale };
+      layers[layers.length - 2].scale = { expression: breatheExpr, base: layers[layers.length - 2].scale };
+    } else {
+      // Direct spec: "dissolve into small glowing particle bursts" -
+      // timed to the "tiny pop before shrink" anticipation moment (1.12)
+      // just above, so the burst reads as the actual cause of the
+      // icon's own disappearance rather than an unrelated coincidence.
+      layers.push(...buildIconBurstParticles(i, x, y, nodeRimInner, 1.15));
     }
   });
+
+  // Circular shockwave at the exact peak of the hero's own explosive
+  // overshoot (HERO_EXPLODE_TIME) - direct spec: "a quick, elegant
+  // circular shockwave (thin glowing ring) that expands from the hero
+  // at the moment it becomes dominant." Same hold-then-ease keyframe
+  // shape as buildSplitConvergeLayers' own ring (see its doc comment) -
+  // a plain 2-keyframe track would interpolate smoothly in from frame
+  // 0 instead of staying invisible until the actual impact moment.
+  layers.push({
+    id: '__node_shockwave__',
+    type: 'shape',
+    width: NODE_SIZE * 1.2,
+    height: NODE_SIZE * 1.2,
+    position: [...CENTER],
+    scale: { keyframes: [
+      { time: 0, value: [1, 1] },
+      { time: HERO_EXPLODE_TIME - 0.01, value: [1, 1] },
+      { time: HERO_EXPLODE_TIME, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: HERO_EXPLODE_TIME + 0.4, value: [8, 8] },
+    ] },
+    opacity: { keyframes: [
+      { time: 0, value: 0 },
+      { time: HERO_EXPLODE_TIME - 0.01, value: 0 },
+      { time: HERO_EXPLODE_TIME, value: 0.85, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: HERO_EXPLODE_TIME + 0.4, value: 0 },
+    ] },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE * 1.2, height: NODE_SIZE * 1.2 } } },
+      { type: 'stroke', color: accentColor, width: 3 },
+    ],
+  });
+
+  // Persistent thin outer ring, hero only, fading in right as it
+  // settles and then rotating slowly forever after - direct spec:
+  // "very slow rotation on a thin outer ring or glow layer while the
+  // logo stays locked." A genuine continuous one-direction spin (not
+  // wiggle's own noise-based back-and-forth) needs a real linear
+  // expression - engine/expressions.js's sandbox exposes "time" in
+  // seconds directly for exactly this.
+  layers.push({
+    id: '__node_hero_outer_ring__',
+    type: 'shape',
+    width: NODE_SIZE * 4.6,
+    height: NODE_SIZE * 4.6,
+    position: [...CENTER],
+    opacity: { keyframes: [
+      { time: 0, value: 0 },
+      { time: HERO_SETTLE_TIME - 0.01, value: 0 },
+      { time: HERO_SETTLE_TIME, value: 0.5, interpolation: 'easing', easing: 'easeOutCubic' },
+    ] },
+    rotation: { expression: 'value + time * 12', base: 0 },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE * 4.6, height: NODE_SIZE * 4.6 } } },
+      { type: 'stroke', color: accentColor, width: 1, opacity: 0.55 },
+    ],
+  });
+
   return layers;
 }
 
