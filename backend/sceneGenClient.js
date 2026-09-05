@@ -348,6 +348,25 @@ async function generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, 
   }
 
   const hadMographAttempt = beat && typeof beat === 'object' && beat.mograph && typeof beat.mograph === 'object';
+  // Mechanical enforcement, direct user instruction (2026-09-05): "MAKE
+  // MOTION GRAPHICS THE MAIN THING... THIS VID IS STILL BAD CUZ IT'S
+  // STILL GOING BACK TO THE OLD TEXT FIRST SYSTEM" - a real generation
+  // came back with only 1 of 5 beats using mograph, the rest falling
+  // back to a raw "layers" array. The schema always allowed that
+  // fallback for a beat that "genuinely doesn't fit" any mograph type,
+  // but prompt wording alone clearly isn't enough to make the model
+  // reach for mograph as the DEFAULT rather than an occasional pick -
+  // this session's own repeated lesson (narration length, hook openers,
+  // now this). Rejecting a beat that skipped "mograph" entirely forces
+  // every retry to genuinely attempt it; only gives up and accepts a
+  // raw beat once retries are fully exhausted, so a beat that truly
+  // can't fit mograph after real attempts still ships instead of
+  // failing the whole video.
+  if (!hadMographAttempt && retriesLeft > 0) {
+    const err = 'mograph: this beat has no "mograph" field at all - REQUIRED. Every beat must be one of nodeCluster/connectorList/phoneSwap (see MOGRAPH above) - do not write a raw "visual":{"layers":[...]} array. Look at this beat\'s own plan again and pick whichever of the three types genuinely fits it best - a beat about a list of things is connectorList, a beat introducing/focusing on one idea among several is nodeCluster, a beat about an app/tool/screen is phoneSwap. Output the corrected Beat object with a real top-level "mograph" field.';
+    console.warn(`[sceneGenClient] beat ${beatIndex} skipped mograph entirely, retrying: ${err}`);
+    return generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, systemPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [err], judgeFeedback });
+  }
   buildMographBeatVisual(beat);
   // Real, confirmed-live gap this closes: when a "mograph" spec is
   // present but malformed (too few icons, bad type name, ...),

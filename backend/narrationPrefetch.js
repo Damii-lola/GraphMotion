@@ -6,9 +6,8 @@ const ffmpegPath = require('ffmpeg-static');
 const deepgramTts = require('./deepgramTtsGen');
 const fishTts = require('./fishTtsGen');
 const edgeTts = require('./ttsGen');
-const { annotateNarrationTags, stripTagsAndNormalize } = require('./narrationTagging');
+const { annotateNarrationTags } = require('./narrationTagging');
 const { getWordTimings } = require('./wordTiming');
-const { callGeminiWithAudio } = require('./geminiClient');
 
 /**
  * Production narration voice promoted to Deepgram's Aura-2 (orpheus)
@@ -402,61 +401,6 @@ function extendPrematureLayerFadeOuts(scene, realDuration) {
   });
 }
 
-/**
- * Direct user request (2026-09-03): "integrate the gemini audio ai to
- * compare the generated audio and the audio script to check if they
- * are one to one." This project already tried an AI-JUDGES-the-audio
- * design once (a Gemini call that renders its own pass/fail verdict)
- * and removed it - not because verification itself was a bad idea, but
- * because trading a whole extra judgment call (and its own retry/parse
- * fragility) for a stage that wasn't the actual bottleneck wasn't worth
- * it at the time. This is a deliberately different, simpler design:
- * Gemini's audio understanding is genuinely reliable at plain
- * transcription (this project has used it that way for ad-hoc debugging
- * all session - see the "Audio self-verification" memory note) - so
- * this ONLY asks it to transcribe, then compares the transcript against
- * the real intended script IN CODE (same stripTagsAndNormalize
- * word-normalization narrationTagging.js already relies on for its own
- * hallucination guard), instead of asking the model to also judge
- * closeness itself. A word-overlap RATIO, not an exact match: Gemini's
- * own transcription carries its own minor recognition noise (a "it's"
- * vs "it is", a missed comma-driven boundary) that isn't a real TTS
- * problem, so demanding a byte-perfect match would false-positive on
- * clips that are actually fine.
- */
-const AUDIO_TRANSCRIBE_PROMPT = 'Transcribe this audio clip exactly, word for word - exactly what is spoken, nothing else. Output ONLY the transcription text itself, no preamble, no quotes around it, no explanation.';
-const AUDIO_WORD_OVERLAP_THRESHOLD = 0.7;
-// Real API-call-volume lesson from earlier this session (a prior
-// aggressive automated-testing pass got real Gemini keys ToS-flagged) -
-// capped at 2 total attempts per beat (1 initial synth + at most 1
-// re-synth), never an open-ended retry loop.
-const MAX_AUDIO_SYNTH_ATTEMPTS = 2;
-
-/**
- * stripTagsAndNormalize alone leaves sentence-ending punctuation (. ? !)
- * attached to words (e.g. "fortune?") - fine for narrationTagging.js's
- * own use, comparing two pieces of WRITTEN text with consistent
- * punctuation conventions on both sides, but a real risk here: an audio
- * transcript's punctuation is Gemini's own guess at how the clip
- * sounded, not a guaranteed match to the script's actual written marks.
- * On this project's now much shorter 3-8 word narration, even one word
- * losing its match to a stray "?" can swing the ratio below threshold
- * on a false alarm alone. Stripped here, locally, rather than changed
- * in the shared function itself, so narrationTagging.js's own
- * hallucination guard (which SHOULD stay strict on written-to-written
- * text) is untouched.
- */
-function normalizeForAudioCompare(text) {
-  return stripTagsAndNormalize(text).replace(/[.?!]/g, '').replace(/\s+/g, ' ').trim();
-}
-
-function narrationWordOverlapRatio(expectedText, transcribedText) {
-  const expectedWords = normalizeForAudioCompare(expectedText).split(' ').filter(Boolean);
-  if (expectedWords.length === 0) return 1;
-  const transcribedWords = new Set(normalizeForAudioCompare(transcribedText).split(' ').filter(Boolean));
-  const matched = expectedWords.filter((w) => transcribedWords.has(w)).length;
-  return matched / expectedWords.length;
-}
 
 /** Synthesizes + trims one beat's clip (the same tag->TTS->silence-trim->tail-trim pipeline this file has always run), writing to attempt-numbered files so a re-synth never collides with or depends on the previous attempt's output. Returns the final clip path for this attempt. */
 async function synthesizeBeatClip(taggedText, dir, index, attempt) {
@@ -490,31 +434,6 @@ async function synthesizeBeatClip(taggedText, dir, index, attempt) {
   return tailTrimmedPath;
 }
 
-/** Transcribes a beat's final clip via Gemini and compares it against the real intended script. Fails OPEN (treats as a pass) on any transcription-call error, exactly like this session's other Gemini-backed quality gates (judgeNarrationScript in sceneGenClient.js) - a verification step that can itself fail should never be the reason a video doesn't ship. */
-async function verifyBeatAudio(clipPath, plainText, index) {
-  try {
-    const buf = fs.readFileSync(clipPath);
-    const transcript = (await callGeminiWithAudio(
-      'You are a precise audio transcription tool.',
-      buf,
-      'audio/mpeg',
-      AUDIO_TRANSCRIBE_PROMPT,
-      { jsonMode: false, maxTokens: 200, temperature: 0.1 },
-    )).trim();
-    const overlap = narrationWordOverlapRatio(plainText, transcript);
-    const passed = overlap >= AUDIO_WORD_OVERLAP_THRESHOLD;
-    if (passed) {
-      console.log(`[narrationPrefetch] beat ${index} audio verify passed (overlap=${overlap.toFixed(2)})`);
-    } else {
-      console.warn(`[narrationPrefetch] beat ${index} audio verify FAILED (overlap=${overlap.toFixed(2)}) - script: "${plainText}" | heard: "${transcript}"`);
-    }
-    return passed;
-  } catch (err) {
-    console.warn(`[narrationPrefetch] beat ${index} audio verify call failed, skipping check (fail open): ${err.message}`);
-    return true;
-  }
-}
-
 /**
  * Generates narration audio for every beat that has one, IN PARALLEL
  * across beats (like imagePrefetch.js) - was sequential when the only
@@ -526,13 +445,12 @@ async function verifyBeatAudio(clipPath, plainText, index) {
  * with no retry (real API-call-volume consequences from the retry
  * version - see git history), then removed entirely (direct user
  * request once production logs showed rendering, not narration, was the
- * actual dominant cost of a generation), and now reinstated in a
- * different, cheaper shape - see verifyBeatAudio's own doc comment for
- * why a transcribe-and-diff-in-code design is used instead of the old
- * ask-Gemini-to-judge design. trimTrailingArtifact (below) still runs
- * unconditionally as the mechanical (no AI call) first line of defense;
- * verifyBeatAudio is an additional real-audio check on top of it, not a
- * replacement. Beats still run in parallel since there's no reason not
+ * actual dominant cost of a generation), then reinstated as a Gemini
+ * transcribe-and-diff check, then REMOVED again, direct user instruction
+ * (2026-09-05): "DONT FUCKING CARE ABT AUDIO... NOOOO GEMINIIII" - this
+ * file makes no AI calls of its own at all now. trimTrailingArtifact
+ * (below) still runs unconditionally as the mechanical (no AI call)
+ * safety net. Beats still run in parallel since there's no reason not
  * to. Each beat only ever touches its OWN index in
  * `renderScenes`/`audioFiles`, so there's no shared-state conflict
  * between beats running concurrently.
@@ -572,22 +490,12 @@ async function prefetchNarration(sceneJSON, jobId) {
       const taggedText = await annotateNarrationTags(plainText);
       console.log(`[narrationPrefetch] beat ${index} tagged text: ${taggedText}`);
 
-      // Synthesize, then verify the REAL generated audio against the
-      // intended script via Gemini transcription (verifyBeatAudio) -
-      // trimTrailingArtifact above is a mechanical, judge-free safety
-      // net; this is the actual real-audio check on top of it. One
-      // re-synth attempt if the first take doesn't pass (capped, not an
-      // open-ended loop - see MAX_AUDIO_SYNTH_ATTEMPTS's own comment);
-      // whatever the last attempt produced ships regardless of the
-      // final verdict, since this is a quality signal, not a hard gate -
-      // never blocking a video over a check that can itself be wrong.
-      let clipPath = await synthesizeBeatClip(taggedText, dir, index, 1);
-      let verified = await verifyBeatAudio(clipPath, plainText, index);
-      for (let attempt = 2; !verified && attempt <= MAX_AUDIO_SYNTH_ATTEMPTS; attempt++) {
-        console.warn(`[narrationPrefetch] beat ${index} re-synthesizing audio (attempt ${attempt}/${MAX_AUDIO_SYNTH_ATTEMPTS}) after failed audio verification`);
-        clipPath = await synthesizeBeatClip(taggedText, dir, index, attempt);
-        verified = await verifyBeatAudio(clipPath, plainText, index);
-      }
+      // Gemini-based audio verification (transcribe + compare against
+      // script, one re-synth attempt on a mismatch) REMOVED, direct user
+      // instruction (2026-09-05): "DONT FUCKING CARE ABT AUDIO... NOOOO
+      // GEMINIIII" - trimTrailingArtifact above stays as the mechanical,
+      // no-AI-call safety net; this file no longer calls Gemini at all.
+      const clipPath = await synthesizeBeatClip(taggedText, dir, index, 1);
       // Mastering (highpass/compressor/loudnorm/alimiter) REMOVED per
       // direct user request after switching to Deepgram's Aura-2 -
       // that whole chain was tuned entirely around Fish Audio's very
