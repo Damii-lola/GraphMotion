@@ -73,8 +73,57 @@ require('./engine/fonts');
 // anti-aliasing on diagonal/curved edges, since there's no extra
 // downscale-blur step) is an accepted, deliberate tradeoff for a
 // system that was outright failing to finish rendering at all.
-const WIDTH = 540;
-const HEIGHT = 960;
+// LOGICAL_WIDTH/LOGICAL_HEIGHT: the size every beat's own layer content
+// actually gets BUILT and rendered at (Composition/layerStack's own
+// accumulator, per-layer effect buffers, 3D layer buffers, warp scratch
+// canvases - see sceneBuilder.js's buildBeatVisual, which sizes its
+// Composition directly from beatContext.width/height, below). Kept at
+// the original, already-proven-fast 540x960 - deliberately NOT raised
+// alongside WIDTH/HEIGHT - specifically so none of that expensive per-
+// layer pipeline gets more costly, exactly avoiding a repeat of the
+// real incident described in the doc comment right above this one
+// (78% more pixels through every intermediate buffer, real 10-minute
+// production timeouts, from the LAST time this pipeline ran at a
+// bigger-than-delivered internal resolution for a completely different
+// reason - supersampled anti-aliasing, since reverted).
+const LOGICAL_WIDTH = 540;
+const LOGICAL_HEIGHT = 960;
+// WIDTH/HEIGHT: the actually DELIVERED output resolution - direct user
+// request (2026-09-05) to raise it from the original 540x960. Raised
+// ONLY here, not LOGICAL_WIDTH/HEIGHT above - every beat's own content
+// still builds and renders at the cheap logical size, then gets
+// upscaled through a single ctx.scale() transform (withLogicalScale,
+// below) right before compositing onto the real output canvas - one
+// hardware-accelerated draw per beat-canvas, not a cost repeated
+// through every intermediate buffer like the incident above. Pure
+// background-level systems (the gradient, ambient orbs, atmosphere
+// overlay) draw natively at this larger size directly instead - they're
+// resolution-flexible procedural draws already, nothing to rescale.
+const WIDTH = 760;
+const HEIGHT = 1352;
+const CONTENT_SCALE_X = WIDTH / LOGICAL_WIDTH;
+const CONTENT_SCALE_Y = HEIGHT / LOGICAL_HEIGHT;
+
+/**
+ * Wraps a beat's own (ctx,t)=>void content-render function so it always
+ * draws upscaled from LOGICAL_WIDTH/HEIGHT to the real WIDTH/HEIGHT,
+ * regardless of which canvas ends up hosting it. Can't apply this "from
+ * outside" once on some shared context - the main frame canvas, a
+ * motion-blur sample canvas, the frozen-previous-beat canvas, and the
+ * transition scratch canvas are each a SEPARATE canvas object with its
+ * own independent transform state, so baking the scale into the draw
+ * function itself is what makes it apply correctly no matter which one
+ * ends up calling it.
+ */
+function withLogicalScale(drawFn) {
+  return (ctx, t) => {
+    ctx.save();
+    ctx.scale(CONTENT_SCALE_X, CONTENT_SCALE_Y);
+    drawFn(ctx, t);
+    ctx.restore();
+  };
+}
+
 // 24 -> 20: total frame count (and so total render time, all else
 // equal) scales directly with FPS - a real, zero-risk lever with none
 // of the resolution change's coordinate-system implications (FPS never
@@ -995,7 +1044,7 @@ function withBeatZoom(drawFn, beatDuration, width, height) {
  */
 async function buildOneBeat(range) {
   const beatContext = {
-    width: WIDTH, height: HEIGHT, duration: range.duration, imagePath: range.scene.params?.imagePath || null,
+    width: LOGICAL_WIDTH, height: LOGICAL_HEIGHT, duration: range.duration, imagePath: range.scene.params?.imagePath || null,
   };
   const loadedImages = await loadBeatImages(range.scene.visual, beatContext);
   const visualObj = buildBeatVisual(range.scene.visual, { ...beatContext, loadedImages });
@@ -1257,11 +1306,11 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         let prevCanvas = frozenFrameCache.get(beatIndex - 1);
         if (!prevCanvas) {
           prevCanvas = createCanvas(WIDTH, HEIGHT);
-          prevBeat.visualObj.render(prevCanvas.getContext('2d'), prevBeat.range.duration);
+          withLogicalScale((c, t) => prevBeat.visualObj.render(c, t))(prevCanvas.getContext('2d'), prevBeat.range.duration);
           frozenFrameCache.set(beatIndex - 1, prevCanvas);
         }
         transitionCurrCtx.clearRect(0, 0, WIDTH, HEIGHT);
-        renderWithMotionBlur(transitionCurrCtx, WIDTH, HEIGHT, localT, FRAME_DURATION, withBeatZoom((c, st) => visualObj.render(c, st), range.duration, WIDTH, HEIGHT), MOTION_BLUR_CONFIG);
+        renderWithMotionBlur(transitionCurrCtx, WIDTH, HEIGHT, localT, FRAME_DURATION, withLogicalScale(withBeatZoom((c, st) => visualObj.render(c, st), range.duration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
 
         // Drawing each beat's canvas at (itsBoardPos - camera) is what
         // actually produces the pan: at progress 0 the previous beat's
@@ -1293,7 +1342,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         drawZoomed(prevCanvas, prevPos.x - camX, prevPos.y - camY, outScale);
         drawZoomed(transitionCurrCanvas, currPos.x - camX, currPos.y - camY, inScale);
       } else {
-        renderWithMotionBlur(ctx, WIDTH, HEIGHT, localT, FRAME_DURATION, withBeatZoom((c, st) => visualObj.render(c, st), range.duration, WIDTH, HEIGHT), MOTION_BLUR_CONFIG);
+        renderWithMotionBlur(ctx, WIDTH, HEIGHT, localT, FRAME_DURATION, withLogicalScale(withBeatZoom((c, st) => visualObj.render(c, st), range.duration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
       }
 
       // JPEG, not PNG: measured directly (not assumed) via a controlled
