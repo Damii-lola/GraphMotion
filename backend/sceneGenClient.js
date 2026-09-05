@@ -222,20 +222,35 @@ function pickRandomCreativeAngle() {
 // maxTokens reduced from 8000 to 5500 for Groq specifically - real,
 // measured finding: this account's Groq free tier caps at a flat 8000
 // TPM PER KEY, checked against CUMULATIVE usage within a rolling
-// minute, not just this one call's own size. Cut further, 5500 -> 3200,
-// direct user instruction (2026-09-05): "I DONT WANT IT TO EVER FALL
-// BACK TO GEMINI, I WANT GROK" - the smaller this call's own real
-// footprint, the more headroom is left on whichever key it lands on for
-// the beat-generation calls that immediately follow it. Real,
-// gpt-tokenizer-measured output on an actual call: ~2767 tokens for a
-// full, detailed multi-beat treatment - 3200 keeps real margin above
-// that without paying for far more than a treatment (plain prose, not
-// JSON) ever actually needs.
-async function generateCreativeTreatment(userPrompt, targetDurationSeconds) {
+// minute, not just this one call's own size.
+//
+// Real, confirmed-live regression (2026-09-05): cut further to 3200 in
+// an earlier pass of this same fix, on the strength of ONE measured
+// real treatment needing only ~2767 tokens - but a real production
+// video hit a genuinely LONGER treatment (more beats/detail, this
+// call's own output has real variance across topics/durations) that
+// needed more than 3200 and got hard-truncated - "Groq response was
+// truncated (hit max_tokens=3200) before completing" - which had NO
+// retry at all here, killing the entire job outright. A hard failure is
+// far worse than the token-budget squeeze this was trying to reduce, so
+// this reverts to 5000 (real margin above the one measured real case,
+// short of the original 5500) AND adds actual retry-with-escalation
+// below, so a rare unusually-long treatment gets a genuine second shot
+// at a higher cap instead of killing the job.
+const TREATMENT_MAX_TOKENS_STEPS = [5000, 7000];
+async function generateCreativeTreatment(userPrompt, targetDurationSeconds, attempt = 0) {
   const creativeAngle = pickRandomCreativeAngle();
   console.log(`[sceneGenClient] creative angle for this generation: ${creativeAngle}`);
   const systemPrompt = buildTreatmentSystemPrompt(targetDurationSeconds, creativeAngle);
-  return callGroqRaw(systemPrompt, userPrompt, { jsonMode: false, maxTokens: 3200, temperature: 0.85 });
+  try {
+    return await callGroqRaw(systemPrompt, userPrompt, { jsonMode: false, maxTokens: TREATMENT_MAX_TOKENS_STEPS[attempt], temperature: 0.85 });
+  } catch (err) {
+    if (attempt + 1 < TREATMENT_MAX_TOKENS_STEPS.length) {
+      console.warn(`[sceneGenClient] treatment call failed (${err.message}), retrying with a higher token cap...`);
+      return generateCreativeTreatment(userPrompt, targetDurationSeconds, attempt + 1);
+    }
+    throw err;
+  }
 }
 
 // Splits a treatment's plain-prose HOOK/PALETTE section off (never sent
