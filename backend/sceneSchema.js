@@ -2295,7 +2295,14 @@ function pointAtArcFraction(table, totalLength, frac) {
  * model itself could ever approximate that by hand.
  */
 function attachLineRevealSparks(beat) {
-  if (isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  // Deliberately NOT skipped for mograph beats (unlike every other pass
+  // in this file) - buildConnectorListLayers relies on this running
+  // against its own __connector_line__ shape to get the traveling spark
+  // for free (see its own doc comment). Safe to leave unguarded for the
+  // other two mograph types too: neither nodeCluster nor phoneSwap ever
+  // produces a shape layer matching this function's own customPath+trim+
+  // stroke+no-fill signature, so it naturally no-ops on them already.
+  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   const additions = [];
   layers.forEach((layer, i) => {
@@ -3448,9 +3455,27 @@ function autoRepairBeat(beat) {
     }
   }
 
-  autoSpreadDuplicatePositions(beat.visual);
-  fixBackdropZOrder(beat.visual);
-  fixFramingBoxSize(beat.visual);
+  // Skipped for mograph beats, same as every other repair pass in this
+  // file (see the isPlainObject(beat.mograph) guards throughout) - these
+  // three specifically assume free-form, possibly-mistaken AI layer
+  // placement, and a mograph beat's layers are mechanically constructed
+  // with deliberately precise, intentional overlaps (an icon centered
+  // exactly on its own node circle, a crossfading icon/text pair sharing
+  // one screen position) that look identical to the exact mistakes these
+  // passes exist to fix. Confirmed live via direct instrumentation, not
+  // just reasoning: even after cloneTrack (see buildNodeClusterLayers'
+  // own doc comment) stopped sibling layers from silently sharing one
+  // mutable keyframe object, autoSpreadDuplicatePositions still spreads
+  // a connectorList's icon and node circle 80px apart from each other
+  // (a real overlap by design, not a mistake), and fixBackdropZOrder
+  // still reorders phoneSwap's crossfading icon to sit BEHIND its own
+  // text instead of on top of it - neither pass has any way to tell a
+  // deliberate mograph composition from an accidental one.
+  if (!isPlainObject(beat.mograph)) {
+    autoSpreadDuplicatePositions(beat.visual);
+    fixBackdropZOrder(beat.visual);
+    fixFramingBoxSize(beat.visual);
+  }
   recenterSparseContent(beat);
   // Runs AFTER the overlap/position repairs above, not before - it
   // needs the dominant text layer's FINAL, settled position (where
@@ -4362,6 +4387,28 @@ function validateBeat(beat, path = 'beat') {
 // session - for the traveling-dot connector line, both reused as-is
 // rather than rebuilt.
 
+// Real, confirmed-live bug found via direct instrumentation (not just
+// code reading) while auditing this whole section: every constructor
+// below builds ONE keyframe-track object (a node's shared position, or
+// a node/icon pair's shared scale/opacity) and assigns that SAME object
+// to two different sibling layers as a "they're always identical, why
+// duplicate it" shortcut. That's fine as long as nothing ever mutates a
+// layer's own track in place - but autoSpreadDuplicatePositions (an
+// existing, unconditional repair pass) does exactly that, and two
+// sibling layers silently sharing one mutable object meant shifting one
+// layer's position ALSO moved its sibling by the same amount - observed
+// directly as a connectorList icon and its own node circle getting
+// pulled 80px apart from each other post-repair, and (worse, harder to
+// notice) a nodeCluster bg/icon pair's opposite +40/-40 shifts silently
+// CANCELLING OUT on the one shared object, masking the exact same bug
+// behind a coincidental net-zero result. cloneTrack gives each layer
+// its own independent copy of a track with equal starting values but no
+// shared reference, so a later pass mutating one layer's animation can
+// never leak into a sibling's.
+function cloneTrack(track) {
+  return track === null || typeof track !== 'object' ? track : JSON.parse(JSON.stringify(track));
+}
+
 function computeZigzagPositions(count) {
   const marginTop = CANVAS_HEIGHT * 0.2;
   const marginBottom = CANVAS_HEIGHT * 0.18;
@@ -4443,7 +4490,7 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
       iconColor: isChosen ? '#FFFFFF' : '#E9E4FF',
       width: NODE_SIZE * 0.5,
       height: NODE_SIZE * 0.5,
-      position: posKf,
+      position: cloneTrack(posKf),
       scale: isChosen
         ? { keyframes: [
           { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
@@ -4457,7 +4504,7 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
           { time: 1.0, value: [1, 1] },
           { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
         ] },
-      opacity: opacityKf,
+      opacity: cloneTrack(opacityKf),
     });
   });
   return layers;
@@ -4554,8 +4601,8 @@ function buildConnectorListLayers({ items, accentColor }) {
       width: NODE_SIZE * 0.5,
       height: NODE_SIZE * 0.5,
       position: [x, y],
-      scale: nodeKf,
-      opacity: opacityKf,
+      scale: cloneTrack(nodeKf),
+      opacity: cloneTrack(opacityKf),
     });
     layers.push({
       id: `__list_label_${i}__`,
@@ -4624,7 +4671,7 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
       fillStyle: accentColor,
       textAlign: 'center',
       maxWidth: PHONE_WIDTH - 40,
-      position: CENTER,
+      position: [...CENTER],
       opacity: { keyframes: [
         { time: 0.4, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
         { time: 0.65, value: 1 },
@@ -4639,7 +4686,7 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
       iconColor: accentColor,
       width: 110,
       height: 110,
-      position: CENTER,
+      position: [...CENTER],
       scale: { keyframes: [
         { time: 1.4, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutCubic' },
         { time: 1.7, value: [1.1, 1.1], interpolation: 'easing', easing: 'easeInOutCubic' },
