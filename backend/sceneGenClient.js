@@ -70,13 +70,13 @@ function extractJson(text) {
   }
 }
 
-// The FALLBACK path for a beat's own JSON-encoding call, only reached
-// when Groq's own transport genuinely fails (see callBeatJSONTransport
-// below) - Gemini's own retry/timeout/multi-key resilience already
-// lives inside callGeminiRaw. No further fallback past Gemini - Mistral
-// used to sit here but is removed per direct user instruction (its keys
-// no longer exist); if Gemini also fails, the caller's own retry loop
-// (generateOneBeatJSON) is what gets another shot, not a third provider.
+// Gemini-only transport, kept ONLY for generateEditedSceneJSON below -
+// buildEditSystemPrompt shares SCHEMA_REFERENCE with the old rich
+// generation prompt (~18,000 tokens, gpt-tokenizer-confirmed), nowhere
+// close to fitting Groq's 8000 TPM ceiling without its own dedicated
+// minimal rewrite (a separate, not-yet-done piece of work - editing
+// wasn't the reported failure this session's fixes targeted). NOT used
+// by beat generation any more - see callBeatJSONTransport below.
 async function callSceneJSONTransport(systemPrompt, userMessage, maxTokens) {
   return callGeminiRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens });
 }
@@ -104,13 +104,16 @@ async function callSceneJSONTransport(systemPrompt, userMessage, maxTokens) {
 // treatment text, a near-constant, small size regardless of how many
 // beats the video has - the thing that used to grow unboundedly is
 // gone entirely, not just budgeted more carefully around.
+//
+// Gemini fallback REMOVED, direct user instruction (2026-09-05): "I
+// DONT WANT IT TO EVER FALL BACK TO GEMINI, I WANT GROK." Groq alone
+// now, relying on callGroqRaw's own more-patient retry budget (see its
+// own doc comment) plus generateOneBeatJSON's OWN outer retry (a
+// transport failure is caught there the same way a validation failure
+// already was, not left to throw uncaught) to outlast a rate-limit
+// window rather than escalate to a second provider.
 async function callBeatJSONTransport(systemPrompt, userMessage, maxTokens) {
-  try {
-    return await callGroqRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens });
-  } catch (err) {
-    console.warn(`[sceneGenClient] Groq failed (${err.message}), falling back to Gemini`);
-    return callSceneJSONTransport(systemPrompt, userMessage, maxTokens);
-  }
+  return callGroqRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens });
 }
 
 async function callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, onRetry, transport = callSceneJSONTransport) {
@@ -218,16 +221,21 @@ function pickRandomCreativeAngle() {
 
 // maxTokens reduced from 8000 to 5500 for Groq specifically - real,
 // measured finding: this account's Groq free tier caps at a flat 8000
-// TPM, and the treatment system prompt alone is ~2185 tokens - 2185 +
-// 8000 (the old value) genuinely exceeded that ceiling (confirmed live:
-// "Requested 10437, Limit 8000"). 5500 leaves real headroom (2185 +
-// 5500 = 7685) while still being far more than a treatment plan (plain
-// prose, not JSON) actually needs.
+// TPM PER KEY, checked against CUMULATIVE usage within a rolling
+// minute, not just this one call's own size. Cut further, 5500 -> 3200,
+// direct user instruction (2026-09-05): "I DONT WANT IT TO EVER FALL
+// BACK TO GEMINI, I WANT GROK" - the smaller this call's own real
+// footprint, the more headroom is left on whichever key it lands on for
+// the beat-generation calls that immediately follow it. Real,
+// gpt-tokenizer-measured output on an actual call: ~2767 tokens for a
+// full, detailed multi-beat treatment - 3200 keeps real margin above
+// that without paying for far more than a treatment (plain prose, not
+// JSON) ever actually needs.
 async function generateCreativeTreatment(userPrompt, targetDurationSeconds) {
   const creativeAngle = pickRandomCreativeAngle();
   console.log(`[sceneGenClient] creative angle for this generation: ${creativeAngle}`);
   const systemPrompt = buildTreatmentSystemPrompt(targetDurationSeconds, creativeAngle);
-  return callGroqRaw(systemPrompt, userPrompt, { jsonMode: false, maxTokens: 5500, temperature: 0.85 });
+  return callGroqRaw(systemPrompt, userPrompt, { jsonMode: false, maxTokens: 3200, temperature: 0.85 });
 }
 
 // Splits a treatment's plain-prose HOOK/PALETTE section off (never sent
@@ -259,12 +267,36 @@ function splitTreatmentIntoBeats(treatment) {
 // regardless of total video length, so the thing that used to grow
 // unboundedly against a fixed ceiling is structurally gone, not just
 // budgeted more carefully around.
-async function generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, systemPrompt, { retriesLeft = 4, priorErrors = null, judgeFeedback = null } = {}) {
+async function generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, systemPrompt, { retriesLeft = 6, priorErrors = null, judgeFeedback = null } = {}) {
   let userMessage = `Video topic: ${userPrompt}\nThis is beat ${beatIndex + 1} of ${totalBeats} in the video.\nEncode this ONE beat EXACTLY and faithfully as a single Beat object matching the schema above (the top-level object itself, NOT wrapped in a "scenes" array - just {"params":...,"mograph":...}, with "mograph" a TOP-LEVEL sibling of "params", never nested inside "visual" - leave "visual" out entirely when you set "mograph", it fills in automatically). The plan may reference sound cues/audio for pacing feel (a "clink", a "whoosh") - this engine has no sound-effect field, only spoken narration via params.narration, so translate any such cue into a well-timed VISUAL beat instead. Only use real fields from the schema above.\n\nThis beat's own plan:\n${beatText}`;
   if (judgeFeedback) userMessage += `\n\nA brutal judge rejected the previous full script as boring: "${judgeFeedback}" Make THIS beat's narration genuinely sharper and more hooked, not generic - keep the same core idea.`;
   if (priorErrors) userMessage += `\n\nYour previous attempt at this beat was invalid:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected single Beat object.`;
 
-  const raw = await callBeatJSONTransport(systemPrompt, userMessage, 1500);
+  // maxTokens cut 1500 -> 1000: real, gpt-tokenizer-measured worst case
+  // (a maxed-out 6-item connectorList's full JSON) is only ~120 tokens,
+  // but openai/gpt-oss-120b is a reasoning model - real testing found a
+  // more aggressive 600 cap occasionally starved it into a genuine
+  // json_validate_failed (empty failed_generation, not a truncation),
+  // most likely leaving no room for its own internal reasoning before
+  // it needs to emit the actual JSON answer. 1000 keeps a real cut from
+  // 1500 (shrinking this call's own fixed footprint against Groq's per-
+  // key TPM ceiling) while leaving that reasoning headroom back.
+  let raw;
+  try {
+    raw = await callBeatJSONTransport(systemPrompt, userMessage, 1000);
+  } catch (err) {
+    // Real, direct consequence of removing the Gemini fallback (user
+    // instruction: "I DONT WANT IT TO EVER FALL BACK TO GEMINI, I WANT
+    // GROK") - callBeatJSONTransport no longer has anywhere else to go
+    // on a transport failure, so THIS retry loop (on top of
+    // callGroqRaw's own internal one) is what has to actually outlast a
+    // persistent rate-limit window instead.
+    if (retriesLeft > 0) {
+      console.warn(`[sceneGenClient] beat ${beatIndex} Groq transport failed (${err.message}), retrying...`);
+      return generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, systemPrompt, { retriesLeft: retriesLeft - 1, priorErrors, judgeFeedback });
+    }
+    throw err;
+  }
   let beat;
   try {
     beat = extractJson(raw);
@@ -311,14 +343,25 @@ async function generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, 
   return beat;
 }
 
-// Outer assembly: one generateOneBeatJSON call per beat (fired together -
-// groqClient.js's own per-key adaptive round-robin queue already spaces
-// these out safely, the same mechanism narrationTagging.js's own
-// parallel per-beat calls already rely on), then the FULL
-// validateSceneJSON on the assembled {scenes:[...]} for the whole-
-// video-level checks per-beat validation alone can't do (the opening-
-// hook check, ensureCumulativeListBeats, varyHeadlinePositions, the
-// shared background-decoration seed). Beat COUNT is structurally
+// Outer assembly: one generateOneBeatJSON call per beat, SEQUENTIAL -
+// not Promise.all - direct fix for a real, confirmed-live 429-storm
+// (2026-09-05): firing every beat's own call at once round-robins them
+// across keys, but they all LAND at once too, piling several calls onto
+// the SAME still-hot key (its cumulative usage-this-minute already high
+// from whatever landed there moments earlier) before any of them has a
+// chance to complete and reveal whether that key even has room. Doing
+// them one at a time doesn't change the underlying per-key TPM math,
+// but it stops the pile-up itself - a call that lands on a hot key now
+// just retries onto the OTHER key on its own next attempt, instead of
+// several calls compounding the same collision simultaneously. Slower
+// in the best case (no free concurrency), but real production logs
+// showed the parallel version wasn't actually faster anyway once a
+// 429-storm hit - it was slower AND noisy.
+//
+// Then the FULL validateSceneJSON on the assembled {scenes:[...]} for
+// the whole-video-level checks per-beat validation alone can't do (the
+// opening-hook check, ensureCumulativeListBeats, varyHeadlinePositions,
+// the shared background-decoration seed). Beat COUNT is structurally
 // guaranteed correct by construction now (exactly one call per treatment
 // beat, each retried until individually valid) - the old "beat count
 // came back short" check is gone because there's no longer a way for it
@@ -328,12 +371,15 @@ async function generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, 
 // passed their own validateBeat) is repaired by regenerating ONLY the
 // specific beat(s) named in the error (parsed from "scenes[N]." prefix),
 // not the whole video - same "small, targeted retry" principle as the
-// per-beat generation itself.
+// per-beat generation itself, also sequential for the same reason.
 const MAX_WHOLE_SCENE_REPAIR_ROUNDS = 3;
 async function generateAllBeatsJSON(userPrompt, targetDurationSeconds, treatment, judgeFeedback) {
   const systemPrompt = buildMinimalGenerationSystemPrompt(targetDurationSeconds);
   const beatChunks = splitTreatmentIntoBeats(treatment);
-  const beats = await Promise.all(beatChunks.map((chunk, i) => generateOneBeatJSON(userPrompt, chunk, i, beatChunks.length, systemPrompt, { judgeFeedback })));
+  const beats = [];
+  for (let i = 0; i < beatChunks.length; i++) {
+    beats.push(await generateOneBeatJSON(userPrompt, beatChunks[i], i, beatChunks.length, systemPrompt, { judgeFeedback }));
+  }
 
   for (let round = 0; round <= MAX_WHOLE_SCENE_REPAIR_ROUNDS; round++) {
     const sceneJSON = { scenes: beats };
@@ -360,10 +406,12 @@ async function generateAllBeatsJSON(userPrompt, targetDurationSeconds, treatment
       throw new Error(`Groq-generated scene JSON failed whole-scene validation with no specific beat to repair: ${unindexed.join('; ')}`);
     }
     console.warn(`[sceneGenClient] whole-scene validation found ${byBeatIndex.size} beat(s) needing repair (round ${round + 1}/${MAX_WHOLE_SCENE_REPAIR_ROUNDS}): ${[...byBeatIndex.keys()].join(',')}`);
-    await Promise.all([...byBeatIndex.entries()].map(async ([idx, beatErrors]) => {
-      if (idx >= beatChunks.length) return; // stale index from a prior round's now-fixed array shape
+    // Sequential, same reasoning as the initial per-beat loop above -
+    // see its own doc comment.
+    for (const [idx, beatErrors] of byBeatIndex.entries()) {
+      if (idx >= beatChunks.length) continue; // stale index from a prior round's now-fixed array shape
       beats[idx] = await generateOneBeatJSON(userPrompt, beatChunks[idx], idx, beatChunks.length, systemPrompt, { priorErrors: beatErrors, judgeFeedback });
-    }));
+    }
   }
   // Unreachable (the loop above always returns or throws), kept only to
   // satisfy control-flow analysis.

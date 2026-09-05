@@ -88,7 +88,21 @@ function queueGroqCall(makeFetch) {
   return scheduled;
 }
 
-const MAX_RATE_LIMIT_RETRIES = 4;
+// Raised 4 -> 6, direct user instruction (2026-09-05): "I DONT WANT IT
+// TO EVER FALL BACK TO GEMINI, I WANT GROK" - sceneGenClient.js's beat
+// generation no longer falls back to Gemini at all (see
+// callBeatJSONTransport there), so a 429 has to be outlasted on Groq
+// alone. Real, measured reality this retry budget has to survive: with
+// only 2 keys, one key's own 8000 TPM/minute is checked against
+// CUMULATIVE usage that minute, not just this one call - a single
+// treatment-planning call alone can burn ~5100 of that (confirmed live,
+// gpt-tokenizer-measured), leaving a beat call landing on that same key
+// no room until the rolling window actually clears. 6 retries with this
+// function's own exponential backoff (capped at 20s/attempt) sums to
+// enough real wall-clock time to span past a minute boundary even in
+// the worst case, so persistence alone - not a second provider - gets
+// there.
+const MAX_RATE_LIMIT_RETRIES = 6;
 
 /**
  * Retries on 429/5xx with exponential backoff, rotating to the next
