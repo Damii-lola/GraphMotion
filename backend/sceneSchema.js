@@ -502,6 +502,43 @@ function adjustLightness(hex, factor) {
   return rgbToHexLocal([mix(r), mix(g), mix(b)]);
 }
 
+// Real HSL rotation - unlike adjustLightness above, deriving a genuinely
+// DIFFERENT hue (not just a lighter/darker shade of the same one) needs
+// actual hue math, not an RGB-space mix toward white/black. Self-
+// contained (same "dependency-free from the rendering engine's own
+// internals" rule the block above states), mirrors render-worker/
+// renderEngine.js's own hexToHsl/hslToHex byte-for-byte so the same
+// input produces the same output in both places, even though the two
+// files never share this code directly.
+function hexToHsl(hex) {
+  const [r, g, b] = hexToRgbLocal(hex).map((v) => v / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return [0, 0, l];
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0));
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  return [h * 60, s, l];
+}
+function hslToHex(h, s, l) {
+  h = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let rgb;
+  if (h < 60) rgb = [c, x, 0];
+  else if (h < 120) rgb = [x, c, 0];
+  else if (h < 180) rgb = [0, c, x];
+  else if (h < 240) rgb = [0, x, c];
+  else if (h < 300) rgb = [x, 0, c];
+  else rgb = [c, 0, x];
+  return rgbToHexLocal(rgb.map((v) => (v + m) * 255));
+}
+
 // Real, direct user complaint with a reference video attached
 // (2026-09-03): "we are just reusing one single color... the bg color
 // is supposed to be random, sometimes light eg cream sometimes dark,
@@ -4429,11 +4466,26 @@ function computeZigzagPositions(count) {
  * confirmed via a real local render before this was wired into
  * generation at all.
  */
+// Phase 1 of the direct "god-tier nodeCluster" spec (2026-09-05):
+// "Icon Treatment (biggest remaining gap)." Every node's own accent hue
+// used to be either the shared accentColor (hero) or a flat generic
+// lavender (#E9E4FF, every non-hero node identical) - direct ask was
+// "different hue per platform." This template has no way to know an
+// icon is actually Instagram vs. YouTube (it's a generic constructor,
+// not brand-aware), so real per-icon identity comes from spacing
+// distinct ANALOGOUS/related hues around the beat's own accentColor
+// instead - same harmony principle render-time's own
+// buildHarmoniousAccentPalette already uses, applied here at
+// generation time so it's baked into the actual node colors, not just
+// a background-vs-icon relationship.
+const NODE_HUE_OFFSETS = [0, -45, 45, -90, 90, -135, 135, 180];
+
 function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
   const RING_RADIUS = 150;
   const NODE_SIZE = 70;
   const layers = [];
+  const [baseHue] = hexToHsl(accentColor);
   icons.forEach((icon, i) => {
     const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
     const x = CENTER[0] + Math.cos(angle) * RING_RADIUS;
@@ -4458,6 +4510,20 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
         { time: 1.0, value: 1 },
         { time: 1.3, value: 0 },
       ] };
+    // Dual-stroke "premium material" rim, every node: a thicker, more
+    // saturated outer edge establishing real weight, then a thinner,
+    // brighter highlight stroke drawn on TOP of it at the same
+    // centerline (shapeLayer.js's renderContents draws every stroke
+    // entry in array order, later ones compositing over earlier ones -
+    // confirmed directly, not assumed - so two stroke entries on one
+    // path genuinely stack rather than the second silently replacing
+    // the first). Base widths are deliberately small for the hero
+    // circle specifically since its OWN scale keyframes grow it 4.3x -
+    // stroke width scales right along with the shape, so "1.2" here
+    // reads as a proportionate ~5px rim once fully grown, not a hairline.
+    const nodeHue = baseHue + NODE_HUE_OFFSETS[i % NODE_HUE_OFFSETS.length];
+    const nodeRimOuter = hslToHex(nodeHue, 0.6, 0.4);
+    const nodeRimInner = hslToHex(nodeHue, 0.5, 0.78);
     layers.push({
       id: `__node_bg_${i}__`,
       type: 'shape',
@@ -4478,16 +4544,35 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
           { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
         ] },
       opacity: opacityKf,
-      contents: [
+      contents: isChosen ? [
         { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
-        isChosen ? { type: 'fill', color: accentColor } : { type: 'stroke', color: '#FFFFFF', width: 2 },
+        { type: 'fill', color: accentColor },
+        { type: 'stroke', color: adjustLightness(accentColor, -0.4), width: 1.2 },
+        { type: 'stroke', color: '#FFFFFF', width: 0.4, opacity: 0.6 },
+      ] : [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
+        { type: 'stroke', color: nodeRimOuter, width: 4.5 },
+        { type: 'stroke', color: nodeRimInner, width: 1.6, opacity: 0.9 },
       ],
+      // Multi-layer glow stack, hero only - tight core + medium bloom +
+      // wide atmospheric haze, direct spec ask. Pre-set here (not left
+      // to applyMographGlow's own default single-glow pass) specifically
+      // because that pass explicitly skips a layer that already has an
+      // outerGlow effect - setting all three here is what lets this
+      // node have its own deliberately layered glow instead of the
+      // generic one-glow-per-layer treatment every other mograph layer
+      // gets.
+      effects: isChosen ? [
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.95, blur: 10, blendMode: 'screen' } },
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.5, blur: 32, blendMode: 'screen' } },
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.22, blur: 75, blendMode: 'screen' } },
+      ] : undefined,
     });
     layers.push({
       id: `__node_icon_${i}__`,
       type: 'image',
       icon,
-      iconColor: isChosen ? '#FFFFFF' : '#E9E4FF',
+      iconColor: isChosen ? '#FFFFFF' : nodeRimInner,
       width: NODE_SIZE * 0.5,
       height: NODE_SIZE * 0.5,
       position: cloneTrack(posKf),
