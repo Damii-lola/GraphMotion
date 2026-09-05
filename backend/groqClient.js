@@ -152,7 +152,20 @@ async function callGroqRaw(systemPrompt, userMessage, { jsonMode = true, maxToke
 
   const data = await res.json();
   const choice = data.choices?.[0];
-  const text = choice?.message?.content;
+  // Real, confirmed-live bug found via production logs (2026-09-05):
+  // openai/gpt-oss-120b is a reasoning model - on a short, low-effort
+  // prompt (the script judge's terse VERDICT/REASON format is the
+  // observed case) it sometimes puts its ENTIRE answer in the OpenAI-
+  // reasoning-model-style "message.reasoning" field and leaves
+  // "message.content" empty, rather than the reverse. The old
+  // content-only read treated that as "no content" and threw, which
+  // silently broke the whole script-judge feature (judgeNarrationScript
+  // fails open on any error, so this never crashed a job - it just
+  // meant the judge always passed by default without ever actually
+  // reading the model's real verdict). Falling back to "reasoning" when
+  // "content" is empty recovers the real answer either way, without
+  // guessing WHICH field a given response will use.
+  const text = choice?.message?.content || choice?.message?.reasoning;
   if (!text) throw new Error(`Groq returned no content: ${JSON.stringify(data).slice(0, 300)}`);
   if (choice.finish_reason === 'length') {
     throw new Error(`Groq response was truncated (hit max_tokens=${maxTokens}) before completing`);

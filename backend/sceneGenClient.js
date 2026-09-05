@@ -4,31 +4,31 @@ const {
   buildTreatmentSystemPrompt, buildMinimalGenerationSystemPrompt, buildEditSystemPrompt, listTreatmentBeatHeaders,
 } = require('./scenePrompts');
 const { callGroqRaw } = require('./groqClient');
-const { callMistralRaw } = require('./mistralClient');
 const { callGeminiRaw } = require('./geminiClient');
 
 /**
- * Scene generation, split across THREE providers matched to what each
- * is actually good at:
- * - Groq: the smaller treatment-planning call (~2185-token prompt,
- *   fits Groq's flat 8000 TPM ceiling).
- * - Gemini: the big JSON-encoding call (~16,923-token prompt) -
- *   PRIMARY again per direct user request. History: removed entirely
- *   after a real incident where all three Gemini keys hit repeated
- *   timeouts/503s in one window; replaced with OpenRouter (MiniMax),
- *   removed after mandatory reasoning caused a real 8-minute-timeout
- *   job death; replaced with Mistral, which worked but needed FAR more
- *   retries than Gemini ever did on this task (a real, measured
- *   capability gap, not a bug - Mistral's small/free tier genuinely
- *   struggles to hold this many simultaneous hard constraints across
- *   one large generation, averaging 300s+ with many retries vs
- *   Gemini's normal 18-28s per call). The original Gemini outage is
- *   now survivable - the retry-on-abort bug that let it hard-fail the
- *   whole job is already fixed (see geminiClient.js's own history).
- * - Mistral: kept as FALLBACK for the JSON-encoding call - if Gemini's
+ * Scene generation, split across TWO providers matched to what each is
+ * actually good at:
+ * - Groq: PRIMARY for both the treatment-planning call AND the whole-
+ *   scene JSON-encoding call (via buildMinimalGenerationSystemPrompt,
+ *   ~1720 tokens - small enough to fit Groq's flat 8000 TPM ceiling for
+ *   the encoding step too, not just the treatment). Direct user
+ *   instruction: "we are meant to use groq as the main ai."
+ * - Gemini: FALLBACK ONLY for the JSON-encoding call, if Groq's
  *   transport genuinely fails (not a validation retry, an actual
- *   transport failure), Mistral gets a real shot at finishing the job
- *   rather than the whole generation dying outright.
+ *   transport failure). Direct user finding from real production logs:
+ *   Gemini "causes alott of troublesss" (repeated 45s timeouts and 503s
+ *   observed live, costing 70+ seconds on a single fallback) - kept as
+ *   a last resort only, never primary, so a real Groq outage still has
+ *   somewhere to go rather than failing the whole job outright.
+ *
+ * Mistral REMOVED entirely, direct user instruction (2026-09-05): "we
+ * aint meant to be using mistral atalll, like i even removed the keys."
+ * It used to sit as a further fallback (and, in narrationTagging.js, as
+ * the PRIMARY provider for a different call) - both are gone now,
+ * pointed at Groq instead. See narrationTagging.js's own doc comment
+ * for why sending Groq that file's parallel per-beat calls is safe now
+ * in a way it wasn't when Mistral was first brought in.
  *
  * This file is a fork of what used to live in geminiClient.js - the
  * provider-agnostic orchestration (JSON extraction/repair, schema-
@@ -70,40 +70,48 @@ function extractJson(text) {
   }
 }
 
-// The big JSON-encoding call - mechanically translates the treatment
-// Groq already planned into real scene JSON, no creative judgment of
-// its own. Gemini primary (fast, capable, needs far fewer retries on
-// this task than Mistral's free tier), Mistral as a real fallback if
-// Gemini's TRANSPORT itself fails (not a validation retry - Gemini's
-// own retry/timeout/multi-key resilience already lives inside
-// callGeminiRaw). Groq stays in use elsewhere in this file for the
-// smaller treatment call.
+// The FALLBACK path for the big JSON-encoding call, only reached when
+// Groq's own transport genuinely fails (see callMinimalSceneJSONTransport
+// below) - Gemini's own retry/timeout/multi-key resilience already
+// lives inside callGeminiRaw. No further fallback past Gemini - Mistral
+// used to sit here but is removed per direct user instruction (its keys
+// no longer exist); if Gemini also fails, the caller's own retry loop
+// (generateWholeSceneJSON) is what gets another shot, not a third
+// provider.
 async function callSceneJSONTransport(systemPrompt, userMessage, maxTokens) {
-  try {
-    return await callGeminiRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens });
-  } catch (err) {
-    console.warn(`[sceneGenClient] Gemini failed (${err.message}), falling back to Mistral`);
-    return callMistralRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens });
-  }
+  return callGeminiRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens });
 }
 
 // Real, direct user demand this session: "REDUCE THE FUCKING INPUT" so
 // Groq (free, fast, but a flat ~8000 TPM ceiling per key per request)
 // can actually run the whole-scene JSON-encoding call, not just the
 // small treatment step. buildMinimalGenerationSystemPrompt measures at
-// ~1,720 tokens (down from buildGenerationSystemPrompt's ~17,700) by
-// cutting everything this session's own mechanical passes
+// ~3,350 real tokens (gpt-tokenizer-measured, not estimated) after the
+// MOGRAPH section was added - down from buildGenerationSystemPrompt's
+// ~17,700 - by cutting everything this session's own mechanical passes
 // (ensureSustainedWordMotion/ensureDropShadowOnDominant/
 // ensureActiveBackgroundElement/ensureBackgroundSwoosh/
 // ensureDecorativeAccent/varyHeadlinePositions, all in sceneSchema.js)
 // already guarantee regardless of what the model outputs - see that
 // function's own doc comment for the full reasoning. Groq first (fits
-// comfortably now), Gemini then Mistral as real fallback if Groq's
-// transport itself fails - same fallback shape as the rich path above,
-// just a different primary.
+// comfortably now), Gemini as real fallback if Groq's transport itself
+// fails - same fallback shape as the rich path above, just a different
+// primary.
+//
+// maxTokens cut 5000 -> 3500 specifically when MOGRAPH was added here:
+// Groq's flat 8000 TPM ceiling is checked against system+user+max_tokens
+// as REQUESTED, not actual usage (confirmed live: a real "Requested
+// 10437, Limit 8000" error from this exact failure mode elsewhere in
+// this file's own history) - system alone grew to ~3350 tokens, so the
+// old 5000 left almost no room for the userMessage (treatment text +
+// beat headers) before hitting the ceiling. 3500 is still generous for
+// real output: a mograph spec is far more compact per beat than a raw
+// "layers" array ever was (a maxed-out 6-item connectorList beat is
+// ~100 tokens of JSON), so encouraging mograph should need LESS output
+// budget than before, not more.
 async function callMinimalSceneJSONTransport(systemPrompt, userMessage, maxTokens) {
   try {
-    return await callGroqRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 5000 });
+    return await callGroqRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 3500 });
   } catch (err) {
     console.warn(`[sceneGenClient] Groq failed (${err.message}), falling back to Gemini`);
     return callSceneJSONTransport(systemPrompt, userMessage, maxTokens);

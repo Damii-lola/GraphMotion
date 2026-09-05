@@ -1477,8 +1477,20 @@ Beat:
     "duration": number,     // seconds, REQUIRED - overridden automatically to match the real measured narration length, treat as an estimate. 2-5s is typical.
     "narration": string     // REQUIRED, every beat - see NARRATION below
   },
-  "visual": { "layers": [ TextLayer | ImageLayer, ... ] }  // REQUIRED, at least one TextLayer with real non-empty words
+  "visual": { "mograph": MographSpec }  // REQUIRED - see MOGRAPH below, the normal way to build a beat. { "layers": [...] } (TextLayer|ImageLayer, below) still works for the rare beat mograph genuinely can't express.
 }
+
+=====================================================================
+MOGRAPH - THE way you build a beat's visual
+=====================================================================
+Pick ONE per beat, vary across the video:
+{ "type": "nodeCluster", "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload"], "chosenIndex": 0, "accentColor": "#8B5CF6" }
+  icon-nodes ring in, one grows into a hero circle - intro/focus beat. "icons": 3-8 real Iconify names. "chosenIndex": 0-based, which becomes the hero.
+{ "type": "connectorList", "items": [{"icon":"mdi:hand-heart","label":"Valuable"},{"icon":"mdi:puzzle","label":"Relevant"}], "accentColor": "#8B5CF6" }
+  a line draws down a list of icon+label pairs - "here are the N things" beats. "items": 2-6, each a real "icon" + SHORT 1-2 word "label".
+{ "type": "phoneSwap", "text": "Content Marketing", "icon": "mdi:bullhorn", "accentColor": "#8B5CF6" }
+  a phone shows "text" (2-4 words) then crossfades to "icon" - app/tool beat.
+"accentColor" always OPTIONAL, omit to auto-pick. Raw "layers" (below) only for a beat none of these three fit - keep that rare.
 
 TextLayer:
 { "type": "text", "text": string, "fontFamily": one of ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')},
@@ -1609,13 +1621,17 @@ FINAL CHECKLIST
 =====================================================================
 - "fontFamily" is ALWAYS EXACTLY one of ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')}.
 - No two layers in the same beat share identical "text".
-- Every beat: at least one real, non-empty "text" layer (REJECTED
-  outright otherwise) and a non-empty "params.narration" under 8 words,
-  one sentence only, rhyming with its paired beat.
-- Every "image" layer: a real "icon" (REJECTED otherwise if missing).
-- The dominant text layer's own "text" matches its beat's own
-  "narration" word for word - that's what makes the real audio-synced,
-  word-by-word reveal possible.
+- Every beat: a real "mograph" spec (see MOGRAPH above) - "nodeCluster",
+  "connectorList", or "phoneSwap". Only fall back to a raw "layers"
+  array for a beat that genuinely cannot be one of the three - if you
+  do, it still needs at least one real, non-empty "text" layer
+  (REJECTED outright otherwise), and every "image" layer needs a real
+  "icon" (REJECTED otherwise if missing).
+- Every beat: a non-empty "params.narration" under 8 words, one
+  sentence only.
+- If a beat uses a raw "layers" array, its dominant text layer's own
+  "text" matches its beat's own "narration" word for word - that's what
+  makes the real audio-synced, word-by-word reveal possible.
 - Encode EVERY beat the treatment planned, none skipped, merged, or
   summarized away - exact count, exact order.
 

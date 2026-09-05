@@ -1,4 +1,4 @@
-const { callMistralRaw } = require('./mistralClient');
+const { callGroqRaw } = require('./groqClient');
 
 /**
  * Second-pass narration tagging - deliberately split from scene JSON
@@ -141,25 +141,29 @@ function stripTagsAndNormalize(text) {
  * minor loss; sending hallucinated content to TTS is not something to
  * risk.
  */
-// Real, confirmed-live bug found via production logs: this used to call
-// Groq (like sceneGenClient.js's treatment step) - but this file runs
-// its call for EVERY beat IN PARALLEL (narrationPrefetch.js's
-// Promise.all), right after the treatment call already spent Groq's
-// entire 8000 TPM budget for that minute. Result: some beats' tagging
-// calls got real LLM comma-pause judgment, others hit a 429 and fell
-// back to mechanical-only tagging (still safe - see ensurePauseTags -
-// but no comma-pause judgment at all) - INCONSISTENT pacing between
-// beats within the SAME video, a real, if subtle, cause of a video
-// reading as "off" even with no single beat outright broken. Moved to
-// Mistral instead - a separate provider with its own much larger
-// budget (500,000 TPM vs Groq's 8000), so this no longer competes with
-// the treatment call at all.
+// Real, confirmed-live bug found via production logs (2026-09-05): this
+// used to call Groq directly, moved to Mistral because this file fires
+// one call per beat IN PARALLEL (narrationPrefetch.js's Promise.all)
+// right after the treatment call already spent Groq's 8000 TPM budget
+// for that minute - some beats got real LLM comma-pause judgment,
+// others 429'd straight to mechanical-only tagging, an inconsistent-
+// pacing bug even though no single beat outright broke.
+//
+// Moved BACK to Groq, direct user instruction: Mistral's API keys were
+// removed from the project entirely ("we aint meant to be using mistral
+// atalll... we are meant to use groq as the main ai"). The original
+// 429-storm this was moved to Mistral to avoid predates groqClient.js's
+// own per-key adaptive round-robin queue (added later - see that
+// file's own doc comment) - multiple keys with built-in inter-call
+// spacing now absorb this file's own burst of parallel calls the way
+// Mistral's single much-larger budget used to, without a second
+// provider.
 async function annotateNarrationTags(plainText, feedback = '') {
   const userMessage = feedback
     ? `${plainText}\n\n(A previous take of this exact script was reviewed by an audio QA judge and rejected - apply this specific feedback this time: ${feedback})`
     : plainText;
   try {
-    const tagged = (await callMistralRaw(TAGGING_SYSTEM_PROMPT, userMessage, { jsonMode: false, maxTokens: 1000, temperature: 0.4 })).trim();
+    const tagged = (await callGroqRaw(TAGGING_SYSTEM_PROMPT, userMessage, { jsonMode: false, maxTokens: 1000, temperature: 0.4 })).trim();
     if (stripTagsAndNormalize(tagged) !== stripTagsAndNormalize(plainText)) {
       console.warn(`[narrationTagging] tagged text changed the actual words (likely hallucinated content) - using mechanical pause tags only. Original: "${plainText}" | Got: "${tagged}"`);
       return ensurePauseTags(plainText);
