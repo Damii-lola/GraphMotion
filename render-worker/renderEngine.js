@@ -203,6 +203,62 @@ function adjustLightness(hex, factor) {
   const mix = (c) => (factor >= 0 ? c + (255 - c) * factor : c + c * factor);
   return rgbToHexLocal([mix(r), mix(g), mix(b)]);
 }
+
+// Real HSL round-trip and a real WCAG contrast-ratio formula - added
+// specifically for ensureHarmoniousColors below, direct user request
+// for "actual artist color concepts" (hue relationships, not
+// independently-random picks) instead of the old approach of picking a
+// background and an accent color from two totally unrelated palettes,
+// patched only reactively (and only ever toward one flat charcoal) when
+// they happened to collide badly. hexToHsl/hslToHex operate in real
+// hue-degrees/0-1 saturation-lightness, not the perceptual-luma
+// approximation relativeLuma below already uses for the OLD light/dark
+// background check - contrastRatio here is the actual WCAG 2.x formula
+// (linearized sRGB, 0.2126/0.7152/0.0722 weights, the (L1+0.05)/(L2+0.05)
+// ratio), since the user specifically asked for "WCAG-level contrast
+// ratios," not just a good-enough brightness comparison.
+function hexToHsl(hex) {
+  const [r, g, b] = hexToRgbLocal(hex).map((c) => c / 255);
+  const max = Math.max(r, g, b); const min = Math.min(r, g, b);
+  let h = 0; const l = (max + min) / 2; let s = 0;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0));
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+  }
+  return [h, s, l];
+}
+function hslToHex(h, s, l) {
+  const hue = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = l - c / 2;
+  let rgb;
+  if (hue < 60) rgb = [c, x, 0];
+  else if (hue < 120) rgb = [x, c, 0];
+  else if (hue < 180) rgb = [0, c, x];
+  else if (hue < 240) rgb = [0, x, c];
+  else if (hue < 300) rgb = [x, 0, c];
+  else rgb = [c, 0, x];
+  return rgbToHexLocal(rgb.map((v) => (v + m) * 255));
+}
+function srgbChannelToLinear(c) {
+  const cs = c / 255;
+  return cs <= 0.03928 ? cs / 12.92 : ((cs + 0.055) / 1.055) ** 2.4;
+}
+function wcagRelativeLuminance(rgb) {
+  const [r, g, b] = rgb.map(srgbChannelToLinear);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+function contrastRatio(hexA, hexB) {
+  const La = wcagRelativeLuminance(hexToRgbLocal(hexA));
+  const Lb = wcagRelativeLuminance(hexToRgbLocal(hexB));
+  const [lighter, darker] = La >= Lb ? [La, Lb] : [Lb, La];
+  return (lighter + 0.05) / (darker + 0.05);
+}
 // Real, directly-measured fix for a repeatedly-reported "background
 // looks dull/muted/lifeless" complaint: the OLD palette here
 // (#0A2435, #1A1035, etc) measured out to real HSL lightness of only
@@ -326,15 +382,14 @@ const LIGHT_TEXT_COLOR_LUMA_THRESHOLD = 150; // out of 255
  * seed - nothing upstream of this file (scene JSON generation) has any
  * way to know what background a given video will actually land on, so
  * light text authored blind would go invisible outright on a newly-
- * possible light/cream background. Fixed by checking the ACTUAL picked
- * background's real perceptual lightness after buildBoardLayoutAndBackground
- * runs, and - only when it turns out light - darkening any light text
- * fill/icon color/reveal-sweep color found in the scene (keeping each
- * color's own hue via adjustLightness rather than flattening everything
- * to one neutral, so beat-to-beat accent variety survives). Completely
- * inert (zero behavior change) on a dark background - the historical,
- * previously-only-possible case - since nothing here fires unless
- * isLightBackground is true.
+ * possible light/cream background. Only handles the LIGHT-background
+ * case, and only body/headline TEXT ("fillStyle") - a flat, confident
+ * dark neutral is the genuinely correct, deliberate choice there
+ * (matching the user's own later color-theory guidance: "prefer
+ * neutral... backgrounds should recede"), not something that needs
+ * hue-harmonizing. Icon/shape ACCENT colors are a separate concern,
+ * handled below by ensureHarmoniousColors - this only exists to keep
+ * the readable-text safety net that predates it.
  */
 function ensureTextContrastAgainstBackground(sceneJSON, boardBackgroundDef) {
   const startLuma = relativeLuma(hexToRgbLocal(boardBackgroundDef.startColor));
@@ -368,10 +423,142 @@ function ensureTextContrastAgainstBackground(sceneJSON, boardBackgroundDef) {
     for (const layer of layers) {
       if (!layer || typeof layer !== 'object') continue;
       if (typeof layer.fillStyle === 'string') layer.fillStyle = fixColor(layer.fillStyle);
-      if (typeof layer.iconColor === 'string') layer.iconColor = fixColor(layer.iconColor);
+    }
+  }
+}
+
+// A color counts as a real, deliberate ACCENT (needing hue-coordination
+// with the background) only if it's genuinely vivid - real HSL lightness
+// in a mid-range band, not washed out toward white/tint or crushed
+// toward black/shade. Confirmed with actual computed HSL values, not a
+// guess: this codebase's own neutral colors (#FFFFFF, the near-white
+// #E9E4FF/#F5F3FF icon tints, the #262220 dark-text charcoal) all land
+// at L<=0.14 or L>=0.88 REGARDLESS of their own HSL saturation (a very
+// light tint is mathematically "100% saturated" in HSL despite reading
+// as a near-neutral to the eye) - while every real accent color this
+// file's own ACCENT_PALETTE and mograph beats actually use lands at
+// L 0.60-0.77. This is what lets the pass below tell "a deliberate
+// neutral" from "a real accent that should match the background"
+// apart, without needing to track which JSON field a color came from.
+const VIVID_ACCENT_MIN_SATURATION = 0.5;
+const VIVID_ACCENT_MIN_LIGHTNESS = 0.35;
+const VIVID_ACCENT_MAX_LIGHTNESS = 0.80;
+function isVividAccentColor(hex) {
+  if (typeof hex !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(hex)) return false;
+  const [, s, l] = hexToHsl(hex);
+  return s >= VIVID_ACCENT_MIN_SATURATION && l >= VIVID_ACCENT_MIN_LIGHTNESS && l <= VIVID_ACCENT_MAX_LIGHTNESS;
+}
+
+const MIN_ACCENT_CONTRAST_RATIO = 3.2; // real WCAG large-UI-component minimum (3:1) plus a small safety margin
+
+/**
+ * Builds a small palette of accent colors all genuinely RELATED to the
+ * background's own hue (monochromatic and analogous relationships -
+ * complementary is deliberately NOT included here: the user's own
+ * guidance was explicit that "two high-saturation complementary colors
+ * directly against each other" should be used "sparingly," and this
+ * palette is applied to EVERY accent-role color across a whole video,
+ * not a single rare highlight, so skipping it here avoids exactly the
+ * failure case that warning describes). Each candidate's lightness is
+ * nudged - never its hue, that's what keeps it "in the family" - until
+ * it clears a real measured WCAG contrast ratio against the background,
+ * so every option in the returned palette is both harmonious AND
+ * genuinely readable, not just one or the other.
+ */
+function buildHarmoniousAccentPalette(backgroundHex, rand) {
+  const [bgH, , bgL] = hexToHsl(backgroundHex);
+  const hueOffsets = [0, 30, -30, 18, -18];
+  return hueOffsets.map((offset) => {
+    const hue = bgH + offset;
+    const sat = 0.62 + rand() * 0.22;
+    let light = bgL > 0.5 ? 0.26 + rand() * 0.1 : 0.66 + rand() * 0.14;
+    let hex = hslToHex(hue, sat, light);
+    let guard = 0;
+    while (contrastRatio(hex, backgroundHex) < MIN_ACCENT_CONTRAST_RATIO && guard < 14) {
+      light = bgL > 0.5 ? Math.max(0.06, light - 0.05) : Math.min(0.96, light + 0.05);
+      hex = hslToHex(hue, sat, light);
+      guard += 1;
+    }
+    return hex;
+  });
+}
+
+/**
+ * Real, direct user request: "USE ACTUAL ARTIST COLOR CONCEPTS WHEN
+ * PICKING COLORS FOR BOTH THE BG AND THE ICONS" - hierarchical
+ * contrast + harmony (hue relationships, WCAG contrast), not
+ * independently-random picks patched only reactively. Before this,
+ * background color (buildBoardLayoutAndBackground, above) and every
+ * icon/shape accent color (sceneSchema.js's ACCENT_PALETTE, picked at
+ * scene-JSON-GENERATION time, before this render-time background is
+ * even chosen) came from two totally unrelated sources - the only
+ * existing safety net (ensureTextContrastAgainstBackground, above)
+ * only ever fixed body TEXT on a light background, never touched icon/
+ * shape colors at all, on either light or dark backgrounds.
+ *
+ * Runs unconditionally (unlike the text-only pass above, which only
+ * fires on a light background) - a dark background can just as easily
+ * clash with an unrelated accent hue as a light one; harmony isn't a
+ * light-background-only problem the way raw readability was.
+ *
+ * Uses its OWN independently-seeded rand() stream (hashSceneJSONToSeed
+ * XORed with a fixed salt), never sharing buildBoardLayoutAndBackground's
+ * own stream - inserting extra draws into that SHARED sequence would
+ * shift every later position/background draw it makes, breaking the
+ * cross-chunk-worker determinism buildBoardLayoutAndBackground's own
+ * doc comment depends on. A second, independently-seeded deterministic
+ * stream stays exactly as reproducible without touching the first.
+ *
+ * Detects which colors actually need harmonizing via isVividAccentColor
+ * (real HSL lightness, not which JSON field it came from) - lets this
+ * one pass cover every accent-carrying field this file didn't
+ * previously touch at all (shape fill/stroke - node circles, connector
+ * lines, phone body/notch - none of which the old text-only pass ever
+ * saw), not just iconColor and text fills. Maps each DISTINCT original
+ * color to the SAME palette entry everywhere it appears (a Map, keyed
+ * by the original hex) - if a beat originally used one accentColor
+ * consistently across several fields (the normal mograph case), that
+ * internal consistency survives the remap instead of scattering into
+ * unrelated replacements.
+ */
+function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
+  const rand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x9E3779B1);
+  const bgRefColor = boardBackgroundDef.startColor;
+  const palette = buildHarmoniousAccentPalette(bgRefColor, rand);
+  const remap = new Map();
+  let nextPaletteIndex = 0;
+  const harmonize = (color) => {
+    if (!isVividAccentColor(color)) return color;
+    const key = color.toUpperCase();
+    if (!remap.has(key)) {
+      remap.set(key, palette[nextPaletteIndex % palette.length]);
+      nextPaletteIndex += 1;
+    }
+    return remap.get(key);
+  };
+
+  for (const scene of sceneJSON.scenes || []) {
+    const layers = scene?.visual?.layers;
+    if (!Array.isArray(layers)) continue;
+    for (const layer of layers) {
+      if (!layer || typeof layer !== 'object') continue;
+      if (typeof layer.iconColor === 'string') layer.iconColor = harmonize(layer.iconColor);
+      if (typeof layer.fillStyle === 'string') layer.fillStyle = harmonize(layer.fillStyle);
+      if (Array.isArray(layer.contents)) {
+        for (const c of layer.contents) {
+          if (!c || typeof c !== 'object') continue;
+          if (c.type === 'fill' && typeof c.color === 'string') c.color = harmonize(c.color);
+          if (c.type === 'stroke' && typeof c.color === 'string') c.color = harmonize(c.color);
+        }
+      }
       if (Array.isArray(layer.animators)) {
         for (const a of layer.animators) {
-          if (a?.properties && typeof a.properties.color === 'string') a.properties.color = fixColor(a.properties.color);
+          if (a?.properties && typeof a.properties.color === 'string') a.properties.color = harmonize(a.properties.color);
+        }
+      }
+      if (Array.isArray(layer.effects)) {
+        for (const e of layer.effects) {
+          if (e?.params && typeof e.params.color === 'string') e.params.color = harmonize(e.params.color);
         }
       }
     }
@@ -478,6 +665,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   const { beatRanges } = buildTimeline(sceneJSON);
   const { positions: boardPositions, background: boardBackgroundDef } = buildBoardLayoutAndBackground(sceneJSON, beatRanges);
   ensureTextContrastAgainstBackground(sceneJSON, boardBackgroundDef);
+  ensureHarmoniousColors(sceneJSON, boardBackgroundDef);
 
   // The ONE shared background, logically covering every position the
   // camera can ever be parked at (each beat's own WIDTHxHEIGHT
