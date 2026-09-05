@@ -14,6 +14,7 @@ const { prefetchBeatImages, cleanupBeatImages } = require('./imagePrefetch');
 const { prefetchNarration, cleanupNarration } = require('./narrationPrefetch');
 const { muxNarrationOntoVideo } = require('./audioMux');
 const { dispatchToWorker } = require('./renderDispatch');
+const { harmonizeSceneColors } = require('./renderEngine');
 
 // Deliberately NOT `require('./iconFetch')` here - that file requires
 // @resvg/resvg-js at its own top level, a real native SVG rasterizer
@@ -148,6 +149,16 @@ process.on('message', async ({ jobId, prompt, targetDurationSeconds, parentScene
       await sendAndFlush({ type: 'dispatched_to_worker', jobId, workerUrl: dispatch.workerUrl });
       return;
     }
+
+    // Same fix as render-worker/server.js's own handleRenderJob (see
+    // harmonizeSceneColors' doc comment in renderEngine.js): must run
+    // before prefetchIconsIsolated below bakes each icon's own color
+    // into pixels and deletes the field, or the icon and its own glow
+    // effect end up harmonized to two different colors. The dispatched-
+    // to-worker path above doesn't need this call here - render-worker's
+    // own handleRenderJob does it on its side - this only covers the
+    // local-fallback path taken when no worker was available.
+    harmonizeSceneColors(narratedSceneJSON);
 
     const imageResolvedSceneJSON = await prefetchBeatImages(narratedSceneJSON, jobId);
     console.log(`[renderWorker] job ${jobId} images prefetched, rss=${rssMB()}MB`);

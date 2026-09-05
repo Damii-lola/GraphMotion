@@ -6,6 +6,7 @@ const path = require('path');
 const { fork } = require('child_process');
 
 const { prefetchBeatImages, cleanupBeatImages } = require('./imagePrefetch');
+const { harmonizeSceneColors } = require('./renderEngine');
 const {
   renderLongFormVideo, RenderCancelledError, CHUNK_THRESHOLD_SECONDS,
   computeChunkRanges, renderSingleChunk, concatChunks,
@@ -399,6 +400,18 @@ async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
   const PROGRESS_UPDATE_MIN_INTERVAL_MS = 1500;
 
   try {
+    // Must run before ANY prefetch step touches sceneJSON - see
+    // harmonizeSceneColors' own doc comment (renderEngine.js) for the
+    // real, confirmed-live bug this fixes: iconFetch.js's own prefetch
+    // rasterizes each icon layer's PNG using whatever iconColor it finds
+    // and then deletes that field outright, so harmonizing colors any
+    // later than this leaves every icon's own glow effect harmonized to
+    // a different color than the icon itself ends up baked as. Mutates
+    // sceneJSON in place; everything below (image prefetch, a possible
+    // sibling's own icon-raw copy, this worker's own icon prefetch) all
+    // derives from this same already-harmonized object.
+    harmonizeSceneColors(sceneJSON);
+
     // Icons deliberately NOT resolved here anymore - see
     // renderWithPossibleHelp's own doc comment for the real, confirmed-
     // live bug this fixes. Hero images stay resolved this early since

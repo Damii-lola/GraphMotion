@@ -157,13 +157,25 @@ const MOTION_BLUR_CONFIG = { enabled: false, shutterAngle: 180, shutterPhase: -9
 // sceneJSON (same content -> same hash), which is the one property this
 // function actually needs to preserve - see this function's own callers
 // for why (chunk-to-chunk consistency within ONE video's render).
+// Real, second bug found in THIS same hash (2026-09-05, tracing a live
+// "icon renders one color, its own glow renders a totally different
+// color" report): the layerSig above included each image layer's own
+// "icon" field - which iconFetch.js's prefetchIcons DELETES once it
+// rasterizes that icon to a local PNG (replaced with a "src" file
+// path). ensureHarmoniousColors (below) needs to run BEFORE that
+// deletion so it can actually harmonize iconColor before it's baked
+// permanently into pixels - but this hash function is what seeds BOTH
+// that pre-prefetch harmonization pass AND renderTimelineRange's own
+// later pass, and computing it before vs after the icon field's own
+// deletion produced two DIFFERENT seeds for the exact same video,
+// silently picking a different background/palette each time. Dropping
+// the layer signature entirely and keeping just duration+narration
+// (verified sufficient on its own for the ORIGINAL collision bug this
+// hash was written to fix - see this function's other doc comment)
+// keeps the seed stable across every stage of the pipeline regardless
+// of what icon/image prefetch mutates afterward.
 function hashSceneJSONToSeed(sceneJSON) {
-  const s = (sceneJSON.scenes || []).map((sc) => {
-    const layerSig = (sc.visual?.layers || [])
-      .map((l) => `${l?.type || ''}:${l?.text || l?.icon || ''}`)
-      .join(',');
-    return `${sc.params?.duration || 0}|${sc.params?.narration || ''}|${layerSig}`;
-  }).join(';');
+  const s = (sceneJSON.scenes || []).map((sc) => `${sc.params?.duration || 0}|${sc.params?.narration || ''}`).join(';');
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
@@ -588,6 +600,41 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
       }
     }
   }
+}
+
+/**
+ * Real production fix, not just a refactor: server.js used to let
+ * renderTimelineRange be the ONLY place background color gets picked
+ * and ensureHarmoniousColors run - fine in isolation, but by the time a
+ * job actually reaches that call, iconFetch.js's own prefetch step has
+ * ALREADY rasterized every icon layer's PNG using its ORIGINAL,
+ * un-harmonized iconColor and deleted the field outright (see
+ * hashSceneJSONToSeed's own doc comment for the full trace). That left
+ * ensureHarmoniousColors' `if (typeof layer.iconColor === 'string')`
+ * check permanently unable to reach image layers - it kept correctly
+ * harmonizing that same layer's OWN outerGlow color (a separate, still-
+ * live field), producing a confirmed-live, directly reproduced bug: a
+ * mograph icon rendering in its ORIGINAL AI-picked color while its own
+ * glow renders in a totally different, harmonized one.
+ *
+ * Exported so server.js can call this explicitly, once, BEFORE any
+ * icon/image prefetch ever touches the scene - at that point iconColor
+ * is still a live string, so it gets harmonized right alongside every
+ * other color, and prefetch then bakes icons using the ALREADY-correct
+ * value. Safe to still let renderTimelineRange run its own internal
+ * copy of this same pass afterward (it does, unconditionally, for every
+ * caller that does NOT pre-harmonize) - same stable seed (see
+ * hashSceneJSONToSeed) plus the same first-color-encountered ->
+ * palette-slot assignment order means re-running it against already-
+ * harmonized values is a no-op fixed point, not a second, different
+ * remap.
+ */
+function harmonizeSceneColors(sceneJSON) {
+  const { beatRanges } = buildTimeline(sceneJSON);
+  const { background } = buildBoardLayoutAndBackground(sceneJSON, beatRanges);
+  ensureTextContrastAgainstBackground(sceneJSON, background);
+  ensureHarmoniousColors(sceneJSON, background);
+  return background;
 }
 
 /** Standard ease-in-out-cubic - explicitly requested ("MAKE SURE THE MOVEMENT IS CUBIC") for the camera pan, smooth acceleration then deceleration rather than a linear/robotic glide. */
@@ -1152,5 +1199,5 @@ async function renderJobToFile(jobId, sceneJSON, onProgress) {
 }
 
 module.exports = {
-  renderJobToFile, renderTimelineRange, buildTimeline, WIDTH, HEIGHT, FPS,
+  renderJobToFile, renderTimelineRange, buildTimeline, harmonizeSceneColors, WIDTH, HEIGHT, FPS,
 };
