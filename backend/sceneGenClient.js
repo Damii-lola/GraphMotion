@@ -273,6 +273,76 @@ async function generateCreativeTreatment(userPrompt, targetDurationSeconds, atte
   }
 }
 
+// TEMPORARY Gemini path, direct user instruction (2026-09-05): "Remove
+// groq for now, do ur test with all the other different ais" - said
+// right after Groq's account hit its real daily token quota
+// (organization-wide "tokens per day: Limit 200000, Used 198581" -
+// confirmed live, NOT a per-key limit, so the 2nd Groq key doesn't
+// route around it) hard enough that even the FIRST treatment call
+// failed all 6 retries, twice, blowing the whole job's 480s hard
+// timeout before a single beat was ever encoded. A real, brutal head-
+// to-head test (same treatment, same current 5-template prompt, run
+// against Gemini/OpenRouter/Mistral) found Gemini the clear winner -
+// 6/6 beats, all 5 mograph types used correctly, on the FIRST attempt,
+// no retries needed at all, ~4-6s per call. Mistral stayed unusable
+// (instant 429 across 4+ attempts spanning hours). This is meant to be
+// reverted back to Groq-primary once Groq's daily quota actually
+// recovers - the user's standing, repeated instruction all session has
+// been Groq as the real primary ("I WANT GROK"), this is a deliberate,
+// temporary deviation for a real outage, not a permanent architecture
+// change.
+//
+// Whole-scene-in-one-call here, NOT the per-beat split built for Groq -
+// deliberately different shapes for a real reason: Groq's constraint is
+// TOKENS/minute (splitting into many small calls keeps each one small
+// against that ceiling), but Gemini's own documented constraint is
+// REQUESTS/day (see loadKeys' own doc comment in geminiClient.js -
+// gemini-3.6-flash hits a hard 20 requests/day wall; flash-lite, the
+// model actually configured, has never been measured that precisely
+// but is the same shape of limit) - splitting one video into 6+ small
+// Gemini calls would multiply REQUEST COUNT exactly where Gemini's own
+// ceiling lives, the opposite of helping. One call per video is the
+// right shape for a request-count-limited provider.
+async function generateWholeSceneJSONViaGemini(userPrompt, targetDurationSeconds, treatment, { retriesLeft = 4, priorErrors = null, judgeFeedback = null } = {}) {
+  const systemPrompt = buildMinimalGenerationSystemPrompt(targetDurationSeconds);
+  let userMessage = `CREATIVE TREATMENT (already planned by a senior director - encode this EXACTLY and FAITHFULLY, missing nothing; every real beat/idea below must become its own real mograph spec or (rarely) a raw "layers" array. Only use real fields from the schema above.):\n${treatment}\n\nOriginal request: ${userPrompt}\n\nEncode EVERY beat the treatment planned above, in order, into "scenes" - none skipped, merged, or summarized away. Keep each beat's own "params.narration" SHORT (8 words max, one real sentence or fragment) even if the treatment's own prose for that beat reads longer - condense it down to a short spoken line, don't copy the treatment's descriptive text verbatim.`;
+  if (judgeFeedback) userMessage += `\n\nA brutal judge rejected your last script as boring: "${judgeFeedback}" Rewrite the narration (and matching on-screen text) to fix this - same treatment, same beat count.`;
+  if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON - still encoding the treatment above.`;
+
+  let raw;
+  try {
+    raw = await callGeminiRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 8000 });
+  } catch (err) {
+    if (retriesLeft > 0) {
+      console.warn(`[sceneGenClient] Gemini whole-scene call failed (${err.message}), retrying...`);
+      return generateWholeSceneJSONViaGemini(userPrompt, targetDurationSeconds, treatment, { retriesLeft: retriesLeft - 1, priorErrors, judgeFeedback });
+    }
+    throw err;
+  }
+
+  let sceneJSON;
+  try {
+    sceneJSON = extractJson(raw);
+  } catch (err) {
+    if (retriesLeft > 0) {
+      console.warn(`[sceneGenClient] Gemini JSON parse failed (${err.message}), retrying...`);
+      return generateWholeSceneJSONViaGemini(userPrompt, targetDurationSeconds, treatment, { retriesLeft: retriesLeft - 1, priorErrors, judgeFeedback });
+    }
+    throw err;
+  }
+
+  if (Array.isArray(sceneJSON.scenes)) sceneJSON.scenes.forEach(buildMographBeatVisual);
+  const { valid, errors } = validateSceneJSON(sceneJSON);
+  if (!valid) {
+    if (retriesLeft > 0) {
+      console.warn(`[sceneGenClient] Gemini scene JSON failed validation (${errors.length} error(s)), retrying: ${errors.slice(0, 3).join('; ')}`);
+      return generateWholeSceneJSONViaGemini(userPrompt, targetDurationSeconds, treatment, { retriesLeft: retriesLeft - 1, priorErrors: errors, judgeFeedback });
+    }
+    throw new Error(`Gemini-generated scene JSON failed schema validation after retries: ${errors.join('; ')}`);
+  }
+  return sceneJSON;
+}
+
 // Splits a treatment's plain-prose HOOK/PALETTE section off (never sent
 // to the per-beat call - it's director's-notes-to-self, not part of any
 // one beat's own plan) and the rest into one chunk per "===BEAT n==="
@@ -514,15 +584,39 @@ async function generateAllBeatsJSON(userPrompt, targetDurationSeconds, treatment
 // or vice versa) - capped at MAX_JUDGE_ROUNDS total attempts; if the
 // judge still hasn't passed by then, ships the LAST attempt anyway
 // rather than block the whole generation on taste forever.
+// TEMPORARY Gemini treatment path, same outage/reasoning as
+// generateWholeSceneJSONViaGemini above - the treatment call is the
+// very FIRST Groq call generateSceneJSON makes, so it hit the exact
+// same organization-wide daily-quota wall before a single beat was
+// ever attempted (confirmed live: 5-6 straight 429s here alone, twice,
+// eating ~200s before the whole job even got to encoding). Revert to
+// generateCreativeTreatment (Groq) once the quota recovers.
+async function generateCreativeTreatmentViaGemini(userPrompt, targetDurationSeconds) {
+  const creativeAngle = pickRandomCreativeAngle();
+  console.log(`[sceneGenClient] creative angle for this generation: ${creativeAngle}`);
+  const systemPrompt = buildTreatmentSystemPrompt(targetDurationSeconds, creativeAngle);
+  return callGeminiRaw(systemPrompt, userPrompt, { jsonMode: false, maxTokens: 5000 });
+}
+
+// PRIMARY PROVIDER SWITCH - TEMPORARY, direct user instruction
+// (2026-09-05): "Remove groq for now, do ur test with all the other
+// different ais" - see generateWholeSceneJSONViaGemini's own doc
+// comment above for the full reasoning (Groq's real, confirmed
+// organization-wide daily quota exhaustion, and the real head-to-head
+// test that found Gemini the clear winner among the alternatives
+// actually reachable with a working key today). Both calls below point
+// at the *ViaGemini variants instead of the normal Groq-primary ones -
+// swap back to generateCreativeTreatment/generateAllBeatsJSON once Groq
+// recovers, this project's real standing preference all session.
 async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
-  console.log('[sceneGenClient] planning creative treatment...');
-  const treatment = await generateCreativeTreatment(userPrompt, targetDurationSeconds);
+  console.log('[sceneGenClient] planning creative treatment (Gemini, TEMPORARY while Groq is quota-exhausted)...');
+  const treatment = await generateCreativeTreatmentViaGemini(userPrompt, targetDurationSeconds);
 
   let sceneJSON = null;
   let judgeFeedback = null;
   for (let round = 1; round <= MAX_JUDGE_ROUNDS; round++) {
-    console.log(`[sceneGenClient] encoding scene, one beat at a time (script round ${round}/${MAX_JUDGE_ROUNDS})...`);
-    sceneJSON = await generateAllBeatsJSON(userPrompt, targetDurationSeconds, treatment, judgeFeedback);
+    console.log(`[sceneGenClient] encoding whole scene via Gemini, TEMPORARY (script round ${round}/${MAX_JUDGE_ROUNDS})...`);
+    sceneJSON = await generateWholeSceneJSONViaGemini(userPrompt, targetDurationSeconds, treatment, { judgeFeedback });
 
     console.log('[sceneGenClient] judging narration script...');
     const verdict = await judgeNarrationScript(sceneJSON);
