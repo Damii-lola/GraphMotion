@@ -370,7 +370,31 @@ function buildBoardLayoutAndBackground(sceneJSON, beatRanges) {
   // across a batch of videos, just less often now.
   const shape = rand() < 0.25 ? 'linear' : 'radial';
 
-  return { positions, background: { startColor, endColor, shape } };
+  // Direct user spec (2026-09-05): "deep, multi-layered atmospheric
+  // field... dark navy-to-indigo radial gradient with subtle cyan/
+  // electric blue light pooling in the center" - a genuine THIRD stop
+  // (see gradientRamp's own colorStops support), not just the existing
+  // 2-tone ramp. poolColor/edgeColor are ADDITIONAL fields, independent
+  // of startColor/endColor - every existing consumer of this object
+  // (ensureHarmoniousColors, adaptGlowForBackground, text-contrast)
+  // keeps reading startColor/endColor exactly as before, unaffected by
+  // this. Center is always the BRIGHTEST point and the edge always the
+  // DARKEST, monotonically - regardless of the lighten coin flip above,
+  // since a "pooling" look specifically wants the eye pulled to the
+  // middle, not whichever of start/end happened to land lighter today.
+  // Only meaningful for 'radial' shape (a linear ramp has no center to
+  // pool at) - render loop below falls back to the plain 2-stop ramp
+  // for 'linear'.
+  const [baseHue, baseSat, baseLight] = hexToHsl(baseColor);
+  const poolColor = hslToHex(baseHue, Math.min(1, baseSat * 0.55 + 0.4), Math.min(0.82, baseLight + 0.32));
+  const edgeColor = hslToHex(baseHue, Math.min(1, baseSat * 0.7 + 0.15), Math.max(0.05, baseLight * 0.22));
+
+  return {
+    positions,
+    background: {
+      startColor, endColor, shape, poolColor, edgeColor,
+    },
+  };
 }
 
 // Perceptual luma (ITU-R BT.601 weights) - standard "how bright does
@@ -719,6 +743,175 @@ function drawAmbientOrbs(ctx, orbs, camX, camY, width, height) {
   }
 }
 
+/**
+ * Direct user spec, the per-frame half of the atmosphere upgrade:
+ * "soft volumetric fog / haze layers that slowly drift," "tiny floating
+ * particles... that drift slowly in 3D space with parallax," plus a
+ * pulsing energy ring and fine film grain. All of it lives in VIEWPORT
+ * space (fixed relative to the screen), not world/board space like the
+ * gradient and orbs - this is meant to read as a constant ambient layer
+ * hugging the current view, not a specific point on the shared board,
+ * so it never needs the camX/camY math the background gradient does.
+ * Independently seeded (yet another distinct XOR constant, see
+ * generateAmbientOrbs' own doc comment for why this matters) so it
+ * never perturbs any other seeded sequence in this file.
+ */
+function generateAtmosphereField(sceneJSON, backgroundDef) {
+  const rand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0xc2b2ae35);
+  const [bgHue] = hexToHsl(backgroundDef.poolColor || backgroundDef.startColor);
+
+  const fogBlobs = [];
+  for (let i = 0; i < 4; i++) {
+    fogBlobs.push({
+      baseX: rand() * WIDTH,
+      baseY: rand() * HEIGHT,
+      radius: 160 + rand() * 200,
+      driftX: 25 + rand() * 35,
+      driftY: 18 + rand() * 28,
+      freqX: 0.04 + rand() * 0.04,
+      freqY: 0.035 + rand() * 0.04,
+      phase: rand() * Math.PI * 2,
+      color: hslToHex(bgHue + (rand() * 50 - 25), 0.4 + rand() * 0.2, 0.55 + rand() * 0.15),
+      opacity: 0.04 + rand() * 0.03,
+    });
+  }
+
+  const MOTE_COUNT = 22;
+  const motes = [];
+  for (let i = 0; i < MOTE_COUNT; i++) {
+    const depth = rand(); // 0 = far (small/slow/faint), 1 = near (big/fast/bright) - real parallax
+    motes.push({
+      baseX: rand() * WIDTH,
+      startY: rand() * (HEIGHT + 80) - 40,
+      radius: 0.8 + depth * 2.2,
+      fallSpeed: 3 + depth * 9,
+      driftAmp: 8 + depth * 14,
+      driftFreq: 0.15 + rand() * 0.25,
+      driftPhase: rand() * Math.PI * 2,
+      opacity: 0.12 + depth * 0.3,
+    });
+  }
+
+  return { fogBlobs, motes };
+}
+
+/**
+ * Real film grain needs to look like fine, high-frequency, ever-shifting
+ * noise - true per-pixel-per-frame randomness would cost a full
+ * width*height loop EVERY frame (exactly the cost gradientRamp's own
+ * caching exists to avoid paying more than once). Generated ONCE here
+ * instead (a genuinely random small tile), then scrolled by a cheap
+ * changing offset each frame (see drawAtmosphereOverlay) for a
+ * convincing animated flicker without ever recomputing the noise
+ * itself. Tiled at draw time, so a small texture covers the full frame.
+ */
+function buildGrainTexture(seed) {
+  const rand = mulberry32(seed);
+  const size = 128;
+  const canvas = createCanvas(size, size);
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.createImageData(size, size);
+  const data = imgData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const v = Math.floor(rand() * 255);
+    data[i] = v; data[i + 1] = v; data[i + 2] = v; data[i + 3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return canvas;
+}
+
+function drawAtmosphereOverlay(ctx, t, atmosphere, grainTexture, width, height) {
+  // Fog - native ctx.createRadialGradient, not the manual per-pixel
+  // gradientRamp - cheap enough to redraw every single frame.
+  for (const fog of atmosphere.fogBlobs) {
+    const x = fog.baseX + Math.sin(t * fog.freqX + fog.phase) * fog.driftX;
+    const y = fog.baseY + Math.cos(t * fog.freqY + fog.phase) * fog.driftY;
+    const [r, g, b] = hexToRgbLocal(fog.color);
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, fog.radius);
+    grad.addColorStop(0, `rgba(${r},${g},${b},${fog.opacity})`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, fog.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Motes - slow, looping vertical fall with a little horizontal sway,
+  // sized/speeded/faded by their own "depth" for real parallax (a near
+  // mote is bigger, faster, and more visible than a far one).
+  for (const m of atmosphere.motes) {
+    const span = height + 80;
+    const y = (((m.startY - t * m.fallSpeed) % span) + span) % span - 40;
+    const x = m.baseX + Math.sin(t * m.driftFreq + m.driftPhase) * m.driftAmp;
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(255,255,255,${m.opacity})`;
+    ctx.arc(x, y, m.radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // A single looping "sonar ping" ring, expanding from screen-center
+  // and fading as it grows - the animated counterpart to
+  // drawStaticEnergyRings' own fixed set baked into the cached
+  // background. "Almost like a gravitational field" per the spec.
+  const RING_PERIOD = 3.4;
+  const ringProgress = ((t % RING_PERIOD) + RING_PERIOD) % RING_PERIOD / RING_PERIOD;
+  ctx.beginPath();
+  ctx.strokeStyle = `rgba(160,225,255,${(1 - ringProgress) * 0.1})`;
+  ctx.lineWidth = 1.5;
+  ctx.arc(width / 2, height / 2, ringProgress * Math.max(width, height) * 0.55, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Fine grain - the same small noise tile, tiled to cover the frame,
+  // scrolled by a cheap time-based offset so it flickers rather than
+  // sitting fixed like a watermark. 'overlay' blend keeps it from ever
+  // flattening or discoloring the image underneath at this low alpha.
+  const gw = grainTexture.width;
+  const gh = grainTexture.height;
+  const ox = -((t * 137) % gw);
+  const oy = -((t * 89) % gh);
+  ctx.save();
+  ctx.globalAlpha = 0.05;
+  ctx.globalCompositeOperation = 'overlay';
+  for (let gx = ox; gx < width; gx += gw) {
+    for (let gy = oy; gy < height; gy += gh) {
+      ctx.drawImage(grainTexture, gx, gy);
+    }
+  }
+  ctx.restore();
+}
+
+/**
+ * Direct user spec: "faint concentric energy rings... that pulse
+ * outward from the eventual hero position, almost like a gravitational
+ * field." This universal background pass has no idea which beat will
+ * eventually grow a "hero" (that's mograph-specific, not something a
+ * generic background layer knows about) - centered on each beat's own
+ * board position instead, a reasonable stand-in since that's exactly
+ * where a beat's own content actually sits once the camera parks there.
+ * Static, not literally pulsing - drawn once into the SAME per-camera-
+ * position cached canvas drawAmbientOrbs already uses (see its own
+ * cache comment above), so this costs nothing extra per frame; a
+ * genuinely animated pulse lives instead in drawAtmosphereOverlay's
+ * cheap per-frame sonar-style ring, layered on top of this static set.
+ */
+function drawStaticEnergyRings(ctx, boardPositions, backgroundDef, camX, camY, width, height) {
+  const [r, g, b] = hexToRgbLocal(backgroundDef.poolColor || backgroundDef.startColor);
+  const RADII = [90, 160, 240];
+  for (const pos of boardPositions) {
+    const cx = pos.x - camX;
+    const cy = pos.y - camY;
+    const maxR = RADII[RADII.length - 1];
+    if (cx < -maxR || cx > width + maxR || cy < -maxR || cy > height + maxR) continue;
+    RADII.forEach((radius, i) => {
+      ctx.beginPath();
+      ctx.strokeStyle = `rgba(${r},${g},${b},${0.1 - i * 0.028})`;
+      ctx.lineWidth = 1.5;
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    });
+  }
+}
+
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2;
 }
@@ -945,6 +1138,17 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   let cachedBgCamX = null;
   let cachedBgCamY = null;
   const ambientOrbs = generateAmbientOrbs(sceneJSON, boardPositions, boardBackgroundDef);
+  // Direct user spec: fog/motes/grain/pulse - unlike the gradient and
+  // static orbs/rings above, these genuinely animate over TIME (drift,
+  // scroll, pulse), not just camera position, so they can't live in the
+  // camX/camY-keyed cache above - drawn fresh into the main `ctx` every
+  // single frame instead, right after the cached background blits in.
+  // Kept deliberately cheap (native ctx.createRadialGradient calls and
+  // small circle fills, not per-pixel loops like gradientRamp) since
+  // "every frame, no caching possible" is exactly the cost profile the
+  // cache above was built to avoid paying for the background itself.
+  const atmosphere = generateAtmosphereField(sceneJSON, boardBackgroundDef);
+  const grainTexture = buildGrainTexture(hashSceneJSONToSeed(sceneJSON) ^ 0x27d4eb2f);
 
   const canvas = createCanvas(WIDTH, HEIGHT);
   const ctx = canvas.getContext('2d');
@@ -1027,15 +1231,26 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
           endPoint: [boardBgEndPoint[0] - camX, boardBgEndPoint[1] - camY],
           startColor: boardBackgroundDef.startColor,
           endColor: boardBackgroundDef.endColor,
+          // Radial only - see buildBoardLayoutAndBackground's own doc
+          // comment for poolColor/edgeColor. A linear ramp has no real
+          // "center" for a light pool to make sense at, so it keeps the
+          // plain 2-stop startColor/endColor ramp untouched.
+          colorStops: boardBackgroundDef.shape === 'radial' ? [
+            { offset: 0, color: boardBackgroundDef.poolColor },
+            { offset: 0.45, color: boardBackgroundDef.startColor },
+            { offset: 1, color: boardBackgroundDef.edgeColor },
+          ] : undefined,
           shape: boardBackgroundDef.shape,
           dither: false,
         });
+        drawStaticEnergyRings(viewportBg.getContext('2d'), boardPositions, boardBackgroundDef, camX, camY, WIDTH, HEIGHT);
         drawAmbientOrbs(viewportBg.getContext('2d'), ambientOrbs, camX, camY, WIDTH, HEIGHT);
         cachedBgCanvas = viewportBg;
         cachedBgCamX = camX;
         cachedBgCamY = camY;
       }
       ctx.drawImage(viewportBg, 0, 0);
+      drawAtmosphereOverlay(ctx, globalT, atmosphere, grainTexture, WIDTH, HEIGHT);
 
       if (inPan) {
         const prevBeat = built.get(beatIndex - 1);
