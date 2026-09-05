@@ -6,6 +6,8 @@ const {
 const { callGroqRaw } = require('./groqClient');
 const { callGeminiRaw } = require('./geminiClient');
 
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
 /**
  * Scene generation, split across TWO providers matched to what each is
  * actually good at:
@@ -330,8 +332,23 @@ async function generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, 
     // on a transport failure, so THIS retry loop (on top of
     // callGroqRaw's own internal one) is what has to actually outlast a
     // persistent rate-limit window instead.
+    //
+    // Real, confirmed-live bug this backoff fixes (found via a deep-dive
+    // stress test, 2026-09-05): this retry used to recurse IMMEDIATELY,
+    // no delay at all - a transient network blip (confirmed live: a
+    // brief "getaddrinfo ENOTFOUND api.groq.com" DNS failure) got hit 6
+    // times in a row, all within milliseconds, burning the ENTIRE retry
+    // budget before the transient issue had any real chance to clear,
+    // then hard-failing the whole beat. callGroqRaw's own 429 handling
+    // already backs off before retrying; this outer layer never did.
+    // Same exponential-with-jitter shape, so a real network hiccup (DNS,
+    // a dropped connection, a momentary host issue) gets genuine time to
+    // resolve instead of being retried into the ground instantly.
     if (retriesLeft > 0) {
-      console.warn(`[sceneGenClient] beat ${beatIndex} Groq transport failed (${err.message}), retrying...`);
+      const attempt = 6 - retriesLeft;
+      const backoffMs = Math.min(1500 * 2 ** attempt, 15000) + Math.random() * 500;
+      console.warn(`[sceneGenClient] beat ${beatIndex} Groq transport failed (${err.message}), waiting ${Math.round(backoffMs)}ms before retry (${retriesLeft} left)...`);
+      await sleep(backoffMs);
       return generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, systemPrompt, { retriesLeft: retriesLeft - 1, priorErrors, judgeFeedback });
     }
     throw err;
@@ -382,7 +399,18 @@ async function generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, 
   // instead of falling through to the generic one.
   const mographSilentlyFailed = hadMographAttempt && !(beat.visual && Array.isArray(beat.visual.layers));
   if (mographSilentlyFailed) {
-    const err = `mograph: your "mograph" spec (type "${beat.mograph.type}") could not be built - check MOGRAPH above for the exact required fields per type (nodeCluster needs 3-8 "icons" + a valid "chosenIndex"; connectorList needs 2-6 "items" each with a real "icon"+"label"; phoneSwap needs real "text"+"icon"). Fix the spec and keep "mograph" as a TOP-LEVEL field - do not fall back to a raw "visual" layers array instead.`;
+    // Real, confirmed-live bug found via a deep-dive stress test
+    // (2026-09-05): a beat told its mograph spec was malformed
+    // sometimes "fixed" it on retry by DROPPING "mograph" entirely and
+    // writing raw "layers" instead - which then immediately triggered
+    // the OTHER mandatory-mograph rejection above, bouncing the model
+    // between two different corrections instead of converging. The
+    // message now states explicitly, up front, not to do that, and
+    // gives one concrete worked example of the exact shape expected
+    // (not just a field-by-field description) so there's a real correct
+    // answer to copy the pattern of, not just rules to interpret.
+    const typeLabel = typeof beat.mograph.type === 'string' ? `"${beat.mograph.type}"` : '(missing entirely)';
+    const err = `mograph: your "mograph" spec (type ${typeLabel}) could not be built. DO NOT remove "mograph" or fall back to a raw "visual" layers array - fix the spec's fields instead, it still must stay a TOP-LEVEL "mograph" field. Required fields per type: nodeCluster needs "type":"nodeCluster", "icons" (3-8 real Iconify names), "chosenIndex" (a number, 0-based, less than icons.length). connectorList needs "type":"connectorList", "items" (2-6 objects, each {"icon":"...", "label":"..."}). phoneSwap needs "type":"phoneSwap", "text" (a string), "icon" (a real Iconify name). Worked example: {"type":"nodeCluster","icons":["mdi:heart","mdi:brain","mdi:water"],"chosenIndex":0,"accentColor":"#8B5CF6"} - match this exact shape for whichever type fits this beat.`;
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] beat ${beatIndex} mograph spec malformed, retrying: ${err}`);
       return generateOneBeatJSON(userPrompt, beatText, beatIndex, totalBeats, systemPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [err], judgeFeedback });
