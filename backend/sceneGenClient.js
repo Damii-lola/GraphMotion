@@ -328,6 +328,19 @@ async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
   console.log('[sceneGenClient] planning creative treatment...');
   const treatment = await generateCreativeTreatment(userPrompt, targetDurationSeconds);
 
+  // Script-quality judge loop TEMPORARILY DISABLED - direct user request
+  // (2026-09-07): "comment out the audio script and the judge to judge
+  // the audio script... Rn we are trying to get the motion graphics in
+  // place, that's the priority." Narration audio itself is also
+  // disabled right now (see narrationPrefetch.js's prefetchNarration),
+  // so judging the narration script's hook/entertainment value is moot
+  // until audio comes back. Commented out below, not deleted - re-enable
+  // by restoring the loop and deleting this single-pass replacement.
+  const budget = { left: TOTAL_STRUCTURAL_RETRY_BUDGET };
+  const sceneJSON = await generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { budget });
+  return sceneJSON;
+
+  /*
   let sceneJSON = null;
   let judgeFeedback = null;
   // Shared, by-reference structural-retry budget - see
@@ -353,6 +366,7 @@ async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
     judgeFeedback = verdict.reason;
   }
   return sceneJSON;
+  */
 }
 
 async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds = 12, { retriesLeft = 4, priorErrors = null } = {}) {
