@@ -99,13 +99,20 @@ const LOGICAL_HEIGHT = 960;
 // background-level systems (the gradient, ambient orbs, atmosphere
 // overlay) draw natively at this larger size directly instead - they're
 // resolution-flexible procedural draws already, nothing to rescale.
-// 760x1352 -> 480x854 (2026-09-06, direct user request alongside the
-// 20->60fps change below): the withLogicalScale architecture above
-// means this works in either direction, up or down - beat content still
-// builds at the cheap LOGICAL_WIDTH/HEIGHT and gets scaled to whatever
-// WIDTH/HEIGHT ends up being.
-const WIDTH = 480;
-const HEIGHT = 854;
+// 760x1352 -> 480x854 -> 760x1352 (2026-09-06): the 480 drop was tried
+// alongside the 20->60fps change below to roughly offset the pixel-
+// throughput cost, but direct user report ("icons still look poor
+// scaled up") plus a real side-by-side test (identical scene, identical
+// icon-rasterization fix, only WIDTH/HEIGHT changed) confirmed 480px
+// genuinely doesn't leave enough pixel budget for fine icon/curve
+// detail to survive H.264 encoding, independent of how sharp the source
+// bitmap is - back to 760x1352, keeping 60fps, direct user choice after
+// seeing that comparison (real cost: see FPS's own doc comment below).
+// The withLogicalScale architecture above works in either direction
+// regardless - beat content still builds at the cheap LOGICAL_WIDTH/
+// HEIGHT and gets scaled to whatever WIDTH/HEIGHT ends up being.
+const WIDTH = 760;
+const HEIGHT = 1352;
 const CONTENT_SCALE_X = WIDTH / LOGICAL_WIDTH;
 const CONTENT_SCALE_Y = HEIGHT / LOGICAL_HEIGHT;
 
@@ -130,14 +137,16 @@ function withLogicalScale(drawFn) {
 }
 
 // 24 -> 20 was an emergency speed pass; 20 -> 60 (2026-09-06) is the
-// deliberate reverse - direct user request, paired with the resolution
-// drop just above (760x1352 -> 480x854). Total per-second pixel
-// throughput (WIDTH*HEIGHT*FPS) actually lands close to where it was
-// before this pair of changes (480*854*60 ~= 24.6M px/s vs the prior
-// 760*1352*20 ~= 20.6M px/s) - real render-time/memory impact verified
-// directly (see this function's own call sites and the commit this
-// change shipped in), not assumed safe just because the two numbers
-// happen to roughly offset on paper.
+// deliberate reverse - direct user request. Originally paired with a
+// resolution drop (760x1352 -> 480x854) to roughly offset the extra
+// pixel throughput, but that drop was reverted (see WIDTH/HEIGHT's own
+// doc comment - 480px wasn't enough resolution for icons to stay
+// sharp), so this combination (760x1352 @ 60fps) is a genuine ~6x
+// pixel-throughput increase over the original 540x960 @ 20fps, not a
+// roughly-offsetting swap any more. Direct, informed user choice after
+// seeing the real measured render-time cost this incurs - not assumed
+// safe, and worth revisiting if that cost turns out to be a problem in
+// practice on longer videos.
 const FPS = 60;
 const FRAME_DURATION = 1 / FPS;
 
