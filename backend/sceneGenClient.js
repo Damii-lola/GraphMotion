@@ -325,7 +325,18 @@ async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targe
 // Real production incident this guards against: a hung generation call
 // leaving a job stuck "processing" forever with no way for the user to
 // tell it had actually died rather than just being slow.
-const GENERATION_HARD_TIMEOUT_MS = 8 * 60 * 1000;
+// 8 -> 11 minutes (2026-09-06): a real 28s-target job hit this ceiling
+// outright and failed, confirmed live. A genuinely successful generation
+// earlier the same session took 5.3 minutes for a shorter (~12s target,
+// fewer required beats) video against this same slow provider - a
+// longer target needs more distinct templates to fill 3-6 beats, each
+// beat's own encode/validate/retry cycle costing real time (MiniMax via
+// OpenRouter runs 60-100s+ per call), so a longer video plausibly just
+// needed more of that same real, working-as-designed retry time rather
+// than being newly stuck. Raised rather than left to fail outright on
+// exactly the videos users are more likely to actually want (a 12s
+// default is already on the short end for real content).
+const GENERATION_HARD_TIMEOUT_MS = 11 * 60 * 1000;
 
 function withHardTimeout(promiseFactory, label) {
   return async (...args) => {
