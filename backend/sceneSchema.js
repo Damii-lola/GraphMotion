@@ -4617,11 +4617,23 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
           { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
         ] },
       opacity: opacityKf,
+      // Direct user correction (2026-09-06, against a real screenshot):
+      // the hero used to be a SOLID FILLED disc in its own accentColor -
+      // a totally different visual treatment from the other nodes'
+      // outlined-only circles, and looked like an inconsistent, unrelated
+      // shape rather than the "same family, now selected" story this
+      // beat is telling. No fill any more, and the SAME uniform rim
+      // colors as the unselected nodes (not accentColor) - selection now
+      // reads through sheer scale (4.3-4.75x) and the still-accentColor
+      // multi-layer glow radiating from behind it, not a different-
+      // colored or differently-styled ring. Base widths stay small
+      // (1.2/0.4, not the unselected nodes' 4.5/1.6) since THIS circle's
+      // own scale keyframes grow it ~4.75x - the same stroke width
+      // scales up right along with the shape.
       contents: isChosen ? [
         { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
-        { type: 'fill', color: accentColor },
-        { type: 'stroke', color: adjustLightness(accentColor, -0.4), width: 1.2 },
-        { type: 'stroke', color: '#FFFFFF', width: 0.4, opacity: 0.6 },
+        { type: 'stroke', color: nodeRimOuter, width: 1.2 },
+        { type: 'stroke', color: nodeRimInner, width: 0.4, opacity: 0.9 },
       ] : [
         { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
         { type: 'stroke', color: nodeRimOuter, width: 4.5 },
