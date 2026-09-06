@@ -4697,18 +4697,26 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
       opacity: opacityKf,
       // Uniform rim, every node, whether chosen or not - the hero no
       // longer looks different here at all pre-selection (see the fill
-      // layer above for what actually changes at selection). Base
-      // widths stay small for the hero (1.2/0.4, not the unselected
-      // nodes' 4.5/1.6) since THIS circle's own scale keyframes grow it
-      // ~4.75x - the same stroke width scales up right along with it.
+      // layer above for what actually changes at selection). Widths
+      // bumped again (2026-09-06, direct user report against a real
+      // screenshot: "the line is still a bit faint," pointing at this
+      // exact ring) - a thin 1-2px stroke can clear the accent-palette's
+      // own real WCAG contrast guarantee (ensureHarmoniousColors,
+      // MIN_ACCENT_CONTRAST_RATIO=3.2, a "large UI component" minimum,
+      // not full text-level contrast) and still read as faint to the
+      // eye, since so few pixels carry that contrast versus a bold
+      // stroke at the identical color/ratio. Base widths stay smaller
+      // for the hero (1.8/0.6, not the unselected nodes' 7/2.4) since
+      // THIS circle's own scale keyframes grow it ~4.75x - the same
+      // stroke width scales up right along with it.
       contents: isChosen ? [
         { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
-        { type: 'stroke', color: nodeRimOuter, width: 1.2 },
-        { type: 'stroke', color: nodeRimInner, width: 0.4, opacity: 0.9 },
+        { type: 'stroke', color: nodeRimOuter, width: 1.8 },
+        { type: 'stroke', color: nodeRimInner, width: 0.6 },
       ] : [
         { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
-        { type: 'stroke', color: nodeRimOuter, width: 4.5 },
-        { type: 'stroke', color: nodeRimInner, width: 1.6, opacity: 0.9 },
+        { type: 'stroke', color: nodeRimOuter, width: 7 },
+        { type: 'stroke', color: nodeRimInner, width: 2.4 },
       ],
       // No effects set here any more, hero included - see
       // __node_hero_fill__'s own doc comment for why the accentColor
