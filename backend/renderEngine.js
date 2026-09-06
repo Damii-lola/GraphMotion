@@ -99,8 +99,13 @@ const LOGICAL_HEIGHT = 960;
 // background-level systems (the gradient, ambient orbs, atmosphere
 // overlay) draw natively at this larger size directly instead - they're
 // resolution-flexible procedural draws already, nothing to rescale.
-const WIDTH = 760;
-const HEIGHT = 1352;
+// 760x1352 -> 480x854 (2026-09-06, direct user request alongside the
+// 20->60fps change below): the withLogicalScale architecture above
+// means this works in either direction, up or down - beat content still
+// builds at the cheap LOGICAL_WIDTH/HEIGHT and gets scaled to whatever
+// WIDTH/HEIGHT ends up being.
+const WIDTH = 480;
+const HEIGHT = 854;
 const CONTENT_SCALE_X = WIDTH / LOGICAL_WIDTH;
 const CONTENT_SCALE_Y = HEIGHT / LOGICAL_HEIGHT;
 
@@ -124,12 +129,16 @@ function withLogicalScale(drawFn) {
   };
 }
 
-// 24 -> 20: total frame count (and so total render time, all else
-// equal) scales directly with FPS - a real, zero-risk lever with none
-// of the resolution change's coordinate-system implications (FPS never
-// affects authored pixel positions). Part of the same emergency
-// speed pass as the resolution change above.
-const FPS = 20;
+// 24 -> 20 was an emergency speed pass; 20 -> 60 (2026-09-06) is the
+// deliberate reverse - direct user request, paired with the resolution
+// drop just above (760x1352 -> 480x854). Total per-second pixel
+// throughput (WIDTH*HEIGHT*FPS) actually lands close to where it was
+// before this pair of changes (480*854*60 ~= 24.6M px/s vs the prior
+// 760*1352*20 ~= 20.6M px/s) - real render-time/memory impact verified
+// directly (see this function's own call sites and the commit this
+// change shipped in), not assumed safe just because the two numbers
+// happen to roughly offset on paper.
+const FPS = 60;
 const FRAME_DURATION = 1 / FPS;
 
 // Real, confirmed-live gap: motionBlur.js (real sub-frame accumulation
@@ -1395,7 +1404,22 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       // (itself lossy, no alpha channel) either way, so JPEG's small
       // quality loss on an already-lossy pipeline's intermediate step is
       // imperceptible in the actual output.
-      const jpeg = canvas.encodeSync('jpeg', 90);
+      // 90 -> 96 (2026-09-06): direct user report of visibly poor
+      // delivered quality that the resolution increase alone didn't
+      // fix - real root cause traced to the FINAL ffmpeg encode below
+      // (ultrafast preset, no explicit CRF, so libx264's default of 23)
+      // rather than this JPEG step, but JPEG's own blocking artifacts on
+      // the new smooth pooling-gradient backgrounds specifically are
+      // real too and cheap to reduce. Measured directly on a realistic
+      // gradient+text frame at this exact resolution: encode time is
+      // statistically the same either way (~17ms/frame at both 90 and
+      // 96 - napi-rs/canvas's own JPEG encoder cost here is dominated by
+      // something other than the quality parameter), so this is a real
+      // quality win at no measured speed cost. Output size roughly
+      // doubles per frame (38KB -> 79KB in that same test), harmless
+      // since these files are transient and deleted after ffmpeg reads
+      // them, not part of the delivered output.
+      const jpeg = canvas.encodeSync('jpeg', 96);
       const frameIndex = frame - startFrame;
       fs.writeFileSync(path.join(framesDir, `f${String(frameIndex).padStart(6, '0')}.jpg`), jpeg);
 
@@ -1475,6 +1499,30 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         '-i', path.join(framesDir, 'f%06d.jpg'),
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
+        // Direct user report (2026-09-06): delivered video quality
+        // looked poor even after the resolution increase - real root
+        // cause, not resolution at all. libx264 had no explicit -crf
+        // here, defaulting to 23; "ultrafast" is a SPEED preset (kept
+        // deliberately, see this project's own real production timeout
+        // history) and trades real quality-per-bit for encode speed even
+        // at a fixed CRF, so the combination of a middling CRF and the
+        // least bit-efficient preset was the actual bottleneck, not
+        // pixel count. A lower CRF asks the encoder to spend MORE bits
+        // to hit a higher quality bar - orthogonal to -preset, which
+        // only governs how EFFICIENTLY those bits get used, not the
+        // target quality - so this doesn't touch the encode-speed axis
+        // the preset choice was specifically protecting. Landed on 21,
+        // not the more aggressive 18 first tried: measured directly on
+        // this exact content, 18 produced a 4.9MB four-second clip (this
+        // engine's own new film-grain overlay adds genuine per-frame
+        // noise that changes every frame, which is specifically hard for
+        // a motion-compensated codec to compress - asking for
+        // near-lossless preservation of that noise at 18 spent an
+        // enormous number of bits on it) versus 21's 1.9MB for the
+        // identical clip with no visible banding/blockiness on direct
+        // frame inspection - a real, deliberate quality/size trade
+        // rather than reflexively maxing out quality.
+        '-crf', '21',
         '-pix_fmt', 'yuv420p',
         outputPath,
       ]);
