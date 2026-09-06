@@ -554,6 +554,42 @@ function isVividAccentColor(hex) {
 
 const MIN_ACCENT_CONTRAST_RATIO = 3.2; // real WCAG large-UI-component minimum (3:1) plus a small safety margin
 
+// Real color-theory fix (2026-09-07, direct user complaint after seeing
+// an actual render: "how does red and dark green match with orange" -
+// the "dark green" was this SAME palette's own yellow-family candidate,
+// crushed down to L~0.15 to clear contrast against a light-ish
+// background, at which point it no longer reads as yellow at all. This
+// is a real, well-documented perceptual fact, not a hue-math bug: yellow
+// has an intrinsically high relative luminance even at full saturation
+// (the Munsell color system's own charts show yellow's maximum-chroma
+// value sitting at a much higher lightness than red, blue, or purple
+// ever need), so achieving the SAME WCAG contrast ratio against a light
+// background forces yellow down to a lightness where it perceptually
+// FLIPS into looking like dark olive/brown/green instead - a completely
+// different, uncoordinated hue sneaking into what was supposed to be a
+// harmonious analogous palette. Red (which held up fine dark) plus an
+// accidental "green" that was never actually chosen as green is exactly
+// the clash reported live.
+//
+// Rather than let a candidate land in that band and then crush it dark
+// below, nudge it OUT of the band first - toward the analogous side
+// (orange/red) if that's the shorter rotation, or into TRUE green
+// (~120-160deg) if that's shorter, since real saturated green (unlike
+// yellow) genuinely holds up at low lightness (a deep forest green
+// stays recognizably green; a deep "yellow" just looks brown). Hue
+// nudges only ever apply when the accent needs to go DARK for contrast
+// (a light/mid background) - a yellow candidate against a dark
+// background stays light-toned already (0.66-0.80), which is exactly
+// the lightness band real gold/yellow needs to read correctly, so no
+// adjustment is needed there.
+const YELLOW_BAND_MIN_DEG = 40;
+const YELLOW_BAND_MAX_DEG = 100;
+function escapeYellowBandForDarkAccent(hue) {
+  if (hue < YELLOW_BAND_MIN_DEG || hue > YELLOW_BAND_MAX_DEG) return hue;
+  const nudged = hue < 70 ? hue - 45 : hue + 45; // toward orange/red, or toward true green - whichever edge is closer
+  return ((nudged % 360) + 360) % 360;
+}
+
 /**
  * Builds a small palette of accent colors all genuinely RELATED to the
  * background's own hue (monochromatic and analogous relationships -
@@ -563,22 +599,25 @@ const MIN_ACCENT_CONTRAST_RATIO = 3.2; // real WCAG large-UI-component minimum (
  * palette is applied to EVERY accent-role color across a whole video,
  * not a single rare highlight, so skipping it here avoids exactly the
  * failure case that warning describes). Each candidate's lightness is
- * nudged - never its hue, that's what keeps it "in the family" - until
- * it clears a real measured WCAG contrast ratio against the background,
- * so every option in the returned palette is both harmonious AND
- * genuinely readable, not just one or the other.
+ * nudged - never its hue (aside from the yellow-band escape above,
+ * which only fires to keep a hue perceptually honest, not to chase
+ * harmony) - until it clears a real measured WCAG contrast ratio against
+ * the background, so every option in the returned palette is both
+ * harmonious AND genuinely readable, not just one or the other.
  */
 function buildHarmoniousAccentPalette(backgroundHex, rand) {
   const [bgH, , bgL] = hexToHsl(backgroundHex);
   const hueOffsets = [0, 30, -30, 18, -18];
+  const needsDarkAccent = bgL > 0.5;
   return hueOffsets.map((offset) => {
-    const hue = bgH + offset;
+    let hue = ((bgH + offset) % 360 + 360) % 360;
+    if (needsDarkAccent) hue = escapeYellowBandForDarkAccent(hue);
     const sat = 0.62 + rand() * 0.22;
-    let light = bgL > 0.5 ? 0.26 + rand() * 0.1 : 0.66 + rand() * 0.14;
+    let light = needsDarkAccent ? 0.30 + rand() * 0.12 : 0.66 + rand() * 0.14;
     let hex = hslToHex(hue, sat, light);
     let guard = 0;
     while (contrastRatio(hex, backgroundHex) < MIN_ACCENT_CONTRAST_RATIO && guard < 14) {
-      light = bgL > 0.5 ? Math.max(0.06, light - 0.05) : Math.min(0.96, light + 0.05);
+      light = needsDarkAccent ? Math.max(0.06, light - 0.05) : Math.min(0.96, light + 0.05);
       hex = hslToHex(hue, sat, light);
       guard += 1;
     }
