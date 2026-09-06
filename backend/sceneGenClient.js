@@ -107,7 +107,32 @@ async function callSceneJSONForJSON(systemPrompt, userMessage, retriesLeft, onRe
 // could otherwise loop forever chasing a verdict that never comes;
 // after the cap, the LAST attempt ships regardless rather than block
 // the whole generation on taste forever.
-const MAX_JUDGE_ROUNDS = 3;
+//
+// 3 -> 2 (2026-09-06): a real production job (28s target) failed
+// outright, blowing through even the just-tripled 660s hard timeout,
+// traced via full logs to a compounding-cost bug: each round called
+// generateWholeSceneJSON with a FRESH retriesLeft budget (see
+// TOTAL_STRUCTURAL_RETRY_BUDGET below for the actual fix to that), so
+// worst case was 3 rounds x up to 5 structural attempts each x up to
+// 150s/call (OPENROUTER_TIMEOUT_MS) plus 3 judge calls - a theoretical
+// ceiling far beyond 660s, and the observed real job burned the whole
+// budget mostly on round-to-round retries rather than genuine judge
+// iteration. Fewer, more effective rounds (paired with the mechanical
+// rewrite instructions added below, which target the actual recurring
+// failure instead of hoping a vague "try again" converges) converges
+// faster in practice than more rounds ever did.
+const MAX_JUDGE_ROUNDS = 2;
+
+// Real bug (2026-09-06, traced from the same production log above):
+// generateWholeSceneJSON used to get handed a FRESH retriesLeft=4 on
+// EVERY judge round (the outer loop below never threaded remaining
+// budget between rounds), so the true worst case was MAX_JUDGE_ROUNDS x
+// 5 structural attempts, not 5 total - the exact compounding that blew
+// past even an 11-minute hard timeout. This budget object is created
+// ONCE per generateSceneJSON call and passed BY REFERENCE into every
+// round's generateWholeSceneJSON call, so structural retries are now
+// capped ACROSS the whole generation, not per round.
+const TOTAL_STRUCTURAL_RETRY_BUDGET = 3;
 
 const SCRIPT_JUDGE_SYSTEM_PROMPT = `You are an EXTREMELY BRUTAL, non-sugarcoating short-form video script judge. You judge exactly ONE thing: would a 10-year-old with severe ADHD, scrolling TikTok, watch this ENTIRE video without swiping away?
 
@@ -216,11 +241,29 @@ async function generateCreativeTreatment(userPrompt, targetDurationSeconds, atte
 // video into many small calls would only multiply request count against
 // exactly the ceiling that actually matters here. One call per video is
 // the right shape for a request-count-limited provider.
-async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft = 4, priorErrors = null, judgeFeedback = null } = {}) {
+async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { budget = { left: TOTAL_STRUCTURAL_RETRY_BUDGET }, priorErrors = null, judgeFeedback = null } = {}) {
   const systemPrompt = buildMinimalGenerationSystemPrompt(targetDurationSeconds);
   let userMessage = `CREATIVE TREATMENT (already planned by a senior director - encode this EXACTLY and FAITHFULLY, missing nothing; every real beat/idea below must become its own real mograph spec or (rarely) a raw "layers" array. Only use real fields from the schema above.):\n${treatment}\n\nOriginal request: ${userPrompt}\n\nEncode EVERY beat the treatment planned above, in order, into "scenes" - none skipped, merged, or summarized away. Keep each beat's own "params.narration" SHORT (8 words max, one real sentence or fragment) even if the treatment's own prose for that beat reads longer - condense it down to a short spoken line, don't copy the treatment's descriptive text verbatim.`;
   if (judgeFeedback) userMessage += `\n\nA brutal judge rejected your last script as boring: "${judgeFeedback}" Rewrite the narration (and matching on-screen text) to fix this - same treatment, same beat count.`;
-  if (priorErrors) userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON - still encoding the treatment above.`;
+  if (priorErrors) {
+    userMessage += `\n\nYour previous attempt produced invalid JSON:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON - still encoding the treatment above.`;
+    // Real bug (2026-09-06, traced from production logs): the two most
+    // common validation errors were each hit 3-5+ times IN A ROW by the
+    // same generation, with only cosmetic rewording between attempts
+    // ("Hours of work. Disappears into the feed." -> "Hours of work. It
+    // just disappears." -> "Months of posts. Nobody's watching.") that
+    // never actually satisfied the mechanical check. Asking the model to
+    // creatively "fix" a hook is exactly the kind of vague instruction
+    // this project already learned (everywhere else this session) not
+    // to rely on - so when these two SPECIFIC errors appear, give an
+    // unambiguous mechanical patch instead of hoping a rewrite lands.
+    if (priorErrors.some((e) => /scenes\[0\]\.params\.narration/.test(e))) {
+      userMessage += `\n\nMECHANICAL FIX for the scenes[0] narration error above: keep the same underlying fact/claim, but the SENTENCE FORM must change. Do ONE of these, literally, and nothing fancier: (a) start the sentence with "You" or "Your", (b) end the sentence with "?", (c) end the sentence with "!", or (d) start the sentence with one of: Stop, Imagine, Picture, Wait, Guess, What if, Never. Pick whichever is easiest to bolt onto your last attempt and apply it directly - do not just reword the fact again without doing one of these four things.`;
+    }
+    if (priorErrors.some((e) => /params\.narration:.*too long/.test(e))) {
+      userMessage += `\n\nCOUNT THE WORDS in EVERY beat's narration before responding, not just the one flagged above - fixing one beat while another drifts over the limit is not a fix. Every single beat needs 8 words or fewer, no exceptions.`;
+    }
+  }
 
   let raw;
   try {
@@ -238,9 +281,10 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
     // latency win over guaranteeing a wasted round trip.
     raw = await callOpenRouterRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 14000 });
   } catch (err) {
-    if (retriesLeft > 0) {
-      console.warn(`[sceneGenClient] whole-scene call failed (${err.message}), retrying...`);
-      return generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: retriesLeft - 1, priorErrors, judgeFeedback });
+    if (budget.left > 0) {
+      budget.left -= 1;
+      console.warn(`[sceneGenClient] whole-scene call failed (${err.message}), retrying (${budget.left} structural retries left)...`);
+      return generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { budget, priorErrors, judgeFeedback });
     }
     throw err;
   }
@@ -249,9 +293,10 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
   try {
     sceneJSON = extractJson(raw);
   } catch (err) {
-    if (retriesLeft > 0) {
-      console.warn(`[sceneGenClient] JSON parse failed (${err.message}), retrying...`);
-      return generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: retriesLeft - 1, priorErrors, judgeFeedback });
+    if (budget.left > 0) {
+      budget.left -= 1;
+      console.warn(`[sceneGenClient] JSON parse failed (${err.message}), retrying (${budget.left} structural retries left)...`);
+      return generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { budget, priorErrors, judgeFeedback });
     }
     throw err;
   }
@@ -259,9 +304,10 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
   if (Array.isArray(sceneJSON.scenes)) sceneJSON.scenes.forEach(buildMographBeatVisual);
   const { valid, errors } = validateSceneJSON(sceneJSON);
   if (!valid) {
-    if (retriesLeft > 0) {
-      console.warn(`[sceneGenClient] scene JSON failed validation (${errors.length} error(s)), retrying: ${errors.slice(0, 3).join('; ')}`);
-      return generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { retriesLeft: retriesLeft - 1, priorErrors: errors, judgeFeedback });
+    if (budget.left > 0) {
+      budget.left -= 1;
+      console.warn(`[sceneGenClient] scene JSON failed validation (${errors.length} error(s)), retrying (${budget.left} structural retries left): ${errors.slice(0, 3).join('; ')}`);
+      return generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { budget, priorErrors: errors, judgeFeedback });
     }
     throw new Error(`Generated scene JSON failed schema validation after retries: ${errors.join('; ')}`);
   }
@@ -284,9 +330,14 @@ async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
 
   let sceneJSON = null;
   let judgeFeedback = null;
+  // Shared, by-reference structural-retry budget - see
+  // TOTAL_STRUCTURAL_RETRY_BUDGET's own doc comment. Created ONCE here
+  // and passed into every round below so retries are capped across the
+  // WHOLE generation, not reset fresh on every judge round.
+  const budget = { left: TOTAL_STRUCTURAL_RETRY_BUDGET };
   for (let round = 1; round <= MAX_JUDGE_ROUNDS; round++) {
     console.log(`[sceneGenClient] encoding whole scene (script round ${round}/${MAX_JUDGE_ROUNDS})...`);
-    sceneJSON = await generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { judgeFeedback });
+    sceneJSON = await generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { budget, judgeFeedback });
 
     console.log('[sceneGenClient] judging narration script...');
     const verdict = await judgeNarrationScript(sceneJSON);
