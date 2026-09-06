@@ -4679,8 +4679,28 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
         // every other node's rim gets) visually bled over and tinted
         // it toward accentColor anyway, so the hero read as a different
         // color well before it was actually supposed to change.
+        //
+        // Second real catch, same screenshot, zoomed: a visible green/
+        // teal FRINGE right at the rim's own edge, confirmed via a
+        // direct local render + zoomed frame inspection, not a
+        // compression artifact. Root cause: the rim's own uniform color
+        // and accentColor are two SEPARATE original values that get
+        // independently assigned slots in the same small harmonious
+        // palette (ensureHarmoniousColors) - individually each is
+        // harmonious against the BACKGROUND, but nothing coordinates
+        // them against EACH OTHER, and the tight-core glow (blur 10, a
+        // narrow, concentrated ring sitting almost exactly under the
+        // rim's own stroke) put accentColor's own hue directly adjacent
+        // to the rim's, producing a visible two-tone seam wherever they
+        // happened to land far apart on the color wheel. Switched the
+        // tight core specifically to the rim's own color (nodeRimOuter)
+        // - it sits too close to the rim to ever read as a deliberate
+        // "different accent" anyway, just as a clash - while the medium
+        // bloom and wide atmospheric layers, which spread well past the
+        // rim into open space, keep the real accentColor so the
+        // selection still reads as a genuine color reveal at a distance.
         effects: [
-          { type: 'outerGlow', params: { color: accentColor, opacity: 0.95, blur: 10, blendMode: 'screen' } },
+          { type: 'outerGlow', params: { color: nodeRimOuter, opacity: 0.95, blur: 10, blendMode: 'screen' } },
           { type: 'outerGlow', params: { color: accentColor, opacity: 0.5, blur: 32, blendMode: 'screen' } },
           { type: 'outerGlow', params: { color: accentColor, opacity: 0.22, blur: 75, blendMode: 'screen' } },
         ],
@@ -4718,13 +4738,34 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
         { type: 'stroke', color: nodeRimOuter, width: 7 },
         { type: 'stroke', color: nodeRimInner, width: 2.4 },
       ],
-      // No effects set here any more, hero included - see
-      // __node_hero_fill__'s own doc comment for why the accentColor
-      // glow moved there instead. This layer now falls through to
-      // applyMographGlow's default single-glow treatment (using its own
-      // uniform rim color) exactly like every other node, hero or not -
-      // true visual identity before selection, not just matching stroke
-      // color while a much stronger glow quietly gave it away anyway.
+      // Third real catch from the same screenshot, confirmed by directly
+      // sampling pixel RGB values across the rim's own edge (not just
+      // eyeballing) - a soft, muddy multi-pixel transition band between
+      // the rim and the background, perceived as an off-color "fringe"
+      // even though no individual pixel was actually a rogue hue. Root
+      // cause: this layer's glow (and every effect's blur/offset
+      // params) is defined in the layer's OWN un-scaled pixel space,
+      // computed inside withEffects' buffer BEFORE the layer's own scale
+      // keyframes are applied during compositing - so a blur that looks
+      // right on a 1x-scale node becomes enormous once stretched by this
+      // circle's ~4.3-4.75x growth. applyMographGlow's default (blur 22,
+      // sized for the common 1x case) was ending up as a ~95-105px blur
+      // once scaled, producing a huge, soft halo instead of a defined
+      // edge. Pre-set here with a base blur scaled back down
+      // (22/4.3~=5) specifically so the EFFECTIVE, post-scale blur lands
+      // back around what every unselected node's own glow already looks
+      // like - applyMographGlow's own "skip if already has a glow" guard
+      // leaves this alone once set.
+      effects: isChosen ? [
+        { type: 'outerGlow', params: { color: nodeRimOuter, opacity: 0.85, blur: 5, blendMode: 'screen' } },
+      ] : undefined,
+      // Non-chosen nodes have no pre-set effects here - they fall
+      // through to applyMographGlow's own default single-glow treatment
+      // (using this same uniform rim color) same as before. The hero's
+      // own pre-set glow just above targets the SAME effective look
+      // once its scale is accounted for - true visual identity before
+      // selection, not just matching stroke color while an oversized
+      // glow quietly gave it away anyway.
     });
 
     if (isChosen) {
