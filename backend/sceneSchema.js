@@ -4466,19 +4466,15 @@ function computeZigzagPositions(count) {
  * confirmed via a real local render before this was wired into
  * generation at all.
  */
-// Phase 1 of the direct "god-tier nodeCluster" spec (2026-09-05):
-// "Icon Treatment (biggest remaining gap)." Every node's own accent hue
-// used to be either the shared accentColor (hero) or a flat generic
-// lavender (#E9E4FF, every non-hero node identical) - direct ask was
-// "different hue per platform." This template has no way to know an
-// icon is actually Instagram vs. YouTube (it's a generic constructor,
-// not brand-aware), so real per-icon identity comes from spacing
-// distinct ANALOGOUS/related hues around the beat's own accentColor
-// instead - same harmony principle render-time's own
-// buildHarmoniousAccentPalette already uses, applied here at
-// generation time so it's baked into the actual node colors, not just
-// a background-vs-icon relationship.
-const NODE_HUE_OFFSETS = [0, -45, 45, -90, 90, -135, 135, 180];
+// Direct user spec (2026-09-06): every non-chosen icon shares this SAME
+// neutral blue, uniform across all of them, regardless of the beat's
+// own accentColor - the chosen one turning a genuinely different color
+// (its real accentColor) is what makes the selection moment read as an
+// actual event. See buildNodeClusterLayers' own call site for the full
+// reasoning (this superseded Phase 1's original per-icon hue-variety
+// design, which pointed the opposite direction).
+const UNSELECTED_RIM_OUTER = '#3B6FA8';
+const UNSELECTED_RIM_INNER = '#A8D0F0';
 
 // Phase 1's own hero settle time (1.7s, a flat cut straight to final
 // size) is where Phase 2's "money shot" transition drama replaces it -
@@ -4538,7 +4534,6 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
   const RING_RADIUS = 150;
   const NODE_SIZE = 70;
   const layers = [];
-  const [baseHue] = hexToHsl(accentColor);
   icons.forEach((icon, i) => {
     const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
     const x = CENTER[0] + Math.cos(angle) * RING_RADIUS;
@@ -4571,20 +4566,26 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
         { time: 1.0, value: 1 },
         { time: 1.3, value: 0 },
       ] };
-    // Dual-stroke "premium material" rim, every node: a thicker, more
-    // saturated outer edge establishing real weight, then a thinner,
-    // brighter highlight stroke drawn on TOP of it at the same
-    // centerline (shapeLayer.js's renderContents draws every stroke
-    // entry in array order, later ones compositing over earlier ones -
-    // confirmed directly, not assumed - so two stroke entries on one
-    // path genuinely stack rather than the second silently replacing
-    // the first). Base widths are deliberately small for the hero
-    // circle specifically since its OWN scale keyframes grow it 4.3x -
-    // stroke width scales right along with the shape, so "1.2" here
-    // reads as a proportionate ~5px rim once fully grown, not a hairline.
-    const nodeHue = baseHue + NODE_HUE_OFFSETS[i % NODE_HUE_OFFSETS.length];
-    const nodeRimOuter = hslToHex(nodeHue, 0.6, 0.4);
-    const nodeRimInner = hslToHex(nodeHue, 0.5, 0.78);
+    // Dual-stroke "premium material" rim. Direct reversal of Phase 1's
+    // own per-icon hue variety (2026-09-06): every non-chosen node now
+    // shares the EXACT SAME neutral color, uniform - the "selection"
+    // moment only reads as a real event if everything looked identical
+    // beforehand; icons that were already all different colors have
+    // nothing left to visibly change INTO once one gets picked. The
+    // chosen node keeps using the beat's own real accentColor (already
+    // true since Phase 1), so the selected one now genuinely stands out
+    // as a color shift, not just a size change. Same original color
+    // string on every non-chosen icon also means render-time's own
+    // ensureHarmoniousColors maps them all to one identical replacement
+    // (its Map is keyed by the input string) - true uniformity survives
+    // harmonization, unlike the old per-icon variants which sometimes
+    // collided or clashed under a small 5-slot palette. Base widths are
+    // deliberately small for the hero circle specifically since its OWN
+    // scale keyframes grow it 4.3x - stroke width scales right along
+    // with the shape, so "1.2" here reads as a proportionate ~5px rim
+    // once fully grown, not a hairline.
+    const nodeRimOuter = UNSELECTED_RIM_OUTER;
+    const nodeRimInner = UNSELECTED_RIM_INNER;
     layers.push({
       id: `__node_bg_${i}__`,
       type: 'shape',

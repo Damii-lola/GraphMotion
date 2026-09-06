@@ -961,6 +961,45 @@ function drawStaticEnergyRings(ctx, boardPositions, backgroundDef, camX, camY, w
   }
 }
 
+/**
+ * Direct user spec: "a transparent very faint but there grid to all
+ * backgrounds." Drawn in WORLD space (offset by camX/camY, like the
+ * gradient and orbs above), not fixed to the viewport - a grid glued to
+ * the screen would look like a static overlay ignoring the camera pan;
+ * one anchored to world coordinates instead reads as an actual surface
+ * the camera moves across, exactly like the energy rings and orbs
+ * already do. The offsetX/offsetY modulo is what keeps the pattern
+ * genuinely continuous across different camera positions - without it,
+ * each newly (re)computed background canvas would restart the grid at
+ * its own local (0,0) instead of lining up with the SAME infinite grid
+ * a moment before. Static, drawn once into the same per-camera-position
+ * cached canvas drawStaticEnergyRings/drawAmbientOrbs already use.
+ */
+function drawWorldGrid(ctx, backgroundDef, camX, camY, width, height) {
+  const startLuma = relativeLuma(hexToRgbLocal(backgroundDef.startColor));
+  const endLuma = relativeLuma(hexToRgbLocal(backgroundDef.endColor));
+  const isLight = (startLuma + endLuma) / 2 > LIGHT_BACKGROUND_LUMA_THRESHOLD;
+  const GRID_SIZE = 72;
+  ctx.save();
+  ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.045)';
+  ctx.lineWidth = 1;
+  const offsetX = ((-camX % GRID_SIZE) + GRID_SIZE) % GRID_SIZE;
+  const offsetY = ((-camY % GRID_SIZE) + GRID_SIZE) % GRID_SIZE;
+  for (let x = offsetX; x <= width; x += GRID_SIZE) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
+    ctx.stroke();
+  }
+  for (let y = offsetY; y <= height; y += GRID_SIZE) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2;
 }
@@ -1292,6 +1331,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
           shape: boardBackgroundDef.shape,
           dither: false,
         });
+        drawWorldGrid(viewportBg.getContext('2d'), boardBackgroundDef, camX, camY, WIDTH, HEIGHT);
         drawStaticEnergyRings(viewportBg.getContext('2d'), boardPositions, boardBackgroundDef, camX, camY, WIDTH, HEIGHT);
         drawAmbientOrbs(viewportBg.getContext('2d'), ambientOrbs, camX, camY, WIDTH, HEIGHT);
         cachedBgCanvas = viewportBg;
