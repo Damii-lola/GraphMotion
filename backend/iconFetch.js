@@ -33,6 +33,36 @@ function iconsDirFor(jobId) {
   return path.join(os.tmpdir(), 'shortform-renders', `${jobId}-icons`);
 }
 
+/**
+ * Finds the largest scale value a layer's own "scale" track ever
+ * reaches, across every shape that field can take in this schema - a
+ * plain [x,y] array (never animated), a {keyframes:[...]} track (each
+ * keyframe's own value inspected, not just the first/last), or a
+ * {expression, base} wiggle wrapper (recurses into "base", then adds a
+ * fixed safety margin for the wiggle's own additive contribution -
+ * every wiggle amplitude actually used across this codebase's mograph
+ * templates is small, 0.05-0.15, so a flat 15% margin comfortably
+ * covers it without needing a real expression evaluator here). Falls
+ * back to 1 (no upscale headroom needed) for anything unparseable.
+ */
+function getMaxScaleFactor(layer) {
+  const track = layer && layer.scale;
+  if (!track) return 1;
+  if (Array.isArray(track)) return Math.max(1, ...track.filter((v) => typeof v === 'number'));
+  if (typeof track !== 'object') return 1;
+  if (Array.isArray(track.keyframes)) {
+    let max = 1;
+    for (const kf of track.keyframes) {
+      if (!kf) continue;
+      if (Array.isArray(kf.value)) max = Math.max(max, ...kf.value.filter((v) => typeof v === 'number'));
+      else if (typeof kf.value === 'number') max = Math.max(max, kf.value);
+    }
+    return max;
+  }
+  if (typeof track.expression === 'string') return getMaxScaleFactor({ scale: track.base }) * 1.15;
+  return 1;
+}
+
 /** Recursively collects every layer (including inside precomps) needing icon resolution. */
 function collectIconLayers(layers, out) {
   if (!Array.isArray(layers)) return;
@@ -82,7 +112,21 @@ async function prefetchIcons(sceneJSON, jobId) {
   // fetch per DISTINCT key, applied to every layer that shares it.
   const groups = new Map(); // cacheKey -> { icon, iconColor, sizePx, layers: [...] }
   for (const layer of iconLayers) {
-    const sizePx = Math.max(typeof layer.width === 'number' ? layer.width : 0, typeof layer.height === 'number' ? layer.height : 0) || 256;
+    const baseSizePx = Math.max(typeof layer.width === 'number' ? layer.width : 0, typeof layer.height === 'number' ? layer.height : 0) || 256;
+    // Direct user report: icons "look good when small but when enlarged
+    // they don't look good." Real, confirmed root cause - this used to
+    // size the rasterized bitmap ONLY from the layer's own base width/
+    // height, with zero awareness that many mograph layers (nodeCluster/
+    // mergeCluster's own hero icon, for instance) grow well past 1x via
+    // their OWN "scale" keyframes - up to ~4x for a hero. A bitmap
+    // rasterized for the BASE size then gets a real, visible UPSCALE
+    // once that keyframe track plays out, softening/blurring exactly
+    // when the icon is biggest and most on-screen. getMaxScaleFactor
+    // finds the largest scale value that layer's own track ever reaches
+    // (including through a wiggle expression's base) so the bitmap is
+    // rasterized at the size it will ACTUALLY be displayed at, not just
+    // its resting size.
+    const sizePx = Math.min(800, Math.round(baseSizePx * getMaxScaleFactor(layer)));
     const cacheKey = `${layer.icon}|${layer.iconColor || ''}|${sizePx}`;
     if (!groups.has(cacheKey)) groups.set(cacheKey, { icon: layer.icon, iconColor: layer.iconColor, sizePx, layers: [] });
     groups.get(cacheKey).layers.push(layer);

@@ -136,18 +136,29 @@ async function judgeNarrationScript(sceneJSON) {
   const numberedScript = buildNumberedScript(sceneJSON);
   if (!numberedScript) return { pass: true, reason: '' };
   try {
-    // maxTokens capped hard at 80 (was 400) - not just the system
-    // prompt's own "under 15 words" request, a real ceiling. The prompt
-    // instruction alone doesn't guarantee brevity (this session's own
-    // "mechanical enforcement beats prompt guidance" lesson again) and
-    // this reason text gets re-injected into the next whole-scene encode
-    // round - a real 413 was caused live by an unbounded version of this
-    // same text once already.
-    const raw = await callOpenRouterRaw(SCRIPT_JUDGE_SYSTEM_PROMPT, numberedScript, { jsonMode: false, maxTokens: 80, temperature: 0.6 });
+    // maxTokens capped hard at 80 (was 400), then found to be a real,
+    // guaranteed-failure bug (2026-09-06, traced directly from
+    // production logs): openRouterClient.js's own mandatory reasoning
+    // pass draws up to REASONING_MAX_TOKENS (3000) from this SAME
+    // budget before the actual PASS/FAIL verdict ever gets written - an
+    // 80-token ceiling can NEVER survive that, so this call was hitting
+    // finish_reason:"length" with zero usable content on effectively
+    // every single invocation, confirmed live, silently auto-passing
+    // every round (see the catch block below) while still burning a
+    // real 20+ second round trip for it. Raised to 3200 (3000 reasoning
+    // + genuine headroom for the short verdict/reason text) so the judge
+    // can actually complete instead of being structurally guaranteed to
+    // fail before this fix. The OLD 80-token ceiling was ALSO
+    // (accidentally) what kept the re-injected "reason" text short
+    // enough to avoid the prior live 413 - raising maxTokens for the
+    // reasoning problem above removes that accidental protection, so
+    // the explicit slice() below is what deliberately restores it now,
+    // rather than relying on an unrelated ceiling to happen to do it.
+    const raw = await callOpenRouterRaw(SCRIPT_JUDGE_SYSTEM_PROMPT, numberedScript, { jsonMode: false, maxTokens: 3200, temperature: 0.6 });
     const verdictMatch = raw.match(/VERDICT:\s*(PASS|FAIL)/i);
     const reasonMatch = raw.match(/REASON:\s*([\s\S]*)/i);
     const pass = verdictMatch ? verdictMatch[1].toUpperCase() === 'PASS' : true;
-    const reason = reasonMatch ? reasonMatch[1].trim() : '';
+    const reason = reasonMatch ? reasonMatch[1].trim().slice(0, 300) : '';
     return { pass, reason };
   } catch (err) {
     console.warn(`[sceneGenClient] script judge call failed (${err.message}) - passing this round open rather than block the generation on a judge that couldn't be reached`);
@@ -213,7 +224,19 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
 
   let raw;
   try {
-    raw = await callOpenRouterRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 8000 });
+    // 8000 -> 14000 (2026-09-06): real, confirmed-live failure mode
+    // traced directly from production logs, not guessed - this call
+    // repeatedly returned finish_reason:"length" with ZERO usable
+    // content. openRouterClient.js's own mandatory reasoning pass draws
+    // up to REASONING_MAX_TOKENS (3000) from this SAME budget before any
+    // real JSON gets written, leaving only ~5000 for a full 3-6-beat
+    // scene - not always enough, especially once a beat's own mograph
+    // spec runs long (a big icons array, a label, etc.) or the model's
+    // reasoning itself runs long. Each length-truncated failure forces a
+    // full retry (another 60-100s+ call from scratch, per this exact
+    // production log), so paying for more headroom up front is a net
+    // latency win over guaranteeing a wasted round trip.
+    raw = await callOpenRouterRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 14000 });
   } catch (err) {
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] whole-scene call failed (${err.message}), retrying...`);
