@@ -4666,6 +4666,24 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
           { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
           { type: 'fill', color: accentColor },
         ],
+        // Multi-layer glow stack - tight core + medium bloom + wide
+        // atmospheric haze, direct spec ask. Lives on THIS layer, not
+        // the outline circle below, specifically because this layer's
+        // own opacity is what's gated to the selection moment - putting
+        // the accentColor glow here means it only ever becomes visible
+        // exactly when the fill itself does. Real, direct user catch
+        // (2026-09-06): this used to sit on the outline layer instead,
+        // active from frame 0 - the rim's OWN color was already
+        // correctly uniform with the other nodes the whole time, but
+        // this glow (far more intense than the single default glow
+        // every other node's rim gets) visually bled over and tinted
+        // it toward accentColor anyway, so the hero read as a different
+        // color well before it was actually supposed to change.
+        effects: [
+          { type: 'outerGlow', params: { color: accentColor, opacity: 0.95, blur: 10, blendMode: 'screen' } },
+          { type: 'outerGlow', params: { color: accentColor, opacity: 0.5, blur: 32, blendMode: 'screen' } },
+          { type: 'outerGlow', params: { color: accentColor, opacity: 0.22, blur: 75, blendMode: 'screen' } },
+        ],
       });
     }
 
@@ -4692,19 +4710,13 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
         { type: 'stroke', color: nodeRimOuter, width: 4.5 },
         { type: 'stroke', color: nodeRimInner, width: 1.6, opacity: 0.9 },
       ],
-      // Multi-layer glow stack, hero only - tight core + medium bloom +
-      // wide atmospheric haze, direct spec ask. Pre-set here (not left
-      // to applyMographGlow's own default single-glow pass) specifically
-      // because that pass explicitly skips a layer that already has an
-      // outerGlow effect - setting all three here is what lets this
-      // node have its own deliberately layered glow instead of the
-      // generic one-glow-per-layer treatment every other mograph layer
-      // gets.
-      effects: isChosen ? [
-        { type: 'outerGlow', params: { color: accentColor, opacity: 0.95, blur: 10, blendMode: 'screen' } },
-        { type: 'outerGlow', params: { color: accentColor, opacity: 0.5, blur: 32, blendMode: 'screen' } },
-        { type: 'outerGlow', params: { color: accentColor, opacity: 0.22, blur: 75, blendMode: 'screen' } },
-      ] : undefined,
+      // No effects set here any more, hero included - see
+      // __node_hero_fill__'s own doc comment for why the accentColor
+      // glow moved there instead. This layer now falls through to
+      // applyMographGlow's default single-glow treatment (using its own
+      // uniform rim color) exactly like every other node, hero or not -
+      // true visual identity before selection, not just matching stroke
+      // color while a much stronger glow quietly gave it away anyway.
     });
 
     if (isChosen) {
