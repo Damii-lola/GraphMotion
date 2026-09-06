@@ -4473,7 +4473,25 @@ function computeZigzagPositions(count) {
 // actual event. See buildNodeClusterLayers' own call site for the full
 // reasoning (this superseded Phase 1's original per-icon hue-variety
 // design, which pointed the opposite direction).
-const UNSELECTED_RIM_OUTER = '#3B6FA8';
+//
+// Real, confirmed-live bug found via direct user report (2026-09-07):
+// "why is the color of the icon, the ring around it and the fill color
+// constant... didn't i tell u that all colors should be based on the bg
+// color" - this ring color is supposed to run through renderEngine.js's
+// own ensureHarmoniousColors pass (the "color studies" system: any
+// genuinely vivid accent color gets remapped to a palette derived from
+// whatever background hue that render actually picked), same as every
+// other accent color in this codebase. #3B6FA8's own saturation measured
+// at 0.480 - just UNDER isVividAccentColor's 0.5 minimum - so it silently
+// never qualified as "vivid" and stayed hard-coded to this exact blue on
+// every single render regardless of background, while nearby colors
+// (accentColor, UNSELECTED_RIM_INNER) correctly cleared the same gate and
+// DID adapt. Confirmed via direct HSL computation, not guessed. Bumped
+// saturation 0.48 -> 0.62 (same hue/lightness, so still the same visual
+// "steel blue" in isolation) - comfortably clears the 0.5 floor now, so
+// this finally participates in background-based harmonization like every
+// other accent color is supposed to.
+const UNSELECTED_RIM_OUTER = '#2B6EB8';
 const UNSELECTED_RIM_INNER = '#A8D0F0';
 
 // Phase 1's own hero settle time (1.7s, a flat cut straight to final
