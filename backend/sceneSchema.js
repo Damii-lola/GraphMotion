@@ -4586,50 +4586,103 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
     // once fully grown, not a hairline.
     const nodeRimOuter = UNSELECTED_RIM_OUTER;
     const nodeRimInner = UNSELECTED_RIM_INNER;
+    // Hero scale-up upgraded per direct spec: anticipation squash,
+    // explosive overshoot PAST the final size, then settle - was a
+    // single flat cut straight to 4.3x with no drama at all. Non-hero
+    // arrival gets its own small overshoot + settle bounce ("tiny scale
+    // settle bounce when they lock into the diamond formation") plus a
+    // brief anticipation pop right before it shrinks away. Extracted into
+    // named tracks (not inline in one layer's own "scale" field like
+    // before) specifically so the new hero-fill layer below can share the
+    // EXACT same circle scale via cloneTrack - it needs to grow in
+    // perfect lockstep with the outline it sits behind.
+    const circleScale = isChosen
+      ? { keyframes: [
+        { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: HERO_ANTICIPATION_TIME, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: HERO_ANTICIPATION_TIME + 0.08, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: HERO_EXPLODE_TIME, value: [4.75, 4.75], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: HERO_SETTLE_TIME, value: [4.3, 4.3] },
+      ] }
+      : { keyframes: [
+        { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.3, value: [1.18, 1.18], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.42, value: [1, 1] },
+        { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.12, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
+      ] };
+    const iconScale = isChosen
+      ? { keyframes: [
+        { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: HERO_ANTICIPATION_TIME, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: HERO_ANTICIPATION_TIME + 0.08, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: HERO_EXPLODE_TIME, value: [3.95, 3.95], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: HERO_SETTLE_TIME, value: [3.6, 3.6] },
+      ] }
+      : { keyframes: [
+        { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.3, value: [1.18, 1.18], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.42, value: [1, 1] },
+        { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.12, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
+      ] };
+
+    // Direct user spec (2026-09-06): the hero should look IDENTICAL to
+    // the others (uniform rim, no fill, blue-tinted icon) right up until
+    // the actual selection moment - only THEN does it turn white and
+    // gain a real solid fill "with a good color" (the beat's own real,
+    // harmonized accentColor). Colors in this engine are flat per-layer
+    // strings, not keyframeable - the established way to animate a color
+    // CHANGE (see buildPhoneSwapLayers' own text-to-icon crossfade) is
+    // two separate layers swapping opacity, not one layer whose color
+    // shifts. Timed to HERO_EXPLODE_TIME -> HERO_SETTLE_TIME, the same
+    // window the scale explosion already happens in, so the color
+    // change reads as PART OF the explosive reveal, not a separate,
+    // disconnected event.
+    if (isChosen) {
+      // Solid fill, hero only, invisible until the explode moment - sits
+      // BEHIND the outline (pushed first) so the rim's own dual-stroke
+      // still reads as a border around it rather than being covered by
+      // an opaque fill on top.
+      layers.push({
+        id: '__node_hero_fill__',
+        type: 'shape',
+        width: NODE_SIZE,
+        height: NODE_SIZE,
+        position: cloneTrack(posKf),
+        scale: cloneTrack(circleScale),
+        opacity: { keyframes: [
+          { time: HERO_EXPLODE_TIME - 0.01, value: 0 },
+          { time: HERO_EXPLODE_TIME, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: HERO_SETTLE_TIME, value: 1 },
+        ] },
+        contents: [
+          { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
+          { type: 'fill', color: accentColor },
+        ],
+      });
+    }
+
     layers.push({
       id: `__node_bg_${i}__`,
       type: 'shape',
       width: NODE_SIZE,
       height: NODE_SIZE,
       position: posKf,
-      // Hero scale-up upgraded per direct spec: anticipation squash,
-      // explosive overshoot PAST the final size, then settle - was a
-      // single flat cut straight to 4.3x with no drama at all. Non-hero
-      // arrival gets its own small overshoot + settle bounce ("tiny
-      // scale settle bounce when they lock into the diamond formation")
-      // plus a brief anticipation pop right before it shrinks away.
-      scale: isChosen
-        ? { keyframes: [
-          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: HERO_ANTICIPATION_TIME, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: HERO_ANTICIPATION_TIME + 0.08, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: HERO_EXPLODE_TIME, value: [4.75, 4.75], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: HERO_SETTLE_TIME, value: [4.3, 4.3] },
-        ] }
-        : { keyframes: [
-          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.3, value: [1.18, 1.18], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.42, value: [1, 1] },
-          { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.12, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
-        ] },
+      scale: circleScale,
       opacity: opacityKf,
-      // Direct user correction (2026-09-06, against a real screenshot):
-      // the hero used to be a SOLID FILLED disc in its own accentColor -
-      // a totally different visual treatment from the other nodes'
-      // outlined-only circles, and looked like an inconsistent, unrelated
-      // shape rather than the "same family, now selected" story this
-      // beat is telling. No fill any more, and the SAME uniform rim
-      // colors as the unselected nodes (not accentColor) - selection now
-      // reads through sheer scale (4.3-4.75x) and the still-accentColor
-      // multi-layer glow radiating from behind it, not a different-
-      // colored or differently-styled ring. Base widths stay small
-      // (1.2/0.4, not the unselected nodes' 4.5/1.6) since THIS circle's
-      // own scale keyframes grow it ~4.75x - the same stroke width
-      // scales up right along with the shape.
+      // Uniform rim, every node, whether chosen or not - the hero no
+      // longer looks different here at all pre-selection (see the fill
+      // layer above for what actually changes at selection). Base
+      // widths stay small for the hero (1.2/0.4, not the unselected
+      // nodes' 4.5/1.6) since THIS circle's own scale keyframes grow it
+      // ~4.75x - the same stroke width scales up right along with it.
       contents: isChosen ? [
         { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
         { type: 'stroke', color: nodeRimOuter, width: 1.2 },
@@ -4653,57 +4706,86 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
         { type: 'outerGlow', params: { color: accentColor, opacity: 0.22, blur: 75, blendMode: 'screen' } },
       ] : undefined,
     });
-    layers.push({
-      id: `__node_icon_${i}__`,
-      type: 'image',
-      icon,
-      iconColor: isChosen ? '#FFFFFF' : nodeRimInner,
-      width: NODE_SIZE * 0.5,
-      height: NODE_SIZE * 0.5,
-      position: cloneTrack(posKf),
-      scale: isChosen
-        ? { keyframes: [
-          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: HERO_ANTICIPATION_TIME, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: HERO_ANTICIPATION_TIME + 0.08, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: HERO_EXPLODE_TIME, value: [3.95, 3.95], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: HERO_SETTLE_TIME, value: [3.6, 3.6] },
-        ] }
-        : { keyframes: [
-          { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.3, value: [1.18, 1.18], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: delay + 0.42, value: [1, 1] },
-          { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.12, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
-          { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
+
+    if (isChosen) {
+      // "Before" icon: same blue tint as every other node's icon,
+      // visible through the whole clustering phase, fades OUT right as
+      // the fill/color-change lands.
+      layers.push({
+        id: `__node_icon_${i}__`,
+        type: 'image',
+        icon,
+        iconColor: nodeRimInner,
+        width: NODE_SIZE * 0.5,
+        height: NODE_SIZE * 0.5,
+        position: cloneTrack(posKf),
+        scale: cloneTrack(iconScale),
+        opacity: { keyframes: [
+          { time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.25, value: 1 },
+          { time: HERO_EXPLODE_TIME - 0.01, value: 1 },
+          { time: HERO_EXPLODE_TIME, value: 0 },
         ] },
-      opacity: cloneTrack(opacityKf),
-    });
+      });
+      // "After" icon: white, invisible until the same moment, then locks
+      // in for the rest of the beat.
+      layers.push({
+        id: `__node_icon_${i}__selected`,
+        type: 'image',
+        icon,
+        iconColor: '#FFFFFF',
+        width: NODE_SIZE * 0.5,
+        height: NODE_SIZE * 0.5,
+        position: cloneTrack(posKf),
+        scale: cloneTrack(iconScale),
+        opacity: { keyframes: [
+          { time: HERO_EXPLODE_TIME, value: 0 },
+          { time: HERO_SETTLE_TIME, value: 1 },
+        ] },
+      });
+    } else {
+      layers.push({
+        id: `__node_icon_${i}__`,
+        type: 'image',
+        icon,
+        iconColor: nodeRimInner,
+        width: NODE_SIZE * 0.5,
+        height: NODE_SIZE * 0.5,
+        position: cloneTrack(posKf),
+        scale: cloneTrack(iconScale),
+        opacity: cloneTrack(opacityKf),
+      });
+    }
+
     // Real, direct reference-comparison complaint ("ANIMATIONS ARE
     // LACKINGGGG FOR EVERYTHINGGGGG"): the chosen icon grows into its
     // final hero size by ~1.7s and then just sits there, dead still,
     // for however much of the beat remains. A slow rotational wiggle on
-    // the icon ALONE (not its background circle - a flat-color circle
-    // is radially symmetric, rotating it is a visual no-op) reads as
-    // life with zero risk of the drift/desync issue a position wiggle
-    // would risk elsewhere: both circle and icon are already perfectly
-    // concentric post-settle, and rotation pivots around that same
-    // shared center, so nothing needs to move together here at all.
+    // the icon layers ALONE (not the circle - a flat-color/outline
+    // circle is radially symmetric, rotating it is a visual no-op)
+    // reads as life with zero risk of the drift/desync issue a position
+    // wiggle would risk elsewhere: circle and icon are already
+    // perfectly concentric post-settle, and rotation pivots around that
+    // same shared center, so nothing needs to move together here at all.
     if (isChosen) {
-      layers[layers.length - 1].rotation = { expression: 'wiggle(0.3, 4)', base: 0 };
+      const heroLayers = layers.slice(-4); // fill, outline, icon-before, icon-after, in that push order
+      const [fillLayer, outlineLayer, iconBeforeLayer, iconAfterLayer] = heroLayers;
+      const heroRotation = { expression: 'wiggle(0.3, 4)', base: 0 };
+      iconBeforeLayer.rotation = cloneTrack(heroRotation);
+      iconAfterLayer.rotation = cloneTrack(heroRotation);
       // Priority 3, direct spec: "extremely subtle continuous breathing
       // scale on the hero circle once it's settled." Identical
-      // expression string on BOTH the circle and its icon, default seed
-      // (0) on each - confirmed via a direct isolated render test
-      // earlier this session that two layers sharing an identical
-      // wiggle expression + seed evaluate in perfect sync, so the logo
-      // breathes exactly in step with its own circle instead of
-      // drifting independently against it.
+      // expression string + default seed (0) on every one of these four
+      // layers - confirmed via a direct isolated render test earlier
+      // this session that layers sharing an identical wiggle expression
+      // + seed evaluate in perfect sync, so the fill/outline/both icon
+      // variants all breathe exactly in step with each other instead of
+      // drifting independently.
       const breatheExpr = 'wiggle(0.15, 0.05)';
-      layers[layers.length - 1].scale = { expression: breatheExpr, base: layers[layers.length - 1].scale };
-      layers[layers.length - 2].scale = { expression: breatheExpr, base: layers[layers.length - 2].scale };
+      fillLayer.scale = { expression: breatheExpr, base: fillLayer.scale };
+      outlineLayer.scale = { expression: breatheExpr, base: outlineLayer.scale };
+      iconBeforeLayer.scale = { expression: breatheExpr, base: iconBeforeLayer.scale };
+      iconAfterLayer.scale = { expression: breatheExpr, base: iconAfterLayer.scale };
     } else {
       // Direct spec: "dissolve into small glowing particle bursts" -
       // timed to the "tiny pop before shrink" anticipation moment (1.12)
