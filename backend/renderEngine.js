@@ -852,21 +852,28 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
     for (const layer of layers) {
       if (!layer || typeof layer !== 'object') continue;
       // See buildNodeClusterLayers: this layer's own "fill" content entry
-      // and its 2 outer (medium/wide) glow entries all originally carry
-      // the beat's plain accentColor - swapped for the dedicated
-      // complementary hero color above instead of the shared analogous
-      // harmonize(). Its FIRST glow entry (the tight core) is deliberately
-      // color-matched to the ring instead (nodeRimOuter) - routed through
-      // harmonizeMaybeRing below like every other rim-colored field, so it
-      // automatically picks up the SAME dedicated ring color too.
+      // and its 3 glow entries all originally carry the beat's plain
+      // accentColor - swapped for the dedicated analogous hero color
+      // above instead of the shared palette's own harmonize(), so the
+      // fill and its own glow are always a single, unified color exactly
+      // as a real reference video's own "ring becomes the fill" moment
+      // shows (2026-09-07 direct spec). __node_shockwave__ and
+      // __node_hero_outer_ring__ (sceneSchema.js) are the SAME hero
+      // moment's own follow-through effects (the expanding ring pulse,
+      // the persistent slow-rotating outer ring) and use the identical
+      // literal accentColor string - routed through the same
+      // getHeroAccent() so the whole hero "reveal" reads as one
+      // consistent color, not several independently-harmonized shades of
+      // it.
       const isHeroFill = layer.id === '__node_hero_fill__';
+      const isHeroAccentLayer = isHeroFill || layer.id === '__node_shockwave__' || layer.id === '__node_hero_outer_ring__';
       if (typeof layer.iconColor === 'string') layer.iconColor = harmonizeMaybeRing(layer.iconColor);
       if (typeof layer.fillStyle === 'string') layer.fillStyle = harmonize(layer.fillStyle);
       if (Array.isArray(layer.contents)) {
         for (const c of layer.contents) {
           if (!c || typeof c !== 'object') continue;
           if (c.type === 'fill' && typeof c.color === 'string') c.color = isHeroFill ? getHeroAccent() : harmonize(c.color);
-          if (c.type === 'stroke' && typeof c.color === 'string') c.color = harmonizeMaybeRing(c.color);
+          if (c.type === 'stroke' && typeof c.color === 'string') c.color = isHeroAccentLayer ? getHeroAccent() : harmonizeMaybeRing(c.color);
         }
       }
       if (Array.isArray(layer.animators)) {
@@ -875,9 +882,9 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
         }
       }
       if (Array.isArray(layer.effects)) {
-        layer.effects.forEach((e, idx) => {
+        layer.effects.forEach((e) => {
           if (!e || !e.params || typeof e.params.color !== 'string') return;
-          e.params.color = (isHeroFill && idx > 0) ? getHeroAccent() : harmonizeMaybeRing(e.params.color);
+          e.params.color = isHeroFill ? getHeroAccent() : harmonizeMaybeRing(e.params.color);
         });
         adaptGlowForBackground(layer.effects, isLightBackground);
       }

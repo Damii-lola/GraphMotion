@@ -410,13 +410,18 @@ beat is actually about.
 { "type": "nodeCluster",
   "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload","mdi:note-text","mdi:record-circle"],
   "chosenIndex": 0,
-  "accentColor": "#8B5CF6" }
+  "accentColor": "#8B5CF6",
+  "introText": "Which one wins?" }
 - "icons": 3-8 real Iconify names (see ICONS below for how to pick a
   real one) - genuinely related to the beat's own topic, not random.
 - "chosenIndex": which one (0-based) becomes the hero circle - the icon
   that best represents THIS beat's own specific point.
 - "accentColor": OPTIONAL hex color for the hero circle's fill; omit to
   let the pipeline pick one.
+- "introText": OPTIONAL, a short (2-5 word) hook line shown BEFORE the
+  icons appear, with its own glow-in/hold/shrink-away entrance, then the
+  icon cluster starts right after. Omit for no intro phase at all (icons
+  start immediately at the beat's own start).
 
 2) connectorList - a LIST/ROADMAP beat. A line draws itself down a
 zigzag of icon+label pairs, each one popping in as the line's leading
@@ -1518,8 +1523,8 @@ total (never fewer than 3 beats, never more than 6), and EACH TEMPLATE
 IS USED AT MOST ONCE across the whole video - never repeat one, even if
 a later beat would otherwise fit it well. There is no fixed or expected
 order between them.
-{ "type": "nodeCluster", "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload"], "chosenIndex": 0, "accentColor": "#8B5CF6" }
-  icon-nodes ring in, one grows into a hero circle - intro/focus beat. "icons": 3-8 real Iconify names. "chosenIndex": 0-based, which becomes the hero.
+{ "type": "nodeCluster", "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload"], "chosenIndex": 0, "accentColor": "#8B5CF6", "introText": "Which one wins?" }
+  icon-nodes ring in, one grows into a hero circle - intro/focus beat. "icons": 3-8 real Iconify names. "chosenIndex": 0-based, which becomes the hero. "introText": OPTIONAL - a short (2-5 word) hook line shown BEFORE the icons appear, with its own glow-in/hold/shrink-away animation, THEN the icon cluster starts; omit for no intro phase (icons start immediately at beat start).
 { "type": "connectorList", "items": [{"icon":"mdi:hand-heart","label":"Valuable"},{"icon":"mdi:puzzle","label":"Relevant"}], "accentColor": "#8B5CF6" }
   a line draws down a list of icon+label pairs - "here are the N things" beats. "items": 2-6, each a real "icon" + SHORT 1-2 word "label".
 { "type": "phoneSwap", "text": "Content Marketing", "icon": "mdi:bullhorn", "accentColor": "#8B5CF6" }

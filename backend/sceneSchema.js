@@ -4493,6 +4493,21 @@ function computeZigzagPositions(count) {
 // other accent color is supposed to.
 const UNSELECTED_RIM_OUTER = '#2B6EB8';
 const UNSELECTED_RIM_INNER = '#A8D0F0';
+// Real, direct user report against a reference video (2026-09-07): "can
+// u make the icon color pop out more, it's a bit too dark" - the icon
+// was previously tinted with UNSELECTED_RIM_INNER (the ring's own inner
+// stroke color), which reads fine as a subtle rim sheen but noticeably
+// duller than a real icon glyph needs to be. The reference's own icons
+// stay a crisp, bright near-white throughout - never tinted to match the
+// ring at all. A near-white constant this low in saturation and this
+// high in lightness fails isVividAccentColor's own vividness gate
+// (S>=0.5, L in [0.35,0.80]) by design, so ensureHarmoniousColors leaves
+// it untouched at render time - it stays bright regardless of whatever
+// hue the background/ring end up harmonized to, matching the reference's
+// own icon behavior exactly. Reuses this codebase's own existing near-
+// white icon-tint value (see isVividAccentColor's own doc comment) rather
+// than inventing a new one.
+const ICON_BRIGHT_TINT = '#F5F3FF';
 
 // Phase 1's own hero settle time (1.7s, a flat cut straight to final
 // size) is where Phase 2's "money shot" transition drama replaces it -
@@ -4547,7 +4562,78 @@ function buildIconBurstParticles(index, x, y, color, burstTime) {
   return particles;
 }
 
-function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
+// Real, direct user spec (2026-09-07, against a reference video): "there
+// is a text at the beginning (which is a variable that the ai can
+// change) with an animation then it goes into the main scene." Purely
+// additive - a beat with no introText (older beats, or a generation that
+// leaves it unset) skips this phase entirely and the icon cluster starts
+// at t=0 exactly as before.
+const INTRO_TEXT_DURATION = 1.0;
+function buildIntroTextLayers(introText, accentColor) {
+  return [{
+    id: '__node_intro_text__',
+    type: 'text',
+    text: introText,
+    fontSize: 46,
+    maxWidth: CANVAS_WIDTH - 80,
+    position: [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42],
+    fillStyle: '#FFFFFF',
+    textAlign: 'center',
+    fontFamily: 'Poppins Bold',
+    fontWeight: '700',
+    // Soft neon-style glow reveal, matching the reference's own opening
+    // text treatment - holds, then scales down small as the transition
+    // INTO the icon cluster (which starts growing in from the same
+    // center point right as this shrinks away, see the shift applied to
+    // every other layer below).
+    effects: [
+      { type: 'outerGlow', params: { blur: 18, color: accentColor, opacity: 0.85, blendMode: 'screen' } },
+    ],
+    opacity: { keyframes: [
+      { time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: 0.3, value: 1 },
+      { time: 0.7, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+      { time: INTRO_TEXT_DURATION - 0.05, value: 0 },
+    ] },
+    scale: { keyframes: [
+      { time: 0, value: [0.9, 0.9], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+      { time: 0.7, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+      { time: INTRO_TEXT_DURATION, value: [0.3, 0.3] },
+    ] },
+  }];
+}
+
+// Generic keyframe-time shifter - used to push the ENTIRE icon-cluster
+// timeline later by INTRO_TEXT_DURATION when an intro text phase is
+// present, without having to hand-rewrite every one of the many keyframe
+// times throughout this function (error-prone, easy to miss one and
+// desync the cluster's own internal timing). Only ever applied to
+// position/opacity/scale/rotation - the only animatable fields any layer
+// in this function actually uses. Expression tracks ({expression, base})
+// shift their own base keyframe track the same way - the expression
+// itself (e.g. wiggle) still reads the render's own absolute clock, which
+// is correct: it's idle/ambient motion, not tied to a specific narrative
+// moment.
+function shiftAnimatableTime(track, offset) {
+  if (!track || typeof track !== 'object') return track;
+  if (Array.isArray(track.keyframes)) {
+    return { ...track, keyframes: track.keyframes.map((kf) => (kf && typeof kf.time === 'number' ? { ...kf, time: kf.time + offset } : kf)) };
+  }
+  if (typeof track.expression === 'string' && track.base !== undefined) {
+    return { ...track, base: shiftAnimatableTime(track.base, offset) };
+  }
+  return track;
+}
+function shiftLayerTimeline(layer, offset) {
+  const shifted = { ...layer };
+  for (const field of ['position', 'opacity', 'scale', 'rotation']) {
+    if (shifted[field] !== undefined) shifted[field] = shiftAnimatableTime(shifted[field], offset);
+  }
+  return shifted;
+}
+
+function buildNodeClusterLayers({ icons, chosenIndex, accentColor, introText }) {
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
   const RING_RADIUS = 150;
   const NODE_SIZE = 70;
@@ -4733,14 +4819,43 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
         // bloom and wide atmospheric layers, which spread well past the
         // rim into open space, keep the real accentColor so the
         // selection still reads as a genuine color reveal at a distance.
+        // Real, direct user spec (2026-09-07, against a reference video):
+        // "see how the ring outline becomes the fill color I want that
+        // instead" - the reference shows a single unified color (the
+        // circle's own eventual fill), not a fill in one accent plus a
+        // separately-colored ring on top. All 3 glow entries now use
+        // accentColor (was nodeRimOuter for the tight core, matched to
+        // the RING specifically to avoid a clash - no longer needed
+        // since the ring itself fades away at this same moment, see
+        // its own opacity keyframes below).
         effects: [
-          { type: 'outerGlow', params: { color: nodeRimOuter, opacity: 0.95, blur: 10, blendMode: 'screen' } },
+          { type: 'outerGlow', params: { color: accentColor, opacity: 0.95, blur: 10, blendMode: 'screen' } },
           { type: 'outerGlow', params: { color: accentColor, opacity: 0.5, blur: 32, blendMode: 'screen' } },
           { type: 'outerGlow', params: { color: accentColor, opacity: 0.22, blur: 75, blendMode: 'screen' } },
         ],
       });
     }
 
+    // Real, direct user spec (2026-09-07, against a reference video): the
+    // ring itself should "become the fill" rather than persist as a
+    // separately-colored rim once selected - the reference's own final
+    // state shows a clean, single-color filled circle with a soft glow,
+    // no distinct ring line on top of it. Since colors on this engine are
+    // flat per-layer (not keyframeable), and the ring needs to look
+    // UNIFORM with every other node right up until selection, the only
+    // way to make it visually "become" the fill is to fade this uniform-
+    // colored ring OUT as the (identically-colored-family) fill fades IN
+    // - by settle time only the fill and its own glow define the edge.
+    // Non-chosen rings are untouched (fade out already handled by their
+    // own opacityKf, tied to their exit at t=1.3).
+    const ringOpacity = isChosen
+      ? { keyframes: [
+        { time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.25, value: 1 },
+        { time: HERO_EXPLODE_TIME, value: 1 },
+        { time: HERO_SETTLE_TIME, value: 0 },
+      ] }
+      : opacityKf;
     layers.push({
       id: `__node_bg_${i}__`,
       type: 'shape',
@@ -4748,7 +4863,7 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
       height: NODE_SIZE,
       position: posKf,
       scale: circleScale,
-      opacity: opacityKf,
+      opacity: ringOpacity,
       // Uniform rim, every node, whether chosen or not - the hero no
       // longer looks different here at all pre-selection (see the fill
       // layer above for what actually changes at selection). Widths
@@ -4871,7 +4986,7 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
         id: `__node_icon_${i}__`,
         type: 'image',
         icon,
-        iconColor: nodeRimInner,
+        iconColor: ICON_BRIGHT_TINT,
         width: NODE_SIZE * 0.5,
         height: NODE_SIZE * 0.5,
         position: cloneTrack(posKf),
@@ -4882,7 +4997,7 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
           { time: HERO_EXPLODE_TIME, value: 1 },
           { time: HERO_EXPLODE_TIME + 0.1, value: 0 },
         ] },
-        effects: [{ type: 'outerGlow', params: { color: nodeRimInner, opacity: 0.85, blur: 6, blendMode: 'screen' } }],
+        effects: [{ type: 'outerGlow', params: { color: ICON_BRIGHT_TINT, opacity: 0.85, blur: 6, blendMode: 'screen' } }],
       });
       // "After" icon: white, invisible until the same moment, then locks
       // in for the rest of the beat. Same scale-compensated glow fix as
@@ -4907,7 +5022,7 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
         id: `__node_icon_${i}__`,
         type: 'image',
         icon,
-        iconColor: nodeRimInner,
+        iconColor: ICON_BRIGHT_TINT,
         width: NODE_SIZE * 0.5,
         height: NODE_SIZE * 0.5,
         position: cloneTrack(posKf),
@@ -5010,6 +5125,10 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
     ],
   });
 
+  if (introText) {
+    const shiftedLayers = layers.map((l) => shiftLayerTimeline(l, INTRO_TEXT_DURATION));
+    return [...buildIntroTextLayers(introText, accentColor), ...shiftedLayers];
+  }
   return layers;
 }
 
@@ -5592,7 +5711,17 @@ function buildMographBeatVisual(beat) {
     const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 8);
     if (icons.length >= 3) {
       const chosenIndex = Number.isInteger(spec.chosenIndex) && spec.chosenIndex >= 0 && spec.chosenIndex < icons.length ? spec.chosenIndex : 0;
-      layers = buildNodeClusterLayers({ icons, chosenIndex, accentColor });
+      const introText = typeof spec.introText === 'string' && spec.introText.trim() ? truncateAtWordBoundary(spec.introText.trim(), 40) : null;
+      layers = buildNodeClusterLayers({ icons, chosenIndex, accentColor, introText });
+      // The intro text phase adds INTRO_TEXT_DURATION seconds of real
+      // screen time BEFORE the icon cluster even starts - if the beat's
+      // own authored duration isn't extended to cover it, the icon
+      // cluster's own (now-shifted) explosion/settle would get cut off
+      // by the beat ending too early. Auto-extended here rather than
+      // relying on generation to remember to add exactly 1.0s itself.
+      if (introText && isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+        beat.params.duration += INTRO_TEXT_DURATION;
+      }
     }
   } else if (spec.type === 'connectorList' && Array.isArray(spec.items)) {
     const items = spec.items
