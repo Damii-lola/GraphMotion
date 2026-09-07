@@ -5543,11 +5543,20 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
  * cloneTrack) so the mask stays proportional to the icon's own current
  * rendered size through the settle-bounce at the end, not just at rest.
  */
-function buildSplitConvergeLayers({ icon, accentColor }) {
+// Real, direct user spec (2026-09-07), against a reference video: "V2
+// is extremely plain - a single static-feeling icon on a grid... almost
+// no presence, hierarchy, or motion interest." A well-scoped subset of
+// the full "god-tier" list (multi-layer glow, stronger impact, real hold
+// motion, optional text) - the rest (dual-line offset stroke, traveling
+// specular highlight, a drawn-on frame/container, a secondary background
+// shape) is real, legitimate follow-up work, not attempted in this same
+// pass, matching how connectorList's own equally large spec was scoped.
+function buildSplitConvergeLayers({ icon, accentColor, label }) {
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
   const ICON_SIZE = 170;
   const START_OFFSET = CANVAS_WIDTH * 0.75 + ICON_SIZE;
   const ARRIVE_TIME = 0.9;
+  const SETTLE_TIME = ARRIVE_TIME + 0.32;
 
   const leftPos = [
     { time: 0, value: [CENTER[0] - START_OFFSET, CENTER[1]], interpolation: 'easing', easing: 'easeOutCubic' },
@@ -5557,22 +5566,67 @@ function buildSplitConvergeLayers({ icon, accentColor }) {
     { time: 0, value: [CENTER[0] + START_OFFSET, CENTER[1]], interpolation: 'easing', easing: 'easeOutCubic' },
     { time: ARRIVE_TIME, value: [...CENTER] },
   ];
+  // Overshoot bumped 1.16 -> 1.3 - direct spec ask ("strong overshoot +
+  // settle"), the old bounce was real but too mild to read as impactful.
   const settleScale = { keyframes: [
     { time: 0, value: [1, 1] },
     { time: ARRIVE_TIME, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' },
-    { time: ARRIVE_TIME + 0.15, value: [1.16, 1.16], interpolation: 'easing', easing: 'easeInOutCubic' },
-    { time: ARRIVE_TIME + 0.32, value: [1, 1] },
+    { time: ARRIVE_TIME + 0.15, value: [1.3, 1.3], interpolation: 'easing', easing: 'easeInOutCubic' },
+    { time: SETTLE_TIME, value: [1, 1] },
   ] };
   const matteOffset = (keyframes, dx) => keyframes.map((kf) => ({ ...kf, value: [kf.value[0] + dx, kf.value[1]] }));
 
-  return [
+  // Real spec: "breathing scale... gentle rotation oscillation." Applied
+  // to the icon HALVES' scale only (never rotation - each half is only
+  // half the glyph under a track matte, independently rotating them
+  // would visibly shear the combined icon apart), same identical
+  // expression+seed on both so they breathe in perfect lockstep (see
+  // nodeCluster's own confirmed-live finding on this exact pattern).
+  const breatheExpr = 'wiggle(0.18, 0.035)';
+
+  // Real, confirmed-live bug found via direct frame inspection right
+  // after adding the glow stack above: a trackMatte clips the layer's
+  // ENTIRE rendered output, effects included (the glow is baked into the
+  // SAME buffer as the icon shape before compositing) - and this
+  // template's own matte is a RECTANGLE sized to show exactly one half
+  // of the icon, so a wide (blur 44) glow trying to bloom outward hit a
+  // hard rectangular wall at the matte's own edge instead of falling off
+  // naturally, a visibly straight-edged "glow box" rather than an
+  // organic halo. Fixed by moving the glow OFF the two matte-clipped
+  // halves entirely, onto a separate, UNMASKED full-icon layer sitting
+  // BEHIND them, fixed at CENTER the whole time (no split, no sliding -
+  // it only needs to exist for its own glow) and faded in right as the
+  // two halves actually land - the crisp foreground halves cover its own
+  // icon shape once arrived, so only its glow ever reads as visible.
+  const glowFadeIn = { keyframes: [
+    { time: 0, value: 0 },
+    { time: ARRIVE_TIME - 0.01, value: 0 },
+    { time: ARRIVE_TIME, value: 1, interpolation: 'easing', easing: 'easeOutCubic' },
+  ] };
+  const layers = [
+    {
+      id: '__split_icon_glow_source__',
+      type: 'image',
+      icon,
+      iconColor: ICON_BRIGHT_TINT,
+      width: ICON_SIZE,
+      height: ICON_SIZE,
+      position: [...CENTER],
+      scale: { expression: breatheExpr, base: [1, 1] },
+      opacity: glowFadeIn,
+      effects: [
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.9, blur: 8, blendMode: 'screen' } },
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.5, blur: 20, blendMode: 'screen' } },
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.25, blur: 44, blendMode: 'screen' } },
+      ],
+    },
     {
       id: '__split_matte_left__',
       type: 'shape',
       width: ICON_SIZE / 2 + 2,
       height: ICON_SIZE * 1.2,
       position: { keyframes: matteOffset(leftPos, -ICON_SIZE / 4) },
-      scale: cloneTrack(settleScale),
+      scale: { expression: breatheExpr, base: cloneTrack(settleScale) },
       contents: [
         { type: 'path', shape: { kind: 'rectangle', params: { width: ICON_SIZE / 2 + 2, height: ICON_SIZE * 1.2 } } },
         { type: 'fill', color: '#FFFFFF' },
@@ -5582,11 +5636,15 @@ function buildSplitConvergeLayers({ icon, accentColor }) {
       id: '__split_icon_left__',
       type: 'image',
       icon,
-      iconColor: accentColor,
+      // Real spec: "core stroke: bright cyan/white." Bright near-white
+      // (survives ensureHarmoniousColors untouched, same reasoning as
+      // nodeCluster's own ICON_BRIGHT_TINT fix). No effects here anymore
+      // - see __split_icon_glow_source__ above for why the glow moved.
+      iconColor: ICON_BRIGHT_TINT,
       width: ICON_SIZE,
       height: ICON_SIZE,
       position: { keyframes: leftPos },
-      scale: cloneTrack(settleScale),
+      scale: { expression: breatheExpr, base: cloneTrack(settleScale) },
       trackMatte: { source: '__split_matte_left__', type: 'alpha' },
     },
     {
@@ -5595,7 +5653,7 @@ function buildSplitConvergeLayers({ icon, accentColor }) {
       width: ICON_SIZE / 2 + 2,
       height: ICON_SIZE * 1.2,
       position: { keyframes: matteOffset(rightPos, ICON_SIZE / 4) },
-      scale: cloneTrack(settleScale),
+      scale: { expression: breatheExpr, base: cloneTrack(settleScale) },
       contents: [
         { type: 'path', shape: { kind: 'rectangle', params: { width: ICON_SIZE / 2 + 2, height: ICON_SIZE * 1.2 } } },
         { type: 'fill', color: '#FFFFFF' },
@@ -5605,48 +5663,70 @@ function buildSplitConvergeLayers({ icon, accentColor }) {
       id: '__split_icon_right__',
       type: 'image',
       icon,
-      iconColor: accentColor,
+      iconColor: ICON_BRIGHT_TINT,
       width: ICON_SIZE,
       height: ICON_SIZE,
       position: { keyframes: rightPos },
-      scale: cloneTrack(settleScale),
+      scale: { expression: breatheExpr, base: cloneTrack(settleScale) },
       trackMatte: { source: '__split_matte_right__', type: 'alpha' },
     },
-    {
-      id: '__split_ring__',
+  ];
+
+  // Real spec: "1-2 soft concentric rings... slightly delayed from each
+  // other." Two rings now instead of one, the second a touch later and
+  // wider, both fading out - reads as a real impact pulse instead of one
+  // thin flash.
+  [
+    { delay: 0, maxScale: 1, width: 3, opacity: 0.8 },
+    { delay: 0.12, maxScale: 1.22, width: 2, opacity: 0.5 },
+  ].forEach(({ delay, maxScale, width, opacity }, ringIdx) => {
+    const t0 = ARRIVE_TIME + delay;
+    layers.push({
+      id: `__split_ring_${ringIdx}__`,
       type: 'shape',
       width: ICON_SIZE * 1.5,
       height: ICON_SIZE * 1.5,
       position: [...CENTER],
       scale: { keyframes: [
         { time: 0, value: [0.4, 0.4] },
-        { time: ARRIVE_TIME, value: [0.4, 0.4], interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: ARRIVE_TIME + 0.4, value: [1, 1] },
+        { time: t0, value: [0.4, 0.4], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: t0 + 0.4, value: [maxScale, maxScale] },
       ] },
-      // Real, confirmed-live bug found via direct frame inspection, TWO
-      // rounds of it: keyframes always ANIMATE between consecutive
-      // points, they don't hold - a first fix adding a single {time:0,
-      // value:0} keyframe still left this interpolating smoothly from 0
-      // up to 0.8 across the ENTIRE 0-to-ARRIVE_TIME span (confirmed by
-      // re-rendering: still visibly present, just fainter, at a frame
-      // well before arrival). What's actually needed is a real HOLD
-      // plateau - the SAME two-consecutive-equal-values pattern this
-      // file's own nodeCluster/connectorList tracks already use
-      // elsewhere: 0 at time 0, STILL 0 immediately before ARRIVE_TIME,
-      // only THEN easing up to 0.8 - so opacity stays flat at zero for
-      // the whole approach instead of gradually leaking in.
+      // Real HOLD-then-ease pattern (see this template's own earlier fix
+      // for why a naive 2-keyframe ramp leaks in early) - flat at 0 right
+      // up to t0, only then easing up and back down.
       opacity: { keyframes: [
         { time: 0, value: 0 },
-        { time: ARRIVE_TIME - 0.01, value: 0 },
-        { time: ARRIVE_TIME, value: 0.8, interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: ARRIVE_TIME + 0.4, value: 0 },
+        { time: t0 - 0.01, value: 0 },
+        { time: t0, value: opacity, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: t0 + 0.4, value: 0 },
       ] },
       contents: [
         { type: 'path', shape: { kind: 'ellipse', params: { width: ICON_SIZE * 1.5, height: ICON_SIZE * 1.5 } } },
-        { type: 'stroke', color: accentColor, width: 3 },
+        { type: 'stroke', color: accentColor, width },
       ],
-    },
-  ];
+    });
+  });
+
+  // Real spec: "tiny particles that emit from the icon... right as it
+  // scales up." Reuses nodeCluster's own proven burst-particle builder
+  // rather than a new particle mechanic.
+  layers.push(...buildIconBurstParticles(0, CENTER[0], CENTER[1], ICON_BRIGHT_TINT, ARRIVE_TIME));
+
+  // Real spec: "reveal it after the icon has settled... keep text glow
+  // intensity lower than the icon." Reuses connectorList's own outro-
+  // text glow-in treatment (same function, same call site convention:
+  // "use the final text layer from the previous scene we just worked
+  // on").
+  if (label) {
+    const textLayer = buildOutroTextLayer(label, accentColor, SETTLE_TIME + 0.35);
+    textLayer.id = '__split_label__';
+    textLayer.position = [CENTER[0], CENTER[1] + ICON_SIZE * 0.85];
+    textLayer.fontSize = 30;
+    layers.push(textLayer);
+  }
+
+  return layers;
 }
 
 /**
@@ -5921,7 +6001,8 @@ function buildMographBeatVisual(beat) {
   } else if (spec.type === 'phoneSwap' && typeof spec.text === 'string' && spec.text.trim() && typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon)) {
     layers = buildPhoneSwapLayers({ text: truncateAtWordBoundary(spec.text.trim().toUpperCase(), 26), icon: spec.icon, accentColor });
   } else if (spec.type === 'splitConverge' && typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon)) {
-    layers = buildSplitConvergeLayers({ icon: spec.icon, accentColor });
+    const label = typeof spec.label === 'string' && spec.label.trim() ? truncateAtWordBoundary(spec.label.trim().toUpperCase(), 24) : null;
+    layers = buildSplitConvergeLayers({ icon: spec.icon, accentColor, label });
   } else if (spec.type === 'mergeCluster' && Array.isArray(spec.icons) && typeof spec.resultIcon === 'string' && MOGRAPH_ICON_RE.test(spec.resultIcon)) {
     const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 5);
     const label = typeof spec.label === 'string' && spec.label.trim() ? truncateAtWordBoundary(spec.label.trim().toUpperCase(), 24) : null;

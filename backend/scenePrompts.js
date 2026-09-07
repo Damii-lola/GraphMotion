@@ -1533,8 +1533,8 @@ order between them.
   a line draws down a list of icon+label pairs - "here are the N things" beats. "items": 2-6, each a real "icon" + SHORT 1-2 word "label". "outroText": OPTIONAL - a short (2-6 word) closing line shown AFTER every item has settled; omit for no outro (beat just ends once the last item lands).
 { "type": "phoneSwap", "text": "Content Marketing", "icon": "mdi:bullhorn", "accentColor": "#8B5CF6" }
   a phone shows "text" (2-4 words) then crossfades to "icon" - app/tool beat.
-{ "type": "splitConverge", "icon": "mdi:bullhorn", "accentColor": "#8B5CF6" }
-  one icon splits in half, each half flies in from off-screen and snaps together at center - a strong reveal/impact beat, e.g. "the answer", a single big idea landing.
+{ "type": "splitConverge", "icon": "mdi:bullhorn", "accentColor": "#8B5CF6", "label": "The Big Idea" }
+  one icon splits in half, each half flies in from off-screen and snaps together at center - a strong reveal/impact beat, e.g. "the answer", a single big idea landing. "label": OPTIONAL, 1-3 words, reveals below the icon once it settles - omit for icon-only.
 { "type": "mergeCluster", "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload"], "resultIcon": "mdi:movie-open", "label": "Content Creation", "accentColor": "#8B5CF6" }
   small icon-nodes ("icons", 2-5) converge inward and merge into one new bigger circle showing "resultIcon", with "label" (OPTIONAL, 1-3 words) naming it underneath - "these things COMBINE into this" beats, distinct from nodeCluster (which singles ONE existing icon out, not combines several into something new).
 "accentColor" always OPTIONAL, omit to auto-pick. Raw "layers" (below) only for a beat none of these five fit - keep that rare.
