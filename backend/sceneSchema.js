@@ -4747,23 +4747,28 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
       // for the hero (1.8/0.6, not the unselected nodes' 7/2.4) since
       // THIS circle's own scale keyframes grow it ~4.75x - the same
       // stroke width scales up right along with it.
-      // Hero widths bumped again (2026-09-07, direct user report against
-      // a real render: "why is the tiktok ring not as bold as the other
-      // rings") - the OLD 1.8/0.6 was sized to land at roughly the SAME
-      // effective post-scale width as the unselected rings (1.8*4.3~=7.7,
-      // matching their flat 7), but "matching" still read as visibly
-      // thinner in practice, most likely because a thin base stroke
-      // scaled up ~4.3x through the layer's own scale transform picks up
-      // more visible softening/anti-aliasing than a stroke drawn at a
-      // comparable width natively. Bumped further so the hero's ring is
-      // UNAMBIGUOUSLY bolder (2.3*4.3~=9.9, 0.85*4.3~=3.7) rather than
-      // just barely tying - it's the one node that just won the
-      // selection, it should never read as the least emphatic ring on
-      // screen.
+      // Hero widths bumped AGAIN (2026-09-07, direct user report - STILL
+      // "not as bold" even after the first bump to 2.3/0.85, confirmed via
+      // direct pixel-sampling two real extracted frames rather than
+      // guessing a third time): a non-chosen ring's edge showed a sharp
+      // ~10px dark stroke core plus a distinct light inner-stroke band,
+      // while the hero's edge measured as a soft ~30px gradient with NO
+      // distinct solid-color core at all. Root cause isn't really a width
+      // mismatch (2.3*4.3~=9.9 vs 7 is already comparable) - it's that the
+      // hero ring sits sandwiched between two strongly DIFFERENT colors
+      // (the vivid solid fill inside, the background outside), so blur
+      // bleed from both sides eats into a thin ring band before it ever
+      // reads as a solid color, while a non-chosen ring (background on
+      // BOTH sides, no fill) doesn't fight that same two-sided bleed.
+      // Bumped substantially harder this time (3.2/1.2, effective
+      // post-scale ~13.8/5.2) specifically to give the ring's own color
+      // enough raw pixel width to keep a genuine solid core despite that
+      // bleed, paired with a reduced glow blur just below (so the glow
+      // itself bleeds less far into that core to begin with).
       contents: isChosen ? [
         { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
-        { type: 'stroke', color: nodeRimOuter, width: 2.3 },
-        { type: 'stroke', color: nodeRimInner, width: 0.85 },
+        { type: 'stroke', color: nodeRimOuter, width: 3.2 },
+        { type: 'stroke', color: nodeRimInner, width: 1.2 },
       ] : [
         { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
         { type: 'stroke', color: nodeRimOuter, width: 7 },
@@ -4787,8 +4792,14 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
       // back around what every unselected node's own glow already looks
       // like - applyMographGlow's own "skip if already has a glow" guard
       // leaves this alone once set.
+      //
+      // blur 5 -> 3.5 (2026-09-07, paired with the width bump just above):
+      // less blur bleeding into the ring's own now-wider stroke core keeps
+      // more of it reading as solid ring color instead of gradient, the
+      // other half of the "not as bold" fix (see the width comment above
+      // for the full measurement).
       effects: isChosen ? [
-        { type: 'outerGlow', params: { color: nodeRimOuter, opacity: 0.85, blur: 5, blendMode: 'screen' } },
+        { type: 'outerGlow', params: { color: nodeRimOuter, opacity: 0.85, blur: 3.5, blendMode: 'screen' } },
       ] : undefined,
       // Non-chosen nodes have no pre-set effects here - they fall
       // through to applyMographGlow's own default single-glow treatment

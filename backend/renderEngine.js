@@ -605,9 +605,8 @@ function escapeYellowGreenBand(hue) {
  * the background, so every option in the returned palette is both
  * harmonious AND genuinely readable, not just one or the other.
  */
-function buildHarmoniousAccentPalette(backgroundHex, rand) {
+function buildHarmoniousAccentPalette(backgroundHex, rand, hueOffsets = [0, 30, -30, 18, -18]) {
   const [bgH, , bgL] = hexToHsl(backgroundHex);
-  const hueOffsets = [0, 30, -30, 18, -18];
   const needsDarkAccent = bgL > 0.5;
   return hueOffsets.map((offset) => {
     let hue = ((bgH + offset) % 360 + 360) % 360;
@@ -677,10 +676,33 @@ function buildHarmoniousAccentPalette(backgroundHex, rand) {
 // would be) only when the ACTUAL picked background turns out light;
 // completely inert on a dark background, the majority/originally-only
 // case this glow system was built and tuned against.
+//
+// Real, confirmed-live bug found via direct frame inspection (2026-09-07,
+// direct user report: "the color is still bad" - no further detail given,
+// found by extracting and looking at an actual rendered frame rather than
+// guessing again): this was unconditionally flipping EVERY glow on a
+// light background to 'multiply', including nodeCluster's own ring glow
+// - whose color is frequently already dark by design (see
+// buildHarmoniousAccentPalette's "needsDarkAccent" branch, tuned
+// specifically for light backgrounds). Multiplying an ALREADY-dark color
+// onto a light background compounds darkness on darkness - the rendered
+// frame showed exactly this: a muddy, dirty-looking brown smudge/halo
+// around the hero circle instead of a clean glow, because 'multiply'
+// was applied on top of a color already chosen to sit dark. 'multiply'
+// only actually needs to happen for a glow color that's still LIGHT/
+// vivid (screen would otherwise wash it out invisible per the original
+// bug above) - a color that's already dark shows up fine left on the
+// default 'screen' (which barely brightens it further, staying subtle
+// rather than muddy). Checked per-effect, using that effect's OWN
+// (already-harmonized) color, not a single blanket flip for the whole
+// layer.
+const GLOW_MULTIPLY_LIGHTNESS_THRESHOLD = 0.5;
 function adaptGlowForBackground(effects, isLightBackground) {
   if (!isLightBackground || !Array.isArray(effects)) return;
   for (const e of effects) {
-    if (e?.type === 'outerGlow' && e.params) e.params.blendMode = 'multiply';
+    if (e?.type !== 'outerGlow' || !e.params) continue;
+    const [, , colorLight] = typeof e.params.color === 'string' ? hexToHsl(e.params.color) : [0, 0, 0];
+    if (colorLight >= GLOW_MULTIPLY_LIGHTNESS_THRESHOLD) e.params.blendMode = 'multiply';
   }
 }
 
@@ -747,6 +769,49 @@ function deriveHeroAccentColor(backgroundHex, rand) {
   return hex;
 }
 
+// Real, confirmed-live bug found via direct frame inspection (2026-09-07,
+// direct user report: "the color is still bad", no further detail given -
+// extracted and looked at an actual rendered frame rather than guessing
+// again): nodeCluster's ring (sceneSchema.js's UNSELECTED_RIM_OUTER/
+// INNER) is a single pair of literal constants routed through the SAME
+// generic analogous harmonize() as everything else - and on a light/warm
+// background, that palette's own "needsDarkAccent" branch (see
+// buildHarmoniousAccentPalette) crushes EVERY candidate down to L~0.22-
+// 0.42 for contrast, including whichever slot the ring lands on. For a
+// hue offset of 0 specifically (landing on the SAME hue as the
+// background itself), a dark, muted shade of that SAME hue is
+// EXACTLY what a dirty shadow/smudge looks like - confirmed directly in
+// the extracted frame: a muddy brown halo bleeding around the hero
+// circle instead of a defined rim.
+//
+// FIRST fix attempt here gave the ring its OWN bespoke "always bright,
+// never crushed dark" lightness formula, independent of the background's
+// own contrast needs - this looked fine against one random background but
+// was confirmed BROKEN against another actual extracted frame: a near-
+// invisible, washed-out icon color barely distinguishable from a medium-
+// light orange background (both direct user report - "the problem is the
+// icon color and the fill color" - and directly visible in the frame,
+// not a guess). A fixed lightness can never guarantee contrast against
+// an ARBITRARY background lightness - only a real guard loop checking
+// the ACTUAL contrast ratio can, which is exactly what
+// buildHarmoniousAccentPalette above already does successfully, proven
+// across every other accent in this file all session. Reused directly
+// here (same function, just a hueOffsets set that EXCLUDES 0 so the ring
+// never again lands exactly on the background's own hue) instead of
+// re-inventing separate, unproven lightness math.
+//
+// These two literal hex values are used NOWHERE else in this codebase
+// (confirmed via a direct grep) - always nodeCluster's own ring, so
+// matching by raw original value (rather than by layer id, the pattern
+// the hero fill fix above uses) safely targets exactly this without
+// touching any other template's own colors.
+const NODE_CLUSTER_RIM_OUTER_RAW = '#2B6EB8';
+const NODE_CLUSTER_RIM_INNER_RAW = '#A8D0F0';
+function buildRingAccentPair(backgroundHex, rand) {
+  const [outer, inner] = buildHarmoniousAccentPalette(backgroundHex, rand, [30, -30]);
+  return { outer, inner };
+}
+
 function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
   const rand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x9E3779B1);
   const bgRefColor = boardBackgroundDef.startColor;
@@ -762,14 +827,27 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
     }
     return remap.get(key);
   };
-  // Own independent stream (never perturbs the shared palette's own
-  // sequence above) + lazily computed so it's only ever drawn from if a
-  // scene actually contains a nodeCluster hero fill layer.
+  // Own independent streams (never perturb the shared palette's own
+  // sequence above) + lazily computed so they're only ever drawn from if
+  // a scene actually contains the relevant nodeCluster layer.
   const heroRand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x27D4EB2F);
   let heroAccent = null;
   const getHeroAccent = () => {
     if (!heroAccent) heroAccent = deriveHeroAccentColor(bgRefColor, heroRand);
     return heroAccent;
+  };
+  const ringRand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x165667B1);
+  let ringAccentPair = null;
+  const getRingAccentPair = () => {
+    if (!ringAccentPair) ringAccentPair = buildRingAccentPair(bgRefColor, ringRand);
+    return ringAccentPair;
+  };
+  const getRingOuterAccent = () => getRingAccentPair().outer;
+  const getRingInnerAccent = () => getRingAccentPair().inner;
+  const harmonizeMaybeRing = (color) => {
+    if (color.toUpperCase() === NODE_CLUSTER_RIM_OUTER_RAW) return getRingOuterAccent();
+    if (color.toUpperCase() === NODE_CLUSTER_RIM_INNER_RAW) return getRingInnerAccent();
+    return harmonize(color);
   };
   const startLuma = relativeLuma(hexToRgbLocal(boardBackgroundDef.startColor));
   const endLuma = relativeLuma(hexToRgbLocal(boardBackgroundDef.endColor));
@@ -785,16 +863,17 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
       // the beat's plain accentColor - swapped for the dedicated
       // complementary hero color above instead of the shared analogous
       // harmonize(). Its FIRST glow entry (the tight core) is deliberately
-      // color-matched to the ring instead (nodeRimOuter) and stays on the
-      // regular harmonize() path below, unaffected by this special case.
+      // color-matched to the ring instead (nodeRimOuter) - routed through
+      // harmonizeMaybeRing below like every other rim-colored field, so it
+      // automatically picks up the SAME dedicated ring color too.
       const isHeroFill = layer.id === '__node_hero_fill__';
-      if (typeof layer.iconColor === 'string') layer.iconColor = harmonize(layer.iconColor);
+      if (typeof layer.iconColor === 'string') layer.iconColor = harmonizeMaybeRing(layer.iconColor);
       if (typeof layer.fillStyle === 'string') layer.fillStyle = harmonize(layer.fillStyle);
       if (Array.isArray(layer.contents)) {
         for (const c of layer.contents) {
           if (!c || typeof c !== 'object') continue;
           if (c.type === 'fill' && typeof c.color === 'string') c.color = isHeroFill ? getHeroAccent() : harmonize(c.color);
-          if (c.type === 'stroke' && typeof c.color === 'string') c.color = harmonize(c.color);
+          if (c.type === 'stroke' && typeof c.color === 'string') c.color = harmonizeMaybeRing(c.color);
         }
       }
       if (Array.isArray(layer.animators)) {
@@ -805,7 +884,7 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
       if (Array.isArray(layer.effects)) {
         layer.effects.forEach((e, idx) => {
           if (!e || !e.params || typeof e.params.color !== 'string') return;
-          e.params.color = (isHeroFill && idx > 0) ? getHeroAccent() : harmonize(e.params.color);
+          e.params.color = (isHeroFill && idx > 0) ? getHeroAccent() : harmonizeMaybeRing(e.params.color);
         });
         adaptGlowForBackground(layer.effects, isLightBackground);
       }
