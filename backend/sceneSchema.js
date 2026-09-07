@@ -4446,9 +4446,9 @@ function cloneTrack(track) {
   return track === null || typeof track !== 'object' ? track : JSON.parse(JSON.stringify(track));
 }
 
-function computeZigzagPositions(count, extraBottomMargin = 0) {
+function computeZigzagPositions(count) {
   const marginTop = CANVAS_HEIGHT * 0.2;
-  const marginBottom = CANVAS_HEIGHT * 0.18 + extraBottomMargin;
+  const marginBottom = CANVAS_HEIGHT * 0.18;
   const usableHeight = CANVAS_HEIGHT - marginTop - marginBottom;
   const positions = [];
   for (let i = 0; i < count; i++) {
@@ -5236,31 +5236,37 @@ function computeCumulativeArcLengths(anchors) {
 // Real, direct user spec (2026-09-07): "add the text after the scene" -
 // a short closing line, shown once every item has settled, glowing in
 // the same "premium" language as the rest of the beat. Optional - a beat
-// with no outroText behaves exactly as before.
-const OUTRO_TEXT_DURATION = 1.2;
-// Real, confirmed bug found via a real render (2026-09-07): a fixed
-// CANVAS_HEIGHT*0.82 position happened to land almost EXACTLY on top of
-// the LAST list item (computeZigzagPositions spreads every item across
-// the SAME usableHeight range regardless of item count, so the last
-// item's own y is always marginTop+usableHeight = CANVAS_HEIGHT*0.82,
-// no matter how many items there are) - confirmed directly, the outro
-// text overlapped the final icon/label in a real frame. Takes the last
-// item's own real y now and sits comfortably below it instead of
-// guessing a fixed fraction of the canvas.
-function buildOutroTextLayer(outroText, accentColor, appearAt, lastItemY) {
+// with no outroText behaves exactly as before. 1.2 -> 1.6: the outro now
+// waits for a real fade-out of the whole reveal first (see its own
+// wiring below), pushing its own appearance later than the original
+// estimate assumed - bumped so there's still genuine hold time left
+// after it appears, not just enough room to fade in and immediately get
+// cut off by the beat ending.
+const OUTRO_TEXT_DURATION = 1.6;
+// Real, direct user spec (2026-09-07), against a reference video: "the
+// text shouldn't be at the bottom, the scene is meant to fade out or
+// something then show the text like how the ref vid did it." The first
+// version placed the outro alongside the still-visible list (reserving
+// bottom margin for it, see the old fix comment this replaced) - the
+// reference instead clears the WHOLE reveal first (a real fade to
+// nothing), then the closing line appears alone on the bare background,
+// same as its own intro-text treatment. Centered like nodeCluster's own
+// introText rather than anchored to any per-item position, since by the
+// time this is visible nothing else is on screen to sit relative to.
+function buildOutroTextLayer(outroText, accentColor, appearAt) {
   return {
     id: '__connector_outro_text__',
     type: 'text',
     text: outroText,
-    fontSize: 32,
-    maxWidth: CANVAS_WIDTH - 60,
-    position: [CANVAS_WIDTH / 2, lastItemY + 160],
+    fontSize: 40,
+    maxWidth: CANVAS_WIDTH - 80,
+    position: [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42],
     fillStyle: '#FFFFFF',
     textAlign: 'center',
     fontFamily: 'Poppins Bold',
     fontWeight: '700',
     effects: [
-      { type: 'outerGlow', params: { blur: 16, color: accentColor, opacity: 0.85, blendMode: 'screen' } },
+      { type: 'outerGlow', params: { blur: 18, color: accentColor, opacity: 0.85, blendMode: 'screen' } },
     ],
     opacity: { keyframes: [
       { time: appearAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
@@ -5275,13 +5281,7 @@ function buildOutroTextLayer(outroText, accentColor, appearAt, lastItemY) {
 
 function buildConnectorListLayers({ items, accentColor, outroText }) {
   const NODE_SIZE = 90;
-  // Real, confirmed bug found via a real render (2026-09-07): with the
-  // list's own normal layout margins, the outro text's own space
-  // overlapped the last item's icon/label (the default marginBottom
-  // wasn't reserving nearly enough room for a whole extra text block).
-  // Reserves genuine extra room at the bottom up front when an outro is
-  // requested, rather than trying to squeeze it into whatever was left.
-  const positions = computeZigzagPositions(items.length, outroText ? 110 : 0);
+  const positions = computeZigzagPositions(items.length);
   const layers = [];
 
   const rawAnchors = buildConnectorLineAnchors(positions);
@@ -5396,12 +5396,28 @@ function buildConnectorListLayers({ items, accentColor, outroText }) {
   });
 
   if (outroText) {
+    // Real, direct user spec (2026-09-07), against a reference video:
+    // "the scene is meant to fade out or something then show the text."
     // Settle window of the LAST item (its own scale keyframes finish at
-    // appearAt+0.5) plus a short hold, so the outro doesn't crowd in
-    // before the last icon/label has actually landed.
-    const outroAppearAt = lastAppearAt + 0.5 + 0.4;
-    const lastItemY = positions[positions.length - 1][1];
-    layers.push(buildOutroTextLayer(outroText, accentColor, outroAppearAt, lastItemY));
+    // appearAt+0.5) plus a short hold to actually read it, THEN every
+    // single layer built so far (line, all node/icon/label layers) fades
+    // to 0 together, and only once that's done does the outro text fade
+    // in on the now-bare background - a real sequential clear, not text
+    // sharing the frame with content still on screen.
+    const fadeStart = lastAppearAt + 0.5 + 0.4;
+    const fadeEnd = fadeStart + 0.45;
+    for (const l of layers) {
+      const fadeOutKfs = [
+        { time: fadeStart, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+        { time: fadeEnd, value: 0 },
+      ];
+      if (isPlainObject(l.opacity) && Array.isArray(l.opacity.keyframes)) l.opacity.keyframes.push(...fadeOutKfs);
+      else l.opacity = { keyframes: fadeOutKfs };
+    }
+    // Small overlap (not a hard cut to black first) so the transition
+    // reads as one continuous crossfade rather than a dead gap.
+    const outroAppearAt = fadeEnd - 0.1;
+    layers.push(buildOutroTextLayer(outroText, accentColor, outroAppearAt));
   }
   return layers;
 }

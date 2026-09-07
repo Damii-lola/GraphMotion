@@ -706,62 +706,6 @@ function adaptGlowForBackground(effects, isLightBackground) {
   }
 }
 
-// Real, direct user complaint after watching an actual render (2026-09-07):
-// "red color fill or red icon color doesn't fit... the icons should
-// standout and be easy to see but still match the color palette" - the
-// nodeCluster hero's own fill (and its glow) is a deliberate, SINGULAR
-// focal color, the one moment in the whole beat meant to visually pop -
-// and it sits directly UNDER a pure white icon once selected (see
-// sceneSchema.js's buildNodeClusterLayers, the before/after icon
-// crossfade). Routing it through the same analogous-family palette as
-// every other accent (buildHarmoniousAccentPalette) produced literal red
-// against an orange background - hue-related to the bg, technically, but
-// picked ONLY for hue-family membership, with no guarantee of actually
-// contrasting well against the white icon about to sit on top of it.
-//
-// FIRST attempt here used a genuinely COMPLEMENTARY hue (opposite side of
-// the wheel from the background), the standard color-theory tool for a
-// singular focal pop - direct, immediate, and unambiguous user rejection
-// once actually seen rendered (2026-09-07): "why is it blue fill, like
-// blue doesn't match with orange at all????" A complementary hue is
-// correct when the goal is maximum CONTRAST, but this user's own
-// standing preference (confirmed across multiple corrections this same
-// session) is that every accent - including this one - should read as
-// the SAME color family as the background, just a more intense/deeper
-// version of it, not a different hue entirely. Their own suggested
-// direction pointed at exactly this ("a brighter whitish color of the
-// bg" - i.e. a lighter/richer shade of the SAME hue).
-//
-// Reworked to stay ANALOGOUS - a small (+-15deg) offset from the
-// background's own hue, comfortably inside the same "family" a viewer
-// reads as belonging together, while still explicitly avoiding hue
-// offset 0 (landing exactly on the bg's own hue reads as "a dark shadow
-// of the background," the same muddy-ring problem fixed elsewhere) and
-// the yellow-green band (a hue that flips identity - reads as green
-// instead of yellow - once darkened for contrast). Saturation stays high
-// (rich, not washed out) and lightness starts at a deep-but-not-crushed
-// mid band, exactly the "brighter, richer version of the same warm
-// color" look the user was already describing - contrast against the
-// white icon on top is still guaranteed by the same measured guard loop
-// as before, darkening further only if the actual computed ratio falls
-// short rather than assuming a fixed lightness always works.
-const MIN_HERO_WHITE_CONTRAST_RATIO = 3.5; // a bit above the 3:1 "large UI component" WCAG floor - deliberately not cut close, since this is a big, central, always-visible fill under a solid white icon, not a rare edge case.
-function deriveHeroAccentColor(backgroundHex, rand) {
-  const [bgH] = hexToHsl(backgroundHex);
-  let hue = ((bgH + (rand() * 30 - 15)) % 360 + 360) % 360;
-  hue = escapeYellowGreenBand(hue);
-  const sat = 0.7 + rand() * 0.2;
-  let light = 0.38 + rand() * 0.08;
-  let hex = hslToHex(hue, sat, light);
-  let guard = 0;
-  while (contrastRatio(hex, '#FFFFFF') < MIN_HERO_WHITE_CONTRAST_RATIO && guard < 14) {
-    light = Math.max(0.12, light - 0.04);
-    hex = hslToHex(hue, sat, light);
-    guard += 1;
-  }
-  return hex;
-}
-
 // Real, confirmed-live bug found via direct frame inspection (2026-09-07,
 // direct user report: "the color is still bad", no further detail given -
 // extracted and looked at an actual rendered frame rather than guessing
@@ -820,15 +764,9 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
     }
     return remap.get(key);
   };
-  // Own independent streams (never perturb the shared palette's own
-  // sequence above) + lazily computed so they're only ever drawn from if
-  // a scene actually contains the relevant nodeCluster layer.
-  const heroRand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x27D4EB2F);
-  let heroAccent = null;
-  const getHeroAccent = () => {
-    if (!heroAccent) heroAccent = deriveHeroAccentColor(bgRefColor, heroRand);
-    return heroAccent;
-  };
+  // Own independent stream (never perturbs the shared palette's own
+  // sequence above) + lazily computed so it's only ever drawn from if a
+  // scene actually contains the relevant nodeCluster layer.
   const ringRand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x165667B1);
   let ringAccentPair = null;
   const getRingAccentPair = () => {
@@ -851,29 +789,32 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
     if (!Array.isArray(layers)) continue;
     for (const layer of layers) {
       if (!layer || typeof layer !== 'object') continue;
-      // See buildNodeClusterLayers: this layer's own "fill" content entry
-      // and its 3 glow entries all originally carry the beat's plain
-      // accentColor - swapped for the dedicated analogous hero color
-      // above instead of the shared palette's own harmonize(), so the
-      // fill and its own glow are always a single, unified color exactly
-      // as a real reference video's own "ring becomes the fill" moment
-      // shows (2026-09-07 direct spec). __node_shockwave__ and
-      // __node_hero_outer_ring__ (sceneSchema.js) are the SAME hero
-      // moment's own follow-through effects (the expanding ring pulse,
-      // the persistent slow-rotating outer ring) and use the identical
-      // literal accentColor string - routed through the same
-      // getHeroAccent() so the whole hero "reveal" reads as one
-      // consistent color, not several independently-harmonized shades of
-      // it.
-      const isHeroFill = layer.id === '__node_hero_fill__';
-      const isHeroAccentLayer = isHeroFill || layer.id === '__node_shockwave__' || layer.id === '__node_hero_outer_ring__';
+      // Real, direct user instruction (2026-09-07), against real
+      // screenshots comparing both templates: "the connectorList scene
+      // you did it correctly... just use the same color and same
+      // settings you used for connectorList in the prior scene [node
+      // Cluster] - delete all the color settings in the prior scene and
+      // copy connectorList's color settings into it." nodeCluster's hero
+      // fill/shockwave/outer-ring used to get a DEDICATED derivation
+      // (deriveHeroAccentColor, since removed) instead of the same plain
+      // harmonize() every other accent-carrying color in this file uses
+      // (connectorList's own node fill/glow included) - genuinely
+      // different math producing a visibly different result even though
+      // both were nominally "analogous." Removed entirely: these three
+      // layers now go through the exact same harmonize()/
+      // harmonizeMaybeRing() path as connectorList's own nodes, which the
+      // user already confirmed looks right. Since all three originally
+      // carry the SAME literal accentColor string, harmonize()'s own
+      // remap Map (keyed by that string) naturally gives them one
+      // consistent color for free, without needing a separate "shared
+      // accent" mechanism to enforce it.
       if (typeof layer.iconColor === 'string') layer.iconColor = harmonizeMaybeRing(layer.iconColor);
       if (typeof layer.fillStyle === 'string') layer.fillStyle = harmonize(layer.fillStyle);
       if (Array.isArray(layer.contents)) {
         for (const c of layer.contents) {
           if (!c || typeof c !== 'object') continue;
-          if (c.type === 'fill' && typeof c.color === 'string') c.color = isHeroFill ? getHeroAccent() : harmonize(c.color);
-          if (c.type === 'stroke' && typeof c.color === 'string') c.color = isHeroAccentLayer ? getHeroAccent() : harmonizeMaybeRing(c.color);
+          if (c.type === 'fill' && typeof c.color === 'string') c.color = harmonize(c.color);
+          if (c.type === 'stroke' && typeof c.color === 'string') c.color = harmonizeMaybeRing(c.color);
         }
       }
       if (Array.isArray(layer.animators)) {
@@ -884,7 +825,7 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
       if (Array.isArray(layer.effects)) {
         layer.effects.forEach((e) => {
           if (!e || !e.params || typeof e.params.color !== 'string') return;
-          e.params.color = isHeroFill ? getHeroAccent() : harmonizeMaybeRing(e.params.color);
+          e.params.color = harmonizeMaybeRing(e.params.color);
         });
         adaptGlowForBackground(layer.effects, isLightBackground);
       }
