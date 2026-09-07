@@ -433,11 +433,15 @@ traits, features, reasons - 2 to 6 items.
     { "icon": "mdi:puzzle", "label": "Relevant" },
     { "icon": "mdi:cog", "label": "Consistent" }
   ],
-  "accentColor": "#8B5CF6" }
+  "accentColor": "#8B5CF6",
+  "outroText": "Now you know all three." }
 - "items": each needs a real Iconify "icon" and a SHORT "label" (one or
   two words, it's a caption not a sentence - it gets uppercased
   automatically).
 - "accentColor": OPTIONAL, same as nodeCluster.
+- "outroText": OPTIONAL, a short (2-6 word) closing line shown AFTER
+  every item has settled, with its own glow-in entrance. Omit for no
+  outro phase (the beat just ends once the last item lands).
 
 3) phoneSwap - a beat centered on an app/tool/tracking idea. A phone
 silhouette shows a short headline, which crossfades into a real icon
@@ -1525,8 +1529,8 @@ a later beat would otherwise fit it well. There is no fixed or expected
 order between them.
 { "type": "nodeCluster", "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload"], "chosenIndex": 0, "accentColor": "#8B5CF6", "introText": "Which one wins?" }
   icon-nodes ring in, one grows into a hero circle - intro/focus beat. "icons": 3-8 real Iconify names. "chosenIndex": 0-based, which becomes the hero. "introText": OPTIONAL - a short (2-5 word) hook line shown BEFORE the icons appear, with its own glow-in/hold/shrink-away animation, THEN the icon cluster starts; omit for no intro phase (icons start immediately at beat start).
-{ "type": "connectorList", "items": [{"icon":"mdi:hand-heart","label":"Valuable"},{"icon":"mdi:puzzle","label":"Relevant"}], "accentColor": "#8B5CF6" }
-  a line draws down a list of icon+label pairs - "here are the N things" beats. "items": 2-6, each a real "icon" + SHORT 1-2 word "label".
+{ "type": "connectorList", "items": [{"icon":"mdi:hand-heart","label":"Valuable"},{"icon":"mdi:puzzle","label":"Relevant"}], "accentColor": "#8B5CF6", "outroText": "Now you know all three." }
+  a line draws down a list of icon+label pairs - "here are the N things" beats. "items": 2-6, each a real "icon" + SHORT 1-2 word "label". "outroText": OPTIONAL - a short (2-6 word) closing line shown AFTER every item has settled; omit for no outro (beat just ends once the last item lands).
 { "type": "phoneSwap", "text": "Content Marketing", "icon": "mdi:bullhorn", "accentColor": "#8B5CF6" }
   a phone shows "text" (2-4 words) then crossfades to "icon" - app/tool beat.
 { "type": "splitConverge", "icon": "mdi:bullhorn", "accentColor": "#8B5CF6" }

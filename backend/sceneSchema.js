@@ -4446,9 +4446,9 @@ function cloneTrack(track) {
   return track === null || typeof track !== 'object' ? track : JSON.parse(JSON.stringify(track));
 }
 
-function computeZigzagPositions(count) {
+function computeZigzagPositions(count, extraBottomMargin = 0) {
   const marginTop = CANVAS_HEIGHT * 0.2;
-  const marginBottom = CANVAS_HEIGHT * 0.18;
+  const marginBottom = CANVAS_HEIGHT * 0.18 + extraBottomMargin;
   const usableHeight = CANVAS_HEIGHT - marginTop - marginBottom;
   const positions = [];
   for (let i = 0; i < count; i++) {
@@ -5145,57 +5145,211 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor, introText }) 
  * double-line artifact) any sideways bow on this exact shape triggers;
  * a straight zigzag is a known-safe choice, a smoothly bowed one is not.
  */
-function buildConnectorListLayers({ items, accentColor }) {
-  const NODE_SIZE = 90;
-  const positions = computeZigzagPositions(items.length);
-  const layers = [];
-
-  const anchors = positions.map((p, i) => {
+// Real, confirmed bug found tracing the render pipeline end to end
+// (2026-09-07, direct user report: "it's only the tip of the line that
+// we have, and it ain't even done properly"): TWO separate, compounding
+// bugs, neither a guess:
+//
+// 1. build2DLayer (sceneBuilder.js) always calls withEffects(...,
+//    centered:true) for type:'shape' - the buffer it builds assumes the
+//    shape's own content is authored LOCALLY, centered around (0,0), and
+//    translates by (width/2+pad, height/2+pad) before drawing. This
+//    line's own anchors used to be authored in ABSOLUTE canvas
+//    coordinates (position:[0,0], "already in absolute coordinates" per
+//    the old comment here) - fine for a plain stroke with NO effects
+//    (withEffects short-circuits to the raw draw fn when a layer has no
+//    effects), but applyMographGlow (sceneSchema.js) unconditionally
+//    attaches a default glow to any shape with a real stroke/fill color
+//    UNLESS effects are already pre-set - which this layer never did.
+//    The instant that auto-glow attaches, the centered buffer's
+//    recentring translate shoves the entire absolute-coordinate path far
+//    outside its own small buffer canvas, clipping nearly the whole
+//    thing - confirmed directly: forcing effects:[] on this exact layer
+//    (bypassing the auto-glow) made the full line reappear instantly in
+//    a real render. Fixed at the source instead of opting out of the
+//    glow: anchors are now authored RELATIVE TO THE PATH'S OWN BOUNDING-
+//    BOX CENTER, with that center point moved onto the layer's own
+//    "position" field - exactly the convention every other shape/spark
+//    layer in this file already uses, and exactly what
+//    attachLineRevealSparks' own position-then-local-offset math already
+//    assumed (previously true only by coincidence, since position was
+//    hardcoded to [0,0]).
+// 2. The old tangent computation gave each anchor a "next"-only
+//    outTangent and a "prev"-only inTangent - two tangent directions
+//    that don't line up with each other at the same point, which
+//    doesn't curve at all, it kinks: confirmed directly in a real render
+//    (with bug #1 already worked around for the test), dead straight
+//    segments meeting at hard corners, not the smooth flowing curve a
+//    zigzag path needs. Real fix is the standard Catmull-Rom-style
+//    tangent: ONE direction per interior anchor, computed from
+//    (next - prev) skipping the anchor itself, used for BOTH its
+//    incoming and outgoing control point (scaled per-segment so
+//    uneven spacing doesn't distort it) - this is what actually produces
+//    a smooth pass-through curve at every waypoint.
+function buildConnectorLineAnchors(positions) {
+  return positions.map((p, i) => {
     const prev = positions[i - 1];
     const next = positions[i + 1];
     const anchor = { point: p };
+    let dirX = 0; let dirY = 0;
+    if (next && prev) { dirX = next[0] - prev[0]; dirY = next[1] - prev[1]; } else if (next) { dirX = next[0] - p[0]; dirY = next[1] - p[1]; } else if (prev) { dirX = p[0] - prev[0]; dirY = p[1] - prev[1]; }
+    const dirLen = Math.hypot(dirX, dirY) || 1;
+    const ux = dirX / dirLen; const uy = dirY / dirLen;
     if (next) {
-      const dx = next[0] - p[0]; const dy = next[1] - p[1];
-      const dist = Math.hypot(dx, dy) || 1;
-      const len = dist * 0.33;
-      anchor.outTangent = [(dx / dist) * len, (dy / dist) * len];
+      const segLen = Math.hypot(next[0] - p[0], next[1] - p[1]);
+      const len = segLen * 0.33;
+      anchor.outTangent = [ux * len, uy * len];
     }
     if (prev) {
-      const dx = p[0] - prev[0]; const dy = p[1] - prev[1];
-      const dist = Math.hypot(dx, dy) || 1;
-      const len = dist * 0.33;
-      anchor.inTangent = [(-dx / dist) * len, (-dy / dist) * len];
+      const segLen = Math.hypot(p[0] - prev[0], p[1] - prev[1]);
+      const len = segLen * 0.33;
+      anchor.inTangent = [-ux * len, -uy * len];
     }
     return anchor;
   });
+}
+
+// Cumulative bezier arc length AT each anchor (index i = real distance
+// travelled along the curve from anchor 0 through anchor i) - reuses the
+// exact same per-segment sampling bezierSegmentControlPoints/
+// cubicBezierPointAt already use for the traveling spark (above), so
+// "how far along the curve is node i" and "where does the spark actually
+// sit at a given % trimmed" agree with each other exactly, not two
+// independently-approximated numbers that could disagree.
+function computeCumulativeArcLengths(anchors) {
+  const SAMPLES = 40;
+  const lengths = [0];
+  let cum = 0;
+  for (let seg = 0; seg < anchors.length - 1; seg++) {
+    const [p0, p1, p2, p3] = bezierSegmentControlPoints(anchors[seg], anchors[seg + 1]);
+    let prev = p0;
+    for (let i = 1; i <= SAMPLES; i++) {
+      const pt = cubicBezierPointAt(p0, p1, p2, p3, i / SAMPLES);
+      cum += Math.hypot(pt[0] - prev[0], pt[1] - prev[1]);
+      prev = pt;
+    }
+    lengths.push(cum);
+  }
+  return lengths;
+}
+
+// Real, direct user spec (2026-09-07): "add the text after the scene" -
+// a short closing line, shown once every item has settled, glowing in
+// the same "premium" language as the rest of the beat. Optional - a beat
+// with no outroText behaves exactly as before.
+const OUTRO_TEXT_DURATION = 1.2;
+// Real, confirmed bug found via a real render (2026-09-07): a fixed
+// CANVAS_HEIGHT*0.82 position happened to land almost EXACTLY on top of
+// the LAST list item (computeZigzagPositions spreads every item across
+// the SAME usableHeight range regardless of item count, so the last
+// item's own y is always marginTop+usableHeight = CANVAS_HEIGHT*0.82,
+// no matter how many items there are) - confirmed directly, the outro
+// text overlapped the final icon/label in a real frame. Takes the last
+// item's own real y now and sits comfortably below it instead of
+// guessing a fixed fraction of the canvas.
+function buildOutroTextLayer(outroText, accentColor, appearAt, lastItemY) {
+  return {
+    id: '__connector_outro_text__',
+    type: 'text',
+    text: outroText,
+    fontSize: 32,
+    maxWidth: CANVAS_WIDTH - 60,
+    position: [CANVAS_WIDTH / 2, lastItemY + 160],
+    fillStyle: '#FFFFFF',
+    textAlign: 'center',
+    fontFamily: 'Poppins Bold',
+    fontWeight: '700',
+    effects: [
+      { type: 'outerGlow', params: { blur: 16, color: accentColor, opacity: 0.85, blendMode: 'screen' } },
+    ],
+    opacity: { keyframes: [
+      { time: appearAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: appearAt + 0.4, value: 1 },
+    ] },
+    scale: { keyframes: [
+      { time: appearAt, value: [0.85, 0.85], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: appearAt + 0.4, value: [1, 1] },
+    ] },
+  };
+}
+
+function buildConnectorListLayers({ items, accentColor, outroText }) {
+  const NODE_SIZE = 90;
+  // Real, confirmed bug found via a real render (2026-09-07): with the
+  // list's own normal layout margins, the outro text's own space
+  // overlapped the last item's icon/label (the default marginBottom
+  // wasn't reserving nearly enough room for a whole extra text block).
+  // Reserves genuine extra room at the bottom up front when an outro is
+  // requested, rather than trying to squeeze it into whatever was left.
+  const positions = computeZigzagPositions(items.length, outroText ? 110 : 0);
+  const layers = [];
+
+  const rawAnchors = buildConnectorLineAnchors(positions);
   const xs = positions.map((p) => p[0]);
   const ys = positions.map((p) => p[1]);
   const boundsWidth = Math.max(1, Math.max(...xs) - Math.min(...xs));
   const boundsHeight = Math.max(1, Math.max(...ys) - Math.min(...ys));
+  const centerX = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const centerY = (Math.min(...ys) + Math.max(...ys)) / 2;
+  // Shift every anchor point to be relative to the path's own bounding-
+  // box center (tangent VECTORS are relative already, untouched) - see
+  // this function's own doc comment above for why.
+  const anchors = rawAnchors.map((a) => ({ ...a, point: [a.point[0] - centerX, a.point[1] - centerY] }));
+
   const totalRevealTime = 0.5 + items.length * 0.5;
+  const LINE_START_TIME = 0.2;
+  // Real spec (2026-09-07): "as [the line] passes a point that an (icon &
+  // text) is meant to appear after a 0.45 sec delay". The trim's own
+  // "end" ramps 0->100 between LINE_START_TIME and totalRevealTime under
+  // easeOutCubic - inverting that analytically (1-(1-x)^3, solved for x
+  // given a target value) gives the EXACT real time the trim reaches any
+  // given %, not an assumed-linear approximation.
+  const cumLengths = computeCumulativeArcLengths(rawAnchors);
+  const totalLength = cumLengths[cumLengths.length - 1] || 1;
+  function timeLinePassesAnchor(i) {
+    const frac = cumLengths[i] / totalLength;
+    const tNorm = 1 - (1 - frac) ** (1 / 3);
+    return LINE_START_TIME + tNorm * (totalRevealTime - LINE_START_TIME);
+  }
 
   layers.push({
     id: '__connector_line__',
     type: 'shape',
     width: boundsWidth,
     height: boundsHeight,
-    // Explicit [0,0], not a no-op - anchors above are already authored
-    // in absolute canvas coordinates, matching ensureCurvedAccentLine's
-    // own established convention (and attachLineRevealSparks' own
-    // detection requires a real position field to compute from).
-    position: [0, 0],
-    opacity: 0.75,
+    position: [centerX, centerY],
     rotation: 0,
     contents: [
-      { type: 'path', shape: { kind: 'customPath', params: { anchors } } },
-      { type: 'trim', start: 0, end: { keyframes: [{ time: 0.2, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: totalRevealTime, value: 100 }] } },
-      { type: 'stroke', color: accentColor, width: 3 },
+      { type: 'path', shape: { kind: 'customPath', params: { anchors, closed: false } } },
+      { type: 'trim', start: 0, end: { keyframes: [{ time: LINE_START_TIME, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: totalRevealTime, value: 100 }] } },
+      // Real spec (2026-09-07): "give the line multiple layers: Core -
+      // thin bright stroke, Mid - slightly thicker semi-transparent glow,
+      // Outer - wide soft atmospheric bloom." A single stroke can't carry
+      // 3 different widths/opacities at once, so this is 3 stacked
+      // stroke passes over the SAME (already-trimmed) path, thin-to-wide,
+      // opaque-to-faint outer-to-inner in stacking order (AE-style -
+      // later stroke draws on TOP, so the brightest/thinnest core goes
+      // LAST). Colors handled at render time (ensureHarmoniousColors)
+      // same as every other accent-carrying stroke in this file.
+      { type: 'stroke', color: accentColor, width: 14, opacity: 0.22 },
+      { type: 'stroke', color: accentColor, width: 6, opacity: 0.55 },
+      { type: 'stroke', color: '#FFFFFF', width: 2, opacity: 0.95 },
+    ],
+    effects: [
+      { type: 'outerGlow', params: { color: accentColor, opacity: 0.6, blur: 18, blendMode: 'screen' } },
     ],
   });
 
+  let lastAppearAt = 0;
   items.forEach((item, i) => {
     const [x, y] = positions[i];
-    const appearAt = 0.3 + i * (totalRevealTime / items.length);
+    // Real spec (2026-09-07): each node now appears exactly
+    // timeLinePassesAnchor(i) + 0.45s - tied to the line's OWN real
+    // arrival time at that point, not a fixed independent schedule (the
+    // old `0.3 + i*(totalRevealTime/items.length)`, which had no real
+    // relationship to when the line-tip actually got there).
+    const appearAt = timeLinePassesAnchor(i) + 0.45;
+    lastAppearAt = Math.max(lastAppearAt, appearAt);
     const nodeKf = { keyframes: [
       { time: appearAt, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
       { time: appearAt + 0.35, value: [1.15, 1.15], interpolation: 'easing', easing: 'easeInOutCubic' },
@@ -5240,6 +5394,15 @@ function buildConnectorListLayers({ items, accentColor }) {
       opacity: { keyframes: [{ time: appearAt + 0.1, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.35, value: 1 }] },
     });
   });
+
+  if (outroText) {
+    // Settle window of the LAST item (its own scale keyframes finish at
+    // appearAt+0.5) plus a short hold, so the outro doesn't crowd in
+    // before the last icon/label has actually landed.
+    const outroAppearAt = lastAppearAt + 0.5 + 0.4;
+    const lastItemY = positions[positions.length - 1][1];
+    layers.push(buildOutroTextLayer(outroText, accentColor, outroAppearAt, lastItemY));
+  }
   return layers;
 }
 
@@ -5728,7 +5891,17 @@ function buildMographBeatVisual(beat) {
       .filter((it) => isPlainObject(it) && typeof it.icon === 'string' && MOGRAPH_ICON_RE.test(it.icon) && typeof it.label === 'string' && it.label.trim())
       .slice(0, 6)
       .map((it) => ({ icon: it.icon, label: truncateAtWordBoundary(it.label.trim().toUpperCase(), 18) }));
-    if (items.length >= 2) layers = buildConnectorListLayers({ items, accentColor });
+    if (items.length >= 2) {
+      const outroText = typeof spec.outroText === 'string' && spec.outroText.trim() ? truncateAtWordBoundary(spec.outroText.trim(), 40) : null;
+      layers = buildConnectorListLayers({ items, accentColor, outroText });
+      // Same reasoning as nodeCluster's own introText auto-extend above -
+      // the outro is real extra screen time tacked onto the end of the
+      // reveal, not something squeezed into whatever duration was
+      // already authored.
+      if (outroText && isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+        beat.params.duration += OUTRO_TEXT_DURATION;
+      }
+    }
   } else if (spec.type === 'phoneSwap' && typeof spec.text === 'string' && spec.text.trim() && typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon)) {
     layers = buildPhoneSwapLayers({ text: truncateAtWordBoundary(spec.text.trim().toUpperCase(), 26), icon: spec.icon, accentColor });
   } else if (spec.type === 'splitConverge' && typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon)) {
