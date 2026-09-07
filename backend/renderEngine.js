@@ -1545,17 +1545,37 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         // exactly 1:1 right as it finishes arriving. Scaled around each
         // canvas's own on-screen CENTER (not top-left) so this reads as
         // a zoom, not an extra drift on top of the pan already happening.
-        const drawZoomed = (image, x, y, scale) => {
+        //
+        // Scale range + opacity crossfade amplified (2026-09-07, direct
+        // user report against a real reference video: "the transition
+        // between scenes is bad"): a real frame-by-frame comparison
+        // against our own render at the same transition showed the
+        // difference plainly - the reference's outgoing content grows
+        // dramatically, filling well past the frame before it's gone
+        // (a real "camera punching through" feel), where ours only ever
+        // swelled a barely-visible 16%, reading as a flat slide with a
+        // faint wobble, not a zoom. outScale now reaches 2.2x by the end
+        // of the pan (was 1.16x); inScale starts at a genuinely small
+        // 0.4x (was 0.86x) and swoops up to 1x. Paired with an explicit
+        // opacity crossfade (previously both canvases drew fully opaque,
+        // relying only on screen position to avoid a hard overlap) so
+        // the much bigger scale swing doesn't produce a jarring hard-
+        // edged double-exposure where the two now-larger canvases
+        // overlap more.
+        const drawZoomed = (image, x, y, scale, alpha) => {
           const w = WIDTH * scale;
           const h = HEIGHT * scale;
           const cx = x + WIDTH / 2;
           const cy = y + HEIGHT / 2;
+          ctx.save();
+          ctx.globalAlpha = alpha;
           ctx.drawImage(image, cx - w / 2, cy - h / 2, w, h);
+          ctx.restore();
         };
-        const outScale = 1 + panProgress * 0.16;
-        const inScale = 0.86 + panProgress * 0.14;
-        drawZoomed(prevCanvas, prevPos.x - camX, prevPos.y - camY, outScale);
-        drawZoomed(transitionCurrCanvas, currPos.x - camX, currPos.y - camY, inScale);
+        const outScale = 1 + panProgress * 1.2;
+        const inScale = 0.4 + panProgress * 0.6;
+        drawZoomed(prevCanvas, prevPos.x - camX, prevPos.y - camY, outScale, 1 - panProgress);
+        drawZoomed(transitionCurrCanvas, currPos.x - camX, currPos.y - camY, inScale, panProgress);
       } else {
         renderWithMotionBlur(ctx, WIDTH, HEIGHT, localT, FRAME_DURATION, withLogicalScale(withBeatZoom((c, st) => visualObj.render(c, st), range.duration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
       }
