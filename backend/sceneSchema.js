@@ -4599,9 +4599,9 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
     // harmonization, unlike the old per-icon variants which sometimes
     // collided or clashed under a small 5-slot palette. Base widths are
     // deliberately small for the hero circle specifically since its OWN
-    // scale keyframes grow it 4.3x - stroke width scales right along
-    // with the shape, so "1.2" here reads as a proportionate ~5px rim
-    // once fully grown, not a hairline.
+    // scale keyframes grow it ~4.3x - stroke width scales right along
+    // with the shape (see the hero's own contents block below for the
+    // exact current values and the boldness bump's own reasoning).
     const nodeRimOuter = UNSELECTED_RIM_OUTER;
     const nodeRimInner = UNSELECTED_RIM_INNER;
     // Hero scale-up upgraded per direct spec: anticipation squash,
@@ -4747,10 +4747,23 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
       // for the hero (1.8/0.6, not the unselected nodes' 7/2.4) since
       // THIS circle's own scale keyframes grow it ~4.75x - the same
       // stroke width scales up right along with it.
+      // Hero widths bumped again (2026-09-07, direct user report against
+      // a real render: "why is the tiktok ring not as bold as the other
+      // rings") - the OLD 1.8/0.6 was sized to land at roughly the SAME
+      // effective post-scale width as the unselected rings (1.8*4.3~=7.7,
+      // matching their flat 7), but "matching" still read as visibly
+      // thinner in practice, most likely because a thin base stroke
+      // scaled up ~4.3x through the layer's own scale transform picks up
+      // more visible softening/anti-aliasing than a stroke drawn at a
+      // comparable width natively. Bumped further so the hero's ring is
+      // UNAMBIGUOUSLY bolder (2.3*4.3~=9.9, 0.85*4.3~=3.7) rather than
+      // just barely tying - it's the one node that just won the
+      // selection, it should never read as the least emphatic ring on
+      // screen.
       contents: isChosen ? [
         { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
-        { type: 'stroke', color: nodeRimOuter, width: 1.8 },
-        { type: 'stroke', color: nodeRimInner, width: 0.6 },
+        { type: 'stroke', color: nodeRimOuter, width: 2.3 },
+        { type: 'stroke', color: nodeRimInner, width: 0.85 },
       ] : [
         { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
         { type: 'stroke', color: nodeRimOuter, width: 7 },

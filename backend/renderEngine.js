@@ -584,7 +584,7 @@ const MIN_ACCENT_CONTRAST_RATIO = 3.2; // real WCAG large-UI-component minimum (
 // adjustment is needed there.
 const YELLOW_BAND_MIN_DEG = 40;
 const YELLOW_BAND_MAX_DEG = 100;
-function escapeYellowBandForDarkAccent(hue) {
+function escapeYellowGreenBand(hue) {
   if (hue < YELLOW_BAND_MIN_DEG || hue > YELLOW_BAND_MAX_DEG) return hue;
   const nudged = hue < 70 ? hue - 45 : hue + 45; // toward orange/red, or toward true green - whichever edge is closer
   return ((nudged % 360) + 360) % 360;
@@ -611,7 +611,7 @@ function buildHarmoniousAccentPalette(backgroundHex, rand) {
   const needsDarkAccent = bgL > 0.5;
   return hueOffsets.map((offset) => {
     let hue = ((bgH + offset) % 360 + 360) % 360;
-    if (needsDarkAccent) hue = escapeYellowBandForDarkAccent(hue);
+    if (needsDarkAccent) hue = escapeYellowGreenBand(hue);
     const sat = 0.62 + rand() * 0.22;
     let light = needsDarkAccent ? 0.30 + rand() * 0.12 : 0.66 + rand() * 0.14;
     let hex = hslToHex(hue, sat, light);
@@ -684,6 +684,69 @@ function adaptGlowForBackground(effects, isLightBackground) {
   }
 }
 
+// Real, direct user complaint after watching an actual render (2026-09-07):
+// "red color fill or red icon color doesn't fit... the icons should
+// standout and be easy to see but still match the color palette" - the
+// nodeCluster hero's own fill (and its glow) is a deliberate, SINGULAR
+// focal color, the one moment in the whole beat meant to visually pop -
+// and it sits directly UNDER a pure white icon once selected (see
+// sceneSchema.js's buildNodeClusterLayers, the before/after icon
+// crossfade). Routing it through the same analogous-family palette as
+// every other accent (buildHarmoniousAccentPalette) produced literal red
+// against an orange background - hue-related to the bg, technically, but
+// picked ONLY for hue-family membership, with no guarantee of actually
+// contrasting well against the white icon about to sit on top of it.
+//
+// A genuinely COMPLEMENTARY hue (opposite side of the color wheel from
+// the background) is the correct color-theory tool for exactly this "one
+// deliberate pop, not a repeated pattern" case - this file's own earlier
+// guidance to use complementary colors "sparingly" (see
+// buildHarmoniousAccentPalette's doc comment) is about not building an
+// entire PALETTE out of them, not about this one true focal moment,
+// which is the textbook use a complementary accent is FOR. Lightness is
+// pinned to a rich mid-band (0.42-0.50) rather than the rest of the
+// palette's near-black dark-accent floor, specifically because a WHITE
+// icon needs a mid-toned backdrop to read against - too dark and it's
+// technically high-contrast but looks murky (the same "everything
+// crushed dark" problem the yellow-band fix above addresses elsewhere);
+// too light and the white icon washes out into it, the exact trap the
+// user flagged unprompted ("that will be problematic... hard to see the
+// white icon"). A small degree of random hue jitter (+-20deg) keeps
+// repeated generations from all landing on the EXACT same complementary
+// hue while staying clearly complementary, not analogous.
+//
+// Real, confirmed-live bug found verifying this fix (2026-09-07, no
+// rendering needed - direct HSL/contrast computation caught it before it
+// ever shipped): a purple background's complement landed in the SAME
+// yellow/yellow-green band the general palette above already had to
+// route around (e.g. a lime/chartreuse candidate measured a mere 1.75:1
+// contrast against white - the icon would have been nearly invisible on
+// it, precisely the failure the user pre-emptively worried about).
+// Yellow/lime's own high relative luminance is the culprit either way:
+// too dark and it stops reading as yellow at all (the general palette's
+// problem), too light-but-still-"mid" and it's still bright enough that
+// WHITE on top of it barely shows up (this fill's own problem) - there's
+// no lightness this band can sit at that works for a white icon, so it's
+// routed around the same way, then a dedicated white-contrast guard loop
+// (checking the ACTUAL rendered result, not assumed from lightness alone)
+// catches any other hue that turns out marginal too.
+const MIN_HERO_WHITE_CONTRAST_RATIO = 3.5; // a bit above the 3:1 "large UI component" WCAG floor - deliberately not cut close, since this is a big, central, always-visible fill under a solid white icon, not a rare edge case.
+function deriveHeroAccentColor(backgroundHex, rand) {
+  const [bgH] = hexToHsl(backgroundHex);
+  let hue = ((bgH + 180 + (rand() * 40 - 20)) % 360 + 360) % 360;
+  hue = escapeYellowGreenBand(hue);
+  const sat = 0.68 + rand() * 0.18;
+  let light = 0.42 + rand() * 0.08;
+  let hex = hslToHex(hue, sat, light);
+  let guard = 0;
+  while (contrastRatio(hex, '#FFFFFF') < MIN_HERO_WHITE_CONTRAST_RATIO && guard < 14) {
+    light = Math.max(0.12, light - 0.04);
+    hex = hslToHex(hue, sat, light);
+    guard += 1;
+  }
+  return hex;
+}
+
 function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
   const rand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x9E3779B1);
   const bgRefColor = boardBackgroundDef.startColor;
@@ -699,6 +762,15 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
     }
     return remap.get(key);
   };
+  // Own independent stream (never perturbs the shared palette's own
+  // sequence above) + lazily computed so it's only ever drawn from if a
+  // scene actually contains a nodeCluster hero fill layer.
+  const heroRand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x27D4EB2F);
+  let heroAccent = null;
+  const getHeroAccent = () => {
+    if (!heroAccent) heroAccent = deriveHeroAccentColor(bgRefColor, heroRand);
+    return heroAccent;
+  };
   const startLuma = relativeLuma(hexToRgbLocal(boardBackgroundDef.startColor));
   const endLuma = relativeLuma(hexToRgbLocal(boardBackgroundDef.endColor));
   const isLightBackground = (startLuma + endLuma) / 2 > LIGHT_BACKGROUND_LUMA_THRESHOLD;
@@ -708,12 +780,20 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
     if (!Array.isArray(layers)) continue;
     for (const layer of layers) {
       if (!layer || typeof layer !== 'object') continue;
+      // See buildNodeClusterLayers: this layer's own "fill" content entry
+      // and its 2 outer (medium/wide) glow entries all originally carry
+      // the beat's plain accentColor - swapped for the dedicated
+      // complementary hero color above instead of the shared analogous
+      // harmonize(). Its FIRST glow entry (the tight core) is deliberately
+      // color-matched to the ring instead (nodeRimOuter) and stays on the
+      // regular harmonize() path below, unaffected by this special case.
+      const isHeroFill = layer.id === '__node_hero_fill__';
       if (typeof layer.iconColor === 'string') layer.iconColor = harmonize(layer.iconColor);
       if (typeof layer.fillStyle === 'string') layer.fillStyle = harmonize(layer.fillStyle);
       if (Array.isArray(layer.contents)) {
         for (const c of layer.contents) {
           if (!c || typeof c !== 'object') continue;
-          if (c.type === 'fill' && typeof c.color === 'string') c.color = harmonize(c.color);
+          if (c.type === 'fill' && typeof c.color === 'string') c.color = isHeroFill ? getHeroAccent() : harmonize(c.color);
           if (c.type === 'stroke' && typeof c.color === 'string') c.color = harmonize(c.color);
         }
       }
@@ -723,9 +803,10 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
         }
       }
       if (Array.isArray(layer.effects)) {
-        for (const e of layer.effects) {
-          if (e?.params && typeof e.params.color === 'string') e.params.color = harmonize(e.params.color);
-        }
+        layer.effects.forEach((e, idx) => {
+          if (!e || !e.params || typeof e.params.color !== 'string') return;
+          e.params.color = (isHeroFill && idx > 0) ? getHeroAccent() : harmonize(e.params.color);
+        });
         adaptGlowForBackground(layer.effects, isLightBackground);
       }
     }
