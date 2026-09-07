@@ -1160,9 +1160,26 @@ function drawAtmosphereOverlay(ctx, t, atmosphere, grainTexture, width, height) 
  * genuinely animated pulse lives instead in drawAtmosphereOverlay's
  * cheap per-frame sonar-style ring, layered on top of this static set.
  */
+// Real, confirmed bug found via extensive frame-by-frame pixel
+// measurement (2026-09-07, direct user report: "check it frame by
+// frame" - a real diagnostic hunt, not a guess: isolated by rendering 5
+// variants each stripping a different nodeCluster layer's OWN glow, none
+// of which changed anything, before tracing the "extra ring" to THIS
+// function instead): RADII's outermost ring (240) sat FAR outside
+// nodeCluster's own hero circle at its final settled size (radius ~150 -
+// NODE_SIZE/2 * ~4.3x scale), so a completely unrelated, independently-
+// designed decorative background ring was visibly sweeping past/around
+// the hero's own explosion, reading as a mismatched, broken-looking
+// "second ring" (measured at ~244px radius in an extracted frame -
+// matching this ring almost exactly) rather than the actual hero
+// content. Shrunk so the biggest ring sits comfortably UNDER a typical
+// hero circle's own edge instead of well past it - covered/hidden by an
+// opaque hero fill rather than poking out disconnected from it, while
+// still reading as "faint concentric rings" atmosphere for beats with no
+// large central shape to hide behind.
 function drawStaticEnergyRings(ctx, boardPositions, backgroundDef, camX, camY, width, height) {
   const [r, g, b] = hexToRgbLocal(backgroundDef.poolColor || backgroundDef.startColor);
-  const RADII = [90, 160, 240];
+  const RADII = [60, 100, 140];
   for (const pos of boardPositions) {
     const cx = pos.x - camX;
     const cy = pos.y - camY;

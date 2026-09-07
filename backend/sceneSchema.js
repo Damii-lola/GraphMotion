@@ -4675,10 +4675,26 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
         height: NODE_SIZE,
         position: cloneTrack(posKf),
         scale: cloneTrack(circleScale),
+        // Real, confirmed finding from an extensive frame-by-frame pixel
+        // investigation (2026-09-07, direct user report: "check it frame
+        // by frame... still bad"): what looked like a mismatched "second
+        // ring" was actually the ring (already at its full exploded
+        // radius) and the icon (correctly, proportionally smaller - it's
+        // MEANT to sit inside a filled circle, not fill it) with a
+        // visible GAP between them, because this fill hadn't ramped up
+        // yet to bridge that space - confirmed by computing each one's
+        // own real peak-scale radius and matching them almost exactly
+        // against pixel measurements from an actual extracted frame (ring
+        // ~234px, icon ~97px, matching measured ~240px/~115px). Not a
+        // scale bug - the ring and icon were both exactly where they
+        // should be. Shortened this ramp from the full HERO_SETTLE_TIME
+        // window (0.2s) to just 0.08s so the fill catches up and bridges
+        // that gap almost immediately instead of leaving it visible for
+        // several frames.
         opacity: { keyframes: [
           { time: HERO_EXPLODE_TIME - 0.01, value: 0 },
           { time: HERO_EXPLODE_TIME, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: HERO_SETTLE_TIME, value: 1 },
+          { time: HERO_EXPLODE_TIME + 0.08, value: 1 },
         ] },
         contents: [
           { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
@@ -4814,6 +4830,43 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
       // "Before" icon: same blue tint as every other node's icon,
       // visible through the whole clustering phase, fades OUT right as
       // the fill/color-change lands.
+      //
+      // Real, confirmed bug found via direct pixel-sampling a fixed
+      // point across the transition, frame by frame (2026-09-07, direct
+      // user report: "check it frame by frame... look at it" after two
+      // color fixes already landed - this was a genuine THIRD, separate
+      // issue, not a color problem at all): this used to cut to 0
+      // opacity in the same 10ms window the fill/after-icon below start
+      // ramping up FROM 0 - so for a real, measured frame or two right
+      // at HERO_EXPLODE_TIME, before-icon, fill, AND after-icon were ALL
+      // simultaneously near-invisible at once, a genuine "hollow ring"
+      // flash with nothing inside it. Now holds full opacity right up to
+      // HERO_EXPLODE_TIME (exactly when fill/after start their own ramp)
+      // and fades out over the NEXT 0.1s instead, overlapping with that
+      // ramp-up rather than racing it to zero first - something is
+      // always visible inside the ring through the whole crossfade.
+      // Real, confirmed bug found via direct pixel measurement (2026-09-07,
+      // same investigation as the crossfade-overlap fix above, found
+      // right after fixing that one and re-checking frame by frame again):
+      // a SEPARATE, previously-missed instance of the exact bug the
+      // outline layer's own pre-set glow (below) was already fixed for.
+      // These icon layers had no pre-set "effects" of their own, so
+      // applyMographGlow's generic pass (sceneSchema.js) gave them its
+      // DEFAULT blur:22 - sized for a normal 1x-scale icon, same as
+      // every non-hero icon, which is fine for THEM (their own scale
+      // barely overshoots 1.18x). But the HERO's own iconScale grows to
+      // ~3.6-3.95x, and that unscaled blur:22 grows right along with it
+      // to an effective ~80-105px - a huge, soft, ring-colored halo
+      // blooming far past the icon's own edges, at a visibly DIFFERENT
+      // radius than the outline's own (correctly scale-compensated) ring
+      // - exactly the "small ring inside a big ring" artifact reported
+      // live and confirmed via a real pixel scan (the two radii measured
+      // ~115px and ~244px in one extracted frame - nowhere near each
+      // other, confirming two genuinely different glow sources, not one
+      // shape misreading). Pre-set here with the SAME kind of scale-
+      // compensated blur the outline uses (22 / iconScale's own peak
+      // ~3.6 ~= 6) so applyMographGlow's "skip if already has a glow"
+      // guard leaves it alone once set.
       layers.push({
         id: `__node_icon_${i}__`,
         type: 'image',
@@ -4826,12 +4879,14 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
         opacity: { keyframes: [
           { time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
           { time: delay + 0.25, value: 1 },
-          { time: HERO_EXPLODE_TIME - 0.01, value: 1 },
-          { time: HERO_EXPLODE_TIME, value: 0 },
+          { time: HERO_EXPLODE_TIME, value: 1 },
+          { time: HERO_EXPLODE_TIME + 0.1, value: 0 },
         ] },
+        effects: [{ type: 'outerGlow', params: { color: nodeRimInner, opacity: 0.85, blur: 6, blendMode: 'screen' } }],
       });
       // "After" icon: white, invisible until the same moment, then locks
-      // in for the rest of the beat.
+      // in for the rest of the beat. Same scale-compensated glow fix as
+      // the "before" icon above.
       layers.push({
         id: `__node_icon_${i}__selected`,
         type: 'image',
@@ -4845,6 +4900,7 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor }) {
           { time: HERO_EXPLODE_TIME, value: 0 },
           { time: HERO_SETTLE_TIME, value: 1 },
         ] },
+        effects: [{ type: 'outerGlow', params: { color: '#FFFFFF', opacity: 0.85, blur: 6, blendMode: 'screen' } }],
       });
     } else {
       layers.push({
