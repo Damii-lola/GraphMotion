@@ -719,46 +719,39 @@ function adaptGlowForBackground(effects, isLightBackground) {
 // picked ONLY for hue-family membership, with no guarantee of actually
 // contrasting well against the white icon about to sit on top of it.
 //
-// A genuinely COMPLEMENTARY hue (opposite side of the color wheel from
-// the background) is the correct color-theory tool for exactly this "one
-// deliberate pop, not a repeated pattern" case - this file's own earlier
-// guidance to use complementary colors "sparingly" (see
-// buildHarmoniousAccentPalette's doc comment) is about not building an
-// entire PALETTE out of them, not about this one true focal moment,
-// which is the textbook use a complementary accent is FOR. Lightness is
-// pinned to a rich mid-band (0.42-0.50) rather than the rest of the
-// palette's near-black dark-accent floor, specifically because a WHITE
-// icon needs a mid-toned backdrop to read against - too dark and it's
-// technically high-contrast but looks murky (the same "everything
-// crushed dark" problem the yellow-band fix above addresses elsewhere);
-// too light and the white icon washes out into it, the exact trap the
-// user flagged unprompted ("that will be problematic... hard to see the
-// white icon"). A small degree of random hue jitter (+-20deg) keeps
-// repeated generations from all landing on the EXACT same complementary
-// hue while staying clearly complementary, not analogous.
+// FIRST attempt here used a genuinely COMPLEMENTARY hue (opposite side of
+// the wheel from the background), the standard color-theory tool for a
+// singular focal pop - direct, immediate, and unambiguous user rejection
+// once actually seen rendered (2026-09-07): "why is it blue fill, like
+// blue doesn't match with orange at all????" A complementary hue is
+// correct when the goal is maximum CONTRAST, but this user's own
+// standing preference (confirmed across multiple corrections this same
+// session) is that every accent - including this one - should read as
+// the SAME color family as the background, just a more intense/deeper
+// version of it, not a different hue entirely. Their own suggested
+// direction pointed at exactly this ("a brighter whitish color of the
+// bg" - i.e. a lighter/richer shade of the SAME hue).
 //
-// Real, confirmed-live bug found verifying this fix (2026-09-07, no
-// rendering needed - direct HSL/contrast computation caught it before it
-// ever shipped): a purple background's complement landed in the SAME
-// yellow/yellow-green band the general palette above already had to
-// route around (e.g. a lime/chartreuse candidate measured a mere 1.75:1
-// contrast against white - the icon would have been nearly invisible on
-// it, precisely the failure the user pre-emptively worried about).
-// Yellow/lime's own high relative luminance is the culprit either way:
-// too dark and it stops reading as yellow at all (the general palette's
-// problem), too light-but-still-"mid" and it's still bright enough that
-// WHITE on top of it barely shows up (this fill's own problem) - there's
-// no lightness this band can sit at that works for a white icon, so it's
-// routed around the same way, then a dedicated white-contrast guard loop
-// (checking the ACTUAL rendered result, not assumed from lightness alone)
-// catches any other hue that turns out marginal too.
+// Reworked to stay ANALOGOUS - a small (+-15deg) offset from the
+// background's own hue, comfortably inside the same "family" a viewer
+// reads as belonging together, while still explicitly avoiding hue
+// offset 0 (landing exactly on the bg's own hue reads as "a dark shadow
+// of the background," the same muddy-ring problem fixed elsewhere) and
+// the yellow-green band (a hue that flips identity - reads as green
+// instead of yellow - once darkened for contrast). Saturation stays high
+// (rich, not washed out) and lightness starts at a deep-but-not-crushed
+// mid band, exactly the "brighter, richer version of the same warm
+// color" look the user was already describing - contrast against the
+// white icon on top is still guaranteed by the same measured guard loop
+// as before, darkening further only if the actual computed ratio falls
+// short rather than assuming a fixed lightness always works.
 const MIN_HERO_WHITE_CONTRAST_RATIO = 3.5; // a bit above the 3:1 "large UI component" WCAG floor - deliberately not cut close, since this is a big, central, always-visible fill under a solid white icon, not a rare edge case.
 function deriveHeroAccentColor(backgroundHex, rand) {
   const [bgH] = hexToHsl(backgroundHex);
-  let hue = ((bgH + 180 + (rand() * 40 - 20)) % 360 + 360) % 360;
+  let hue = ((bgH + (rand() * 30 - 15)) % 360 + 360) % 360;
   hue = escapeYellowGreenBand(hue);
-  const sat = 0.68 + rand() * 0.18;
-  let light = 0.42 + rand() * 0.08;
+  const sat = 0.7 + rand() * 0.2;
+  let light = 0.38 + rand() * 0.08;
   let hex = hslToHex(hue, sat, light);
   let guard = 0;
   while (contrastRatio(hex, '#FFFFFF') < MIN_HERO_WHITE_CONTRAST_RATIO && guard < 14) {
