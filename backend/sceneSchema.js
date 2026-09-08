@@ -5755,14 +5755,34 @@ function buildMergeClusterLayers({
   // "basically at once," not a real one-at-a-time reveal, and the old
   // fixed CONVERGE_TIME (1.1) didn't even leave the LAST icon a real
   // moment to be seen before everything converged. REVEAL_INTERVAL is
-  // the real gap asked for (0.25 -> 0.5 on direct follow-up);
+  // the real gap asked for (0.25 -> 0.5 -> 0.4 across follow-ups);
   // CONVERGE_TIME is computed FROM it (last icon's own delay + its own
   // settle time + a short shared hold) so convergence always starts only
   // once every icon has genuinely finished appearing, regardless of how
   // many icons this beat has.
-  const REVEAL_INTERVAL = 0.5;
+  const REVEAL_INTERVAL = 0.4;
   const ICON_SETTLE_TIME = 0.25;
   const HOLD_BEFORE_CONVERGE = 0.35;
+  // Real, direct user spec (2026-09-08): "it's ONLY when all of them have
+  // popup that they should converge." Confirmed via direct pixel-position
+  // measurement that icon 0 was visibly drifting toward center as early as
+  // localT=1.8, a full ~1s before the authored CONVERGE_TIME (2.85) - NOT
+  // an authoring mistake (the raw keyframe data was already correct) but
+  // a consequence of position's own hold segment having only ONE
+  // keyframe at the start value (at delay+0.25) before jumping straight
+  // to a DIFFERENT value at CONVERGE_TIME: with no second identical-value
+  // keyframe in between, the eased interpolation spans the icon's ENTIRE
+  // remaining window, so an early icon (long window) shows much more
+  // cumulative easeInCubic progress by any given time than a late icon
+  // (short window) - a slow, continuous drift, not a hold. opacity/scale
+  // below never had this problem because they already hold via TWO
+  // identical values (delay+0.25 and CONVERGE_TIME-0.15) before their own
+  // short move - CONVERGE_MOVE_DURATION gives position that same
+  // structure: every icon now holds dead still at its own start position
+  // right up until this shared window, then ALL icons ease toward center
+  // together over the same short span, so nothing moves until everyone's
+  // popped up.
+  const CONVERGE_MOVE_DURATION = 0.3;
   // Real, direct user spec (2026-09-08): "the scene shouldn't start
   // until the camera is in place." Every beat after the first pans/zooms
   // in from the previous one (renderEngine.js's own DEFAULT_PAN_DURATION_
@@ -5788,6 +5808,7 @@ function buildMergeClusterLayers({
     const posKf = { keyframes: [
       { time: delay, value: [startX, startY], interpolation: 'easing', easing: 'easeOutCubic' },
       { time: delay + 0.25, value: [startX, startY] },
+      { time: CONVERGE_TIME - CONVERGE_MOVE_DURATION, value: [startX, startY] },
       { time: CONVERGE_TIME, value: [...CENTER], interpolation: 'easing', easing: 'easeInCubic' },
     ] };
     const opacityKf = { keyframes: [
