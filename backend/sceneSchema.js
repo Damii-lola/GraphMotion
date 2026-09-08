@@ -5745,7 +5745,9 @@ function buildMergeClusterLayers({
 }) {
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
   const NODE_SIZE = 64;
-  const START_RADIUS = 190;
+  // Real, direct user spec (2026-09-08): "shift them all a bit closer to
+  // the middle, rn they are far out." Was 190.
+  const START_RADIUS = 130;
   // Real, direct user spec (2026-09-08): "they need to appear one at a
   // time in a clockwise formation... then they will now combine in the
   // middle." The clockwise placement already existed (angle starts at
