@@ -4517,6 +4517,13 @@ const HERO_ANTICIPATION_TIME = 1.6;
 const HERO_EXPLODE_TIME = 1.85;
 const HERO_SETTLE_TIME = 2.05;
 
+// nodeClusterExtended's own Phase 2 timeline (see buildNodeClusterExtendedLayers
+// below) is essentially fixed-length regardless of narration - unlike
+// introText/outroText's "add N seconds on top of whatever was authored"
+// pattern, this is a floor: the beat needs at least this much total
+// runtime for Phase 2 to play out in full before the beat can end.
+const NODE_CLUSTER_EXTENDED_MIN_DURATION = 6.4;
+
 /**
  * Small glowing shards flung outward from a dissolving outer icon,
  * timed to its own exit - direct spec: "dissolve into small glowing
@@ -5124,6 +5131,484 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor, introText }) 
       { type: 'stroke', color: accentColor, width: 1, opacity: 0.55 },
     ],
   });
+
+  if (introText) {
+    const shiftedLayers = layers.map((l) => shiftLayerTimeline(l, INTRO_TEXT_DURATION));
+    return [...buildIntroTextLayers(introText, accentColor), ...shiftedLayers];
+  }
+  return layers;
+}
+
+/**
+ * Extended, two-phase variant of nodeCluster. Direct user spec
+ * (2026-09-08, against a real reference video): "this is an extension of
+ * the nodeCluster scene... duplicate everything in it... then add this
+ * new scene part." Phase 1 below (the icons.forEach loop through the
+ * shockwave/outer-ring layers) is a deliberate, VERBATIM duplicate of
+ * buildNodeClusterLayers - nodeCluster itself is explicitly untouched by
+ * this template so it can keep evolving independently. Phase 2 (new)
+ * picks up right where Phase 1's hero settles: the hero shrinks back
+ * down to a small circle - still filled with its own color, but its icon
+ * disappears - and relocates to one of a few possible spots (a variable,
+ * matching the reference: "the position... can be one of the middle 3
+ * circle positions"); four plain white (unfilled) circles pop in
+ * alongside it; a short variable line of text appears in the middle;
+ * then everything pulls back together and merges into a brand-new hero
+ * circle with a different icon and a caption underneath - both variables
+ * the AI picks, exactly like Phase 1's own icon/chosenIndex choice.
+ */
+function buildNodeClusterExtendedLayers({
+  icons, chosenIndex, accentColor, introText, mergeText, newIcon, newLabel, shrinkSlot,
+}) {
+  const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
+  const RING_RADIUS = 150;
+  const NODE_SIZE = 70;
+  const layers = [];
+  icons.forEach((icon, i) => {
+    const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
+    const x = CENTER[0] + Math.cos(angle) * RING_RADIUS;
+    const y = CENTER[1] + Math.sin(angle) * RING_RADIUS;
+    const delay = 0.05 * i;
+    const isChosen = i === chosenIndex;
+    const posKf = isChosen
+      ? { keyframes: [
+        { time: delay, value: [x, y], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: 1.0, value: [x, y], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.6, value: CENTER },
+      ] }
+      : { keyframes: [
+        { time: delay, value: CENTER, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.4, value: [x, y] },
+        { time: 1.0, value: [x, y], interpolation: 'easing', easing: 'easeInCubic' },
+        { time: 1.3, value: [x + (CENTER[0] - x) * 0.35, y + (CENTER[1] - y) * 0.35] },
+      ] };
+    const opacityKf = isChosen
+      ? { keyframes: [{ time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: delay + 0.25, value: 1 }] }
+      : { keyframes: [
+        { time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.25, value: 1 },
+        { time: 1.0, value: 1 },
+        { time: 1.3, value: 0 },
+      ] };
+    const nodeRimOuter = UNSELECTED_RIM_OUTER;
+    const nodeRimInner = UNSELECTED_RIM_INNER;
+    const circleScale = isChosen
+      ? { keyframes: [
+        { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: HERO_ANTICIPATION_TIME, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: HERO_ANTICIPATION_TIME + 0.08, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: HERO_EXPLODE_TIME, value: [4.75, 4.75], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: HERO_SETTLE_TIME, value: [4.3, 4.3] },
+      ] }
+      : { keyframes: [
+        { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.3, value: [1.18, 1.18], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.42, value: [1, 1] },
+        { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.12, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
+      ] };
+    const iconScale = isChosen
+      ? { keyframes: [
+        { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.3, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: HERO_ANTICIPATION_TIME, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: HERO_ANTICIPATION_TIME + 0.08, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: HERO_EXPLODE_TIME, value: [3.95, 3.95], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: HERO_SETTLE_TIME, value: [3.6, 3.6] },
+      ] }
+      : { keyframes: [
+        { time: delay, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.3, value: [1.18, 1.18], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.42, value: [1, 1] },
+        { time: 1.0, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.12, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: 1.3, value: [0, 0], interpolation: 'easing', easing: 'easeInOutCubic' },
+      ] };
+
+    if (isChosen) {
+      layers.push({
+        id: '__node_hero_fill__',
+        type: 'shape',
+        width: NODE_SIZE,
+        height: NODE_SIZE,
+        position: cloneTrack(posKf),
+        scale: cloneTrack(circleScale),
+        opacity: { keyframes: [
+          { time: HERO_EXPLODE_TIME - 0.01, value: 0 },
+          { time: HERO_EXPLODE_TIME, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: HERO_EXPLODE_TIME + 0.08, value: 1 },
+        ] },
+        contents: [
+          { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
+          { type: 'fill', color: accentColor },
+        ],
+        effects: [
+          { type: 'outerGlow', params: { color: accentColor, opacity: 0.95, blur: 10, blendMode: 'screen' } },
+          { type: 'outerGlow', params: { color: accentColor, opacity: 0.5, blur: 32, blendMode: 'screen' } },
+          { type: 'outerGlow', params: { color: accentColor, opacity: 0.22, blur: 75, blendMode: 'screen' } },
+        ],
+      });
+    }
+
+    const ringOpacity = isChosen
+      ? { keyframes: [
+        { time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: delay + 0.25, value: 1 },
+        { time: HERO_EXPLODE_TIME, value: 1 },
+        { time: HERO_SETTLE_TIME, value: 0 },
+      ] }
+      : opacityKf;
+    layers.push({
+      id: `__node_bg_${i}__`,
+      type: 'shape',
+      width: NODE_SIZE,
+      height: NODE_SIZE,
+      position: posKf,
+      scale: circleScale,
+      opacity: ringOpacity,
+      contents: isChosen ? [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
+        { type: 'stroke', color: nodeRimOuter, width: 3.2 },
+        { type: 'stroke', color: nodeRimInner, width: 1.2 },
+      ] : [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
+        { type: 'stroke', color: nodeRimOuter, width: 7 },
+        { type: 'stroke', color: nodeRimInner, width: 2.4 },
+      ],
+      effects: isChosen ? [
+        { type: 'outerGlow', params: { color: nodeRimOuter, opacity: 0.85, blur: 3.5, blendMode: 'screen' } },
+      ] : undefined,
+    });
+
+    if (isChosen) {
+      layers.push({
+        id: `__node_icon_${i}__`,
+        type: 'image',
+        icon,
+        iconColor: ICON_BRIGHT_TINT,
+        width: NODE_SIZE * 0.5,
+        height: NODE_SIZE * 0.5,
+        position: cloneTrack(posKf),
+        scale: cloneTrack(iconScale),
+        opacity: { keyframes: [
+          { time: delay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: delay + 0.25, value: 1 },
+          { time: HERO_EXPLODE_TIME, value: 1 },
+          { time: HERO_EXPLODE_TIME + 0.1, value: 0 },
+        ] },
+        effects: [{ type: 'outerGlow', params: { color: ICON_BRIGHT_TINT, opacity: 0.85, blur: 6, blendMode: 'screen' } }],
+      });
+      layers.push({
+        id: `__node_icon_${i}__selected`,
+        type: 'image',
+        icon,
+        iconColor: '#FFFFFF',
+        width: NODE_SIZE * 0.5,
+        height: NODE_SIZE * 0.5,
+        position: cloneTrack(posKf),
+        scale: cloneTrack(iconScale),
+        opacity: { keyframes: [
+          { time: HERO_EXPLODE_TIME, value: 0 },
+          { time: HERO_SETTLE_TIME, value: 1 },
+        ] },
+        effects: [{ type: 'outerGlow', params: { color: '#FFFFFF', opacity: 0.85, blur: 6, blendMode: 'screen' } }],
+      });
+    } else {
+      layers.push({
+        id: `__node_icon_${i}__`,
+        type: 'image',
+        icon,
+        iconColor: ICON_BRIGHT_TINT,
+        width: NODE_SIZE * 0.5,
+        height: NODE_SIZE * 0.5,
+        position: cloneTrack(posKf),
+        scale: cloneTrack(iconScale),
+        opacity: cloneTrack(opacityKf),
+      });
+    }
+
+    if (isChosen) {
+      const heroLayers = layers.slice(-4);
+      const [fillLayer, outlineLayer, iconBeforeLayer, iconAfterLayer] = heroLayers;
+      const heroRotation = { expression: 'wiggle(0.3, 4)', base: 0 };
+      iconBeforeLayer.rotation = cloneTrack(heroRotation);
+      iconAfterLayer.rotation = cloneTrack(heroRotation);
+      const breatheExpr = 'wiggle(0.15, 0.05)';
+      fillLayer.scale = { expression: breatheExpr, base: fillLayer.scale };
+      outlineLayer.scale = { expression: breatheExpr, base: outlineLayer.scale };
+      iconBeforeLayer.scale = { expression: breatheExpr, base: iconBeforeLayer.scale };
+      iconAfterLayer.scale = { expression: breatheExpr, base: iconAfterLayer.scale };
+    } else {
+      layers.push(...buildIconBurstParticles(i, x, y, nodeRimInner, 1.15));
+    }
+  });
+
+  layers.push({
+    id: '__node_shockwave__',
+    type: 'shape',
+    width: NODE_SIZE * 1.2,
+    height: NODE_SIZE * 1.2,
+    position: [...CENTER],
+    scale: { keyframes: [
+      { time: 0, value: [1, 1] },
+      { time: HERO_EXPLODE_TIME - 0.01, value: [1, 1] },
+      { time: HERO_EXPLODE_TIME, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: HERO_EXPLODE_TIME + 0.4, value: [8, 8] },
+    ] },
+    opacity: { keyframes: [
+      { time: 0, value: 0 },
+      { time: HERO_EXPLODE_TIME - 0.01, value: 0 },
+      { time: HERO_EXPLODE_TIME, value: 0.85, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: HERO_EXPLODE_TIME + 0.4, value: 0 },
+    ] },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE * 1.2, height: NODE_SIZE * 1.2 } } },
+      { type: 'stroke', color: accentColor, width: 3 },
+    ],
+  });
+
+  layers.push({
+    id: '__node_hero_outer_ring__',
+    type: 'shape',
+    width: NODE_SIZE * 4.6,
+    height: NODE_SIZE * 4.6,
+    position: [...CENTER],
+    opacity: { keyframes: [
+      { time: 0, value: 0 },
+      { time: HERO_SETTLE_TIME - 0.01, value: 0 },
+      { time: HERO_SETTLE_TIME, value: 0.5, interpolation: 'easing', easing: 'easeOutCubic' },
+    ] },
+    rotation: { expression: 'value + time * 12', base: 0 },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE * 4.6, height: NODE_SIZE * 4.6 } } },
+      { type: 'stroke', color: accentColor, width: 1, opacity: 0.55 },
+    ],
+  });
+
+  // ===================== Phase 2 (new) =====================
+  // The hero shrinks from its exploded size back down to a small,
+  // still-filled circle and relocates away from CENTER - three candidate
+  // "satellite" spots (a variable, per direct spec: "the position...
+  // can be one of the middle 3 circle position"), a fixed formation
+  // independent of icons.length since it's a NEW, separate arrangement
+  // from Phase 1's own per-icon ring.
+  const heroFill = layers.find((l) => l.id === '__node_hero_fill__');
+  const heroIconAfter = layers.find((l) => l.id === `__node_icon_${chosenIndex}__selected`);
+  const heroOuterRing = layers.find((l) => l.id === '__node_hero_outer_ring__');
+
+  const SHRINK_START = HERO_SETTLE_TIME + 0.4;
+  const SHRINK_DURATION = 0.5;
+  const SHRINK_END = SHRINK_START + SHRINK_DURATION;
+
+  // Real, confirmed-live finding: Phase 1's own decorative rotating outer
+  // ring fades IN at HERO_SETTLE_TIME but was never given a matching
+  // fade-out - since Phase 1 is a deliberate verbatim duplicate that
+  // never needed one (nodeCluster just ends there), it was still sitting
+  // at 0.5 opacity, rotating, behind the white circles and text for the
+  // rest of the beat. Faded out starting right at SHRINK_START so Phase
+  // 2's own clean composition takes over instead of showing through it.
+  heroOuterRing.opacity.keyframes.push(
+    { time: SHRINK_START, value: 0.5, interpolation: 'easing', easing: 'easeOutCubic' },
+    { time: SHRINK_START + 0.35, value: 0 },
+  );
+
+  const SAT_RADIUS = 140;
+  const SAT_ANGLES_DEG = [-90, 30, 150];
+  const slotIndex = Number.isInteger(shrinkSlot) && shrinkSlot >= 0 && shrinkSlot < SAT_ANGLES_DEG.length
+    ? shrinkSlot
+    : hashString(`${accentColor}:${chosenIndex}:${icons.join(',')}`) % SAT_ANGLES_DEG.length;
+  const satAngle = (SAT_ANGLES_DEG[slotIndex] * Math.PI) / 180;
+  const SAT_POS = [CENTER[0] + Math.cos(satAngle) * SAT_RADIUS, CENTER[1] + Math.sin(satAngle) * SAT_RADIUS];
+
+  // Hold flat at CENTER/full-size right up to SHRINK_START (the safe
+  // "two identical keyframe values" pattern - see mergeCluster's own
+  // fix earlier this session for why a track with no intermediate hold
+  // keyframe drifts visibly early instead of staying put), THEN move+
+  // shrink together over SHRINK_START -> SHRINK_END.
+  heroFill.position.keyframes.push(
+    { time: SHRINK_START, value: [...CENTER], interpolation: 'easing', easing: 'easeInOutCubic' },
+    { time: SHRINK_END, value: SAT_POS },
+  );
+  heroFill.scale.base.keyframes.push(
+    { time: SHRINK_START, value: [4.3, 4.3], interpolation: 'easing', easing: 'easeInOutCubic' },
+    { time: SHRINK_END, value: [1, 1] },
+  );
+  // "The icon will disappear" - a quick fade right as the shrink starts,
+  // rather than trying to keep it visually locked to the moving/shrinking
+  // circle for the whole transition.
+  heroIconAfter.opacity.keyframes.push(
+    { time: SHRINK_START, value: 1, interpolation: 'easing', easing: 'easeOutCubic' },
+    { time: SHRINK_START + 0.15, value: 0 },
+  );
+
+  // Four plain white (unfilled) circles, a separate formation from the
+  // hero's own 3 satellite slots so they never collide regardless of
+  // which slot got picked.
+  const WHITE_CIRCLE_RADIUS = 195;
+  const WHITE_CIRCLE_ANGLES_DEG = [-45, 45, 135, 225];
+  const WHITE_CIRCLE_APPEAR_START = SHRINK_START + 0.15;
+  const WHITE_CIRCLE_STAGGER = 0.08;
+
+  const TEXT_APPEAR = SHRINK_END + 0.6;
+  const TEXT_HOLD_END = TEXT_APPEAR + 1.0;
+  const TEXT_FADE_END = TEXT_HOLD_END + 0.35;
+  const CONVERGE_START = TEXT_FADE_END;
+  const CONVERGE_DURATION = 0.45;
+  const CONVERGE_END = CONVERGE_START + CONVERGE_DURATION;
+
+  WHITE_CIRCLE_ANGLES_DEG.forEach((angleDeg, wi) => {
+    const rad = (angleDeg * Math.PI) / 180;
+    const wx = CENTER[0] + Math.cos(rad) * WHITE_CIRCLE_RADIUS;
+    const wy = CENTER[1] + Math.sin(rad) * WHITE_CIRCLE_RADIUS;
+    const appearAt = WHITE_CIRCLE_APPEAR_START + wi * WHITE_CIRCLE_STAGGER;
+    const settleAt = appearAt + 0.42;
+    layers.push({
+      id: `__nce_white_${wi}__`,
+      type: 'shape',
+      width: NODE_SIZE,
+      height: NODE_SIZE,
+      // Flat hold at (wx,wy) from settleAt to CONVERGE_START, then moves
+      // to CENTER - same safe hold-then-move pattern as the hero above.
+      position: { keyframes: [
+        { time: appearAt, value: [wx, wy] },
+        { time: CONVERGE_START, value: [wx, wy], interpolation: 'easing', easing: 'easeInCubic' },
+        { time: CONVERGE_END, value: [...CENTER] },
+      ] },
+      scale: { keyframes: [
+        { time: appearAt, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: appearAt + 0.3, value: [1.15, 1.15], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: settleAt, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+        { time: CONVERGE_START, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+        { time: CONVERGE_END, value: [0.3, 0.3] },
+      ] },
+      opacity: { keyframes: [
+        { time: appearAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: appearAt + 0.25, value: 1 },
+        { time: CONVERGE_END - 0.1, value: 1 },
+        { time: CONVERGE_END, value: 0 },
+      ] },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
+        { type: 'stroke', color: '#FFFFFF', width: 3, opacity: 0.85 },
+      ],
+    });
+  });
+
+  // Variable middle text, glow-in/hold/fade-out, reusing connectorList's
+  // own outro-text treatment (same convention every other template's own
+  // reused-text call site follows) - it already centers at exactly this
+  // function's own CENTER, no repositioning needed.
+  const textLayer = buildOutroTextLayer(mergeText, accentColor, TEXT_APPEAR);
+  textLayer.id = '__nce_merge_text__';
+  textLayer.opacity.keyframes.push(
+    { time: TEXT_HOLD_END, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+    { time: TEXT_FADE_END, value: 0 },
+  );
+  layers.push(textLayer);
+
+  // Hero fill's own convergence back to CENTER, timed to arrive exactly
+  // as the new result reveal below fires.
+  heroFill.position.keyframes.push(
+    { time: CONVERGE_START, value: SAT_POS, interpolation: 'easing', easing: 'easeInCubic' },
+    { time: CONVERGE_END, value: [...CENTER] },
+  );
+  heroFill.scale.base.keyframes.push(
+    { time: CONVERGE_START, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+    { time: CONVERGE_END, value: [0.3, 0.3] },
+  );
+  heroFill.opacity.keyframes.push(
+    { time: CONVERGE_END - 0.1, value: 1 },
+    { time: CONVERGE_END, value: 0 },
+  );
+
+  // New hero reveal - same explosive overshoot+settle language as
+  // Phase 1's own hero (mergeCluster's own result-circle treatment is
+  // the closer relative mechanically, but visual CONSISTENCY with this
+  // template's own Phase 1 reveal, immediately above in the same beat,
+  // matters more here than matching a different template).
+  const RESULT_SIZE = NODE_SIZE * 4.3;
+  layers.push({
+    id: '__nce_result_bg__',
+    type: 'shape',
+    width: RESULT_SIZE,
+    height: RESULT_SIZE,
+    position: [...CENTER],
+    scale: { keyframes: [
+      { time: CONVERGE_END - 0.05, value: [0.2, 0.2], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: CONVERGE_END + 0.3, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
+      { time: CONVERGE_END + 0.45, value: [1, 1] },
+    ] },
+    opacity: { keyframes: [
+      { time: CONVERGE_END - 0.05, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: CONVERGE_END + 0.1, value: 1 },
+    ] },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: RESULT_SIZE, height: RESULT_SIZE } } },
+      { type: 'fill', color: accentColor },
+    ],
+    effects: [
+      { type: 'outerGlow', params: { color: accentColor, opacity: 0.95, blur: 10, blendMode: 'screen' } },
+      { type: 'outerGlow', params: { color: accentColor, opacity: 0.5, blur: 32, blendMode: 'screen' } },
+      { type: 'outerGlow', params: { color: accentColor, opacity: 0.22, blur: 75, blendMode: 'screen' } },
+    ],
+  });
+  layers.push({
+    id: '__nce_result_icon__',
+    type: 'image',
+    icon: newIcon,
+    iconColor: '#FFFFFF',
+    width: RESULT_SIZE * 0.5,
+    height: RESULT_SIZE * 0.5,
+    position: [...CENTER],
+    rotation: { expression: 'wiggle(0.3, 4)', base: 0 },
+    scale: { expression: 'wiggle(0.15, 0.05)', base: { keyframes: [
+      { time: CONVERGE_END - 0.05, value: [0.2, 0.2], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: CONVERGE_END + 0.3, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
+      { time: CONVERGE_END + 0.45, value: [1, 1] },
+    ] } },
+    opacity: { keyframes: [
+      { time: CONVERGE_END - 0.05, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: CONVERGE_END + 0.1, value: 1 },
+    ] },
+    effects: [{ type: 'outerGlow', params: { color: '#FFFFFF', opacity: 0.85, blur: 6, blendMode: 'screen' } }],
+  });
+  layers.push({
+    id: '__nce_shockwave__',
+    type: 'shape',
+    width: NODE_SIZE * 1.2,
+    height: NODE_SIZE * 1.2,
+    position: [...CENTER],
+    scale: { keyframes: [
+      { time: CONVERGE_END - 0.01, value: [1, 1] },
+      { time: CONVERGE_END, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: CONVERGE_END + 0.4, value: [8, 8] },
+    ] },
+    opacity: { keyframes: [
+      { time: CONVERGE_END - 0.01, value: 0 },
+      { time: CONVERGE_END, value: 0.85, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: CONVERGE_END + 0.4, value: 0 },
+    ] },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE * 1.2, height: NODE_SIZE * 1.2 } } },
+      { type: 'stroke', color: accentColor, width: 3 },
+    ],
+  });
+  layers.push(...buildIconBurstParticles(99, CENTER[0], CENTER[1], '#FFFFFF', CONVERGE_END));
+
+  // "Text underneath the icon" - optional, variable, same reused
+  // outro-text treatment repositioned below the new hero circle (same
+  // convention splitConverge's own optional label already follows).
+  if (newLabel) {
+    const labelLayer = buildOutroTextLayer(newLabel, accentColor, CONVERGE_END + 0.5);
+    labelLayer.id = '__nce_new_label__';
+    labelLayer.fontSize = 32;
+    labelLayer.position = [CENTER[0], CENTER[1] + RESULT_SIZE / 2 + 44];
+    layers.push(labelLayer);
+  }
 
   if (introText) {
     const shiftedLayers = layers.map((l) => shiftLayerTimeline(l, INTRO_TEXT_DURATION));
@@ -6310,6 +6795,28 @@ function buildMographBeatVisual(beat) {
     const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 5);
     const label = typeof spec.label === 'string' && spec.label.trim() ? truncateAtWordBoundary(spec.label.trim().toUpperCase(), 24) : null;
     if (icons.length >= 2) layers = buildMergeClusterLayers({ icons, resultIcon: spec.resultIcon, accentColor, label });
+  } else if (spec.type === 'nodeClusterExtended' && Array.isArray(spec.icons) && typeof spec.newIcon === 'string' && MOGRAPH_ICON_RE.test(spec.newIcon)) {
+    const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 8);
+    if (icons.length >= 3) {
+      const chosenIndex = Number.isInteger(spec.chosenIndex) && spec.chosenIndex >= 0 && spec.chosenIndex < icons.length ? spec.chosenIndex : 0;
+      const introText = typeof spec.introText === 'string' && spec.introText.trim() ? truncateAtWordBoundary(spec.introText.trim(), 40) : null;
+      const mergeText = typeof spec.mergeText === 'string' && spec.mergeText.trim() ? truncateAtWordBoundary(spec.mergeText.trim(), 40) : null;
+      const newLabel = typeof spec.newLabel === 'string' && spec.newLabel.trim() ? truncateAtWordBoundary(spec.newLabel.trim().toUpperCase(), 24) : null;
+      const shrinkSlot = Number.isInteger(spec.shrinkSlot) ? spec.shrinkSlot : undefined;
+      if (mergeText) {
+        layers = buildNodeClusterExtendedLayers({
+          icons, chosenIndex, accentColor, introText, mergeText, newIcon: spec.newIcon, newLabel, shrinkSlot,
+        });
+        // Phase 2's own runtime is essentially fixed-length (see this
+        // constant's own doc comment) - same introText auto-extend as
+        // plain nodeCluster, PLUS a floor under the total so Phase 2
+        // never gets cut off by a short authored duration.
+        if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+          if (introText) beat.params.duration += INTRO_TEXT_DURATION;
+          beat.params.duration = Math.max(beat.params.duration, NODE_CLUSTER_EXTENDED_MIN_DURATION + (introText ? INTRO_TEXT_DURATION : 0));
+        }
+      }
+    }
   }
 
   if (layers) {
@@ -6422,7 +6929,7 @@ function validateSceneJSON(sceneJSON) {
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
     } else if (seen.size < 3) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 3 and 6 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster). Add more template beats to reach at least 3.`);
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 3 and 6 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended). Add more template beats to reach at least 3.`);
     } else if (seen.size > 6) {
       errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 6. Trim beats down to 6 or fewer distinct templates.`);
     }
@@ -8376,6 +8883,7 @@ module.exports = {
   EFFECT_TYPES,
   TRANSITION_TYPES,
   buildNodeClusterLayers,
+  buildNodeClusterExtendedLayers,
   buildConnectorListLayers,
   buildPhoneSwapLayers,
   buildSplitConvergeLayers,

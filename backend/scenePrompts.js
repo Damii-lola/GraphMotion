@@ -1285,6 +1285,16 @@ frame-for-frame:
    - mergeCluster: several small icons converge inward and merge into
      one new, bigger icon (optionally labeled underneath) - good for
      "these things COMBINE into this" beats.
+   - nodeClusterExtended: nodeCluster's own opening reveal, THEN a
+     second act - the chosen hero shrinks to a small filled circle
+     beside 4 plain white rings, a short line of text appears in the
+     middle, then everything pulls together into a brand-new, bigger
+     hero circle with its own icon and caption - good for a beat that
+     needs BOTH a focus moment AND a "these ideas become one bigger
+     insight" payoff, when a single beat should carry more narrative
+     weight than nodeCluster alone gives it. Runs noticeably longer than
+     the other templates (a fixed two-act structure), so use it for a
+     beat that can afford the extra screen time, not a quick aside.
    Choose between 3 and 6 of these templates for this whole video -
    never fewer than 3, never more than 6, and EACH TEMPLATE MAY BE USED
    AT MOST ONCE across the entire video (no repeats - if you've already
@@ -1423,11 +1433,11 @@ generation are the ones most likely to slip by the last beat):
   roughly maxWidth/2 of ${Math.round(COMP_WIDTH / 2)} or it renders
   clipped off one edge of the canvas for the whole beat.
 - MANDATORY, every beat: a real "mograph" spec (see MOGRAPH above) -
-  "nodeCluster", "connectorList", "phoneSwap", "splitConverge", or
-  "mergeCluster", picked deliberately for what THIS beat is actually
-  about, not the same type repeated beat after beat. Only fall back to
-  a raw "layers" array for a beat that genuinely cannot be expressed as
-  one of the five - that should
+  "nodeCluster", "connectorList", "phoneSwap", "splitConverge",
+  "mergeCluster", or "nodeClusterExtended", picked deliberately for what
+  THIS beat is actually about, not the same type repeated beat after
+  beat. Only fall back to a raw "layers" array for a beat that genuinely
+  cannot be expressed as one of the six - that should
   be rare, not the default.
 - If you DO write a raw "layers" array for one of those rare beats: at
   least one "text" layer with real, non-empty words (a beat with only
@@ -1518,7 +1528,7 @@ Beat:
 MOGRAPH - THE way you build a beat's visual
 =====================================================================
 Pick ONE per beat. Direct user requirement: the treatment above already
-chose which of these 5 templates this video uses and in what order (it
+chose which of these 6 templates this video uses and in what order (it
 states the template first thing in each beat's own description) -
 encode that SAME choice here, do not substitute a different template
 than the one the treatment named for a given beat. Two hard rules
@@ -1537,7 +1547,9 @@ order between them.
   one icon splits in half, each half flies in from off-screen and snaps together at center - a strong reveal/impact beat, e.g. "the answer", a single big idea landing. "label": OPTIONAL, 1-3 words, reveals below the icon once it settles - omit for icon-only.
 { "type": "mergeCluster", "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload"], "resultIcon": "mdi:movie-open", "label": "Content Creation", "accentColor": "#8B5CF6" }
   small icon-nodes ("icons", 2-5) converge inward and merge into one new bigger circle showing "resultIcon", with "label" (OPTIONAL, 1-3 words) naming it underneath - "these things COMBINE into this" beats, distinct from nodeCluster (which singles ONE existing icon out, not combines several into something new).
-"accentColor" always OPTIONAL, omit to auto-pick. Raw "layers" (below) only for a beat none of these five fit - keep that rare.
+{ "type": "nodeClusterExtended", "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload"], "chosenIndex": 0, "mergeText": "Content Marketing", "newIcon": "mdi:forum", "newLabel": "The Strategy", "accentColor": "#8B5CF6" }
+  nodeCluster's own opening reveal (same "icons"/"chosenIndex" rules), THEN a second act: the chosen hero shrinks to a small still-filled circle (its icon disappears) and relocates beside 4 plain white unfilled rings, "mergeText" (REQUIRED, 2-5 words) glows in at center, then everything pulls together into a brand-new hero circle showing "newIcon" (REQUIRED, a DIFFERENT icon from anything in "icons") with "newLabel" (OPTIONAL, 1-3 words) underneath - a longer, two-act version of nodeCluster for "these ideas become ONE bigger insight" beats; runs noticeably longer than the other templates, so give it a beat that can afford the extra screen time.
+"accentColor" always OPTIONAL, omit to auto-pick. Raw "layers" (below) only for a beat none of these six fit - keep that rare.
 
 TextLayer:
 { "type": "text", "text": string, "fontFamily": one of ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')},
@@ -1669,14 +1681,14 @@ FINAL CHECKLIST
 - "fontFamily" is ALWAYS EXACTLY one of ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')}.
 - No two layers in the same beat share identical "text".
 - Every beat: a real "mograph" spec (see MOGRAPH above) - one of
-  "nodeCluster", "connectorList", "phoneSwap", "splitConverge", or
-  "mergeCluster". The whole video uses between 3 and 6 of these total,
-  each at most once, in whatever order the treatment chose - never
-  repeat one. Only fall back to a raw "layers" array for a beat that
-  genuinely cannot be any of the five - if you do, it still needs at
-  least one real, non-empty "text" layer (REJECTED outright otherwise),
-  and every "image" layer needs a real "icon" (REJECTED otherwise if
-  missing).
+  "nodeCluster", "connectorList", "phoneSwap", "splitConverge",
+  "mergeCluster", or "nodeClusterExtended". The whole video uses between
+  3 and 6 of these total, each at most once, in whatever order the
+  treatment chose - never repeat one. Only fall back to a raw "layers"
+  array for a beat that genuinely cannot be any of the six - if you do,
+  it still needs at least one real, non-empty "text" layer (REJECTED
+  outright otherwise), and every "image" layer needs a real "icon"
+  (REJECTED otherwise if missing).
 - Every beat: a non-empty "params.narration" under 8 words, one
   sentence only.
 - If a beat uses a raw "layers" array, its dominant text layer's own
