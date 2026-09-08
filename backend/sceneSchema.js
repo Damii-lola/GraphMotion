@@ -5432,12 +5432,21 @@ function buildNodeClusterExtendedLayers({
     { pos: [410, 329], size: 110 },
     { pos: [87, 252], size: 70 },
     { pos: [94, 792], size: 65 },
-    { pos: [341, 940], size: 130 },
+    { pos: [341, 940], size: 130, offscreen: true },
     { pos: [313, 645], size: 64 },
   ];
-  const slotIndex = Number.isInteger(shrinkSlot) && shrinkSlot >= 0 && shrinkSlot < REF_SLOTS.length
+  // Real, direct user finding (2026-09-08): "where does the selected
+  // node/circle go???" - slot 4 is deliberately positioned mostly past
+  // the canvas's own bottom edge (matching the reference's own partially
+  // -cropped circle there), which is fine for a plain white ring but
+  // makes the COLORED hero nearly invisible if it lands there - the one
+  // element that specifically needs to stay trackable. Restricted to the
+  // 5 fully on-screen slots; slot 4 stays reachable only as a white
+  // circle, never as the hero's own destination.
+  const HERO_ELIGIBLE_SLOTS = REF_SLOTS.map((_, i) => i).filter((i) => !REF_SLOTS[i].offscreen);
+  const slotIndex = Number.isInteger(shrinkSlot) && HERO_ELIGIBLE_SLOTS.includes(shrinkSlot)
     ? shrinkSlot
-    : hashString(`${accentColor}:${chosenIndex}:${icons.join(',')}`) % REF_SLOTS.length;
+    : HERO_ELIGIBLE_SLOTS[hashString(`${accentColor}:${chosenIndex}:${icons.join(',')}`) % HERO_ELIGIBLE_SLOTS.length];
   const SAT_POS = REF_SLOTS[slotIndex].pos;
   const SAT_SCALE = REF_SLOTS[slotIndex].size / NODE_SIZE;
 
