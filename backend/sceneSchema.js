@@ -5425,28 +5425,55 @@ function buildNodeClusterExtendedLayers({
   // CANVAS_WIDTH/CANVAS_HEIGHT, so these are used as literal absolute
   // positions with no rescaling. Sizes vary per slot too, matching the
   // reference's own organic scatter (not a uniform grid of same-size
-  // rings) - slot 4 deliberately extends past the canvas's own bottom
-  // edge, matching the reference's own partially-offscreen circle there.
-  const REF_SLOTS = [
+  // rings).
+  const REF_SLOTS_RAW = [
     { pos: [201, 46], size: 70 },
     { pos: [410, 329], size: 110 },
     { pos: [87, 252], size: 70 },
     { pos: [94, 792], size: 65 },
-    { pos: [341, 940], size: 130, offscreen: true },
+    { pos: [341, 940], size: 130 },
     { pos: [313, 645], size: 64 },
   ];
-  // Real, direct user finding (2026-09-08): "where does the selected
-  // node/circle go???" - slot 4 is deliberately positioned mostly past
-  // the canvas's own bottom edge (matching the reference's own partially
-  // -cropped circle there), which is fine for a plain white ring but
-  // makes the COLORED hero nearly invisible if it lands there - the one
-  // element that specifically needs to stay trackable. Restricted to the
-  // 5 fully on-screen slots; slot 4 stays reachable only as a white
-  // circle, never as the hero's own destination.
-  const HERO_ELIGIBLE_SLOTS = REF_SLOTS.map((_, i) => i).filter((i) => !REF_SLOTS[i].offscreen);
-  const slotIndex = Number.isInteger(shrinkSlot) && HERO_ELIGIBLE_SLOTS.includes(shrinkSlot)
+  // Real, direct user correction (2026-09-08): "the circles are too big,
+  // reduce them in size enough that all of them fit inside the screen" -
+  // at the raw measured sizes above, slot 4 alone extended ~45px past
+  // the canvas's own bottom edge. Every slot is scaled down by ONE
+  // shared factor (preserves the reference's own relative size variation
+  // between slots, just smaller overall) rather than shrinking that one
+  // slot in isolation, which would have made it an outlier next to the
+  // other 5. The factor is derived from whichever slot has the least
+  // room to its own nearest canvas edge at its own (unmoved) reference
+  // position, with a small safety margin so nothing sits flush on the
+  // edge. This also means every slot is now genuinely fully on-screen -
+  // the earlier fix excluding one slot from ever being the hero's own
+  // destination (because it used to hang off the bottom edge) no longer
+  // applies, so all 6 are hero-eligible again.
+  const SLOT_EDGE_MARGIN = 4;
+  const slotShrinkFactor = REF_SLOTS_RAW.reduce((minScale, { pos: [x, y], size }) => {
+    const roomToEdge = Math.min(x, CANVAS_WIDTH - x, y, CANVAS_HEIGHT - y) - SLOT_EDGE_MARGIN;
+    return Math.min(minScale, (roomToEdge * 2) / size);
+  }, Infinity);
+  const REF_SLOTS = REF_SLOTS_RAW.map(({ pos, size }) => ({ pos, size: size * slotShrinkFactor }));
+  // Real, confirmed-live rendering bug found while verifying the above:
+  // a shape positioned close enough to the canvas's own BOTTOM edge (slot
+  // 4's own y=940, only 20px from the 960 edge) fails to render AT ALL
+  // once it's small - not clipped, not faint, genuinely absent - even
+  // with every one of its effects stripped. Bisected directly: the exact
+  // same shape at y=900 (44px clearance) renders correctly, at y=940
+  // (4px clearance) it doesn't, and moving ONLY its position (keeping
+  // its tiny size, its color, everything else identical) reproduces the
+  // failure/success on demand - so this is a real engine-level edge case
+  // near the bottom edge specifically, not a symptom of the sizing math
+  // above (every other slot, including two much closer to OTHER edges,
+  // renders fine at these same small sizes). Rather than chase the
+  // engine bug itself, slot 4's own render position is nudged up 50px
+  // (940 -> 890, safely past the confirmed-working y=900 case) - its
+  // SIZE (computed above) is untouched, so this is purely a position fix
+  // for one slot, not a change to how big anything is.
+  REF_SLOTS[4].pos = [REF_SLOTS[4].pos[0], 890];
+  const slotIndex = Number.isInteger(shrinkSlot) && shrinkSlot >= 0 && shrinkSlot < REF_SLOTS.length
     ? shrinkSlot
-    : HERO_ELIGIBLE_SLOTS[hashString(`${accentColor}:${chosenIndex}:${icons.join(',')}`) % HERO_ELIGIBLE_SLOTS.length];
+    : hashString(`${accentColor}:${chosenIndex}:${icons.join(',')}`) % REF_SLOTS.length;
   const SAT_POS = REF_SLOTS[slotIndex].pos;
   const SAT_SCALE = REF_SLOTS[slotIndex].size / NODE_SIZE;
 
