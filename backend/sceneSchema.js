@@ -5475,6 +5475,25 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
   const bodyScale = { keyframes: [{ time: 0, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.4, value: [1, 1] }] };
 
   const layers = [
+    // Real, direct spec: "a faint larger soft shape... behind the phone
+    // at low opacity to create hierarchy and depth." Pushed first (the
+    // back of the stack) and sized bigger than the phone itself - safe
+    // to oversize since the phone's own OPAQUE screen fill sits in front
+    // of it and blocks it completely there, so it only ever shows in the
+    // dark margin around the phone, never muddying the screen content.
+    {
+      id: '__phone_bg_shape__',
+      type: 'shape',
+      width: PHONE_HEIGHT * 1.3,
+      height: PHONE_HEIGHT * 1.3,
+      position: [...CENTER],
+      scale: { expression: 'wiggle(0.12, 0.035)', base: [1, 1] },
+      opacity: { keyframes: [{ time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.5, value: 0.12 }] },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: PHONE_HEIGHT * 1.3, height: PHONE_HEIGHT * 1.3 } } },
+        { type: 'fill', color: accentColor },
+      ],
+    },
     {
       id: '__phone_body__',
       type: 'shape',
@@ -5654,6 +5673,98 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
       { type: 'outerGlow', params: { color: accentColor, opacity: 0.25, blur: 20, blendMode: 'multiply' } },
       { type: 'outerGlow', params: { color: accentColor, opacity: 0.14, blur: 40, blendMode: 'multiply' } },
     ],
+  });
+
+  // Real, direct spec: "a very subtle light sweep... that travels down
+  // the screen once after the icon appears." Needs a dedicated,
+  // invisible-on-its-own matte shape rather than reusing __phone_body__
+  // directly - layerStack.js auto-hides ANY node the instant something
+  // else declares it as a trackMatte source ("a node used as someone
+  // else's track-matte source... does not ALSO render independently,"
+  // matching AE), so matte-ing against the real phone body would
+  // silently delete the phone frame from the render. Same reasoning
+  // splitConverge's own dedicated matte rectangles already rely on.
+  layers.push({
+    id: '__phone_screen_matte__',
+    type: 'shape',
+    width: PHONE_WIDTH - 24,
+    height: PHONE_HEIGHT - 24,
+    position: [...CENTER],
+    rotation: cloneTrack(idleRotation),
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: PHONE_WIDTH - 24, height: PHONE_HEIGHT - 24, roundness: 30 } } },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+  });
+  const SWEEP_START = SWAP_TIME + 0.6;
+  const SWEEP_DURATION = 0.55;
+  const SWEEP_TRAVEL = PHONE_WIDTH * 0.9;
+  layers.push({
+    id: '__phone_sweep__',
+    type: 'shape',
+    width: 40,
+    height: PHONE_HEIGHT * 1.6,
+    position: { keyframes: [
+      { time: SWEEP_START, value: [CENTER[0] - SWEEP_TRAVEL, CENTER[1]], interpolation: 'easing', easing: 'easeInOutCubic' },
+      { time: SWEEP_START + SWEEP_DURATION, value: [CENTER[0] + SWEEP_TRAVEL, CENTER[1]] },
+    ] },
+    // Same rotation wiggle as the rest of the phone (so it reads as
+    // attached to the swaying device), tilted -25deg for a diagonal
+    // sweep instead of a flat vertical wipe.
+    rotation: { expression: 'wiggle(0.35, 1.6)', base: -25 },
+    opacity: { keyframes: [
+      { time: SWEEP_START - 0.01, value: 0 },
+      { time: SWEEP_START, value: 0.32, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: SWEEP_START + SWEEP_DURATION, value: 0 },
+    ] },
+    trackMatte: { source: '__phone_screen_matte__', type: 'alpha' },
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: 40, height: PHONE_HEIGHT * 1.6 } } },
+      { type: 'fill', color: accentColor },
+    ],
+  });
+
+  // Real, direct spec: "tiny floating particles that gently rise or
+  // drift around the phone." A real continuous JS expression (not a
+  // one-shot keyframe track) so each particle loops indefinitely for the
+  // rest of the beat regardless of its own duration - engine/
+  // expressions.js's expressions are real sandboxed JS (documented at
+  // the top of that file), so an IIFE computing a sawtooth "rise, reset,
+  // repeat" position and a matching sine fade (0 at both ends of every
+  // cycle, so the reset itself is always invisible) is a legitimate,
+  // supported pattern, not a hack. Placed in the dark margin around the
+  // phone, where 'screen'-blend glow genuinely works (see this
+  // function's own earlier findings on 'screen' being invisible only
+  // against the near-white SCREEN area, not the surrounding background).
+  const AMBIENT_PARTICLES = [
+    { angle: -50, radius: 195, phase: 0.0, cycle: 3.2 },
+    { angle: -125, radius: 205, phase: 1.1, cycle: 3.6 },
+    { angle: 40, radius: 190, phase: 2.0, cycle: 3.0 },
+    { angle: 130, radius: 210, phase: 0.6, cycle: 3.8 },
+    { angle: 180, radius: 175, phase: 1.7, cycle: 3.4 },
+  ];
+  AMBIENT_PARTICLES.forEach(({ angle, radius, phase, cycle }, i) => {
+    const rad = (angle * Math.PI) / 180;
+    const baseX = CENTER[0] + Math.cos(rad) * radius;
+    const baseY = CENTER[1] + Math.sin(rad) * radius;
+    const riseDist = 55;
+    const posExpr = `(() => { const lt = ((time + ${phase}) % ${cycle} + ${cycle}) % ${cycle}; return [${baseX.toFixed(1)} + Math.sin(lt * 2.1 + ${phase}) * 7, ${baseY.toFixed(1)} - (lt / ${cycle}) * ${riseDist}]; })()`;
+    const opacityExpr = `(() => { const lt = ((time + ${phase}) % ${cycle} + ${cycle}) % ${cycle}; return Math.sin((lt / ${cycle}) * Math.PI) * 0.75; })()`;
+    layers.push({
+      id: `__phone_particle_${i}__`,
+      type: 'shape',
+      width: 6,
+      height: 6,
+      position: { expression: posExpr },
+      opacity: { expression: opacityExpr },
+      effects: [
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.7, blur: 6, blendMode: 'screen' } },
+      ],
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: 6, height: 6 } } },
+        { type: 'fill', color: '#FFFFFF' },
+      ],
+    });
   });
 
   return layers;
