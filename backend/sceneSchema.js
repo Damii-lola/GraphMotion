@@ -5426,8 +5426,10 @@ function buildNodeClusterExtendedLayers({
   // positions with no rescaling. Sizes vary per slot too, matching the
   // reference's own organic scatter (not a uniform grid of same-size
   // rings).
+  // Real, direct user correction (2026-09-09): slot 0 (top) was
+  // "clipping with the border" - y nudged 46 -> 75 for real clearance.
   const REF_SLOTS_RAW = [
-    { pos: [201, 46], size: 70 },
+    { pos: [201, 75], size: 70 },
     { pos: [410, 329], size: 110 },
     { pos: [87, 252], size: 70 },
     { pos: [94, 792], size: 65 },
@@ -5466,11 +5468,14 @@ function buildNodeClusterExtendedLayers({
   // near the bottom edge specifically, not a symptom of the sizing math
   // above (every other slot, including two much closer to OTHER edges,
   // renders fine at these same small sizes). Rather than chase the
-  // engine bug itself, slot 4's own render position is nudged up 50px
-  // (940 -> 890, safely past the confirmed-working y=900 case) - its
-  // SIZE (computed above) is untouched, so this is purely a position fix
-  // for one slot, not a change to how big anything is.
-  REF_SLOTS[4].pos = [REF_SLOTS[4].pos[0], 890];
+  // engine bug itself, slot 4's own render position is nudged up (past
+  // the confirmed-working y=900 case) - its SIZE (computed above) is
+  // untouched, so this is purely a position fix, not a change to how big
+  // anything is. Direct follow-up user correction (2026-09-09): even at
+  // y=890 it read as "too far down that it can't be seen" - pulled up
+  // further to 815 for real visibility, well clear of both the bug zone
+  // and the bottom edge.
+  REF_SLOTS[4].pos = [REF_SLOTS[4].pos[0], 815];
   const slotIndex = Number.isInteger(shrinkSlot) && shrinkSlot >= 0 && shrinkSlot < REF_SLOTS.length
     ? shrinkSlot
     : hashString(`${accentColor}:${chosenIndex}:${icons.join(',')}`) % REF_SLOTS.length;
