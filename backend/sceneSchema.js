@@ -5454,20 +5454,57 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
   // from the body's edge; the small ~1.6-degree rotation swing keeps
   // that drift under a few px, imperceptible at this amplitude.
   const idleRotation = { expression: 'wiggle(0.35, 1.6)', base: 0 };
-  return [
+  // Real, direct reference-video comparison (2026-09-08, M4 vs our own
+  // V5): reference has a much stronger multi-layer glow, a bold
+  // high-contrast icon reveal, and a real reaction at the swap moment -
+  // ours was a flat crossfade with one thin auto-glow. A well-scoped
+  // high-impact subset of the full god-tier list (the rest - traveling
+  // highlight sweep, floating ambient particles, a supporting background
+  // shape, checkmark-specific micro-polish - is real follow-up work, not
+  // attempted in this same pass, matching how connectorList/
+  // splitConverge's equally large specs were scoped down before).
+  // breatheExpr wraps each layer's own entrance/overshoot keyframes as
+  // its `base` (same proven pattern as splitConverge's own breathing
+  // icon halves) so nothing goes dead still once it lands.
+  const breatheExpr = 'wiggle(0.25, 0.018)';
+  // The moment the screen content actually swaps - text starts leaving
+  // and the icon, flash, ring and particle burst all fire together here,
+  // instead of the old plain opacity crossfade with nothing else reacting.
+  const SWAP_TIME = 1.4;
+
+  const bodyScale = { keyframes: [{ time: 0, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.4, value: [1, 1] }] };
+
+  const layers = [
     {
       id: '__phone_body__',
       type: 'shape',
       width: PHONE_WIDTH,
       height: PHONE_HEIGHT,
       position: CENTER,
-      scale: { keyframes: [{ time: 0, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.4, value: [1, 1] }] },
+      scale: { expression: breatheExpr, base: bodyScale },
       opacity: { keyframes: [{ time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.3, value: 1 }] },
       rotation: cloneTrack(idleRotation),
+      // Multi-layer glow hierarchy (tight bright core / medium soft
+      // bloom / wide atmospheric halo) replacing applyMographGlow's flat
+      // single-layer default - the widest layer's own opacity breathes
+      // slowly via an expression (effect params are keyframe/expression-
+      // resolvable per frame, same as any transform - sceneBuilder.js's
+      // resolveParamsAtTime), giving the "very slow opacity pulse on the
+      // outer glow" the spec asked for without a second layer.
+      effects: [
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.95, blur: 6, blendMode: 'screen' } },
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.55, blur: 20, blendMode: 'screen' } },
+        { type: 'outerGlow', params: { color: accentColor, opacity: { expression: 'wiggle(0.15, 0.06)', base: 0.28 }, blur: 46, blendMode: 'screen' } },
+      ],
       contents: [
         { type: 'path', shape: { kind: 'rectangle', params: { width: PHONE_WIDTH, height: PHONE_HEIGHT, roundness: 36 } } },
         { type: 'fill', color: '#F5F3FF' },
+        // Faint dual-stroke frame: a soft wide band underneath, the real
+        // accent stroke, and a hairline bright highlight on top - reads
+        // as a thicker, more premium edge than one flat stroke.
+        { type: 'stroke', color: accentColor, width: 9, opacity: 0.22 },
         { type: 'stroke', color: accentColor, width: 4 },
+        { type: 'stroke', color: '#FFFFFF', width: 1, opacity: 0.5 },
       ],
     },
     {
@@ -5495,30 +5532,131 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
       maxWidth: PHONE_WIDTH - 40,
       position: [...CENTER],
       rotation: cloneTrack(idleRotation),
+      // Gentle scale-breathe while it's on screen, plus its own tighter
+      // 2-layer glow instead of the flat auto-attached one - 'multiply'
+      // for the same reason the icon's own glow uses it (see that
+      // layer's own doc comment): this text sits on the phone's own
+      // near-white screen, where a 'screen'-blend glow would be nearly
+      // invisible.
+      scale: { expression: 'wiggle(0.4, 0.02)', base: [1, 1] },
+      effects: [
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.3, blur: 6, blendMode: 'multiply' } },
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.16, blur: 16, blendMode: 'multiply' } },
+      ],
       opacity: { keyframes: [
         { time: 0.4, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
         { time: 0.65, value: 1 },
-        { time: 1.3, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
-        { time: 1.55, value: 0 },
+        { time: SWAP_TIME - 0.1, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+        { time: SWAP_TIME + 0.15, value: 0 },
       ] },
-    },
-    {
-      id: '__phone_icon__',
-      type: 'image',
-      icon,
-      iconColor: accentColor,
-      width: 110,
-      height: 110,
-      position: [...CENTER],
-      rotation: cloneTrack(idleRotation),
-      scale: { keyframes: [
-        { time: 1.4, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: 1.7, value: [1.1, 1.1], interpolation: 'easing', easing: 'easeInOutCubic' },
-        { time: 1.85, value: [1, 1] },
-      ] },
-      opacity: { keyframes: [{ time: 1.4, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: 1.6, value: 1 }] },
     },
   ];
+
+  // Real, direct spec: "quick flash of brighter screen light at the
+  // moment of swap, then settle" - a soft screen-sized pulse right as
+  // the icon lands, giving the crossfade actual impact instead of a flat
+  // opacity blend between two layers with nothing else reacting. Real,
+  // confirmed-live finding: this used to fill with plain white - alpha-
+  // blending white onto the screen's own already-white background is
+  // literally invisible (white-over-white shows nothing), the same
+  // "no visible headroom against white" issue the icon's glow hit.
+  // Tinted with accentColor instead so it actually reads as a colored
+  // light pulse.
+  layers.push({
+    id: '__phone_swap_flash__',
+    type: 'shape',
+    width: PHONE_WIDTH - 24,
+    height: PHONE_HEIGHT - 24,
+    position: [...CENTER],
+    opacity: { keyframes: [
+      { time: SWAP_TIME - 0.01, value: 0 },
+      { time: SWAP_TIME, value: 0.4, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: SWAP_TIME + 0.22, value: 0 },
+    ] },
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: PHONE_WIDTH - 24, height: PHONE_HEIGHT - 24, roundness: 30 } } },
+      { type: 'fill', color: accentColor },
+    ],
+  });
+
+  // Real, direct spec: "small circular energy ring that expands from the
+  // center of the screen when the icon lands." Same hold-then-ease
+  // pattern splitConverge's own rings use (flat at 0 opacity right up to
+  // the swap instant, only then easing up and back down), so it never
+  // leaks in early.
+  const RING_SIZE = 130;
+  layers.push({
+    id: '__phone_swap_ring__',
+    type: 'shape',
+    width: RING_SIZE,
+    height: RING_SIZE,
+    position: [...CENTER],
+    scale: { keyframes: [
+      { time: 0, value: [0.5, 0.5] },
+      { time: SWAP_TIME, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: SWAP_TIME + 0.35, value: [1.5, 1.5] },
+    ] },
+    opacity: { keyframes: [
+      { time: 0, value: 0 },
+      { time: SWAP_TIME - 0.01, value: 0 },
+      { time: SWAP_TIME, value: 0.7, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: SWAP_TIME + 0.35, value: 0 },
+    ] },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: RING_SIZE, height: RING_SIZE } } },
+      { type: 'stroke', color: accentColor, width: 2.5 },
+    ],
+  });
+
+  // Real spec: "brief particle burst that emit from the icon." Reuses
+  // nodeCluster/splitConverge's own proven burst-particle builder.
+  layers.push(...buildIconBurstParticles(0, CENTER[0], CENTER[1], accentColor, SWAP_TIME));
+
+  // Icon rebuilt with real presence: bigger, a proper multi-layer glow
+  // matching the phone's own, a soft drop shadow + inner highlight so it
+  // sits on the white screen rather than floating flat, and a clearer
+  // scale overshoot (1.1 -> 1.18) on arrival.
+  const ICON_SIZE = 145;
+  layers.push({
+    id: '__phone_icon__',
+    type: 'image',
+    icon,
+    iconColor: accentColor,
+    width: ICON_SIZE,
+    height: ICON_SIZE,
+    position: [...CENTER],
+    rotation: cloneTrack(idleRotation),
+    scale: { expression: breatheExpr, base: { keyframes: [
+      { time: SWAP_TIME, value: [0.4, 0.4], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: SWAP_TIME + 0.3, value: [1.18, 1.18], interpolation: 'easing', easing: 'easeInOutCubic' },
+      { time: SWAP_TIME + 0.45, value: [1, 1] },
+    ] } },
+    opacity: { keyframes: [{ time: SWAP_TIME, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: SWAP_TIME + 0.2, value: 1 }] },
+    // Real, confirmed-live finding: outerGlow/innerGlow's own 'screen'
+    // blend mode - the very thing that makes the PHONE's glow bloom
+    // against the dark background outside it - is nearly invisible
+    // here, because this icon sits entirely within the phone's WHITE
+    // screen: screen-blending anything onto near-white pixels barely
+    // changes them (screen(white, x) ~= white). Confirmed via a direct
+    // frame render: the icon came out pale/washed-out instead of bolder,
+    // because the one effect that WAS visible was innerGlow's white
+    // screen-blend brightening the icon's own colored fill from inside.
+    // Fixed by dropping innerGlow entirely (kept the icon a crisp, solid
+    // fill) and switching the icon's own outerGlow to 'multiply' -
+    // darkens instead of lightens, so it reads as a soft tinted
+    // shadow-halo bleeding into the white screen, which is actually
+    // visible (this is a real, engine-documented distinction - see
+    // layerStyles.js's own applyOuterGlow doc comment: "screen=light,
+    // multiply=darker/shadow").
+    effects: [
+      { type: 'dropShadow', params: { color: '#000000', opacity: 0.18, blur: 10, offsetX: 0, offsetY: 4 } },
+      { type: 'outerGlow', params: { color: accentColor, opacity: 0.4, blur: 8, blendMode: 'multiply' } },
+      { type: 'outerGlow', params: { color: accentColor, opacity: 0.25, blur: 20, blendMode: 'multiply' } },
+      { type: 'outerGlow', params: { color: accentColor, opacity: 0.14, blur: 40, blendMode: 'multiply' } },
+    ],
+  });
+
+  return layers;
 }
 
 /**
