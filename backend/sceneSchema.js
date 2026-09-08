@@ -5746,14 +5746,31 @@ function buildMergeClusterLayers({
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
   const NODE_SIZE = 64;
   const START_RADIUS = 190;
-  const CONVERGE_TIME = 1.1;
+  // Real, direct user spec (2026-09-08): "they need to appear one at a
+  // time in a clockwise formation, having a 0.25sec interval between
+  // them, then they will now combine in the middle." The clockwise
+  // placement already existed (angle starts at -90deg = top, increasing
+  // i sweeps top->right->bottom->left, i.e. clockwise) - what was
+  // actually missing was the TIMING: the old 0.05s stagger landed all 4
+  // icons within 150ms of each other, reading as "basically at once,"
+  // not a real one-at-a-time reveal, and the old fixed CONVERGE_TIME
+  // (1.1) didn't even leave the LAST icon a real moment to be seen
+  // before everything converged. REVEAL_INTERVAL is the real 0.25s gap
+  // asked for; CONVERGE_TIME is now computed FROM it (last icon's own
+  // delay + its own settle time + a short shared hold) so convergence
+  // always starts only once every icon has genuinely finished
+  // appearing, regardless of how many icons this beat has.
+  const REVEAL_INTERVAL = 0.25;
+  const ICON_SETTLE_TIME = 0.25;
+  const HOLD_BEFORE_CONVERGE = 0.35;
+  const CONVERGE_TIME = REVEAL_INTERVAL * (icons.length - 1) + ICON_SETTLE_TIME + HOLD_BEFORE_CONVERGE;
   const layers = [];
 
   icons.forEach((icon, i) => {
     const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
     const startX = CENTER[0] + Math.cos(angle) * START_RADIUS;
     const startY = CENTER[1] + Math.sin(angle) * START_RADIUS;
-    const delay = 0.05 * i;
+    const delay = REVEAL_INTERVAL * i;
     const posKf = { keyframes: [
       { time: delay, value: [startX, startY], interpolation: 'easing', easing: 'easeOutCubic' },
       { time: delay + 0.25, value: [startX, startY] },
