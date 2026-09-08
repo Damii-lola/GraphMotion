@@ -5149,10 +5149,10 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor, introText }) 
  * this template so it can keep evolving independently. Phase 2 (new)
  * picks up right where Phase 1's hero settles: the hero shrinks back
  * down to a small circle - still filled with its own color, but its icon
- * disappears - and relocates to one of a few possible spots (a variable,
- * matching the reference: "the position... can be one of the middle 3
- * circle positions"); four plain white (unfilled) circles pop in
- * alongside it; a short variable line of text appears in the middle;
+ * disappears - and relocates to one of 6 fixed slots measured directly
+ * off the reference video (a variable, "shrinkSlot"); the other 5 slots
+ * pop in as plain white (unfilled) circles at their own reference-
+ * matched sizes; a short variable line of text appears in the middle;
  * then everything pulls back together and merges into a brand-new hero
  * circle with a different icon and a caption underneath - both variables
  * the AI picks, exactly like Phase 1's own icon/chosenIndex choice.
@@ -5416,13 +5416,30 @@ function buildNodeClusterExtendedLayers({
     { time: SHRINK_START + 0.35, value: 0 },
   );
 
-  const SAT_RADIUS = 140;
-  const SAT_ANGLES_DEG = [-90, 30, 150];
-  const slotIndex = Number.isInteger(shrinkSlot) && shrinkSlot >= 0 && shrinkSlot < SAT_ANGLES_DEG.length
+  // Real, direct user correction (2026-09-08), against the same
+  // reference video: "there are meant to be 6 circles" and "the circles
+  // position should be as how it is in the ref vid" - measured directly
+  // off a reference frame (blob-detected bright-ring centers, not
+  // eyeballed) rather than inventing a new formation. The reference's
+  // own canvas is EXACTLY 540x960, identical to this engine's own
+  // CANVAS_WIDTH/CANVAS_HEIGHT, so these are used as literal absolute
+  // positions with no rescaling. Sizes vary per slot too, matching the
+  // reference's own organic scatter (not a uniform grid of same-size
+  // rings) - slot 4 deliberately extends past the canvas's own bottom
+  // edge, matching the reference's own partially-offscreen circle there.
+  const REF_SLOTS = [
+    { pos: [201, 46], size: 70 },
+    { pos: [410, 329], size: 110 },
+    { pos: [87, 252], size: 70 },
+    { pos: [94, 792], size: 65 },
+    { pos: [341, 940], size: 130 },
+    { pos: [313, 645], size: 64 },
+  ];
+  const slotIndex = Number.isInteger(shrinkSlot) && shrinkSlot >= 0 && shrinkSlot < REF_SLOTS.length
     ? shrinkSlot
-    : hashString(`${accentColor}:${chosenIndex}:${icons.join(',')}`) % SAT_ANGLES_DEG.length;
-  const satAngle = (SAT_ANGLES_DEG[slotIndex] * Math.PI) / 180;
-  const SAT_POS = [CENTER[0] + Math.cos(satAngle) * SAT_RADIUS, CENTER[1] + Math.sin(satAngle) * SAT_RADIUS];
+    : hashString(`${accentColor}:${chosenIndex}:${icons.join(',')}`) % REF_SLOTS.length;
+  const SAT_POS = REF_SLOTS[slotIndex].pos;
+  const SAT_SCALE = REF_SLOTS[slotIndex].size / NODE_SIZE;
 
   // Hold flat at CENTER/full-size right up to SHRINK_START (the safe
   // "two identical keyframe values" pattern - see mergeCluster's own
@@ -5435,7 +5452,7 @@ function buildNodeClusterExtendedLayers({
   );
   heroFill.scale.base.keyframes.push(
     { time: SHRINK_START, value: [4.3, 4.3], interpolation: 'easing', easing: 'easeInOutCubic' },
-    { time: SHRINK_END, value: [1, 1] },
+    { time: SHRINK_END, value: [SAT_SCALE, SAT_SCALE] },
   );
   // "The icon will disappear" - a quick fade right as the shrink starts,
   // rather than trying to keep it visually locked to the moving/shrinking
@@ -5445,11 +5462,11 @@ function buildNodeClusterExtendedLayers({
     { time: SHRINK_START + 0.15, value: 0 },
   );
 
-  // Four plain white (unfilled) circles, a separate formation from the
-  // hero's own 3 satellite slots so they never collide regardless of
-  // which slot got picked.
-  const WHITE_CIRCLE_RADIUS = 195;
-  const WHITE_CIRCLE_ANGLES_DEG = [-45, 45, 135, 225];
+  // The other 5 reference slots (everything except whichever one the
+  // hero took) become plain white unfilled circles, each at ITS OWN
+  // measured size - matches the reference's own varied scatter rather
+  // than a uniform ring of same-size circles.
+  const WHITE_SLOTS = REF_SLOTS.filter((_, i) => i !== slotIndex);
   const WHITE_CIRCLE_APPEAR_START = SHRINK_START + 0.15;
   const WHITE_CIRCLE_STAGGER = 0.08;
 
@@ -5460,17 +5477,14 @@ function buildNodeClusterExtendedLayers({
   const CONVERGE_DURATION = 0.45;
   const CONVERGE_END = CONVERGE_START + CONVERGE_DURATION;
 
-  WHITE_CIRCLE_ANGLES_DEG.forEach((angleDeg, wi) => {
-    const rad = (angleDeg * Math.PI) / 180;
-    const wx = CENTER[0] + Math.cos(rad) * WHITE_CIRCLE_RADIUS;
-    const wy = CENTER[1] + Math.sin(rad) * WHITE_CIRCLE_RADIUS;
+  WHITE_SLOTS.forEach(({ pos: [wx, wy], size }, wi) => {
     const appearAt = WHITE_CIRCLE_APPEAR_START + wi * WHITE_CIRCLE_STAGGER;
     const settleAt = appearAt + 0.42;
     layers.push({
       id: `__nce_white_${wi}__`,
       type: 'shape',
-      width: NODE_SIZE,
-      height: NODE_SIZE,
+      width: size,
+      height: size,
       // Flat hold at (wx,wy) from settleAt to CONVERGE_START, then moves
       // to CENTER - same safe hold-then-move pattern as the hero above.
       position: { keyframes: [
@@ -5492,7 +5506,7 @@ function buildNodeClusterExtendedLayers({
         { time: CONVERGE_END, value: 0 },
       ] },
       contents: [
-        { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_SIZE, height: NODE_SIZE } } },
+        { type: 'path', shape: { kind: 'ellipse', params: { width: size, height: size } } },
         { type: 'stroke', color: '#FFFFFF', width: 3, opacity: 0.85 },
       ],
     });
@@ -5517,7 +5531,7 @@ function buildNodeClusterExtendedLayers({
     { time: CONVERGE_END, value: [...CENTER] },
   );
   heroFill.scale.base.keyframes.push(
-    { time: CONVERGE_START, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+    { time: CONVERGE_START, value: [SAT_SCALE, SAT_SCALE], interpolation: 'easing', easing: 'easeInCubic' },
     { time: CONVERGE_END, value: [0.3, 0.3] },
   );
   heroFill.opacity.keyframes.push(
