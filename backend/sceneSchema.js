@@ -5747,30 +5747,44 @@ function buildMergeClusterLayers({
   const NODE_SIZE = 64;
   const START_RADIUS = 190;
   // Real, direct user spec (2026-09-08): "they need to appear one at a
-  // time in a clockwise formation, having a 0.25sec interval between
-  // them, then they will now combine in the middle." The clockwise
-  // placement already existed (angle starts at -90deg = top, increasing
-  // i sweeps top->right->bottom->left, i.e. clockwise) - what was
-  // actually missing was the TIMING: the old 0.05s stagger landed all 4
-  // icons within 150ms of each other, reading as "basically at once,"
-  // not a real one-at-a-time reveal, and the old fixed CONVERGE_TIME
-  // (1.1) didn't even leave the LAST icon a real moment to be seen
-  // before everything converged. REVEAL_INTERVAL is the real 0.25s gap
-  // asked for; CONVERGE_TIME is now computed FROM it (last icon's own
-  // delay + its own settle time + a short shared hold) so convergence
-  // always starts only once every icon has genuinely finished
-  // appearing, regardless of how many icons this beat has.
-  const REVEAL_INTERVAL = 0.25;
+  // time in a clockwise formation... then they will now combine in the
+  // middle." The clockwise placement already existed (angle starts at
+  // -90deg = top, increasing i sweeps top->right->bottom->left, i.e.
+  // clockwise) - what was actually missing was the TIMING: the old 0.05s
+  // stagger landed all 4 icons within 150ms of each other, reading as
+  // "basically at once," not a real one-at-a-time reveal, and the old
+  // fixed CONVERGE_TIME (1.1) didn't even leave the LAST icon a real
+  // moment to be seen before everything converged. REVEAL_INTERVAL is
+  // the real gap asked for (0.25 -> 0.5 on direct follow-up);
+  // CONVERGE_TIME is computed FROM it (last icon's own delay + its own
+  // settle time + a short shared hold) so convergence always starts only
+  // once every icon has genuinely finished appearing, regardless of how
+  // many icons this beat has.
+  const REVEAL_INTERVAL = 0.5;
   const ICON_SETTLE_TIME = 0.25;
   const HOLD_BEFORE_CONVERGE = 0.35;
-  const CONVERGE_TIME = REVEAL_INTERVAL * (icons.length - 1) + ICON_SETTLE_TIME + HOLD_BEFORE_CONVERGE;
+  // Real, direct user spec (2026-09-08): "the scene shouldn't start
+  // until the camera is in place." Every beat after the first pans/zooms
+  // in from the previous one (renderEngine.js's own DEFAULT_PAN_DURATION_
+  // SECONDS, 0.75s) - but a beat's own content already starts animating
+  // from ITS OWN local time 0 regardless of whether that pan is still
+  // playing, so without this, the first icon or two could already be
+  // popping in while the camera was still mid-transition, arriving into
+  // a scene that had already started rather than a settled one. Matches
+  // renderEngine.js's own default exactly (kept as a separate constant,
+  // not imported, since this file is deliberately dependency-free from
+  // the render engine's own internals - see this file's other "mirrors
+  // renderEngine.js" comments for the same pattern) - update both
+  // together if the render engine's own default ever changes.
+  const CAMERA_SETTLE_DELAY = 0.75;
+  const CONVERGE_TIME = CAMERA_SETTLE_DELAY + REVEAL_INTERVAL * (icons.length - 1) + ICON_SETTLE_TIME + HOLD_BEFORE_CONVERGE;
   const layers = [];
 
   icons.forEach((icon, i) => {
     const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
     const startX = CENTER[0] + Math.cos(angle) * START_RADIUS;
     const startY = CENTER[1] + Math.sin(angle) * START_RADIUS;
-    const delay = REVEAL_INTERVAL * i;
+    const delay = CAMERA_SETTLE_DELAY + REVEAL_INTERVAL * i;
     const posKf = { keyframes: [
       { time: delay, value: [startX, startY], interpolation: 'easing', easing: 'easeOutCubic' },
       { time: delay + 0.25, value: [startX, startY] },
