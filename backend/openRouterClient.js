@@ -120,7 +120,22 @@ async function callOpenRouterRaw(systemPrompt, userMessage, { jsonMode = true, m
         // proved it conclusively: the EXACT SAME prompt with NO
         // "reasoning" field at all succeeded immediately (finish_reason:
         // "stop", full real content, 2.1s) - so for m3, omitting the
-        // param entirely is the fix, not tuning its value.
+        // param entirely is the fix, not tuning its value... except that
+        // fix alone still failed live in production (2026-09-10, same
+        // day) with the IDENTICAL symptom - the difference was the
+        // "provider" field in the failed response: "Minimax" (the model
+        // author's own direct hosting), not one of the ~11 other
+        // companies OpenRouter's own pricing page lists as also hosting
+        // this model (CoreWeave, GMICloud, DeepInfra, Together, etc.).
+        // MiniMax's own infrastructure most likely enforces mandatory
+        // reasoning at the API level regardless of what OpenRouter's
+        // unified "reasoning" param does or doesn't send - the exact
+        // same "mandatory, cannot disable" behavior the OLD model
+        // (m2.7:free) had, just now specific to THIS ONE provider rather
+        // than the model as a whole. Excluded via OpenRouter's own
+        // provider-routing API (real, documented: provider.ignore) so
+        // requests only ever land on a host that actually behaves.
+        provider: { ignore: ['minimax'] },
         ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
       }),
     });
