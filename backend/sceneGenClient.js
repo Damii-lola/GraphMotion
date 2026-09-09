@@ -6,9 +6,11 @@ const {
 const { callOpenRouterRaw } = require('./openRouterClient');
 
 /**
- * Scene generation, on OpenRouter's minimax/minimax-m2.7:free model for
- * every real AI call in this file (treatment planning, whole-scene JSON
- * encoding, script judging, and edits) - both Groq and Gemini are gone
+ * Scene generation, on OpenRouter's minimax/minimax-m3 model (paid -
+ * see openRouterClient.js's own OPENROUTER_MODEL doc comment for why
+ * the earlier minimax-m2.7:free choice had to change) for every real AI
+ * call in this file (treatment planning, whole-scene JSON encoding,
+ * script judging, and edits) - both Groq and Gemini are gone
  * from this codebase entirely, direct user instruction (2026-09-05):
  * Groq's organization-wide daily quota stayed exhausted long past when
  * it should have reset ("Groq is still not working, just remove it

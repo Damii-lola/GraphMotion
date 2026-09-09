@@ -21,8 +21,23 @@ const fetch = require('node-fetch');
  * from the SAME shared daily budget, worth remembering if generations
  * start failing in a way that smells like a quota wall.
  *
- * Model: minimax/minimax-m2.7:free - chosen after real, direct A/B
- * testing across 4 candidates, not from documentation:
+ * Model: minimax/minimax-m3 - direct user decision (2026-09-10), a real
+ * live-production outage forced the move: minimax/minimax-m2.7:free
+ * (the earlier choice, see below for that own A/B testing writeup)
+ * stopped being served on OpenRouter's free tier without warning -
+ * every real generation on the live site failed immediately with
+ * "OpenRouter API error 404: This model is unavailable for free," which
+ * itself suggested minimax/minimax-m2.1 as a replacement slug. Checked
+ * OpenRouter directly (not assumed): minimax-m2.1 has no free tier
+ * either, and neither does minimax-m3 - this is a PAID model
+ * (~$0.23-0.30/M input, $0.96-1.20/M output tokens depending on
+ * provider), a real, explicit, informed cost tradeoff the user chose
+ * over hunting for another free model, given free-tier MiniMax
+ * availability had already proven unstable once.
+ *
+ * Original minimax-m2.7:free selection reasoning (2026-09-05), kept for
+ * context - chosen after real, direct A/B testing across 4 candidates,
+ * not from documentation:
  *   - google/gemma-4-26b-a4b-it:free: ruled out immediately - actually
  *     served through GOOGLE'S OWN "AI Studio" infrastructure as the
  *     backing provider (confirmed via the error response's
@@ -48,7 +63,7 @@ const fetch = require('node-fetch');
  *     in one window) doesn't stall this step too.
  */
 
-const OPENROUTER_MODEL = 'minimax/minimax-m2.7:free';
+const OPENROUTER_MODEL = 'minimax/minimax-m3';
 // 150s, not 90s - real measured headroom: the slowest observed single
 // call so far was 84.8s, and 90s left almost no margin above that
 // before falsely aborting a call that was actually still working.
