@@ -21,49 +21,41 @@ const fetch = require('node-fetch');
  * from the SAME shared daily budget, worth remembering if generations
  * start failing in a way that smells like a quota wall.
  *
- * Model: minimax/minimax-m3 - direct user decision (2026-09-10), a real
- * live-production outage forced the move: minimax/minimax-m2.7:free
- * (the earlier choice, see below for that own A/B testing writeup)
- * stopped being served on OpenRouter's free tier without warning -
- * every real generation on the live site failed immediately with
- * "OpenRouter API error 404: This model is unavailable for free," which
- * itself suggested minimax/minimax-m2.1 as a replacement slug. Checked
- * OpenRouter directly (not assumed): minimax-m2.1 has no free tier
- * either, and neither does minimax-m3 - this is a PAID model
- * (~$0.23-0.30/M input, $0.96-1.20/M output tokens depending on
- * provider), a real, explicit, informed cost tradeoff the user chose
- * over hunting for another free model, given free-tier MiniMax
- * availability had already proven unstable once.
+ * Model: nvidia/nemotron-3.5-lightning:free - direct user decision
+ * (2026-09-10), after minimax/minimax-m3 (see git history on this file
+ * for that whole saga: a live outage when m2.7:free got discontinued,
+ * then a real "reasoning silently eats the entire token budget" bug
+ * that took two wrong fixes and provider-exclusion to work around) - at
+ * that point the user stepped back from "which MiniMax model" entirely
+ * and re-scoped the ACTUAL task instead: the AI's real job here is
+ * lightweight (pick which of 7 known templates fit a beat, fill in a
+ * handful of short fields per beat), not the kind of task that needs a
+ * heavy paid reasoning model. Nemotron 3.5 Lightning fits that
+ * directly: free, and (unlike the other free Nemotron variants already
+ * tried and rejected below) explicitly small - 3B ACTIVE parameters
+ * (vs 12-55B for Nemotron 3 Super/Ultra) - built for "high-throughput
+ * agentic workloads," i.e. fast turnaround on a simple task rather than
+ * deep reasoning on a hard one.
  *
- * Original minimax-m2.7:free selection reasoning (2026-09-05), kept for
- * context - chosen after real, direct A/B testing across 4 candidates,
- * not from documentation:
- *   - google/gemma-4-26b-a4b-it:free: ruled out immediately - actually
- *     served through GOOGLE'S OWN "AI Studio" infrastructure as the
- *     backing provider (confirmed via the error response's
- *     provider_name field), defeating the entire purpose of moving off
- *     Gemini, on top of being rate-limited when tried.
+ * Earlier free-model rejections, kept for context - don't re-try these
+ * without a real reason, they were each ruled out for a concrete,
+ * measured problem, not a guess:
+ *   - google/gemma-4-26b-a4b-it:free: served through GOOGLE'S OWN "AI
+ *     Studio" infrastructure as the backing provider (confirmed via the
+ *     error response's provider_name field), defeating the entire point
+ *     of moving off Gemini, on top of being rate-limited when tried.
  *   - nvidia/nemotron-3-super-120b-a12b:free: worked, but consistently
- *     ~255s for the full pipeline - too slow.
+ *     ~255s for the OLD, much bigger encode-a-full-scene task - a
+ *     different, heavier model than Lightning, and a different
+ *     (heavier) task than what this file does now.
  *   - nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free: similarly
- *     slow (~240s) AND unreliable - one real attempt returned only 112
- *     characters, another returned a full-length response with a real
- *     structural bug (all 5 beats crammed into ONE object via duplicate
- *     "params"/"visual" keys instead of 5 separate array entries -
- *     JSON.parse silently keeps only the last pair, discarding 4 of 5
- *     beats without ever throwing a parse error).
- *   - minimax/minimax-m2.7:free: real measured spread across 3 back-
- *     to-back identical calls: 24.9s / 29.9s / 84.8s - genuinely
- *     variable, not a fixed fast number, and comparable to (not
- *     clearly faster than) Gemini's own ~18-28s NORMAL-condition speed
- *     from this session's own logs. Kept anyway per direct user
- *     decision: the point isn't raw speed, it's using a genuinely
- *     independent provider so a Gemini-style multi-key outage (three
- *     keys, three consecutive 45s timeouts, then three more 503s, all
- *     in one window) doesn't stall this step too.
+ *     slow (~240s) AND unreliable on that same old task - one attempt
+ *     returned only 112 characters, another returned a real structural
+ *     bug (all 5 beats crammed into ONE object via duplicate "params"/
+ *     "visual" keys, JSON.parse silently discarding 4 of 5 beats).
  */
 
-const OPENROUTER_MODEL = 'minimax/minimax-m3';
+const OPENROUTER_MODEL = 'nvidia/nemotron-3.5-lightning:free';
 // 150s, not 90s - real measured headroom: the slowest observed single
 // call so far was 84.8s, and 90s left almost no margin above that
 // before falsely aborting a call that was actually still working.
@@ -100,42 +92,14 @@ async function callOpenRouterRaw(systemPrompt, userMessage, { jsonMode = true, m
         ],
         temperature,
         max_tokens: maxTokens,
-        // Real, confirmed finding (2026-09-10) - DO NOT re-add a
-        // "reasoning" param here for minimax-m3. The OLD model
-        // (minimax-m2.7:free) genuinely required one: its endpoint had
-        // MANDATORY reasoning (a request with reasoning:{effort:'none'}
-        // got a hard 400, "Reasoning is mandatory for this endpoint and
-        // cannot be disabled"), and reasoning:{max_tokens:3000} was the
-        // real, working fix for that model (3/3 trials passed reliably).
-        // minimax-m3 is the OPPOSITE: multiple real, billed production
-        // tests (2026-09-10) with reasoning:{max_tokens:N} - even raised
-        // as high as 22000 total / 6000 reasoning, even cut as low as
-        // 2000 total - EVERY one came back finish_reason:"length" with
-        // COMPLETELY EMPTY content, reasoning apparently consuming the
-        // whole budget regardless of the cap's own size (so the cap
-        // itself likely isn't honored for this model at all - OpenRouter's
-        // own reasoning-tokens docs list Anthropic/Gemini/some Qwen
-        // models as respecting reasoning.max_tokens, not MiniMax).
-        // Isolated, direct test (bypassing this function, raw fetch)
-        // proved it conclusively: the EXACT SAME prompt with NO
-        // "reasoning" field at all succeeded immediately (finish_reason:
-        // "stop", full real content, 2.1s) - so for m3, omitting the
-        // param entirely is the fix, not tuning its value... except that
-        // fix alone still failed live in production (2026-09-10, same
-        // day) with the IDENTICAL symptom - the difference was the
-        // "provider" field in the failed response: "Minimax" (the model
-        // author's own direct hosting), not one of the ~11 other
-        // companies OpenRouter's own pricing page lists as also hosting
-        // this model (CoreWeave, GMICloud, DeepInfra, Together, etc.).
-        // MiniMax's own infrastructure most likely enforces mandatory
-        // reasoning at the API level regardless of what OpenRouter's
-        // unified "reasoning" param does or doesn't send - the exact
-        // same "mandatory, cannot disable" behavior the OLD model
-        // (m2.7:free) had, just now specific to THIS ONE provider rather
-        // than the model as a whole. Excluded via OpenRouter's own
-        // provider-routing API (real, documented: provider.ignore) so
-        // requests only ever land on a host that actually behaves.
-        provider: { ignore: ['minimax'] },
+        // No "reasoning" param sent - direct user instruction to try
+        // Nemotron 3.5 Lightning "with the prompt as-is" first, before
+        // touching anything else. See this file's own top doc comment
+        // and git history for the real, hard-won "reasoning silently
+        // eats the whole token budget" lesson from the two MiniMax
+        // models this file used before - worth checking for the SAME
+        // symptom (finish_reason:"length", empty content) here too if
+        // this model ever needs a reasoning param added later.
         ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
       }),
     });
