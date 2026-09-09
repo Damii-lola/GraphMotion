@@ -6851,8 +6851,8 @@ function buildTextPopOutLayers({ text, accentColor }) {
   // shorter interval than the word's own full rise duration, not a
   // strict one-at-a-time queue.
   const WORD_RISE_DISTANCE = 26;
-  const WORD_INTERVAL = 0.14;
-  const WORD_RISE_DURATION = 0.22;
+  const WORD_INTERVAL = 0.18;
+  const WORD_RISE_DURATION = 0.28;
   const lastWordStart = WORD_INTERVAL * (words.length - 1);
   const buildEnd = lastWordStart + WORD_RISE_DURATION;
 
@@ -6860,9 +6860,9 @@ function buildTextPopOutLayers({ text, accentColor }) {
   // full text will now shrink and popout of the screen moving to the
   // next scene" - a real exit, not a settle-into-place. HOLD_AFTER_BUILD
   // gives the finished statement a real beat to be read before it exits.
-  const HOLD_AFTER_BUILD = 0.45;
+  const HOLD_AFTER_BUILD = 0.55;
   const EXIT_START = buildEnd + HOLD_AFTER_BUILD;
-  const EXIT_DURATION = 0.4;
+  const EXIT_DURATION = 0.5;
   const EXIT_END = EXIT_START + EXIT_DURATION;
 
   const BUILD_Y = CANVAS_HEIGHT * 0.5;
@@ -6923,10 +6923,10 @@ function buildTextPopOutLayers({ text, accentColor }) {
   return layers;
 }
 
-const TEXT_POP_OUT_WORD_INTERVAL = 0.14;
-const TEXT_POP_OUT_WORD_RISE_DURATION = 0.22;
-const TEXT_POP_OUT_HOLD_AFTER_BUILD = 0.45;
-const TEXT_POP_OUT_EXIT_DURATION = 0.4;
+const TEXT_POP_OUT_WORD_INTERVAL = 0.18;
+const TEXT_POP_OUT_WORD_RISE_DURATION = 0.28;
+const TEXT_POP_OUT_HOLD_AFTER_BUILD = 0.55;
+const TEXT_POP_OUT_EXIT_DURATION = 0.5;
 const TEXT_POP_OUT_END_BUFFER = 0.15;
 /** Minimum real screen time this template's own build+exit needs for a given word count - mirrors buildTextPopOutLayers' own internal timing constants exactly (kept in sync manually, same pattern as this file's other "mirrors X's own timing" constants). */
 function textPopOutMinDuration(wordCount) {
