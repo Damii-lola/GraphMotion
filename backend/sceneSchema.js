@@ -6789,34 +6789,40 @@ function truncateAtWordBoundary(text, maxChars) {
  * one or the other, so the ordering is a no-op there.
  */
 /**
- * New mograph template straight from a direct reference video (2026-09-
- * 09): a short statement builds up ONE WORD AT A TIME (each one popping
- * in right where it belongs in the line, the earlier words staying put
- * the whole time), then the whole assembled line "zooms out" - scales
- * down slightly and recenters - to settle into its final resting frame.
+ * New mograph template, rebuilt from a direct, frame-by-frame reference
+ * re-check (2026-09-09) after the first pass got this wrong: a short
+ * statement builds up ONE WORD AT A TIME - each word appears a little
+ * BELOW its own resting spot on the line and rises up into place, while
+ * every word already settled stays PERFECTLY STILL (confirmed directly:
+ * "Don't" holds at one exact baseline across several frames while "be"
+ * appears below that SAME baseline and rises up to join it - the words
+ * never move again once they land, and none of the earlier ones are
+ * affected by a later one's own arrival). Once the whole phrase has
+ * landed, it holds briefly, then the WHOLE assembled line shrinks down
+ * and fades out - a quick exit cueing the cut to the next scene - rather
+ * than settling into a smaller resting frame (the first pass's own
+ * wrong reading of this same reference).
  *
  * Built on this engine's real Null Object / parenting system (node.js's
  * getWorldMatrix, sceneBuilder.js's layerDef.parent) rather than hand-
- * animating every word's own position: a single invisible `__pop_group__`
- * null carries the GROUP-level transform (the build-phase left anchor,
- * then the zoom-out-and-recenter), while every word is a child with a
- * FIXED local position for its entire life - only its own opacity/scale
- * ever change (the pop-in), never its position. This is what makes the
- * "first word never visibly moves while later ones pop in" behavior
- * automatic rather than something to hand-tune: the null's own position
- * is completely constant during the whole build phase, so anything
- * parented to it is too.
+ * animating every word's own X position: a single invisible
+ * `__pop_group__` null carries the GROUP-level transform (a fixed left-
+ * anchored build position, then the shrink-and-fade exit), while every
+ * word is a child with a FIXED local X for its entire life - only its
+ * own local Y (the rise), opacity, and a light scale settle ever change.
+ * This is what makes "words already on screen never move when a new one
+ * arrives" automatic: the null's own position is completely constant
+ * through the whole build, so anything parented to it is too, and each
+ * word's OWN rise is a purely local, independent animation.
  *
  * Each word's LOCAL x is measured with a REAL ctx.measureText call
  * against the EXACT font this will render with (this file's own
  * measureTextWrap already established that `@napi-rs/canvas` is usable
  * at scene-JSON-build time, not just at actual render time - no
- * per-character-width estimate needed here). Local x=0 is defined as
- * the exact center of the FULLY ASSEMBLED line (not the first word's own
- * edge) - so scaling the null around its own origin always scales
- * symmetrically around the line's true center, and "recenter on screen"
- * at the end is just "move the null to CANVAS_WIDTH/2," regardless of
- * how many words there are or what scale they end at.
+ * per-character-width estimate needed here). Local x=0 is the exact
+ * center of the FULLY ASSEMBLED line (not the first word's own edge),
+ * so the exit shrink is always symmetric around the line's own true
+ * center regardless of word count.
  */
 function buildTextPopOutLayers({ text, accentColor }) {
   const words = text.split(' ').filter((w) => w.length > 0);
@@ -6837,77 +6843,53 @@ function buildTextPopOutLayers({ text, accentColor }) {
     return center;
   });
 
-  const WORD_POP_INTERVAL = 0.16;
-  const WORD_POP_DURATION = 0.22;
-  const lastWordStart = WORD_POP_INTERVAL * (words.length - 1);
-  const HOLD_AFTER_BUILD = 0.3;
-  const ZOOM_START = lastWordStart + WORD_POP_DURATION + HOLD_AFTER_BUILD;
-  const ZOOM_DURATION = 0.5;
-  const ZOOM_END = ZOOM_START + ZOOM_DURATION;
+  // Real, direct reference measurement: each word's own rise+settle
+  // takes about 2 frames at the reference's own ~10fps sampling (~0.2s),
+  // and the next word starts its own rise while the previous one is
+  // still mid-settle (confirmed: "be" is already visible, mid-rise,
+  // while "Don't" has already fully landed one frame earlier) - a
+  // shorter interval than the word's own full rise duration, not a
+  // strict one-at-a-time queue.
+  const WORD_RISE_DISTANCE = 26;
+  const WORD_INTERVAL = 0.14;
+  const WORD_RISE_DURATION = 0.22;
+  const lastWordStart = WORD_INTERVAL * (words.length - 1);
+  const buildEnd = lastWordStart + WORD_RISE_DURATION;
 
-  const CENTER_X = CANVAS_WIDTH / 2;
-  const BUILD_Y = CANVAS_HEIGHT * 0.54;
-  const FINAL_Y = CANVAS_HEIGHT * 0.5;
-  // Where the FIRST word's own left edge sits during the build phase -
-  // that edge is always at local x = -totalWidth/2 (see wordLocalX
-  // above), so the null's own build-phase position.x is solved to put
-  // it exactly here and hold it there for the whole build.
+  // Real, direct user spec: "after all the words have appeared, the
+  // full text will now shrink and popout of the screen moving to the
+  // next scene" - a real exit, not a settle-into-place. HOLD_AFTER_BUILD
+  // gives the finished statement a real beat to be read before it exits.
+  const HOLD_AFTER_BUILD = 0.45;
+  const EXIT_START = buildEnd + HOLD_AFTER_BUILD;
+  const EXIT_DURATION = 0.4;
+  const EXIT_END = EXIT_START + EXIT_DURATION;
+
+  const BUILD_Y = CANVAS_HEIGHT * 0.5;
+  // Where the FIRST word's own left edge sits for the whole build phase
+  // - that edge is always at local x = -totalWidth/2 (see wordLocalX
+  // above), so the null's own position.x is solved once to put it
+  // exactly here; the null never moves at all until the exit shrink.
   const BUILD_LEFT_MARGIN = CANVAS_WIDTH * 0.12;
-  const FINAL_SCALE = 0.86;
+  const GROUP_X = BUILD_LEFT_MARGIN + totalWidth / 2;
 
   const layers = [{
     id: '__pop_group__',
     type: 'null',
-    position: { keyframes: [
-      { time: 0, value: [BUILD_LEFT_MARGIN + totalWidth / 2, BUILD_Y] },
-      { time: ZOOM_START, value: [BUILD_LEFT_MARGIN + totalWidth / 2, BUILD_Y], interpolation: 'easing', easing: 'easeInOutCubic' },
-      { time: ZOOM_END, value: [CENTER_X, FINAL_Y] },
-    ] },
-    // Gentle continuous breathing once settled (same proven "expression
-    // wraps a keyframed base" pattern as every other template's idle
-    // motion this session) - keeps the final statement from going dead
-    // still for the rest of the beat.
-    scale: { expression: 'wiggle(0.2, 0.014)', base: { keyframes: [
+    position: [GROUP_X, BUILD_Y],
+    scale: { keyframes: [
       { time: 0, value: [1, 1] },
-      { time: ZOOM_START, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
-      { time: ZOOM_START + ZOOM_DURATION * 0.7, value: [FINAL_SCALE * 0.94, FINAL_SCALE * 0.94], interpolation: 'easing', easing: 'easeOutCubic' },
-      { time: ZOOM_END, value: [FINAL_SCALE, FINAL_SCALE] },
-    ] } },
+      { time: EXIT_START, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+      { time: EXIT_END, value: [0.15, 0.15] },
+    ] },
+    opacity: { keyframes: [
+      { time: EXIT_START, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+      { time: EXIT_END, value: 0 },
+    ] },
   }];
 
-  // Real spec extra: a faint accent-colored glow bleeding from behind
-  // the whole line, distinct from each word's own (auto-attached, tight)
-  // white glow - reads as ambient light behind the statement rather than
-  // changing the text's own color. A real, non-zero fill is required
-  // here (not just an outerGlow with nothing behind it) - outerGlow
-  // builds its bloom from the layer's OWN rendered silhouette (see
-  // layerStyles.js's applyOuterGlow), so a fully-transparent fill would
-  // give it nothing to glow from. Low opacity (0.18) keeps it reading as
-  // ambient light, not a solid colored card sitting behind the text.
-  // Pushed BEFORE any word layer so it paints behind them.
-  const backglowSize = [Math.max(totalWidth * 1.15, 200), FONT_SIZE * 2.2];
-  layers.push({
-    id: '__pop_backglow__',
-    type: 'shape',
-    parent: '__pop_group__',
-    width: backglowSize[0],
-    height: backglowSize[1],
-    position: [0, 0],
-    opacity: { keyframes: [
-      { time: lastWordStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-      { time: lastWordStart + WORD_POP_DURATION, value: 1 },
-    ] },
-    effects: [
-      { type: 'outerGlow', params: { color: accentColor, opacity: 0.5, blur: 40, blendMode: 'screen' } },
-    ],
-    contents: [
-      { type: 'path', shape: { kind: 'ellipse', params: { width: backglowSize[0], height: backglowSize[1] } } },
-      { type: 'fill', color: accentColor, opacity: 0.18 },
-    ],
-  });
-
   words.forEach((word, i) => {
-    const popStart = WORD_POP_INTERVAL * i;
+    const riseStart = WORD_INTERVAL * i;
     layers.push({
       id: `__pop_word_${i}__`,
       type: 'text',
@@ -6922,15 +6904,18 @@ function buildTextPopOutLayers({ text, accentColor }) {
       fillStyle: ICON_BRIGHT_TINT,
       textAlign: 'center',
       maxWidth: CANVAS_WIDTH,
-      position: [wordLocalX[i], 0],
-      scale: { keyframes: [
-        { time: popStart, value: [0.4, 0.4], interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: popStart + WORD_POP_DURATION * 0.7, value: [1.18, 1.18], interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: popStart + WORD_POP_DURATION, value: [1, 1] },
+      // X is fixed for life (see this function's own doc comment); Y
+      // rises from WORD_RISE_DISTANCE below the shared baseline up to 0
+      // - once it lands, it holds there (two identical trailing
+      // keyframes) for the rest of the layer's life, including through
+      // the group's own later exit-shrink.
+      position: { keyframes: [
+        { time: riseStart, value: [wordLocalX[i], WORD_RISE_DISTANCE], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: riseStart + WORD_RISE_DURATION, value: [wordLocalX[i], 0] },
       ] },
       opacity: { keyframes: [
-        { time: popStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: popStart + WORD_POP_DURATION * 0.5, value: 1 },
+        { time: riseStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: riseStart + WORD_RISE_DURATION * 0.6, value: 1 },
       ] },
     });
   });
@@ -6938,16 +6923,16 @@ function buildTextPopOutLayers({ text, accentColor }) {
   return layers;
 }
 
-const TEXT_POP_OUT_WORD_INTERVAL = 0.16;
-const TEXT_POP_OUT_WORD_DURATION = 0.22;
-const TEXT_POP_OUT_HOLD_AFTER_BUILD = 0.3;
-const TEXT_POP_OUT_ZOOM_DURATION = 0.5;
-const TEXT_POP_OUT_SETTLE_HOLD = 0.6;
-/** Minimum real screen time this template's own reveal+zoom-out needs for a given word count - mirrors buildTextPopOutLayers' own internal timing constants exactly (kept in sync manually, same pattern as this file's other "mirrors X's own timing" constants). */
+const TEXT_POP_OUT_WORD_INTERVAL = 0.14;
+const TEXT_POP_OUT_WORD_RISE_DURATION = 0.22;
+const TEXT_POP_OUT_HOLD_AFTER_BUILD = 0.45;
+const TEXT_POP_OUT_EXIT_DURATION = 0.4;
+const TEXT_POP_OUT_END_BUFFER = 0.15;
+/** Minimum real screen time this template's own build+exit needs for a given word count - mirrors buildTextPopOutLayers' own internal timing constants exactly (kept in sync manually, same pattern as this file's other "mirrors X's own timing" constants). */
 function textPopOutMinDuration(wordCount) {
   const lastWordStart = TEXT_POP_OUT_WORD_INTERVAL * (wordCount - 1);
-  const zoomEnd = lastWordStart + TEXT_POP_OUT_WORD_DURATION + TEXT_POP_OUT_HOLD_AFTER_BUILD + TEXT_POP_OUT_ZOOM_DURATION;
-  return zoomEnd + TEXT_POP_OUT_SETTLE_HOLD;
+  const exitEnd = lastWordStart + TEXT_POP_OUT_WORD_RISE_DURATION + TEXT_POP_OUT_HOLD_AFTER_BUILD + TEXT_POP_OUT_EXIT_DURATION;
+  return exitEnd + TEXT_POP_OUT_END_BUFFER;
 }
 
 function applyMographGlow(layers) {
@@ -7146,10 +7131,12 @@ function validateSceneJSON(sceneJSON) {
     errors.push('scenes: every beat was dropped as unusable (no valid "mograph" spec and no raw "visual" either) - at least one beat must produce real visual content.');
   }
 
-  // Direct user requirement (2026-09-05): no fixed beat-count/sequence
-  // driven by target duration any more - instead, the video is built
-  // from between 3 and 6 of the named mograph templates, each used AT
-  // MOST ONCE, in whatever order the treatment chose. Mechanically
+  // Direct user requirement (2026-09-05, range raised 3-6 -> 5-7 on
+  // 2026-09-09 once a 7th template - textPopOut - existed): no fixed
+  // beat-count/sequence driven by target duration any more - instead,
+  // the video is built from between 5 and 7 of the named mograph
+  // templates, each used AT MOST ONCE, in whatever order the treatment
+  // chose. Mechanically
   // enforced here rather than trusted to prompt wording alone - same
   // "mechanical enforcement beats prompt guidance" lesson this file
   // already leans on everywhere else (narration length, hook openers,
@@ -7168,10 +7155,10 @@ function validateSceneJSON(sceneJSON) {
     }
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
-    } else if (seen.size < 3) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 3 and 6 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut). Add more template beats to reach at least 3.`);
-    } else if (seen.size > 6) {
-      errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 6. Trim beats down to 6 or fewer distinct templates.`);
+    } else if (seen.size < 5) {
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut). Add more template beats to reach at least 5.`);
+    } else if (seen.size > 7) {
+      errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 7. Trim beats down to 7 or fewer distinct templates.`);
     }
   }
 

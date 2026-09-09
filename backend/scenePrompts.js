@@ -1287,7 +1287,7 @@ frame-for-frame:
      "these things COMBINE into this" beats.
    - nodeClusterExtended: nodeCluster's own opening reveal, THEN a
      second act - the chosen hero shrinks to a small filled circle
-     beside 4 plain white rings, a short line of text appears in the
+     beside 5 plain white rings, a short line of text appears in the
      middle, then everything pulls together into a brand-new, bigger
      hero circle with its own icon and caption - good for a beat that
      needs BOTH a focus moment AND a "these ideas become one bigger
@@ -1295,8 +1295,15 @@ frame-for-frame:
      weight than nodeCluster alone gives it. Runs noticeably longer than
      the other templates (a fixed two-act structure), so use it for a
      beat that can afford the extra screen time, not a quick aside.
-   Choose between 3 and 6 of these templates for this whole video -
-   never fewer than 3, never more than 6, and EACH TEMPLATE MAY BE USED
+   - textPopOut: a short punchy statement builds up one word at a time -
+     each word rises up into place from just below its own spot on the
+     line while every word already on screen holds still - then, once
+     the whole line has landed and held for a beat, it shrinks and fades
+     away as an exit cueing the cut to the next scene - good for a bold,
+     quotable one-liner beat (not a beat that needs to keep its content
+     on screen - it always ends by clearing itself off).
+   Choose between 5 and 7 of these templates for this whole video -
+   never fewer than 5, never more than 7, and EACH TEMPLATE MAY BE USED
    AT MOST ONCE across the entire video (no repeats - if you've already
    used connectorList once, do not reach for it again for a later beat,
    pick a different template even if it fits less perfectly). Use them
@@ -1305,7 +1312,7 @@ frame-for-frame:
    order listed above, and you do not need to use every template that
    exists). Plan exactly one beat per chosen template, so your total
    beat count equals however many distinct templates you chose (between
-   3 and 6) - state which template each beat uses as the FIRST thing in
+   5 and 7) - state which template each beat uses as the FIRST thing in
    that beat's own description, before anything else.
    Every beat also needs enough of its own duration to let its text
    ACTUALLY finish revealing (a real per-character reveal takes real
@@ -1528,12 +1535,12 @@ Beat:
 MOGRAPH - THE way you build a beat's visual
 =====================================================================
 Pick ONE per beat. Direct user requirement: the treatment above already
-chose which of these 6 templates this video uses and in what order (it
+chose which of these 7 templates this video uses and in what order (it
 states the template first thing in each beat's own description) -
 encode that SAME choice here, do not substitute a different template
 than the one the treatment named for a given beat. Two hard rules
-either way: the WHOLE video uses between 3 and 6 of these templates
-total (never fewer than 3 beats, never more than 6), and EACH TEMPLATE
+either way: the WHOLE video uses between 5 and 7 of these templates
+total (never fewer than 5 beats, never more than 7), and EACH TEMPLATE
 IS USED AT MOST ONCE across the whole video - never repeat one, even if
 a later beat would otherwise fit it well. There is no fixed or expected
 order between them.
@@ -1548,8 +1555,10 @@ order between them.
 { "type": "mergeCluster", "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload"], "resultIcon": "mdi:movie-open", "label": "Content Creation", "accentColor": "#8B5CF6" }
   small icon-nodes ("icons", 2-5) converge inward and merge into one new bigger circle showing "resultIcon", with "label" (OPTIONAL, 1-3 words) naming it underneath - "these things COMBINE into this" beats, distinct from nodeCluster (which singles ONE existing icon out, not combines several into something new).
 { "type": "nodeClusterExtended", "icons": ["mdi:microphone","mdi:video","mdi:cloud-upload"], "chosenIndex": 0, "mergeText": "Content Marketing", "newIcon": "mdi:forum", "newLabel": "The Strategy", "accentColor": "#8B5CF6" }
-  nodeCluster's own opening reveal (same "icons"/"chosenIndex" rules), THEN a second act: the chosen hero shrinks to a small still-filled circle (its icon disappears) and relocates beside 4 plain white unfilled rings, "mergeText" (REQUIRED, 2-5 words) glows in at center, then everything pulls together into a brand-new hero circle showing "newIcon" (REQUIRED, a DIFFERENT icon from anything in "icons") with "newLabel" (OPTIONAL, 1-3 words) underneath - a longer, two-act version of nodeCluster for "these ideas become ONE bigger insight" beats; runs noticeably longer than the other templates, so give it a beat that can afford the extra screen time.
-"accentColor" always OPTIONAL, omit to auto-pick. Raw "layers" (below) only for a beat none of these six fit - keep that rare.
+  nodeCluster's own opening reveal (same "icons"/"chosenIndex" rules), THEN a second act: the chosen hero shrinks to a small still-filled circle (its icon disappears) and relocates beside 5 plain white unfilled rings, "mergeText" (REQUIRED, 2-5 words) glows in at center, then everything pulls together into a brand-new hero circle showing "newIcon" (REQUIRED, a DIFFERENT icon from anything in "icons") with "newLabel" (OPTIONAL, 1-3 words) underneath - a longer, two-act version of nodeCluster for "these ideas become ONE bigger insight" beats; runs noticeably longer than the other templates, so give it a beat that can afford the extra screen time.
+{ "type": "textPopOut", "text": "Don't be perfect.", "accentColor": "#8B5CF6" }
+  a short statement builds up one word at a time - each word rises into place from just below its own spot on the line while every already-landed word holds still - then, once the full line has held for a beat, it shrinks and fades away as an exit into the next scene. "text": REQUIRED, a short (2-6 word) punchy statement - keep it self-contained since it exits completely by the end of the beat, it can't carry into whatever the next beat shows.
+"accentColor" always OPTIONAL, omit to auto-pick. Raw "layers" (below) only for a beat none of these seven fit - keep that rare.
 
 TextLayer:
 { "type": "text", "text": string, "fontFamily": one of ${AVAILABLE_FONT_FAMILIES.map((f) => `"${f}"`).join(', ')},
@@ -1682,13 +1691,13 @@ FINAL CHECKLIST
 - No two layers in the same beat share identical "text".
 - Every beat: a real "mograph" spec (see MOGRAPH above) - one of
   "nodeCluster", "connectorList", "phoneSwap", "splitConverge",
-  "mergeCluster", or "nodeClusterExtended". The whole video uses between
-  3 and 6 of these total, each at most once, in whatever order the
-  treatment chose - never repeat one. Only fall back to a raw "layers"
-  array for a beat that genuinely cannot be any of the six - if you do,
-  it still needs at least one real, non-empty "text" layer (REJECTED
-  outright otherwise), and every "image" layer needs a real "icon"
-  (REJECTED otherwise if missing).
+  "mergeCluster", "nodeClusterExtended", or "textPopOut". The whole
+  video uses between 5 and 7 of these total, each at most once, in
+  whatever order the treatment chose - never repeat one. Only fall back
+  to a raw "layers" array for a beat that genuinely cannot be any of the
+  seven - if you do, it still needs at least one real, non-empty "text"
+  layer (REJECTED outright otherwise), and every "image" layer needs a
+  real "icon" (REJECTED otherwise if missing).
 - Every beat: a non-empty "params.narration" under 8 words, one
   sentence only.
 - If a beat uses a raw "layers" array, its dominant text layer's own
