@@ -6824,7 +6824,35 @@ function truncateAtWordBoundary(text, maxChars) {
  * so the exit shrink is always symmetric around the line's own true
  * center regardless of word count.
  */
-function buildTextPopOutLayers({ text, accentColor }) {
+// Real, direct reference measurement: each word's own rise+settle takes
+// about 2 frames at the reference's own ~10fps sampling (~0.2s, later
+// slowed ~25-30% on direct follow-up: "it's a bit too fast"), and the
+// next word starts its own rise while the previous one is still mid-
+// settle (confirmed: "be" is already visible, mid-rise, while "Don't"
+// has already fully landed one frame earlier) - a shorter interval than
+// the word's own full rise duration, not a strict one-at-a-time queue.
+// Shared at module level (not local to buildTextPopOutLayers) so
+// textPopOutMinDuration below can't silently drift out of sync with the
+// real animation - both read the SAME constants.
+const TEXT_POP_OUT_WORD_RISE_DISTANCE = 26;
+const TEXT_POP_OUT_WORD_INTERVAL = 0.18;
+const TEXT_POP_OUT_WORD_RISE_DURATION = 0.28;
+const TEXT_POP_OUT_EXIT_DURATION = 0.5;
+// Real, direct user spec: "after all the words have appeared, the full
+// text will now shrink and popout of the screen moving to the next
+// scene" - a real exit, not a settle-into-place. This is a MINIMUM hold
+// (see buildTextPopOutLayers' own doc comment for why it's usually
+// longer in practice) giving the finished statement a real beat to be
+// read before it exits even on a beat with very little spare duration.
+const TEXT_POP_OUT_MIN_HOLD_AFTER_BUILD = 0.4;
+// Small gap between the exit finishing (fully invisible) and the beat's
+// own hard end, so the fade-out completes cleanly before the beat-to-
+// beat pan transition's own camera motion starts overlapping it.
+const TEXT_POP_OUT_END_BUFFER = 0.1;
+
+function buildTextPopOutLayers({
+  text, accentColor, duration,
+}) {
   const words = text.split(' ').filter((w) => w.length > 0);
   const FONT_FAMILY = 'Poppins Bold';
   const FONT_WEIGHT = '700';
@@ -6843,27 +6871,30 @@ function buildTextPopOutLayers({ text, accentColor }) {
     return center;
   });
 
-  // Real, direct reference measurement: each word's own rise+settle
-  // takes about 2 frames at the reference's own ~10fps sampling (~0.2s),
-  // and the next word starts its own rise while the previous one is
-  // still mid-settle (confirmed: "be" is already visible, mid-rise,
-  // while "Don't" has already fully landed one frame earlier) - a
-  // shorter interval than the word's own full rise duration, not a
-  // strict one-at-a-time queue.
-  const WORD_RISE_DISTANCE = 26;
-  const WORD_INTERVAL = 0.18;
-  const WORD_RISE_DURATION = 0.28;
-  const lastWordStart = WORD_INTERVAL * (words.length - 1);
-  const buildEnd = lastWordStart + WORD_RISE_DURATION;
+  const lastWordStart = TEXT_POP_OUT_WORD_INTERVAL * (words.length - 1);
+  const buildEnd = lastWordStart + TEXT_POP_OUT_WORD_RISE_DURATION;
 
-  // Real, direct user spec: "after all the words have appeared, the
-  // full text will now shrink and popout of the screen moving to the
-  // next scene" - a real exit, not a settle-into-place. HOLD_AFTER_BUILD
-  // gives the finished statement a real beat to be read before it exits.
-  const HOLD_AFTER_BUILD = 0.55;
-  const EXIT_START = buildEnd + HOLD_AFTER_BUILD;
-  const EXIT_DURATION = 0.5;
-  const EXIT_END = EXIT_START + EXIT_DURATION;
+  // Real, direct user finding: "why is there a delay when switching to
+  // the next scene... there shouldn't be any delay." Root cause: the
+  // exit used to fire at a FIXED offset from the build's own end,
+  // completely unaware of the beat's own real duration - once TTS/
+  // narration-driven duration is back (or just a generously-authored
+  // "params.duration"), a beat can easily run several seconds longer
+  // than this template's own visual sequence needs, leaving the screen
+  // sitting on nothing for however long is left over after the early
+  // exit finished. Fixed by ANCHORING the exit to the end of the beat's
+  // own real duration instead: it always finishes right as the beat
+  // does (minus one small buffer - see TEXT_POP_OUT_END_BUFFER's own
+  // doc comment), so the hold after the build stretches or shrinks to
+  // fill whatever time is actually available, and there's never a dead
+  // gap between "text gone" and "scene changes." Falls back to the
+  // fixed minimum hold only when no real duration is known yet (e.g. a
+  // direct unit test of this function in isolation).
+  const minExitEnd = buildEnd + TEXT_POP_OUT_MIN_HOLD_AFTER_BUILD + TEXT_POP_OUT_EXIT_DURATION;
+  const EXIT_END = typeof duration === 'number' && Number.isFinite(duration)
+    ? Math.max(duration - TEXT_POP_OUT_END_BUFFER, minExitEnd)
+    : minExitEnd;
+  const EXIT_START = EXIT_END - TEXT_POP_OUT_EXIT_DURATION;
 
   const BUILD_Y = CANVAS_HEIGHT * 0.5;
   // Where the FIRST word's own left edge sits for the whole build phase
@@ -6889,7 +6920,7 @@ function buildTextPopOutLayers({ text, accentColor }) {
   }];
 
   words.forEach((word, i) => {
-    const riseStart = WORD_INTERVAL * i;
+    const riseStart = TEXT_POP_OUT_WORD_INTERVAL * i;
     layers.push({
       id: `__pop_word_${i}__`,
       type: 'text',
@@ -6905,17 +6936,17 @@ function buildTextPopOutLayers({ text, accentColor }) {
       textAlign: 'center',
       maxWidth: CANVAS_WIDTH,
       // X is fixed for life (see this function's own doc comment); Y
-      // rises from WORD_RISE_DISTANCE below the shared baseline up to 0
-      // - once it lands, it holds there (two identical trailing
-      // keyframes) for the rest of the layer's life, including through
-      // the group's own later exit-shrink.
+      // rises from TEXT_POP_OUT_WORD_RISE_DISTANCE below the shared
+      // baseline up to 0 - once it lands, it holds there (two identical
+      // trailing keyframes) for the rest of the layer's life, including
+      // through the group's own later exit-shrink.
       position: { keyframes: [
-        { time: riseStart, value: [wordLocalX[i], WORD_RISE_DISTANCE], interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: riseStart + WORD_RISE_DURATION, value: [wordLocalX[i], 0] },
+        { time: riseStart, value: [wordLocalX[i], TEXT_POP_OUT_WORD_RISE_DISTANCE], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: riseStart + TEXT_POP_OUT_WORD_RISE_DURATION, value: [wordLocalX[i], 0] },
       ] },
       opacity: { keyframes: [
         { time: riseStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: riseStart + WORD_RISE_DURATION * 0.6, value: 1 },
+        { time: riseStart + TEXT_POP_OUT_WORD_RISE_DURATION * 0.6, value: 1 },
       ] },
     });
   });
@@ -6923,15 +6954,10 @@ function buildTextPopOutLayers({ text, accentColor }) {
   return layers;
 }
 
-const TEXT_POP_OUT_WORD_INTERVAL = 0.18;
-const TEXT_POP_OUT_WORD_RISE_DURATION = 0.28;
-const TEXT_POP_OUT_HOLD_AFTER_BUILD = 0.55;
-const TEXT_POP_OUT_EXIT_DURATION = 0.5;
-const TEXT_POP_OUT_END_BUFFER = 0.15;
-/** Minimum real screen time this template's own build+exit needs for a given word count - mirrors buildTextPopOutLayers' own internal timing constants exactly (kept in sync manually, same pattern as this file's other "mirrors X's own timing" constants). */
+/** Minimum real screen time this template's own build+exit needs for a given word count (the FLOOR under a beat's own authored/narration-driven duration) - mirrors buildTextPopOutLayers' own internal timing constants exactly by reading the SAME module-level constants, so the two can never drift out of sync with each other. */
 function textPopOutMinDuration(wordCount) {
   const lastWordStart = TEXT_POP_OUT_WORD_INTERVAL * (wordCount - 1);
-  const exitEnd = lastWordStart + TEXT_POP_OUT_WORD_RISE_DURATION + TEXT_POP_OUT_HOLD_AFTER_BUILD + TEXT_POP_OUT_EXIT_DURATION;
+  const exitEnd = lastWordStart + TEXT_POP_OUT_WORD_RISE_DURATION + TEXT_POP_OUT_MIN_HOLD_AFTER_BUILD + TEXT_POP_OUT_EXIT_DURATION;
   return exitEnd + TEXT_POP_OUT_END_BUFFER;
 }
 
@@ -7034,14 +7060,20 @@ function buildMographBeatVisual(beat) {
     }
   } else if (spec.type === 'textPopOut' && typeof spec.text === 'string' && spec.text.trim()) {
     const text = truncateAtWordBoundary(spec.text.trim(), 60);
-    layers = buildTextPopOutLayers({ text, accentColor });
-    // The build+zoom-out sequence needs real time proportional to word
-    // count - floored (not just extended) since a very short authored
-    // duration would otherwise cut the zoom-out off before it lands.
+    // The build+exit sequence needs real time proportional to word count
+    // - floored (not just extended) since a very short authored duration
+    // would otherwise cut the exit off before it lands. Resolved to the
+    // FINAL duration BEFORE building layers (not after) so the exit can
+    // be anchored to the beat's own real end - see buildTextPopOutLayers'
+    // own doc comment for the dead-air bug this fixes.
+    const wordCount = text.split(' ').filter((w) => w.length > 0).length;
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-      const wordCount = text.split(' ').filter((w) => w.length > 0).length;
       beat.params.duration = Math.max(beat.params.duration, textPopOutMinDuration(wordCount));
     }
+    const duration = isPlainObject(beat.params) && typeof beat.params.duration === 'number'
+      ? beat.params.duration
+      : textPopOutMinDuration(wordCount);
+    layers = buildTextPopOutLayers({ text, accentColor, duration });
   }
 
   if (layers) {
