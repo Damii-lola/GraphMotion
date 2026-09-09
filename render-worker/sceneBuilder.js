@@ -768,10 +768,44 @@ function buildBeatVisual(visual, beatContext) {
   // at render time, rather than during generation-validation.
   applyTextAnimationPresets(visual, duration);
 
+  // Real, confirmed-live bug found while building this engine's first
+  // real use of layer parenting (a null/group object multiple children
+  // attach to - textPopOut's own word-reveal-then-zoom-out template,
+  // backend/sceneSchema.js): EVERY built node used to be pushed into
+  // rootChildren here, including ones a LATER layerDef declares as a
+  // child via "parent" - and Composition's own constructor
+  // (composition.js) unconditionally calls root.addChild(c) on every one
+  // of its own "children" argument, which (per Node.addChild's own
+  // logic: "if (child.parent) child.parent.removeChild(child)") FORCIBLY
+  // detaches a node from whatever parent it has and reattaches it to
+  // root. So wireTrackMattesAndParents's own correct re-parenting, run
+  // just before this, was immediately undone the moment `new
+  // Composition` ran one line later - any child rendered as if it were
+  // a top-level layer (only its own LOCAL position, no parent transform
+  // composed in at all). Confirmed directly: a text layer authored with
+  // local position [x, 0] under a parent positioned at [x, 520] rendered
+  // at y=0 (the canvas's own top edge), not y=520 - Node.render() DOES
+  // correctly climb the real parent chain via getWorldMatrix(), but only
+  // for nodes that are ACTUALLY still attached to that parent by the
+  // time rendering happens, which none of them were.
+  //
+  // Fixed by building every node and wiring parents FIRST, then
+  // filtering to only the genuinely top-level ones (no resolvable
+  // "parent") for Composition's own children list - a parented node
+  // still exists and still renders, just via its real parent's own
+  // recursive render(), never as a second, independent root-level copy.
+  // Collected as {layerDef, node} pairs rather than re-looked-up via
+  // idMap, because "id" is optional on a layer (only needed when
+  // something else references it) - an id-less layer would silently
+  // vanish from rootChildren if collection depended on idMap.get(id).
   const rootChildren = [];
   if (visual.background) rootChildren.push(build2DLayer({ ...visual.background, id: visual.background.id || '__background__' }, { ...beatContext, duration }, idMap));
-  for (const layerDef of visual.layers) rootChildren.push(build2DLayer(layerDef, { ...beatContext, duration }, idMap));
+  const builtLayers = visual.layers.map((layerDef) => ({ layerDef, node: build2DLayer(layerDef, { ...beatContext, duration }, idMap) }));
   wireTrackMattesAndParents(visual.layers, idMap);
+  for (const { layerDef, node } of builtLayers) {
+    if (layerDef.parent && idMap.has(layerDef.parent)) continue;
+    rootChildren.push(node);
+  }
 
   const composition = new Composition({
     width, height, duration, children: rootChildren,

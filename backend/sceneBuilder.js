@@ -717,10 +717,26 @@ function buildBeatVisual(visual, beatContext) {
   // at render time, rather than during generation-validation.
   applyTextAnimationPresets(visual, duration);
 
+  // See render-worker/sceneBuilder.js's own copy of this function for
+  // the full real-bug writeup: Composition's own constructor used to
+  // unconditionally re-parent every one of its "children" onto root,
+  // undoing wireTrackMattesAndParents's correct parenting one line
+  // earlier - any child rendered with only its own LOCAL position, no
+  // parent transform composed in. Fixed by filtering to only genuinely
+  // top-level layers (no resolvable "parent") before constructing the
+  // Composition.
   const rootChildren = [];
   if (visual.background) rootChildren.push(build2DLayer({ ...visual.background, id: visual.background.id || '__background__' }, { ...beatContext, duration }, idMap));
-  for (const layerDef of visual.layers) rootChildren.push(build2DLayer(layerDef, { ...beatContext, duration }, idMap));
+  // Built via a {layerDef, node} pair (not an idMap re-lookup) so a
+  // layer with no "id" - id is optional, only needed when something
+  // else references it - still gets collected correctly; only layerDefs
+  // with a "parent" that actually resolves get excluded below.
+  const builtLayers = visual.layers.map((layerDef) => ({ layerDef, node: build2DLayer(layerDef, { ...beatContext, duration }, idMap) }));
   wireTrackMattesAndParents(visual.layers, idMap);
+  for (const { layerDef, node } of builtLayers) {
+    if (layerDef.parent && idMap.has(layerDef.parent)) continue;
+    rootChildren.push(node);
+  }
 
   const composition = new Composition({
     width, height, duration, children: rootChildren,

@@ -2525,7 +2525,20 @@ function autoRepairBeat(beat) {
       // deliberate edge position is left completely alone. An earlier
       // keyframe (a legitimate off-screen fly-in START point) is never
       // touched - only a bad LANDING spot gets fixed.
-      if (layer.type === 'text' && typeof layer.text === 'string') {
+      // Real, confirmed-live bug found while building textPopOut (the
+      // first template to ever use real layer parenting): this clamp
+      // assumes "position" is an ABSOLUTE canvas coordinate, which is
+      // true for every layer EXCEPT one with a "parent" - there,
+      // "position" is a LOCAL offset from the parent's own transform (a
+      // small negative x like -152, well within a normal line of text
+      // once its parent's own position is added back in, is completely
+      // valid and expected), not a landing spot on the canvas at all.
+      // Confirmed directly: a word layer authored at local x=-152 got
+      // silently "fixed" to CANVAS_WIDTH/2, destroying the left-anchored
+      // layout its parent null was built to produce. Skipped entirely
+      // for parented layers, matching fixFramingBoxSize's own existing
+      // "textLayer.parent -> skip" convention elsewhere in this file.
+      if (layer.type === 'text' && typeof layer.text === 'string' && !layer.parent) {
         const size = estimateTextEffectiveSize(layer);
         // Math.max(width, actualWidth) - see validateBeatVisual's own
         // matching check for the full live-confirmed reason this takes
@@ -6775,6 +6788,168 @@ function truncateAtWordBoundary(text, maxChars) {
  * neutral fill behind it; every other shape in this file only ever has
  * one or the other, so the ordering is a no-op there.
  */
+/**
+ * New mograph template straight from a direct reference video (2026-09-
+ * 09): a short statement builds up ONE WORD AT A TIME (each one popping
+ * in right where it belongs in the line, the earlier words staying put
+ * the whole time), then the whole assembled line "zooms out" - scales
+ * down slightly and recenters - to settle into its final resting frame.
+ *
+ * Built on this engine's real Null Object / parenting system (node.js's
+ * getWorldMatrix, sceneBuilder.js's layerDef.parent) rather than hand-
+ * animating every word's own position: a single invisible `__pop_group__`
+ * null carries the GROUP-level transform (the build-phase left anchor,
+ * then the zoom-out-and-recenter), while every word is a child with a
+ * FIXED local position for its entire life - only its own opacity/scale
+ * ever change (the pop-in), never its position. This is what makes the
+ * "first word never visibly moves while later ones pop in" behavior
+ * automatic rather than something to hand-tune: the null's own position
+ * is completely constant during the whole build phase, so anything
+ * parented to it is too.
+ *
+ * Each word's LOCAL x is measured with a REAL ctx.measureText call
+ * against the EXACT font this will render with (this file's own
+ * measureTextWrap already established that `@napi-rs/canvas` is usable
+ * at scene-JSON-build time, not just at actual render time - no
+ * per-character-width estimate needed here). Local x=0 is defined as
+ * the exact center of the FULLY ASSEMBLED line (not the first word's own
+ * edge) - so scaling the null around its own origin always scales
+ * symmetrically around the line's true center, and "recenter on screen"
+ * at the end is just "move the null to CANVAS_WIDTH/2," regardless of
+ * how many words there are or what scale they end at.
+ */
+function buildTextPopOutLayers({ text, accentColor }) {
+  const words = text.split(' ').filter((w) => w.length > 0);
+  const FONT_FAMILY = 'Poppins Bold';
+  const FONT_WEIGHT = '700';
+  const FONT_SIZE = 52;
+  const WORD_GAP = FONT_SIZE * 0.28;
+
+  const measureCtx = createCanvas(10, 10).getContext('2d');
+  measureCtx.font = `${FONT_WEIGHT} ${FONT_SIZE}px ${FONT_FAMILY}`;
+  const wordWidths = words.map((w) => measureCtx.measureText(w).width);
+  const totalWidth = wordWidths.reduce((a, b) => a + b, 0) + WORD_GAP * (words.length - 1);
+
+  let cursor = -totalWidth / 2;
+  const wordLocalX = wordWidths.map((w) => {
+    const center = cursor + w / 2;
+    cursor += w + WORD_GAP;
+    return center;
+  });
+
+  const WORD_POP_INTERVAL = 0.16;
+  const WORD_POP_DURATION = 0.22;
+  const lastWordStart = WORD_POP_INTERVAL * (words.length - 1);
+  const HOLD_AFTER_BUILD = 0.3;
+  const ZOOM_START = lastWordStart + WORD_POP_DURATION + HOLD_AFTER_BUILD;
+  const ZOOM_DURATION = 0.5;
+  const ZOOM_END = ZOOM_START + ZOOM_DURATION;
+
+  const CENTER_X = CANVAS_WIDTH / 2;
+  const BUILD_Y = CANVAS_HEIGHT * 0.54;
+  const FINAL_Y = CANVAS_HEIGHT * 0.5;
+  // Where the FIRST word's own left edge sits during the build phase -
+  // that edge is always at local x = -totalWidth/2 (see wordLocalX
+  // above), so the null's own build-phase position.x is solved to put
+  // it exactly here and hold it there for the whole build.
+  const BUILD_LEFT_MARGIN = CANVAS_WIDTH * 0.12;
+  const FINAL_SCALE = 0.86;
+
+  const layers = [{
+    id: '__pop_group__',
+    type: 'null',
+    position: { keyframes: [
+      { time: 0, value: [BUILD_LEFT_MARGIN + totalWidth / 2, BUILD_Y] },
+      { time: ZOOM_START, value: [BUILD_LEFT_MARGIN + totalWidth / 2, BUILD_Y], interpolation: 'easing', easing: 'easeInOutCubic' },
+      { time: ZOOM_END, value: [CENTER_X, FINAL_Y] },
+    ] },
+    // Gentle continuous breathing once settled (same proven "expression
+    // wraps a keyframed base" pattern as every other template's idle
+    // motion this session) - keeps the final statement from going dead
+    // still for the rest of the beat.
+    scale: { expression: 'wiggle(0.2, 0.014)', base: { keyframes: [
+      { time: 0, value: [1, 1] },
+      { time: ZOOM_START, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+      { time: ZOOM_START + ZOOM_DURATION * 0.7, value: [FINAL_SCALE * 0.94, FINAL_SCALE * 0.94], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: ZOOM_END, value: [FINAL_SCALE, FINAL_SCALE] },
+    ] } },
+  }];
+
+  // Real spec extra: a faint accent-colored glow bleeding from behind
+  // the whole line, distinct from each word's own (auto-attached, tight)
+  // white glow - reads as ambient light behind the statement rather than
+  // changing the text's own color. A real, non-zero fill is required
+  // here (not just an outerGlow with nothing behind it) - outerGlow
+  // builds its bloom from the layer's OWN rendered silhouette (see
+  // layerStyles.js's applyOuterGlow), so a fully-transparent fill would
+  // give it nothing to glow from. Low opacity (0.18) keeps it reading as
+  // ambient light, not a solid colored card sitting behind the text.
+  // Pushed BEFORE any word layer so it paints behind them.
+  const backglowSize = [Math.max(totalWidth * 1.15, 200), FONT_SIZE * 2.2];
+  layers.push({
+    id: '__pop_backglow__',
+    type: 'shape',
+    parent: '__pop_group__',
+    width: backglowSize[0],
+    height: backglowSize[1],
+    position: [0, 0],
+    opacity: { keyframes: [
+      { time: lastWordStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: lastWordStart + WORD_POP_DURATION, value: 1 },
+    ] },
+    effects: [
+      { type: 'outerGlow', params: { color: accentColor, opacity: 0.5, blur: 40, blendMode: 'screen' } },
+    ],
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: backglowSize[0], height: backglowSize[1] } } },
+      { type: 'fill', color: accentColor, opacity: 0.18 },
+    ],
+  });
+
+  words.forEach((word, i) => {
+    const popStart = WORD_POP_INTERVAL * i;
+    layers.push({
+      id: `__pop_word_${i}__`,
+      type: 'text',
+      text: word,
+      parent: '__pop_group__',
+      fontFamily: FONT_FAMILY,
+      fontWeight: FONT_WEIGHT,
+      fontSize: FONT_SIZE,
+      // Bright, harmonization-proof white (same ICON_BRIGHT_TINT trick
+      // used elsewhere) - this template's whole visual identity is a
+      // stark, high-contrast statement, not a colored headline.
+      fillStyle: ICON_BRIGHT_TINT,
+      textAlign: 'center',
+      maxWidth: CANVAS_WIDTH,
+      position: [wordLocalX[i], 0],
+      scale: { keyframes: [
+        { time: popStart, value: [0.4, 0.4], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: popStart + WORD_POP_DURATION * 0.7, value: [1.18, 1.18], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: popStart + WORD_POP_DURATION, value: [1, 1] },
+      ] },
+      opacity: { keyframes: [
+        { time: popStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: popStart + WORD_POP_DURATION * 0.5, value: 1 },
+      ] },
+    });
+  });
+
+  return layers;
+}
+
+const TEXT_POP_OUT_WORD_INTERVAL = 0.16;
+const TEXT_POP_OUT_WORD_DURATION = 0.22;
+const TEXT_POP_OUT_HOLD_AFTER_BUILD = 0.3;
+const TEXT_POP_OUT_ZOOM_DURATION = 0.5;
+const TEXT_POP_OUT_SETTLE_HOLD = 0.6;
+/** Minimum real screen time this template's own reveal+zoom-out needs for a given word count - mirrors buildTextPopOutLayers' own internal timing constants exactly (kept in sync manually, same pattern as this file's other "mirrors X's own timing" constants). */
+function textPopOutMinDuration(wordCount) {
+  const lastWordStart = TEXT_POP_OUT_WORD_INTERVAL * (wordCount - 1);
+  const zoomEnd = lastWordStart + TEXT_POP_OUT_WORD_DURATION + TEXT_POP_OUT_HOLD_AFTER_BUILD + TEXT_POP_OUT_ZOOM_DURATION;
+  return zoomEnd + TEXT_POP_OUT_SETTLE_HOLD;
+}
+
 function applyMographGlow(layers) {
   for (const layer of layers) {
     if (!isPlainObject(layer)) continue;
@@ -6871,6 +7046,16 @@ function buildMographBeatVisual(beat) {
           beat.params.duration = Math.max(beat.params.duration, NODE_CLUSTER_EXTENDED_MIN_DURATION + (introText ? INTRO_TEXT_DURATION : 0));
         }
       }
+    }
+  } else if (spec.type === 'textPopOut' && typeof spec.text === 'string' && spec.text.trim()) {
+    const text = truncateAtWordBoundary(spec.text.trim(), 60);
+    layers = buildTextPopOutLayers({ text, accentColor });
+    // The build+zoom-out sequence needs real time proportional to word
+    // count - floored (not just extended) since a very short authored
+    // duration would otherwise cut the zoom-out off before it lands.
+    if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+      const wordCount = text.split(' ').filter((w) => w.length > 0).length;
+      beat.params.duration = Math.max(beat.params.duration, textPopOutMinDuration(wordCount));
     }
   }
 
@@ -6984,7 +7169,7 @@ function validateSceneJSON(sceneJSON) {
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
     } else if (seen.size < 3) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 3 and 6 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended). Add more template beats to reach at least 3.`);
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 3 and 6 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut). Add more template beats to reach at least 3.`);
     } else if (seen.size > 6) {
       errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 6. Trim beats down to 6 or fewer distinct templates.`);
     }
@@ -8943,5 +9128,6 @@ module.exports = {
   buildPhoneSwapLayers,
   buildSplitConvergeLayers,
   buildMergeClusterLayers,
+  buildTextPopOutLayers,
   buildMographBeatVisual,
 };
