@@ -72,7 +72,15 @@ const OPENROUTER_TIMEOUT_MS = 150000;
 // fixed cap on the model's mandatory internal reasoning, well under
 // any real maxTokens this file is called with, so real content always
 // has guaranteed room regardless of how much the model reasons.
-const REASONING_MAX_TOKENS = 3000;
+// 3000 -> 6000 (2026-09-10): minimax-m3's own reasoning routinely blew
+// past the old 3000 cap in real production calls even at a 7000-token
+// overall ceiling (finish_reason:"length", EMPTY content, on BOTH
+// treatment retry steps) - m2.7:free never showed this (3/3 trials
+// passed reliably at 3000), so m3's own reasoning genuinely needs more
+// room, not just a documentation guess. Every maxTokens call site was
+// raised alongside this to keep real content headroom above it - see
+// each one's own comment.
+const REASONING_MAX_TOKENS = 6000;
 
 /**
  * Single call, no retry of its own - sceneGenClient.js's own

@@ -181,7 +181,10 @@ async function judgeNarrationScript(sceneJSON) {
     // reasoning problem above removes that accidental protection, so
     // the explicit slice() below is what deliberately restores it now,
     // rather than relying on an unrelated ceiling to happen to do it.
-    const raw = await callOpenRouterRaw(SCRIPT_JUDGE_SYSTEM_PROMPT, numberedScript, { jsonMode: false, maxTokens: 3200, temperature: 0.6 });
+    // 3200 -> 8000 (2026-09-10): keeps the same "REASONING_MAX_TOKENS +
+    // genuine headroom" shape after that cap was raised 3000->6000 for
+    // minimax-m3 - see openRouterClient.js's own comment.
+    const raw = await callOpenRouterRaw(SCRIPT_JUDGE_SYSTEM_PROMPT, numberedScript, { jsonMode: false, maxTokens: 8000, temperature: 0.6 });
     const verdictMatch = raw.match(/VERDICT:\s*(PASS|FAIL)/i);
     const reasonMatch = raw.match(/REASON:\s*([\s\S]*)/i);
     const pass = verdictMatch ? verdictMatch[1].toUpperCase() === 'PASS' : true;
@@ -216,12 +219,16 @@ function pickRandomCreativeAngle() {
   return CREATIVE_ANGLES[Math.floor(Math.random() * CREATIVE_ANGLES.length)];
 }
 
-// Real, measured margin: this model's own free-endpoint reasoning is
-// mandatory and draws from this SAME max_tokens budget (see
-// openRouterClient.js's own doc comment) - 5000 leaves real room above
-// every treatment length seen so far, with one escalation step for a
-// rare unusually-long one rather than a hard truncation failure.
-const TREATMENT_MAX_TOKENS_STEPS = [5000, 7000];
+// Real, measured margin: this model's own reasoning is mandatory and
+// draws from this SAME max_tokens budget (see openRouterClient.js's own
+// doc comment) - leaves real room above every treatment length seen so
+// far, with one escalation step for a rare unusually-long one rather
+// than a hard truncation failure. [5000,7000] -> [10000,16000]
+// (2026-09-10): both steps were hitting finish_reason:"length" with
+// EMPTY content on minimax-m3 even at 7000, once REASONING_MAX_TOKENS
+// itself was raised 3000->6000 for the same model - doubled here to
+// keep real content headroom above the new reasoning cap.
+const TREATMENT_MAX_TOKENS_STEPS = [10000, 16000];
 async function generateCreativeTreatment(userPrompt, targetDurationSeconds, attempt = 0) {
   const creativeAngle = pickRandomCreativeAngle();
   console.log(`[sceneGenClient] creative angle for this generation: ${creativeAngle}`);
@@ -281,7 +288,11 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
     // full retry (another 60-100s+ call from scratch, per this exact
     // production log), so paying for more headroom up front is a net
     // latency win over guaranteeing a wasted round trip.
-    raw = await callOpenRouterRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 14000 });
+    // 14000 -> 22000 (2026-09-10): REASONING_MAX_TOKENS itself raised
+    // 3000->6000 for minimax-m3 (see openRouterClient.js) - kept the
+    // same real content headroom above it (~8000+) that this call
+    // already needed for a full multi-beat scene.
+    raw = await callOpenRouterRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 22000 });
   } catch (err) {
     if (budget.left > 0) {
       budget.left -= 1;
