@@ -495,6 +495,37 @@
   // duplicate jobs) this closes. Reset in generate()'s own finally
   // block, so it can't get stuck true after an error.
   let isGenerating = false;
+  // Real, confirmed-live bug (2026-09-09, direct user report: "my
+  // internet went off, and it failed try it again"): when pollJob gives
+  // up client-side (a network blip that outlasts MAX_CONSECUTIVE_FAILURES,
+  // or the user's own connection dropping entirely), the backend job it
+  // was watching is NEVER told to stop - it's a real forked render
+  // process with no idea the client gave up, so it keeps rendering to
+  // completion, orphaned. Confirmed directly via production logs: a
+  // retried generation showed TWO interleaved sets of chunkWorker logs
+  // (different pids, overlapping ranges) fighting over the same CPU,
+  // each frame taking ~1.2-1.5s instead of the ~0.5s measured with only
+  // one job running - the render wasn't slow, it was CONTENDED. This
+  // flag tracks whether currentJobId's true server-side status is still
+  // unknown (client gave up without ever hearing done/cancelled/failed)
+  // - generate() uses it to cancel a stale orphaned job before starting
+  // a fresh one, rather than letting both run concurrently. Deliberately
+  // NOT applied to the "job is just slow" timeout path in pollJob (see
+  // its own MAX_WAIT_MS comment) - that path's whole point is that
+  // refreshing the page should still resume and eventually show the
+  // finished video, which cancelling here would break.
+  let currentJobMightBeOrphaned = false;
+
+  // Best-effort - matches server.js's own cancelJobOnWorker convention
+  // (fire-and-forget, never blocks the caller). Failing silently here is
+  // fine: if this can't reach the server, the OLD job was orphaned
+  // before this call too and this was never going to be reliable on its
+  // own - the real fix is not creating a second concurrent job in the
+  // first place, which is the caller's job, not this function's.
+  function cancelOrphanedJob(jobId) {
+    if (!jobId) return;
+    fetch(`${API_BASE}/api/jobs/${jobId}/cancel?userId=${encodeURIComponent(getUserId())}`, { method: "POST" }).catch(() => {});
+  }
 
   // Simple persisted anonymous id so the backend's free-tier daily
   // limit (per userId) works across page reloads during testing.
@@ -616,8 +647,16 @@
   // sidebar's "+ New" button target, and what a direct visit to the
   // bare site root should show.
   function showFreshPromptState() {
+    // Same orphaned-job risk generate() itself guards against (see
+    // currentJobMightBeOrphaned's own doc comment) - clicking "+ New
+    // prompt" while a job is still rendering used to just drop the only
+    // reference to it (currentJobId) with nothing to cancel it.
+    if (currentJobId && currentJobMightBeOrphaned) {
+      cancelOrphanedJob(currentJobId);
+    }
     currentJobId = null;
     currentJobStatus = null;
+    currentJobMightBeOrphaned = false;
     promptInput.value = "";
     autoResizePromptInput();
     videoWrap.innerHTML = `<div class="placeholder" id="videoPlaceholder">Enter a prompt below to generate a video</div>`;
@@ -651,6 +690,7 @@
 
       const job = data.job;
       const isTerminal = job.status === "done" || job.status === "failed" || job.status === "cancelled";
+      currentJobMightBeOrphaned = !isTerminal; // see its own doc comment - navigating to a still-running job needs the same tracking generate()'s own fresh jobs get
       if (isTerminal) {
         loadJobIntoView(job);
       } else {
@@ -693,6 +733,16 @@
 
     isGenerating = true;
     const editingParentId = isInEditMode() ? currentJobId : null;
+    // See currentJobMightBeOrphaned's own doc comment above - this is
+    // the actual fix for the concurrent-jobs-fighting-over-one-CPU
+    // finding: starting a brand new generation (never true in edit mode,
+    // since isInEditMode() already requires the prior job to be "done")
+    // while the PREVIOUS attempt's true status is still unknown means it
+    // may well still be rendering server-side. Cancel it first instead
+    // of leaving it to run alongside the new one.
+    if (!editingParentId && currentJobId && currentJobMightBeOrphaned) {
+      cancelOrphanedJob(currentJobId);
+    }
     setLoading(editingParentId ? "Applying your edit..." : "Starting...");
 
     try {
@@ -716,6 +766,7 @@
       // progress for the right job instead of losing it.
       currentJobId = data.job.id;
       currentJobStatus = data.job.status;
+      currentJobMightBeOrphaned = true; // cleared once pollJob confirms a real terminal status below
       updateEditModeUI(); // hide the banner while the edit itself is rendering
       history.pushState({ jobId: currentJobId }, "", buildJobUrl(currentJobId));
       loadHistory(); // the new job now exists - reflect it in the sidebar immediately
@@ -806,11 +857,13 @@
           updateProgressUI(job);
 
           if (job.status === "done") {
+            currentJobMightBeOrphaned = false; // confirmed terminal - see its own doc comment
             loadJobIntoView(job);
             loadHistory(); // status changed - refresh the sidebar entry
             return resolve();
           }
           if (job.status === "cancelled") {
+            currentJobMightBeOrphaned = false;
             // Not a failure - the user asked for this. loadJobIntoView
             // (not reject) so it gets the calm "Generation cancelled."
             // message rather than the red error box a rejection would
@@ -820,6 +873,7 @@
             return resolve();
           }
           if (job.status === "failed") {
+            currentJobMightBeOrphaned = false;
             loadHistory(); // reflect the failure in the sidebar too
             return reject(new Error(job.error || "Generation failed"));
           }
