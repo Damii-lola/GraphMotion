@@ -1761,12 +1761,48 @@ function listTreatmentBeatHeaders(treatment) {
   return matches.map((header, i) => `${i}. ${header.replace(/=+/g, ' ').replace(/\s+/g, ' ').trim()}`);
 }
 
+// Direct user decision (2026-09-10): re-scoped the AI's whole job away
+// from raw scene-JSON encoding (buildMinimalGenerationSystemPrompt
+// above, ~17K tokens on its own) to something genuinely lightweight -
+// pick which of 7 known templates fit a beat, fill in a handful of
+// real short fields per beat. sceneGenClient.js's own compileCompact
+// SpecToSceneJSON does the actual translation into the full schema
+// buildMographBeatVisual expects (duration, per-template field
+// validation, etc.) - this prompt only needs to teach the model what
+// to pick and how to name real fields, not the full engine schema.
+// Kept under the user's own explicit 750-token ceiling - verified with
+// a real tokenizer count (gpt-tokenizer), not estimated.
+function buildCompactGenerationSystemPrompt() {
+  return `You pick short-form video templates for a topic and fill in their real fields. Respond with ONLY one valid JSON object - no markdown fences, no commentary.
+
+TEMPLATES (name: fields):
+nodeCluster: icons (3-8 real Iconify "prefix:name"), chosenIndex (0-based, which icon wins), introText (optional hook line, <=5 words)
+connectorList: items (2-6 of {icon,label}, label is 1-2 words), outroText (optional closing line, <=6 words)
+phoneSwap: text (2-4 word phone-screen headline), icon (real Iconify name it swaps to)
+splitConverge: icon (real Iconify name), label (optional, 1-3 words)
+mergeCluster: icons (2-5 real Iconify names), resultIcon (real Iconify name), label (optional, 1-3 words)
+nodeClusterExtended: icons (3-8), chosenIndex, mergeText (required short phrase), newIcon (required), newLabel (optional, 1-3 words)
+textPopOut: text (a short punchy statement, 3-6 words)
+
+Icons must be REAL Iconify names, format "prefix:name" - "mdi:concept-name" for general ideas (e.g. mdi:rocket-launch, mdi:calendar-check), "simple-icons:brandname" for real brand logos. Never invent a name.
+
+RULES:
+- Your "beats" array MUST have EXACTLY 6 entries - not fewer, not more. Pick 6 DIFFERENT templates from the 7 above (each used at most once - never repeat one), whichever 6 fit the topic best.
+- Every beat needs "narration": a short SPOKEN line, 8 words max, that matches what's happening on screen.
+- The FIRST beat's narration must do ONE of: contain "you"/"your", end with "?" or "!", or start with Stop/Imagine/Picture/Wait/Guess/"What if"/Never - never a flat statement of fact.
+- "accentColor" is optional per beat, a hex string like "#8B5CF6" - omit it to auto-pick one.
+
+OUTPUT SHAPE (one line, no extra keys):
+{"beats":[{"template":"nodeCluster","narration":"Which one actually works?","vars":{"icons":["mdi:water","mdi:run","mdi:book-open-page-variant"],"chosenIndex":1},"accentColor":"#8B5CF6"}]}`;
+}
+
 module.exports = {
   COMP_WIDTH,
   COMP_HEIGHT,
   buildTreatmentSystemPrompt,
   buildGenerationSystemPrompt,
   buildMinimalGenerationSystemPrompt,
+  buildCompactGenerationSystemPrompt,
   buildEditSystemPrompt,
   listTreatmentBeatHeaders,
 };

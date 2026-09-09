@@ -1,9 +1,10 @@
 const { jsonrepair } = require('jsonrepair');
 const { validateSceneJSON, buildMographBeatVisual } = require('./sceneSchema');
 const {
-  buildTreatmentSystemPrompt, buildMinimalGenerationSystemPrompt, buildEditSystemPrompt,
+  buildTreatmentSystemPrompt, buildMinimalGenerationSystemPrompt, buildCompactGenerationSystemPrompt, buildEditSystemPrompt,
 } = require('./scenePrompts');
 const { callOpenRouterRaw } = require('./openRouterClient');
+const { callCloudflareRaw } = require('./cloudflareClient');
 
 /**
  * Scene generation, on OpenRouter's minimax/minimax-m3 model (paid -
@@ -354,59 +355,204 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
   return sceneJSON;
 }
 
-// Real, direct user request: "the first AI will be generated and give
-// it to this new AI, the new ai will make corrections and give it back
-// to the first ai to regenerate... the cycle will repeat over and over
-// till we get a VERY NICE INTERESTING EYECATCHING SCROLLSTOPPING
-// script." Wired as its own outer loop, separate from
-// generateWholeSceneJSON's own schema-validation retries (a script can
-// be perfectly valid JSON on the first try and still fail the judge,
-// or vice versa) - capped at MAX_JUDGE_ROUNDS total attempts; if the
-// judge still hasn't passed by then, ships the LAST attempt anyway
-// rather than block the whole generation on taste forever.
-async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
-  console.log('[sceneGenClient] planning creative treatment...');
-  const treatment = await generateCreativeTreatment(userPrompt, targetDurationSeconds);
+// Direct user re-scoping (2026-09-10): "the ai wont do much, it will
+// just pick scenes that fit the prompt then give us the variables for
+// the scenes" - replaces the old treatment-then-full-JSON-encode two-
+// step process (generateCreativeTreatment/generateWholeSceneJSON below,
+// kept defined but no longer called from generateSceneJSON - see their
+// own doc comments) with ONE call against Cloudflare Workers AI's
+// compact prompt (buildCompactGenerationSystemPrompt, scenePrompts.js -
+// real, tokenizer-measured 494 tokens, under the user's own 750-token
+// ceiling), then a pure-JS compile step into the real schema.
 
-  // Script-quality judge loop TEMPORARILY DISABLED - direct user request
-  // (2026-09-07): "comment out the audio script and the judge to judge
-  // the audio script... Rn we are trying to get the motion graphics in
-  // place, that's the priority." Narration audio itself is also
-  // disabled right now (see narrationPrefetch.js's prefetchNarration),
-  // so judging the narration script's hook/entertainment value is moot
-  // until audio comes back. Commented out below, not deleted - re-enable
-  // by restoring the loop and deleting this single-pass replacement.
-  const budget = { left: TOTAL_STRUCTURAL_RETRY_BUDGET };
-  const sceneJSON = await generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { budget });
-  return sceneJSON;
+// No real narration-audio timing is available to size a beat's duration
+// from (TTS is currently disabled - see narrationPrefetch.js), so each
+// template gets a reasonable flat starting point; buildMographBeatVisual
+// itself floors/extends several of these upward already (intro/outro
+// text, nodeClusterExtended's own fixed runtime, textPopOut's word-
+// count-driven minimum) - this is deliberately just a sane starting
+// point for that machinery, not a real narration-derived duration.
+const COMPACT_BASE_DURATION = {
+  nodeCluster: 3.0,
+  connectorList: 3.5,
+  phoneSwap: 3.0,
+  splitConverge: 2.5,
+  mergeCluster: 3.0,
+  nodeClusterExtended: 3.0,
+  textPopOut: 3.0,
+};
 
-  /*
-  let sceneJSON = null;
-  let judgeFeedback = null;
-  // Shared, by-reference structural-retry budget - see
-  // TOTAL_STRUCTURAL_RETRY_BUDGET's own doc comment. Created ONCE here
-  // and passed into every round below so retries are capped across the
-  // WHOLE generation, not reset fresh on every judge round.
-  const budget = { left: TOTAL_STRUCTURAL_RETRY_BUDGET };
-  for (let round = 1; round <= MAX_JUDGE_ROUNDS; round++) {
-    console.log(`[sceneGenClient] encoding whole scene (script round ${round}/${MAX_JUDGE_ROUNDS})...`);
-    sceneJSON = await generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatment, { budget, judgeFeedback });
-
-    console.log('[sceneGenClient] judging narration script...');
-    const verdict = await judgeNarrationScript(sceneJSON);
-    if (verdict.pass) {
-      console.log(`[sceneGenClient] script judge: PASS (round ${round})`);
-      break;
+/**
+ * Pure translation, no AI involved - the compact {beats:[{template,
+ * narration, vars, accentColor}]} shape the AI actually produces into
+ * the real {scenes:[{params,mograph}]} shape buildMographBeatVisual/
+ * validateSceneJSON expect. "vars" fields map directly onto each
+ * template's own real mograph fields (icons, chosenIndex, items, etc.
+ * - see buildMographBeatVisual's own dispatch for the authoritative
+ * list), so this is mostly a straight spread - buildMographBeatVisual's
+ * own existing type/shape checks are what actually validate them, not
+ * duplicated here.
+ */
+function compileCompactSpecToSceneJSON(compact) {
+  if (!compact || !Array.isArray(compact.beats) || compact.beats.length === 0) {
+    throw new Error('compact spec is missing a real, non-empty "beats" array');
+  }
+  const fieldErrors = [];
+  const scenes = compact.beats.map((beat, i) => {
+    if (!beat || typeof beat.template !== 'string' || !beat.template.trim()) {
+      fieldErrors.push(`beat[${i}] is missing its "template"`);
+      return null;
     }
-    console.log(`[sceneGenClient] script judge: FAIL (round ${round}) - ${verdict.reason}`);
-    if (round === MAX_JUDGE_ROUNDS) {
-      console.warn(`[sceneGenClient] script judge still failing after ${MAX_JUDGE_ROUNDS} rounds - shipping the last attempt rather than block the job further`);
-      break;
+    const vars = isPlainObjectLocal(beat.vars) ? beat.vars : {};
+    const fieldError = validateCompactBeatVars(beat.template, vars);
+    if (fieldError) fieldErrors.push(`beat[${i}] (${beat.template}) ${fieldError}`);
+    const mograph = { type: beat.template, ...vars };
+    if (typeof beat.accentColor === 'string' && beat.accentColor.trim()) mograph.accentColor = beat.accentColor.trim();
+    return {
+      params: {
+        duration: COMPACT_BASE_DURATION[beat.template] || 3.0,
+        narration: typeof beat.narration === 'string' ? beat.narration.trim() : '',
+      },
+      mograph,
+    };
+  });
+  // Thrown BEFORE handing anything to buildMographBeatVisual - see
+  // validateCompactBeatVars' own doc comment for why: its silent-drop
+  // behavior turns exactly this into an unhelpful generic error later,
+  // so catching it here with specific per-beat reasons first is what
+  // actually gives a retry something to fix.
+  if (fieldErrors.length > 0) throw new Error(fieldErrors.join('; '));
+  return { scenes };
+}
+function isPlainObjectLocal(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+
+// Same pattern sceneSchema.js's own MOGRAPH_ICON_RE uses (kept as a
+// local copy rather than exported/imported - a one-line regex isn't
+// worth wiring a new export through for).
+const ICON_RE = /^[a-z0-9-]+:[a-z0-9-]+$/i;
+function isRealIcon(v) { return typeof v === 'string' && ICON_RE.test(v); }
+
+/**
+ * Real, direct finding (2026-09-10): buildMographBeatVisual SILENTLY
+ * drops a beat whose "vars" don't match its own dispatch conditions -
+ * no per-field reason, it just never builds layers for it. A real local
+ * test hit validateSceneJSON's own generic "every beat was dropped as
+ * unusable" error with zero indication of WHICH field on WHICH beat was
+ * wrong, giving the retry prompt nothing concrete to fix. This mirrors
+ * buildMographBeatVisual's own per-template conditions EXACTLY (see its
+ * own dispatch in sceneSchema.js) so a bad beat gets a specific,
+ * actionable error instead - "beat[2] (mergeCluster): icons needs at
+ * least 2 real Iconify names, got 1" is something a retry can actually
+ * act on; "every beat was dropped" isn't.
+ */
+function validateCompactBeatVars(template, vars) {
+  const icons = Array.isArray(vars.icons) ? vars.icons.filter(isRealIcon) : [];
+  switch (template) {
+    case 'nodeCluster':
+      if (icons.length < 3) return `needs "icons": at least 3 real Iconify names (got ${icons.length} valid ones)`;
+      return null;
+    case 'connectorList': {
+      const items = Array.isArray(vars.items) ? vars.items.filter((it) => isPlainObjectLocal(it) && isRealIcon(it.icon) && typeof it.label === 'string' && it.label.trim()) : [];
+      if (items.length < 2) return `needs "items": at least 2 entries, each a real {icon,label} (got ${items.length} valid ones)`;
+      return null;
     }
-    judgeFeedback = verdict.reason;
+    case 'phoneSwap':
+      if (typeof vars.text !== 'string' || !vars.text.trim()) return 'needs a non-empty "text" (the phone-screen headline)';
+      if (!isRealIcon(vars.icon)) return 'needs a real Iconify "icon" to swap to';
+      return null;
+    case 'splitConverge':
+      if (!isRealIcon(vars.icon)) return 'needs a real Iconify "icon"';
+      return null;
+    case 'mergeCluster':
+      if (icons.length < 2) return `needs "icons": at least 2 real Iconify names (got ${icons.length} valid ones)`;
+      if (!isRealIcon(vars.resultIcon)) return 'needs a real Iconify "resultIcon"';
+      return null;
+    case 'nodeClusterExtended':
+      if (icons.length < 3) return `needs "icons": at least 3 real Iconify names (got ${icons.length} valid ones)`;
+      if (!isRealIcon(vars.newIcon)) return 'needs a real Iconify "newIcon"';
+      if (typeof vars.mergeText !== 'string' || !vars.mergeText.trim()) return 'needs a non-empty "mergeText"';
+      return null;
+    case 'textPopOut':
+      if (typeof vars.text !== 'string' || !vars.text.trim()) return 'needs a non-empty "text"';
+      return null;
+    default:
+      return `"${template}" is not one of the 7 real template names`;
+  }
+}
+
+// Separate from TOTAL_STRUCTURAL_RETRY_BUDGET (3, tuned for the OLD,
+// slow/paid OpenRouter path where every retry cost 60-100s+) - real
+// local testing found the free 8B model occasionally needs more than 3
+// attempts to land a fully valid spec (one real run hit "every beat
+// dropped as unusable" 3 times in a row). Since a retry here costs
+// single-digit seconds and nothing per call, a more generous budget is
+// free real reliability, not a real latency tradeoff.
+const COMPACT_RETRY_BUDGET = 6;
+
+/**
+ * The single Cloudflare call plus its own structural-retry loop -
+ * mirrors generateWholeSceneJSON's own shape (parse -> build mograph ->
+ * validate -> feed errors back -> retry) but against the much smaller
+ * compact prompt/output, so a retry here is cheap (real measured speed:
+ * 3-6s per call) rather than the 60-100s+ round trips the old OpenRouter
+ * path paid for every retry.
+ */
+async function generateCompactBeatSpec(userPrompt, { retriesLeft = COMPACT_RETRY_BUDGET, priorErrors = null } = {}) {
+  const systemPrompt = buildCompactGenerationSystemPrompt();
+  let userMessage = `Topic: ${userPrompt}\n\nCreative angle for this generation: ${pickRandomCreativeAngle()}`;
+  if (priorErrors) userMessage += `\n\nYour previous attempt was invalid:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON.`;
+
+  // 1500 -> 3000 (2026-09-10): a real local test hit finish_reason:
+  // "length" at 1500 once the model tried to actually write 5+ full
+  // beats worth of JSON (icons arrays, labels, etc.) - Cloudflare's free
+  // tier has no per-token cost the way the earlier paid MiniMax path
+  // did, so there's no real downside to generous headroom here; calls
+  // stay in the single-digit seconds regardless.
+  const raw = await callCloudflareRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 3000, temperature: 0.8 });
+  let compact;
+  try {
+    compact = extractJson(raw);
+  } catch (err) {
+    if (retriesLeft > 0) {
+      console.warn(`[sceneGenClient] compact spec JSON parse failed (${err.message}), retrying (${retriesLeft - 1} left)...`);
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [`Your last response was not valid JSON: ${err.message}`] });
+    }
+    throw err;
+  }
+
+  let sceneJSON;
+  try {
+    sceneJSON = compileCompactSpecToSceneJSON(compact);
+  } catch (err) {
+    if (retriesLeft > 0) {
+      console.warn(`[sceneGenClient] compact spec shape invalid (${err.message}), retrying (${retriesLeft - 1} left)...`);
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [err.message] });
+    }
+    throw err;
+  }
+
+  sceneJSON.scenes.forEach(buildMographBeatVisual);
+  const { valid, errors } = validateSceneJSON(sceneJSON);
+  if (!valid) {
+    if (retriesLeft > 0) {
+      console.warn(`[sceneGenClient] compiled scene JSON failed validation (${errors.length} error(s)), retrying (${retriesLeft - 1} left): ${errors.slice(0, 3).join('; ')}`);
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: errors });
+    }
+    throw new Error(`Generated scene JSON failed schema validation after retries: ${errors.join('; ')}`);
   }
   return sceneJSON;
-  */
+}
+
+// targetDurationSeconds kept as a parameter (callers still pass it) but
+// not used yet - the compact flow assigns each beat a flat base
+// duration (COMPACT_BASE_DURATION above) rather than deriving pacing
+// from a target total, since there's no real narration-audio length to
+// size against right now anyway (TTS disabled). Worth revisiting - e.g.
+// scaling COMPACT_BASE_DURATION per beat toward this target - if a real
+// need for duration targeting comes up.
+async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
+  console.log('[sceneGenClient] generating compact beat spec (Cloudflare Workers AI)...');
+  return generateCompactBeatSpec(userPrompt);
 }
 
 async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds = 12, { retriesLeft = 4, priorErrors = null } = {}) {
