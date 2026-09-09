@@ -181,10 +181,13 @@ async function judgeNarrationScript(sceneJSON) {
     // reasoning problem above removes that accidental protection, so
     // the explicit slice() below is what deliberately restores it now,
     // rather than relying on an unrelated ceiling to happen to do it.
-    // 3200 -> 8000 (2026-09-10): keeps the same "REASONING_MAX_TOKENS +
-    // genuine headroom" shape after that cap was raised 3000->6000 for
-    // minimax-m3 - see openRouterClient.js's own comment.
-    const raw = await callOpenRouterRaw(SCRIPT_JUDGE_SYSTEM_PROMPT, numberedScript, { jsonMode: false, maxTokens: 8000, temperature: 0.6 });
+    // Real root cause found (2026-09-10): callOpenRouterRaw's own
+    // reasoning:{max_tokens} param wasn't honored for minimax-m3 at all
+    // and was eating the whole budget regardless of size - see
+    // openRouterClient.js's own doc comment. That param is gone now, so
+    // 3200 (this call's own short verdict+reason output, unmodified from
+    // before any of the reasoning-cap tuning) is real headroom again.
+    const raw = await callOpenRouterRaw(SCRIPT_JUDGE_SYSTEM_PROMPT, numberedScript, { jsonMode: false, maxTokens: 3200, temperature: 0.6 });
     const verdictMatch = raw.match(/VERDICT:\s*(PASS|FAIL)/i);
     const reasonMatch = raw.match(/REASON:\s*([\s\S]*)/i);
     const pass = verdictMatch ? verdictMatch[1].toUpperCase() === 'PASS' : true;
@@ -219,16 +222,20 @@ function pickRandomCreativeAngle() {
   return CREATIVE_ANGLES[Math.floor(Math.random() * CREATIVE_ANGLES.length)];
 }
 
-// Real, measured margin: this model's own reasoning is mandatory and
-// draws from this SAME max_tokens budget (see openRouterClient.js's own
-// doc comment) - leaves real room above every treatment length seen so
-// far, with one escalation step for a rare unusually-long one rather
-// than a hard truncation failure. [5000,7000] -> [10000,16000]
-// (2026-09-10): both steps were hitting finish_reason:"length" with
-// EMPTY content on minimax-m3 even at 7000, once REASONING_MAX_TOKENS
-// itself was raised 3000->6000 for the same model - doubled here to
-// keep real content headroom above the new reasoning cap.
-const TREATMENT_MAX_TOKENS_STEPS = [10000, 16000];
+// Real, direct root cause found (2026-09-10) after several wrong guesses
+// (see openRouterClient.js's own "DO NOT re-add a reasoning param" doc
+// comment for the full investigation): minimax-m3 was failing on EVERY
+// maxTokens value tried (7000, 16000, even as low as 2000) because
+// callOpenRouterRaw was sending a reasoning:{max_tokens} param that
+// isn't honored for this model at all - reasoning was consuming the
+// ENTIRE budget regardless of its own size. Removing that param
+// entirely (not tuning this number) was the actual fix, confirmed with
+// an isolated raw-fetch test: the exact same prompt with no "reasoning"
+// field succeeded immediately (finish_reason:"stop", ~2500 tokens of
+// real content, 2.1s). [5000,7000] leaves real room above every real
+// treatment length seen so far (that same test's own ~2500-token
+// response, with margin), now that nothing is silently eating it first.
+const TREATMENT_MAX_TOKENS_STEPS = [5000, 7000];
 async function generateCreativeTreatment(userPrompt, targetDurationSeconds, attempt = 0) {
   const creativeAngle = pickRandomCreativeAngle();
   console.log(`[sceneGenClient] creative angle for this generation: ${creativeAngle}`);
@@ -272,6 +279,22 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
     if (priorErrors.some((e) => /params\.narration:.*too long/.test(e))) {
       userMessage += `\n\nCOUNT THE WORDS in EVERY beat's narration before responding, not just the one flagged above - fixing one beat while another drifts over the limit is not a fix. Every single beat needs 8 words or fewer, no exceptions.`;
     }
+    // Real, direct finding (2026-09-10): with the minimum distinct-
+    // template requirement raised 3->5 (now 7 templates exist total),
+    // "used more than once" became a real, repeated retry failure - the
+    // model kept landing on the SAME repeated template across multiple
+    // attempts rather than genuinely picking a fresh one, the identical
+    // "vague instruction doesn't reliably land" problem the two
+    // mechanical fixes above already solved for narration. Naming the
+    // exact repeated template(s) and listing what's actually left
+    // removes the guesswork instead of just repeating the abstract rule.
+    const repeatMatch = priorErrors.find((e) => /used more than once/.test(e));
+    if (repeatMatch) {
+      const ALL_TEMPLATES = ['nodeCluster', 'connectorList', 'phoneSwap', 'splitConverge', 'mergeCluster', 'nodeClusterExtended', 'textPopOut'];
+      const repeatedNames = [...repeatMatch.matchAll(/"([a-zA-Z]+)"/g)].map((m) => m[1]);
+      const stillAvailable = ALL_TEMPLATES.filter((t) => !repeatedNames.includes(t));
+      userMessage += `\n\nMECHANICAL FIX for the repeated-template error above: ${repeatedNames.join(', ')} already appear(s) more than once in your last attempt. Find the LATER beat(s) using ${repeatedNames.join('/')} a second time and replace ONLY that beat's own "type" with one of these genuinely still-unused templates instead: ${stillAvailable.join(', ')}. Keep that beat's own narration/idea, just re-encode it as the new template's own real fields.`;
+    }
   }
 
   let raw;
@@ -288,11 +311,15 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
     // full retry (another 60-100s+ call from scratch, per this exact
     // production log), so paying for more headroom up front is a net
     // latency win over guaranteeing a wasted round trip.
-    // 14000 -> 22000 (2026-09-10): REASONING_MAX_TOKENS itself raised
-    // 3000->6000 for minimax-m3 (see openRouterClient.js) - kept the
-    // same real content headroom above it (~8000+) that this call
-    // already needed for a full multi-beat scene.
-    raw = await callOpenRouterRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 22000 });
+    // Real root cause found (2026-09-10): callOpenRouterRaw's own
+    // reasoning:{max_tokens} param wasn't honored for minimax-m3 at all
+    // and was eating the whole budget regardless of size (confirmed via
+    // an isolated raw-fetch test - see openRouterClient.js's own doc
+    // comment for the full investigation). That param is gone now.
+    // 16000 (up slightly from the original 14000 that worked reliably
+    // for the old model) - genuine headroom for a full multi-beat scene
+    // now that nothing is silently consuming the budget first.
+    raw = await callOpenRouterRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 16000 });
   } catch (err) {
     if (budget.left > 0) {
       budget.left -= 1;

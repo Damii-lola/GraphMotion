@@ -68,19 +68,6 @@ const OPENROUTER_MODEL = 'minimax/minimax-m3';
 // call so far was 84.8s, and 90s left almost no margin above that
 // before falsely aborting a call that was actually still working.
 const OPENROUTER_TIMEOUT_MS = 150000;
-// See the reasoning param's own comment at the call site - a small,
-// fixed cap on the model's mandatory internal reasoning, well under
-// any real maxTokens this file is called with, so real content always
-// has guaranteed room regardless of how much the model reasons.
-// 3000 -> 6000 (2026-09-10): minimax-m3's own reasoning routinely blew
-// past the old 3000 cap in real production calls even at a 7000-token
-// overall ceiling (finish_reason:"length", EMPTY content, on BOTH
-// treatment retry steps) - m2.7:free never showed this (3/3 trials
-// passed reliably at 3000), so m3's own reasoning genuinely needs more
-// room, not just a documentation guess. Every maxTokens call site was
-// raised alongside this to keep real content headroom above it - see
-// each one's own comment.
-const REASONING_MAX_TOKENS = 6000;
 
 /**
  * Single call, no retry of its own - sceneGenClient.js's own
@@ -113,21 +100,27 @@ async function callOpenRouterRaw(systemPrompt, userMessage, { jsonMode = true, m
         ],
         temperature,
         max_tokens: maxTokens,
-        // Real, confirmed-live production failure: this model's free
-        // endpoint has MANDATORY reasoning (confirmed directly - a
-        // request with reasoning:{effort:'none'} gets a hard 400,
-        // "Reasoning is mandatory for this endpoint and cannot be
-        // disabled") - and reasoning tokens draw from the SAME
-        // max_tokens budget as real content. A real production job
-        // failed outright when reasoning apparently consumed the
-        // entire 28000-token budget before ever writing the actual
-        // JSON answer (finish_reason:"length" with EMPTY message
-        // content). Capping reasoning's own budget (confirmed working
-        // live, unlike the disable attempt) guarantees real headroom
-        // is always left for content regardless of how much the model
-        // wants to "think" - REASONING_MAX_TOKENS is deliberately a
-        // small fraction of the overall maxTokens.
-        reasoning: { max_tokens: REASONING_MAX_TOKENS },
+        // Real, confirmed finding (2026-09-10) - DO NOT re-add a
+        // "reasoning" param here for minimax-m3. The OLD model
+        // (minimax-m2.7:free) genuinely required one: its endpoint had
+        // MANDATORY reasoning (a request with reasoning:{effort:'none'}
+        // got a hard 400, "Reasoning is mandatory for this endpoint and
+        // cannot be disabled"), and reasoning:{max_tokens:3000} was the
+        // real, working fix for that model (3/3 trials passed reliably).
+        // minimax-m3 is the OPPOSITE: multiple real, billed production
+        // tests (2026-09-10) with reasoning:{max_tokens:N} - even raised
+        // as high as 22000 total / 6000 reasoning, even cut as low as
+        // 2000 total - EVERY one came back finish_reason:"length" with
+        // COMPLETELY EMPTY content, reasoning apparently consuming the
+        // whole budget regardless of the cap's own size (so the cap
+        // itself likely isn't honored for this model at all - OpenRouter's
+        // own reasoning-tokens docs list Anthropic/Gemini/some Qwen
+        // models as respecting reasoning.max_tokens, not MiniMax).
+        // Isolated, direct test (bypassing this function, raw fetch)
+        // proved it conclusively: the EXACT SAME prompt with NO
+        // "reasoning" field at all succeeded immediately (finish_reason:
+        // "stop", full real content, 2.1s) - so for m3, omitting the
+        // param entirely is the fix, not tuning its value.
         ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
       }),
     });

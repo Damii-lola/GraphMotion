@@ -156,11 +156,12 @@ async function annotateNarrationTags(plainText, feedback = '') {
     ? `${plainText}\n\n(A previous take of this exact script was reviewed by an audio QA judge and rejected - apply this specific feedback this time: ${feedback})`
     : plainText;
   try {
-    // 1000 -> 8000 (2026-09-10): REASONING_MAX_TOKENS raised 3000->6000
-    // for minimax-m3 (openRouterClient.js) - 1000 total could never
-    // have survived even the OLD 3000 reasoning cap; kept real headroom
-    // above the new one for this short tagging output.
-    const tagged = (await callOpenRouterRaw(TAGGING_SYSTEM_PROMPT, userMessage, { jsonMode: false, maxTokens: 8000, temperature: 0.4 })).trim();
+    // Real root cause found (2026-09-10): callOpenRouterRaw's own
+    // reasoning:{max_tokens} param wasn't honored for minimax-m3 and was
+    // eating the whole budget regardless of size - see
+    // openRouterClient.js's own doc comment. That param is gone now, so
+    // 1500 is real headroom again for this short per-beat tagging output.
+    const tagged = (await callOpenRouterRaw(TAGGING_SYSTEM_PROMPT, userMessage, { jsonMode: false, maxTokens: 1500, temperature: 0.4 })).trim();
     if (stripTagsAndNormalize(tagged) !== stripTagsAndNormalize(plainText)) {
       console.warn(`[narrationTagging] tagged text changed the actual words (likely hallucinated content) - using mechanical pause tags only. Original: "${plainText}" | Got: "${tagged}"`);
       return ensurePauseTags(plainText);
