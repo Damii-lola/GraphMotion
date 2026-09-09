@@ -144,7 +144,12 @@ async function cancelJobOnWorker(workerUrl, jobId) {
 }
 
 /** Periodic ping to every configured worker's /health - the only thing that actually keeps a Render free-tier worker instance awake (Render sleeps on inbound-traffic idleness; nothing internal to the worker can substitute for real inbound requests). Also doubles as a lightweight liveness log. */
-function startWorkerKeepAlive(intervalMs = 10 * 60 * 1000) {
+// 10min -> 3min: direct user request, tighter safety margin against
+// Render's free-tier ~15min inbound-idle sleep threshold. A plain
+// setInterval in this long-lived process, unlike a GitHub Actions cron
+// (see the .github/workflows keep-alive job for the backend's OWN
+// external pinger) - no platform-imposed minimum interval here.
+function startWorkerKeepAlive(intervalMs = 3 * 60 * 1000) {
   if (WORKER_URLS.length === 0) return;
   setInterval(() => {
     WORKER_URLS.forEach(async (url) => {

@@ -55,8 +55,19 @@ process.on('uncaughtException', (err) => {
   console.error('[render-worker] uncaughtException, staying up despite:', err);
 });
 
-// Direct user instruction: 3 concurrent renders per worker.
-const MAX_CONCURRENT_RENDERS = 3;
+// Direct user instruction (2026-09-09, 3 -> 2): confirmed every service
+// (backend AND this worker) runs on Render's free tier, ruling out a
+// tier mismatch as the "fast before the coordinator/worker split, slow
+// after" cause. withRenderLock already serializes actual Skia rendering
+// to one job at a time regardless of this number (see its own doc
+// comment) - this only bounds how many jobs can be ACCEPTED (and
+// therefore queued behind each other in that same lock) before a new
+// one gets a 503 and the coordinator falls back to local rendering
+// instead. On a single free-tier instance, admitting a 3rd job just
+// means it queues longer behind two others with no extra throughput to
+// show for it - accepting fewer, faster-clearing jobs is a better fit
+// for this tier than accepting more that all wait longer.
+const MAX_CONCURRENT_RENDERS = 2;
 let activeRenders = 0;
 
 // jobIds the coordinator has asked to cancel - checked between chunks
@@ -394,8 +405,9 @@ async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
   // progress ticks arrive roughly 6x/second per chunk with no
   // throttling at the source, and the frontend only polls every 2s
   // anyway, so firing an unthrottled Supabase write per tick is pure
-  // waste (and, at 3 concurrent renders per worker, three times the
-  // waste of the single-job case that pattern was fixed for).
+  // waste (and, at MAX_CONCURRENT_RENDERS concurrent renders per worker,
+  // that many times the waste of the single-job case that pattern was
+  // fixed for).
   let lastProgressUpdateAt = 0;
   const PROGRESS_UPDATE_MIN_INTERVAL_MS = 1500;
 
