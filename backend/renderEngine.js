@@ -136,18 +136,19 @@ function withLogicalScale(drawFn) {
   };
 }
 
-// 24 -> 20 was an emergency speed pass; 20 -> 60 (2026-09-06) is the
-// deliberate reverse - direct user request. Originally paired with a
-// resolution drop (760x1352 -> 480x854) to roughly offset the extra
-// pixel throughput, but that drop was reverted (see WIDTH/HEIGHT's own
-// doc comment - 480px wasn't enough resolution for icons to stay
-// sharp), so this combination (760x1352 @ 60fps) is a genuine ~6x
-// pixel-throughput increase over the original 540x960 @ 20fps, not a
-// roughly-offsetting swap any more. Direct, informed user choice after
-// seeing the real measured render-time cost this incurs - not assumed
-// safe, and worth revisiting if that cost turns out to be a problem in
-// practice on longer videos.
-const FPS = 60;
+// 24 -> 20 was an emergency speed pass; 20 -> 60 (2026-09-06) was the
+// deliberate reverse for smoothness, a direct user request made after
+// seeing the real measured render-time cost and accepting it anyway.
+// 60 -> 30 (2026-09-10) is a direct, informed reversal of THAT choice -
+// now live and real users are bouncing on slow renders, so speed wins
+// out over the smoothness gain. Not a quality compromise in the way the
+// original 480px resolution drop would have been: 30fps is the actual
+// standard delivery frame rate for TikTok/Reels/Shorts, so this matches
+// how the video would already be presented on those platforms rather
+// than rendering 2x the frames a viewer's own feed will ever show them.
+// Halves per-chunk frame count directly, which cuts both render time
+// AND memory pressure (fewer frames ever in flight at once).
+const FPS = 30;
 const FRAME_DURATION = 1 / FPS;
 
 // Real, confirmed-live gap: motionBlur.js (real sub-frame accumulation
