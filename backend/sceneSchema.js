@@ -6856,13 +6856,41 @@ function buildTextPopOutLayers({
   const words = text.split(' ').filter((w) => w.length > 0);
   const FONT_FAMILY = 'Poppins Bold';
   const FONT_WEIGHT = '700';
-  const FONT_SIZE = 52;
-  const WORD_GAP = FONT_SIZE * 0.28;
+  const FONT_SIZE_MAX = 52;
+  const WORD_GAP_RATIO = 0.28;
 
   const measureCtx = createCanvas(10, 10).getContext('2d');
-  measureCtx.font = `${FONT_WEIGHT} ${FONT_SIZE}px ${FONT_FAMILY}`;
-  const wordWidths = words.map((w) => measureCtx.measureText(w).width);
-  const totalWidth = wordWidths.reduce((a, b) => a + b, 0) + WORD_GAP * (words.length - 1);
+  function measureWordsAt(fontSize) {
+    measureCtx.font = `${FONT_WEIGHT} ${fontSize}px ${FONT_FAMILY}`;
+    const widths = words.map((w) => measureCtx.measureText(w).width);
+    const gap = fontSize * WORD_GAP_RATIO;
+    return { widths, gap, total: widths.reduce((a, b) => a + b, 0) + gap * (words.length - 1) };
+  }
+
+  // Real, direct frame-inspection finding (2026-09-09, "trash" quality
+  // complaint): this used to lay words out at a FIXED 52px regardless of
+  // how wide the actual phrase measured, with zero check against the
+  // canvas's own width - a real generation ("Track, don't motivate")
+  // ran its last word straight off the right edge of the frame,
+  // illegible. This template's whole layout only works single-line (each
+  // word rises independently at a fixed X - see this function's own
+  // later doc comment), so wrapping isn't an option here the way
+  // maxWidth-driven auto-wrap works elsewhere in this file; shrinking the
+  // font to whatever actually fits is the fix instead. BUILD_LEFT_MARGIN
+  // is computed once, at FONT_SIZE_MAX, purely to size the available
+  // width symmetrically - it does NOT change once a smaller font is
+  // picked, so a shrunk phrase ends up with extra breathing room on both
+  // sides rather than re-hugging the margin, which reads as intentional
+  // rather than as a shrink artifact. Floor of 30px keeps even a
+  // pathologically long AI-generated phrase readable rather than
+  // shrinking to near-illegibility.
+  const MAX_TEXT_WIDTH = CANVAS_WIDTH - CANVAS_WIDTH * 0.12 * 2;
+  let FONT_SIZE = FONT_SIZE_MAX;
+  let { widths: wordWidths, gap: WORD_GAP, total: totalWidth } = measureWordsAt(FONT_SIZE);
+  if (totalWidth > MAX_TEXT_WIDTH) {
+    FONT_SIZE = Math.max(30, FONT_SIZE * (MAX_TEXT_WIDTH / totalWidth));
+    ({ widths: wordWidths, gap: WORD_GAP, total: totalWidth } = measureWordsAt(FONT_SIZE));
+  }
 
   let cursor = -totalWidth / 2;
   const wordLocalX = wordWidths.map((w) => {

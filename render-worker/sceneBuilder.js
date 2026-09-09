@@ -248,8 +248,25 @@ function buildGenerateCanvas(generateDef, width, height) {
 }
 
 /** Applies one effect to `canvas` at time t, returning the (possibly new) resulting canvas. */
-function applyEffectToCanvas(canvas, effectDef, t) {
-  const params = resolveParamsAtTime(effectDef.params, t);
+// blur/offsetX/offsetY are authored in LOGICAL content pixels, but when
+// withEffects (below) rasterizes its buffer at a higher PHYSICAL
+// resolution than that logical footprint (its own superSample factor),
+// those params need to grow by the same factor or the glow/shadow reads
+// as thinner and closer than authored, relative to the now-bigger
+// buffer. Scoped to exactly the two types computeEffectsPadding already
+// treats as "spreads past the content's own edges" - every other effect
+// type's params were already correct at 1x and are left untouched.
+function scaleEffectParamsForSuperSample(effectType, params, scaleFactor) {
+  if (scaleFactor === 1 || (effectType !== 'outerGlow' && effectType !== 'dropShadow')) return params;
+  const scaled = { ...params };
+  if (typeof scaled.blur === 'number') scaled.blur *= scaleFactor;
+  if (typeof scaled.offsetX === 'number') scaled.offsetX *= scaleFactor;
+  if (typeof scaled.offsetY === 'number') scaled.offsetY *= scaleFactor;
+  return scaled;
+}
+
+function applyEffectToCanvas(canvas, effectDef, t, scaleFactor = 1) {
+  const params = scaleEffectParamsForSuperSample(effectDef.type, resolveParamsAtTime(effectDef.params, t), scaleFactor);
   if (effectDef.type in IMAGE_DATA_EFFECTS) {
     const ctx = canvas.getContext('2d');
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -267,9 +284,9 @@ function applyEffectToCanvas(canvas, effectDef, t) {
   throw new Error(`sceneBuilder: unknown effect type "${effectDef.type}"`);
 }
 
-function applyEffectsToCanvas(canvas, effectsDef, t) {
+function applyEffectsToCanvas(canvas, effectsDef, t, scaleFactor = 1) {
   let current = canvas;
-  for (const effectDef of effectsDef || []) current = applyEffectToCanvas(current, effectDef, t);
+  for (const effectDef of effectsDef || []) current = applyEffectToCanvas(current, effectDef, t, scaleFactor);
   return current;
 }
 
@@ -552,34 +569,90 @@ function computeEffectsPadding(effects) {
   return Math.ceil(pad);
 }
 
+// A layer's own "scale" track (raw JSON at this point, not yet an
+// animatable) can grow it well past 1x by the time it's on screen - up
+// to ~4x for a mograph "hero" (nodeCluster/mergeCluster's chosen icon).
+// Mirrors iconFetch.js's own getMaxScaleFactor (same reasoning, same
+// shape of track to walk) rather than importing it - this file is kept
+// deliberately dependency-free from the icon-prefetch step, and the two
+// already-duplicated helpers only need to agree on behavior, not share code.
+function getLayerMaxScaleFactor(layerDef) {
+  const track = layerDef && layerDef.scale;
+  if (!track) return 1;
+  if (Array.isArray(track)) return Math.max(1, ...track.filter((v) => typeof v === 'number'));
+  if (typeof track !== 'object') return 1;
+  if (Array.isArray(track.keyframes)) {
+    let max = 1;
+    for (const kf of track.keyframes) {
+      if (!kf) continue;
+      if (Array.isArray(kf.value)) max = Math.max(max, ...kf.value.filter((v) => typeof v === 'number'));
+      else if (typeof kf.value === 'number') max = Math.max(max, kf.value);
+    }
+    return max;
+  }
+  if (typeof track.expression === 'string') return getLayerMaxScaleFactor({ scale: track.base }) * 1.15;
+  return 1;
+}
+
 function withEffects(rawDraw, layerDef, contentWidth, contentHeight, centered = false) {
   if (!layerDef.effects || layerDef.effects.length === 0) return rawDraw;
   const pad = computeEffectsPadding(layerDef.effects);
   const bufferW = contentWidth + pad * 2;
   const bufferH = contentHeight + pad * 2;
+  // Real, confirmed-live bug (2026-09-09, direct user report the whole
+  // video looked "trash", traced via a lossless-PNG frame extraction of
+  // nodeCluster's own hero icon - ruled out ffmpeg's own JPEG compression
+  // as the cause FIRST, before concluding this was a real engine bug).
+  // node.js's Node.render() applies this layer's full world transform
+  // (including its own "scale" track) via ctx.setTransform BEFORE calling
+  // this draw closure - so a hero icon growing to ~4x was being drawn
+  // into this buffer at its small BASE (1x) physical resolution, then
+  // that already-low-res buffer got stretched ~4x by the OUTER transform,
+  // producing visibly blocky/aliased edges no matter how high-res the
+  // source icon bitmap was (iconFetch.js's own getMaxScaleFactor fix
+  // already fetches a high-res source PNG for exactly this case - all of
+  // that extra detail was being thrown away right here, at this buffer,
+  // before the outer scale-up ever got a chance to use it). Fixed by
+  // rasterizing this buffer at a higher PHYSICAL resolution when the
+  // layer's own scale track grows large, then letting the final
+  // drawImage's explicit destination size (still the original LOGICAL
+  // bufferW/bufferH) downsample it back before the outer transform
+  // scales it back up - the same "supersample before a big scale-up"
+  // idea iconFetch.js already applies to the source PNG, carried through
+  // this buffer too. Capped at 2x (a 4x buffer-AREA/frame-cost increase,
+  // not the 16x a full 4x cap would cost) and only triggered above 1.5x
+  // scale, since most layers never grow large enough for this to matter
+  // and this buffer's own per-frame blur/composite cost scales directly
+  // with its area (see computeEffectsPadding's own cost comment above).
+  const maxScale = getLayerMaxScaleFactor(layerDef);
+  const superSample = maxScale > 1.5 ? Math.min(2, maxScale) : 1;
+  const physicalW = Math.round(bufferW * superSample);
+  const physicalH = Math.round(bufferH * superSample);
   if (!centered) {
-    const buffer = createCanvas(bufferW, bufferH);
+    const buffer = createCanvas(physicalW, physicalH);
     const bufferCtx = buffer.getContext('2d');
     return (ctx, t) => {
       bufferCtx.resetTransform();
-      bufferCtx.clearRect(0, 0, bufferW, bufferH);
+      bufferCtx.clearRect(0, 0, physicalW, physicalH);
+      bufferCtx.scale(superSample, superSample);
       bufferCtx.translate(pad, pad);
       rawDraw(bufferCtx, t);
-      const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t);
-      ctx.drawImage(finalCanvas, -pad, -pad);
+      const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t, superSample);
+      ctx.drawImage(finalCanvas, -pad, -pad, bufferW, bufferH);
     };
   }
   const offsetX = contentWidth / 2 + pad;
   const offsetY = contentHeight / 2 + pad;
-  const buffer = createCanvas(bufferW, bufferH);
+  const buffer = createCanvas(physicalW, physicalH);
   const bufferCtx = buffer.getContext('2d');
   return (ctx, t) => {
     bufferCtx.resetTransform();
-    bufferCtx.clearRect(0, 0, bufferW, bufferH);
+    bufferCtx.clearRect(0, 0, physicalW, physicalH);
+    bufferCtx.scale(superSample, superSample);
     bufferCtx.translate(offsetX, offsetY);
     rawDraw(bufferCtx, t);
-    const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t);
-    ctx.drawImage(finalCanvas, -offsetX, -offsetY);
+    const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t, superSample);
+    ctx.drawImage(finalCanvas, -offsetX, -offsetY, bufferW, bufferH);
   };
 }
 

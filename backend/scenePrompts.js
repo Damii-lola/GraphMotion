@@ -1778,22 +1778,23 @@ function buildCompactGenerationSystemPrompt() {
 TEMPLATES (name: fields):
 nodeCluster: icons (3-8 real Iconify "prefix:name"), chosenIndex (0-based, which icon wins), introText (optional hook line, <=5 words)
 connectorList: items (2-6 of {icon,label}, label is 1-2 words), outroText (optional closing line, <=6 words)
-phoneSwap: text (2-4 word phone-screen headline), icon (real Iconify name it swaps to)
+phoneSwap: text (REQUIRED, 2-4 word on-screen phone headline - never leave blank), icon (real Iconify name it swaps to)
 splitConverge: icon (real Iconify name), label (optional, 1-3 words)
 mergeCluster: icons (2-5 real Iconify names), resultIcon (real Iconify name), label (optional, 1-3 words)
 nodeClusterExtended: icons (3-8), chosenIndex, mergeText (required short phrase), newIcon (required), newLabel (optional, 1-3 words)
-textPopOut: text (a short punchy statement, 3-6 words)
+textPopOut: text (REQUIRED, a short punchy on-screen statement, 3-6 words - never leave blank)
 
 Icons must be REAL Iconify names, format "prefix:name" - "mdi:concept-name" for general ideas (e.g. mdi:rocket-launch, mdi:calendar-check), "simple-icons:brandname" for real brand logos. Never invent a name.
 
 RULES:
 - Your "beats" array MUST have EXACTLY 6 entries - not fewer, not more. Pick 6 DIFFERENT templates from the 7 above (each used at most once - never repeat one), whichever 6 fit the topic best.
 - Every beat needs "narration": a short SPOKEN line, 8 words max, that matches what's happening on screen.
+- phoneSwap/textPopOut ALSO need their own "text" in "vars" - a SEPARATE on-screen string, even if it overlaps with narration. Never skip it.
 - The FIRST beat's narration must do ONE of: contain "you"/"your", end with "?" or "!", or start with Stop/Imagine/Picture/Wait/Guess/"What if"/Never - never a flat statement of fact.
 - "accentColor" is optional per beat, a hex string like "#8B5CF6" - omit it to auto-pick one.
 
-OUTPUT SHAPE (one line, no extra keys):
-{"beats":[{"template":"nodeCluster","narration":"Which one actually works?","vars":{"icons":["mdi:water","mdi:run","mdi:book-open-page-variant"],"chosenIndex":1},"accentColor":"#8B5CF6"}]}`;
+OUTPUT SHAPE (one line, no extra keys - these are 2 of the 6 beats you must output, just to show the shape; connectorList's "items" is a list of {icon,label} OBJECTS, not two separate lists):
+{"beats":[{"template":"nodeCluster","narration":"Which one actually works?","vars":{"icons":["mdi:water","mdi:run","mdi:book-open-page-variant"],"chosenIndex":1},"accentColor":"#8B5CF6"},{"template":"connectorList","narration":"Sleep, protein, then consistency.","vars":{"items":[{"icon":"mdi:sleep","label":"Sleep"},{"icon":"mdi:food-drumstick","label":"Protein"},{"icon":"mdi:calendar-check","label":"Routine"}]},"accentColor":"#8B5CF6"}]} (write your OWN narration matching your topic - never copy this example's wording)`;
 }
 
 module.exports = {

@@ -1,4 +1,5 @@
 const { jsonrepair } = require('jsonrepair');
+const fetch = require('node-fetch');
 const { validateSceneJSON, buildMographBeatVisual } = require('./sceneSchema');
 const {
   buildTreatmentSystemPrompt, buildMinimalGenerationSystemPrompt, buildCompactGenerationSystemPrompt, buildEditSystemPrompt,
@@ -480,6 +481,66 @@ function validateCompactBeatVars(template, vars) {
   }
 }
 
+/**
+ * Real, direct frame-inspection finding (2026-09-09, "trash" quality
+ * complaint): validateCompactBeatVars/isRealIcon above only check an
+ * icon's own STRING SHAPE ("prefix:name") - never whether that icon
+ * actually exists. The 8B model regularly invents plausible-sounding
+ * names that don't ("mdi:unlock" - the real one is "mdi:lock-open",
+ * "mdi:balance-scale" - the real one is "mdi:scale-balance"), which
+ * iconFetch.js's own render-time fetch then 404s on, silently dropping
+ * the icon and leaving an empty circle/ring/dot in the final video -
+ * confirmed via direct frame extraction, not assumed. Fixed by verifying
+ * every icon a beat actually resolved to BEFORE accepting the spec, so a
+ * hallucinated name becomes a normal, specific retry error (same
+ * mechanism validateCompactBeatVars already uses) instead of a broken
+ * render nobody catches until a human watches it. Iconify's own bulk
+ * "does this exist" endpoint (one request per PREFIX, not per icon -
+ * typically 1-3 requests total for a whole generation since most icons
+ * share "mdi:") makes this cheap enough to run on every attempt; fails
+ * OPEN on a transport hiccup (skips verification rather than blocking
+ * generation on Iconify's own uptime) since the existing render-time
+ * fallback still keeps a genuinely-unreachable check from crashing a job.
+ */
+function collectIconNamesFromScenes(scenes) {
+  const names = [];
+  const walk = (layers) => {
+    if (!Array.isArray(layers)) return;
+    for (const layer of layers) {
+      if (!layer || typeof layer !== 'object') continue;
+      if (layer.type === 'image' && typeof layer.icon === 'string' && layer.icon.trim()) names.push(layer.icon);
+      if (layer.type === 'precomp') walk(layer.layers);
+    }
+  };
+  for (const scene of scenes) walk(scene.visual?.layers);
+  return names;
+}
+
+async function findNonexistentIcons(iconNames) {
+  const uniqueNames = [...new Set(iconNames)].filter(isRealIcon);
+  if (uniqueNames.length === 0) return [];
+  const byPrefix = new Map();
+  for (const full of uniqueNames) {
+    const [prefix, ...rest] = full.split(':');
+    const name = rest.join(':');
+    if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
+    byPrefix.get(prefix).push(name);
+  }
+  const notFound = [];
+  await Promise.all([...byPrefix.entries()].map(async ([prefix, names]) => {
+    try {
+      const url = `https://api.iconify.design/${encodeURIComponent(prefix)}.json?icons=${names.map(encodeURIComponent).join(',')}`;
+      const res = await fetch(url, { timeout: 8000 });
+      if (!res.ok) return;
+      const data = await res.json();
+      for (const missing of data.not_found || []) notFound.push(`${prefix}:${missing}`);
+    } catch (err) {
+      console.warn(`[sceneGenClient] icon existence check failed for prefix "${prefix}" (${err.message}) - skipping verification for these`);
+    }
+  }));
+  return notFound;
+}
+
 // Separate from TOTAL_STRUCTURAL_RETRY_BUDGET (3, tuned for the OLD,
 // slow/paid OpenRouter path where every retry cost 60-100s+) - real
 // local testing found the free 8B model occasionally needs more than 3
@@ -487,7 +548,18 @@ function validateCompactBeatVars(template, vars) {
 // dropped as unusable" 3 times in a row). Since a retry here costs
 // single-digit seconds and nothing per call, a more generous budget is
 // free real reliability, not a real latency tradeoff.
-const COMPACT_RETRY_BUDGET = 6;
+// 6 -> 10 -> 18 (2026-09-09): real local testing kept hitting full
+// exhausted-budget failures even at 10, across a wide variety of
+// DIFFERENT causes each time (narration hook style, a hallucinated icon
+// name, an empty required field, a repeated-first-word mistake) - no
+// single fix eliminates all of them, and a small 8B model landing every
+// constraint at once is inherently probabilistic. A real timed run
+// against this exact budget showed most individual retries fail fast
+// (~2-3s each), so even a much larger budget stays well under the 220s+
+// that drove the original move off OpenRouter - and outright failing the
+// whole job is a strictly worse outcome than one more retry, for both
+// the speed and quality complaints this pipeline exists to fix.
+const COMPACT_RETRY_BUDGET = 18;
 
 /**
  * The single Cloudflare call plus its own structural-retry loop -
@@ -502,13 +574,38 @@ async function generateCompactBeatSpec(userPrompt, { retriesLeft = COMPACT_RETRY
   let userMessage = `Topic: ${userPrompt}\n\nCreative angle for this generation: ${pickRandomCreativeAngle()}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt was invalid:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON.`;
 
-  // 1500 -> 3000 (2026-09-10): a real local test hit finish_reason:
-  // "length" at 1500 once the model tried to actually write 5+ full
-  // beats worth of JSON (icons arrays, labels, etc.) - Cloudflare's free
-  // tier has no per-token cost the way the earlier paid MiniMax path
-  // did, so there's no real downside to generous headroom here; calls
-  // stay in the single-digit seconds regardless.
-  const raw = await callCloudflareRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 3000, temperature: 0.8 });
+  // 1500 -> 3000 -> 4096 (2026-09-09): a real local test hit finish_reason:
+  // "length" at 1500, then AGAIN at 3000, once the model tried to write
+  // out 6+ full beats worth of JSON (icons arrays, labels, a retry's own
+  // echoed prior-error text, etc.) - Cloudflare's free tier has no
+  // per-token cost the way the earlier paid MiniMax path did, so there's
+  // no real downside to generous headroom here; calls stay in the
+  // single-digit seconds regardless.
+  let raw;
+  try {
+    // 0.8 -> 0.5 (2026-09-09): real local testing found this small 8B
+    // model's own format/constraint adherence (exact beat count, valid
+    // JSON shape, no repeated templates) was the actual bottleneck, not
+    // a lack of creative variety - a lower temperature is the standard,
+    // well-established lever for exactly that failure mode on a small
+    // model, at the cost of somewhat less varied phrasing, which matters
+    // far less here than actually landing a valid spec.
+    raw = await callCloudflareRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 4096, temperature: 0.5 });
+  } catch (err) {
+    // Real, confirmed-live bug (2026-09-09): this call was never wrapped
+    // in the retry loop at all - a transport failure (truncation, a
+    // timeout, a Cloudflare hiccup) threw straight out of this whole
+    // function regardless of how much retriesLeft budget remained,
+    // killing the entire job on what should have just been one more
+    // attempt. Retries are cheap here (single-digit seconds, free) -
+    // there's no reason a transport blip should be fatal when a bad
+    // JSON shape from the SAME call already gets retried below.
+    if (retriesLeft > 0) {
+      console.warn(`[sceneGenClient] Cloudflare call failed (${err.message}), retrying (${retriesLeft - 1} left)...`);
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors });
+    }
+    throw err;
+  }
   let compact;
   try {
     compact = extractJson(raw);
@@ -540,6 +637,19 @@ async function generateCompactBeatSpec(userPrompt, { retriesLeft = COMPACT_RETRY
     }
     throw new Error(`Generated scene JSON failed schema validation after retries: ${errors.join('; ')}`);
   }
+
+  const notFoundIcons = await findNonexistentIcons(collectIconNamesFromScenes(sceneJSON.scenes));
+  if (notFoundIcons.length > 0) {
+    if (retriesLeft > 0) {
+      console.warn(`[sceneGenClient] ${notFoundIcons.length} icon(s) don't exist on Iconify (${notFoundIcons.join(', ')}), retrying (${retriesLeft - 1} left)...`);
+      return generateCompactBeatSpec(userPrompt, {
+        retriesLeft: retriesLeft - 1,
+        priorErrors: [`These icon names don't exist on Iconify and must be replaced with real ones: ${notFoundIcons.join(', ')}`],
+      });
+    }
+    console.warn(`[sceneGenClient] ${notFoundIcons.length} icon(s) don't exist after exhausting retries (${notFoundIcons.join(', ')}) - shipping anyway, render-time fallback will drop them`);
+  }
+
   return sceneJSON;
 }
 
