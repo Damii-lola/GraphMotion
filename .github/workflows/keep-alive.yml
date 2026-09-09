@@ -1,0 +1,25 @@
+name: Keep backend awake
+
+# Nothing external kept the backend's own Render free-tier instance
+# awake before this - backend/renderDispatch.js's startWorkerKeepAlive
+# pings the render-worker(s), but that pinger only runs INSIDE the
+# backend process itself, so it does nothing once the backend goes to
+# sleep on Render's own inbound-traffic-idle policy. GitHub Pages (which
+# serves the frontend) can't run a background process to fill that gap,
+# so this repo-level scheduled workflow does it instead - a real inbound
+# HTTP request every 5 minutes, comfortably under Render's ~15 minute
+# free-tier sleep threshold. 5 minutes is the tightest interval GitHub
+# Actions actually honors for scheduled workflows (anything faster is
+# silently throttled/delayed by GitHub's own scheduler) - direct user
+# request was 3 minutes, not achievable here for that reason.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping backend /health
+        run: curl -fsS --max-time 20 https://graphmotion.onrender.com/health || true
