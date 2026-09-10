@@ -13,7 +13,7 @@ const {
 } = require('./longVideoOrchestrator');
 const { muxNarrationOntoVideo, speedUpVideo } = require('./audioMux');
 const { updateJob, uploadRenderedVideo } = require('./supabaseClient');
-const { getAvailableSibling, requestHelp } = require('./chunkDispatch');
+const { getAvailableSiblings, requestHelp } = require('./chunkDispatch');
 
 /**
  * Render-only worker service. Part of a coordinator/worker split added
@@ -209,10 +209,30 @@ async function handleRenderChunksRequest(jobId, sceneJSON, chunkRanges) {
   try {
     return await withRenderLock(async () => {
       const results = [];
-      for (const range of chunkRanges) {
+      for (let i = 0; i < chunkRanges.length; i++) {
+        const range = chunkRanges[i];
         const chunkPath = path.join(workDir, `chunk-${range.index}.mp4`);
         await renderSingleChunk(jobId, renderSceneJSON, range.start, range.end, chunkPath, range.index, () => {});
         results.push({ index: range.index, base64: fs.readFileSync(chunkPath).toString('base64') });
+        // Matches renderWithPossibleHelp's own primary loop below, which
+        // already waits between chunks (undocumented there too, but a
+        // harmless, cheap gap regardless). Investigating a real,
+        // reproduced-3x-locally intermittent ENOENT on a sibling's
+        // SECOND assigned chunk's own just-written frame file (2026-09-10,
+        // found verifying the new N-way split with real running
+        // instances): adding this gap did NOT stop it from recurring, so
+        // it is NOT the fix - most likely cause found so far is Windows
+        // Defender real-time protection (confirmed active on this dev
+        // machine) transiently locking freshly-written frame JPGs under
+        // the unusually high concurrent file-write load 3 simultaneous
+        // local "workers" produce - not something a separate Linux host
+        // per worker would hit in real production. Left in as a cheap,
+        // harmless no-op safety margin, not a confirmed fix - the
+        // per-sibling fallback in renderWithPossibleHelp is what actually
+        // keeps this from ever producing a bad or missing video (every
+        // local test still completed a fully correct output). Revisit if
+        // this shows up in REAL production logs.
+        if (i < chunkRanges.length - 1) await sleep(400);
       }
       return results;
     });
@@ -227,22 +247,30 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 /**
  * Drop-in replacement for calling renderLongFormVideo directly - tries
- * to split a long video's chunks across this worker and ONE available
- * sibling before falling back to rendering every chunk itself, exactly
- * as renderLongFormVideo already does. Short videos (no chunking
- * needed at all) and the case where no sibling has room both fall
- * through to the ORIGINAL, unchanged solo path - this only changes
+ * to split a long video's chunks across this worker and EVERY currently
+ * available sibling before falling back to rendering every chunk
+ * itself, exactly as renderLongFormVideo already does. Short videos (no
+ * chunking needed at all) and the case where no sibling has room both
+ * fall through to the ORIGINAL, unchanged solo path - this only changes
  * behavior when there's real chunked work AND real help available.
  *
- * Splits roughly in half by chunk COUNT (not by content) - simple, and
- * each chunk costs about the same regardless of what it contains, so
- * an even split is already a good balance. Kicks off the sibling
- * request and this worker's own half CONCURRENTLY (Promise.all), not
- * sequentially, since that's the entire point - waiting on one before
- * starting the other would throw away the parallelism this exists for.
- * If the sibling request fails for any reason, its assigned chunks are
- * rendered locally as a fallback (slower than the happy path, but
- * still correct - a flaky sibling should never lose real chunks).
+ * Generalized from a fixed 2-way split to N-way (2026-09-10, direct
+ * user request after deploying 3 more render-worker instances - 5
+ * total). Splits roughly evenly by chunk COUNT (not by content) into
+ * `availableSiblings.length + 1` contiguous, ascending blocks - simple,
+ * and each chunk costs about the same regardless of what it contains,
+ * so an even split is already a good balance. Contiguous ascending
+ * blocks matter for the final concat step below: chunk order is never
+ * explicitly re-sorted, it's just [mine, helper1's, helper2's, ...] in
+ * the same order the blocks were sliced in, which only reassembles the
+ * video correctly because each block is already an unbroken, in-order
+ * run of chunk indices. Kicks off every sibling's request and this
+ * worker's own block CONCURRENTLY, not sequentially - waiting on one
+ * before starting another would throw away the parallelism this exists
+ * for. If a sibling's request fails for any reason, ITS assigned chunks
+ * (and only those) are rendered locally as a fallback (slower than the
+ * happy path, but still correct - a flaky sibling should never lose
+ * real chunks) - one bad sibling never blocks the others.
  */
 // Real, severe, confirmed-live bug fixed here (2026-09-04, direct user
 // report with the actual video attached: a watermark icon rendering
@@ -280,6 +308,20 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 // designed; this worker resolves its own separate local copy
 // (`renderSceneJSON`) just for its own chunks, right where it used to
 // resolve the one shared copy.
+/** Slices `arr` into `groupCount` contiguous, ascending pieces as evenly as possible (any remainder goes to the earliest groups) - used so each worker's own block stays an unbroken run of chunk indices, which is what lets the final concat below just lay blocks end to end without re-sorting. */
+function splitIntoContiguousGroups(arr, groupCount) {
+  const groups = [];
+  const base = Math.floor(arr.length / groupCount);
+  const remainder = arr.length % groupCount;
+  let idx = 0;
+  for (let g = 0; g < groupCount; g++) {
+    const size = base + (g < remainder ? 1 : 0);
+    groups.push(arr.slice(idx, idx + size));
+    idx += size;
+  }
+  return groups;
+}
+
 async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled) {
   const chunkRanges = computeChunkRanges(sceneJSON);
 
@@ -291,32 +333,38 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
     return renderLongFormVideo(jobId, renderSceneJSON, onProgress, isCancelled);
   }
 
-  const siblingUrl = await getAvailableSibling();
-  if (!siblingUrl) {
+  const siblingUrls = await getAvailableSiblings();
+  if (siblingUrls.length === 0) {
     const renderSceneJSON = await prefetchIconsIsolated(sceneJSON, jobId);
     return renderLongFormVideo(jobId, renderSceneJSON, onProgress, isCancelled);
   }
 
-  console.log(`[chunkDispatch] job ${jobId} splitting ${chunkRanges.length} chunks with ${siblingUrl}`);
-  const splitAt = Math.ceil(chunkRanges.length / 2);
-  const myRanges = chunkRanges.slice(0, splitAt);
-  const helperRanges = chunkRanges.slice(splitAt);
+  console.log(`[chunkDispatch] job ${jobId} splitting ${chunkRanges.length} chunks across this worker + ${siblingUrls.length} sibling(s): ${siblingUrls.join(', ')}`);
+  const groupCount = siblingUrls.length + 1;
+  const [myRanges, ...helperRangesList] = splitIntoContiguousGroups(chunkRanges, groupCount);
 
   const workDir = path.join(os.tmpdir(), 'shortform-renders', `${jobId}-chunks`);
   fs.mkdirSync(workDir, { recursive: true });
 
   // Icon-RAW sceneJSON, deliberately - see this function's own doc
-  // comment above for why the sibling must resolve icons itself rather
-  // than inherit this worker's already-resolved (and since-deleted)
-  // copy.
-  const helperPromise = requestHelp(siblingUrl, jobId, sceneJSON, helperRanges).catch((err) => {
-    console.warn(`[chunkDispatch] job ${jobId} sibling ${siblingUrl} failed, rendering its ${helperRanges.length} chunk(s) locally instead: ${err.message}`);
-    return null;
+  // comment above for why every sibling must resolve icons itself
+  // rather than inherit this worker's already-resolved (and
+  // since-deleted) copy. Fired for every sibling CONCURRENTLY, not
+  // awaited one at a time - each `.catch` is independent, so one
+  // sibling failing never delays or blocks the others.
+  const helperPromises = siblingUrls.map((url, i) => {
+    const ranges = helperRangesList[i];
+    return requestHelp(url, jobId, sceneJSON, ranges)
+      .then((chunks) => ({ url, ranges, chunks }))
+      .catch((err) => {
+        console.warn(`[chunkDispatch] job ${jobId} sibling ${url} failed, rendering its ${ranges.length} chunk(s) locally instead: ${err.message}`);
+        return { url, ranges, chunks: null };
+      });
   });
 
   // This worker's OWN resolved copy, used only for myRanges/the local
   // fallback below - kept separate from the icon-raw `sceneJSON` above,
-  // which the sibling still needs unresolved.
+  // which every sibling still needs unresolved.
   const renderSceneJSON = await prefetchIconsIsolated(sceneJSON, jobId);
 
   const myChunkPaths = [];
@@ -329,9 +377,11 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
     const { start, end, index } = myRanges[i];
     const chunkPath = path.join(workDir, `chunk-${index}.mp4`);
     await renderSingleChunk(jobId, renderSceneJSON, start, end, chunkPath, index, (chunkPct) => {
-      // My own half's progress only, scaled into the first ~50% of the
-      // overall bar - the second half jumps in once the sibling's
-      // result (or the local fallback for it) is actually in hand.
+      // This worker's own block only, scaled into the first ~48% of the
+      // overall bar regardless of group count - the rest jumps in once
+      // every sibling's result (or the local fallback for it) is in
+      // hand. Not proportionally accurate per group count, but a rough,
+      // monotonic progress bar is all this ever needs to be.
       if (onProgress) onProgress(Math.min(48, Math.round(((i + chunkPct / 100) / myRanges.length) * 48)));
     });
     myChunkPaths.push(chunkPath);
@@ -340,19 +390,23 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
 
   if (onProgress) onProgress(50);
 
-  const helperChunks = await helperPromise;
+  const helperResults = await Promise.all(helperPromises);
   const helperChunkPaths = [];
-  if (helperChunks) {
-    for (const chunk of helperChunks) {
-      const p = path.join(workDir, `chunk-${chunk.index}.mp4`);
-      fs.writeFileSync(p, Buffer.from(chunk.base64, 'base64'));
-      helperChunkPaths.push(p);
+  for (const { ranges, chunks } of helperResults) {
+    if (chunks) {
+      for (const chunk of chunks) {
+        const p = path.join(workDir, `chunk-${chunk.index}.mp4`);
+        fs.writeFileSync(p, Buffer.from(chunk.base64, 'base64'));
+        helperChunkPaths.push(p);
+      }
+      continue;
     }
-  } else {
-    // Sibling failed entirely - render its assigned ranges myself,
+    // This sibling failed entirely - render ITS assigned ranges myself,
     // sequentially, exactly like the ordinary solo path would. Uses
     // this worker's own resolved copy, same reasoning as myRanges above.
-    for (const { start, end, index } of helperRanges) {
+    // Only this sibling's chunks fall back this way - the others (which
+    // may have already succeeded) are untouched.
+    for (const { start, end, index } of ranges) {
       if (isCancelled && isCancelled()) {
         for (const p of [...myChunkPaths, ...helperChunkPaths]) fs.unlink(p, () => {});
         fs.rm(workDir, { recursive: true, force: true }, () => {});

@@ -3,17 +3,23 @@ const fetch = require('node-fetch');
 /**
  * Worker-to-worker help requests - a "primary" worker (whichever one
  * the coordinator's own renderDispatch.js happened to pick for a job)
- * can hand OFF a subset of that job's video chunks to a SIBLING worker
- * to render in parallel, instead of rendering every chunk itself in
- * sequence. Direct user request after real production logs showed
- * rendering (not narration) is the dominant cost of a generation -
- * ~0.57s/frame on Render's actual host, chunks strictly sequential
- * within one worker (see longVideoOrchestrator.js's own reasoning for
- * why - peak memory, not just speed) - and there are already 2 worker
- * services deployed sitting mostly idle relative to each other. Since
- * chunks don't depend on each other at all, splitting them across 2
- * workers cuts wall-clock render time roughly in half for anything
- * long enough to chunk in the first place.
+ * can hand OFF subsets of that job's video chunks to its SIBLING
+ * worker(s) to render in parallel, instead of rendering every chunk
+ * itself in sequence. Direct user request after real production logs
+ * showed rendering (not narration) is the dominant cost of a generation
+ * - ~1.1-1.5s/frame on Render's actual free-tier host, chunks strictly
+ * sequential within one worker (see longVideoOrchestrator.js's own
+ * reasoning for why - peak memory, not just speed). Originally a fixed
+ * 2-way split (this worker + exactly one sibling); generalized to N-way
+ * (2026-09-10, direct user request to deploy 3 more workers) - the
+ * primary now splits its chunks across itself plus EVERY sibling
+ * currently reporting a free slot, not just one. Since chunks don't
+ * depend on each other at all, splitting across N+1 workers cuts
+ * wall-clock render time roughly (N+1)x for anything long enough to
+ * chunk in the first place - a much bigger lever than any single-CPU
+ * per-frame optimization can reach, since it's genuine parallelism
+ * across separate machines rather than making one machine's own work
+ * cheaper.
  *
  * Same numbered-env-var convention as ../backend/renderDispatch.js's
  * own RENDER_WORKER_URL_N, but configured on EACH WORKER'S OWN
@@ -69,19 +75,23 @@ async function fetchWithTimeout(url, opts, timeoutMs) {
 }
 
 /**
- * Finds ONE available sibling (random among any reporting a free slot)
- * to help with this job - mirrors ../backend/renderDispatch.js's own
- * selection logic, just scoped to this worker's configured siblings
- * instead of the whole pool. Returns null (never throws) if none are
- * configured or none have room - the caller falls back to rendering
- * solo either way. Logs WHY it's returning null in either case - a
- * real production run shipped with the split silently never engaging
- * and no log line explained why, so this is no longer a silent no-op.
+ * Finds EVERY available sibling (any reporting a free slot), not just
+ * one - direct user request to scale chunk-splitting across N deployed
+ * workers instead of a fixed 2-way split. Returns [] (never throws) if
+ * none are configured or none have room - the caller falls back to
+ * rendering solo either way. Logs WHY it's returning [] in either case -
+ * a real production run once shipped with the split silently never
+ * engaging and no log line explained why, so this is no longer a silent
+ * no-op. A sibling's own /render-chunks endpoint still double-checks its
+ * own capacity when the request actually arrives (see server.js), so a
+ * sibling that goes from available to busy in the gap between this
+ * check and the real request fails safe into the per-sibling fallback
+ * renderWithPossibleHelp already has, not an oversubscription bug.
  */
-async function getAvailableSibling() {
+async function getAvailableSiblings() {
   if (SIBLING_URLS.length === 0) {
     console.log('[chunkDispatch] no sibling workers configured (RENDER_WORKER_URL_N not set on this worker) - rendering solo');
-    return null;
+    return [];
   }
   const results = await Promise.all(SIBLING_URLS.map(async (url) => {
     try {
@@ -99,11 +109,8 @@ async function getAvailableSibling() {
     }
   }));
   const available = results.filter(Boolean);
-  if (available.length === 0) {
-    console.log('[chunkDispatch] no sibling had a free slot - rendering solo');
-    return null;
-  }
-  return available[Math.floor(Math.random() * available.length)];
+  if (available.length === 0) console.log('[chunkDispatch] no sibling had a free slot - rendering solo');
+  return available;
 }
 
 /**
@@ -135,4 +142,4 @@ async function requestHelp(workerUrl, jobId, sceneJSON, chunkRanges) {
   return data.chunks;
 }
 
-module.exports = { getAvailableSibling, requestHelp, SIBLING_URLS };
+module.exports = { getAvailableSiblings, requestHelp, SIBLING_URLS };
