@@ -1829,6 +1829,10 @@ const COMPACT_TEMPLATE_INFO = {
     fields: 'text*(2-5w, sits inside the shapes), icon1, icon2',
     example: { template: 'squareSpin', narration: 'Here are your two go-to tools.', vars: { text: 'Pro Tips', icon1: 'mdi:video', icon2: 'mdi:microphone' }, accentColor: '#8B5CF6' },
   },
+  tripleStack: {
+    fields: 'items(EXACTLY 3 of {icon,text}, text 1-3w) - "narration" itself is shown on screen as this beat\'s own caption, so keep it short and exact',
+    example: { template: 'tripleStack', narration: "Here's what you get.", vars: { items: [{ icon: 'mdi:file-image', text: 'PNG Docs' }, { icon: 'mdi:account-group', text: 'Icon Icons' }, { icon: 'mdi:format-quote-close', text: 'Quotes' }] }, accentColor: '#8B5CF6' },
+  },
 };
 const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);
 

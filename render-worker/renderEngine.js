@@ -960,7 +960,7 @@ function pickContrastSafeTint(behindHex, baseAccentHex) {
 // means "sits directly on the board background" (an unfilled ring, or
 // no container shape at all).
 function resolveIconBackdropRule(layerId) {
-  if (layerId === '__phone_icon__') return { fixed: '#F5F3FF' };
+  if (layerId === '__phone_icon__' || layerId === '__phone_text__') return { fixed: '#F5F3FF' };
   if (/^__spin_badge\d+_icon__$/.test(layerId)) return { fixed: '#18140F' };
   if (/^__node_icon_\d+__selected$/.test(layerId)) return { fill: '__node_hero_fill__' };
   if (layerId === '__nce_result_icon__') return { fill: '__nce_result_bg__' };
@@ -968,6 +968,11 @@ function resolveIconBackdropRule(layerId) {
   const listMatch = layerId.match(/^__list_icon_(\d+)__$/);
   if (listMatch) return { fill: `__list_node_${listMatch[1]}__` };
   if (layerId.startsWith('__split_icon_')) return { fill: '__split_container_bg__' };
+  // tripleStack's own nodes: a fixed dark card interior (sceneSchema.js's
+  // own TRIPLE_STACK_NODE_FIXED_BG), same reasoning as the spin badges
+  // above - a stable, known, opaque surface the contrast system can rely
+  // on rather than a translucent/harmonized fill.
+  if (/^__stack_icon_\d+__$/.test(layerId) || /^__stack_text_\d+__$/.test(layerId)) return { fixed: '#18140F' };
   // Everything else authored (nodeCluster/nodeClusterExtended's OWN
   // "__node_icon_N__" pre-explosion state, mergeCluster's small
   // orbiting "__merge_icon_N__", the decorative "__topic_icon__" card)
@@ -1024,11 +1029,21 @@ function ensureIconContrast(sceneJSON, bgRefColor, harmonize) {
           ? (rule.fixed || fillById.get(rule.fill) || bgRefColor)
           : bgRefColor;
         layer.iconColor = pickContrastSafeTint(behindHex, beatAccentHex);
-      } else if (layer.type === 'text' && layer.id === '__phone_text__' && typeof layer.fillStyle === 'string') {
-        // phoneSwap's own headline text sits on the exact same fixed
-        // near-white screen as __phone_icon__ above - same treatment,
-        // via "fillStyle" instead of "iconColor".
-        layer.fillStyle = pickContrastSafeTint('#F5F3FF', beatAccentHex);
+      } else if (layer.type === 'text' && typeof layer.id === 'string' && typeof layer.fillStyle === 'string') {
+        // Generalized from a single hardcoded '__phone_text__' check
+        // (2026-09-10) once tripleStack's own '__stack_text_N__' needed
+        // the exact same "sits on a fixed, known, opaque surface"
+        // treatment - resolveIconBackdropRule already covers both by id,
+        // same rule table icons use, via "fillStyle" instead of
+        // "iconColor". A text layer with no matching rule (a normal
+        // headline sitting on the harmonized board background) is left
+        // alone here - it's not a fixed-surface case, and every OTHER
+        // headline's own contrast is already handled by
+        // MIN_ACCENT_CONTRAST_RATIO's harmonize() pass above.
+        const rule = resolveIconBackdropRule(layer.id);
+        if (rule && rule.fixed) {
+          layer.fillStyle = pickContrastSafeTint(rule.fixed, beatAccentHex);
+        }
       }
     }
   }

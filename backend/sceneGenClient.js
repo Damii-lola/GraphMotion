@@ -392,6 +392,10 @@ const COMPACT_BASE_DURATION = {
   // starting close to the real value avoids relying on that clamp to do
   // all the work.
   squareSpin: 2.0,
+  // Real motion (3 nodes slide in, settle, shrink, unblur) fully
+  // completes in ~1.13s (TRIPLE_STACK_COMPLETE_TIME, sceneSchema.js) -
+  // same "start close to the real value" reasoning as squareSpin above.
+  tripleStack: 2.0,
 };
 
 /**
@@ -521,8 +525,13 @@ function validateCompactBeatVars(template, vars) {
       if (!isRealIcon(vars.icon1)) return 'needs a real Iconify "icon1"';
       if (!isRealIcon(vars.icon2)) return 'needs a real Iconify "icon2"';
       return null;
+    case 'tripleStack': {
+      const items = Array.isArray(vars.items) ? vars.items.filter((it) => isPlainObjectLocal(it) && isRealIcon(it.icon) && typeof it.text === 'string' && it.text.trim()) : [];
+      if (items.length !== 3) return `needs "items": exactly 3 entries, each a real {icon,text} (got ${items.length} valid ones)`;
+      return null;
+    }
     default:
-      return `"${template}" is not one of the 8 real template names`;
+      return `"${template}" is not one of the 9 real template names`;
   }
 }
 

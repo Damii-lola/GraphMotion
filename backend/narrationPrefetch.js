@@ -354,6 +354,35 @@ function applyRealWordTimingToText(scene, wordTimings) {
       }
     }
   }
+
+  // tripleStack's own top caption (sceneSchema.js's
+  // buildWordCascadeCaptionLayer) authors a SECOND animator on this same
+  // layer - a per-word "pop" (properties.scale) whose selector.start/end
+  // sweep across word-index space so the window's center lands exactly
+  // on each word at that word's own reveal time (see that function's own
+  // doc comment for why the pulse has to live in the SELECTOR, not a
+  // static property). Authored against an ESTIMATED even split, same as
+  // the reveal above - re-centering it here on the SAME real wordTimings
+  // keeps the pop from drifting out of sync with when each word actually
+  // becomes visible, exactly the same real-timing upgrade already
+  // applied to the reveal itself just above. Identified by
+  // `properties.scale` - nothing else this project ever authors on a
+  // caption/headline text layer uses that property.
+  const popAnimator = preservedAnimators.find((a) => isPlainObject(a) && isPlainObject(a.properties) && typeof a.properties.scale === 'number' && isPlainObject(a.selector));
+  if (popAnimator) {
+    const POP_HALF_WIDTH_DIVISOR = 2.6; // must match TRIPLE_STACK_CAPTION_WINDOW_HALF_WIDTH_DIVISOR (sceneSchema.js)
+    const halfWidthPct = 100 / (usedCount * POP_HALF_WIDTH_DIVISOR);
+    const startKfs = [];
+    const endKfs = [];
+    for (let i = 0; i < usedCount; i++) {
+      const centerPct = ((i + 0.5) / usedCount) * 100;
+      const t = Math.max(0, wordTimings[i].start);
+      startKfs.push({ time: t, value: centerPct - halfWidthPct });
+      endKfs.push({ time: t, value: centerPct + halfWidthPct });
+    }
+    popAnimator.selector.start = { keyframes: startKfs };
+    popAnimator.selector.end = { keyframes: endKfs };
+  }
 }
 
 function isPlainObject(v) { return typeof v === 'object' && v !== null && !Array.isArray(v); }

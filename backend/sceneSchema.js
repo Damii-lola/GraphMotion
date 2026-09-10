@@ -7058,6 +7058,258 @@ function buildSquareSpinLayers({
   return layers;
 }
 
+/**
+ * Built from a real frame-by-frame read of a user-attached reference
+ * video (A6.mp4 - "Video Editors" intro): three rectangular icon+text
+ * nodes fly in blurred (top and bottom from the LEFT, middle from the
+ * RIGHT - direct user spec), land in a stacked, brick-offset layout
+ * (top/bottom flush left, middle shifted right so it overlaps both),
+ * settle, shrink slightly as a group, then - 0.1s later, also direct
+ * spec - the icon/text blur clears. A word-cascading caption runs across
+ * the top the whole time, independent of the node motion (see
+ * buildWordCascadeCaptionLayer's own doc comment).
+ *
+ * Node fill is a FIXED dark neutral (not accentColor-tinted, not
+ * translucent) deliberately: resolveIconBackdropRule/ensureIconContrast
+ * (renderEngine.js) need a stable, opaque, KNOWN color to guarantee
+ * icon/text contrast against - the same reasoning squareSpin's own
+ * badges already use (`{fixed: '#18140F'}`), reused verbatim here for
+ * one less magic number in the contrast system.
+ */
+const TRIPLE_STACK_NODE_WIDTH = 420;
+const TRIPLE_STACK_NODE_HEIGHT = 104;
+const TRIPLE_STACK_OFFSET_X = 90; // middle node's rightward shift over top/bottom
+const TRIPLE_STACK_ICON_SIZE = 46;
+const TRIPLE_STACK_ENTER_DURATION = 0.5;
+const TRIPLE_STACK_SETTLE_HOLD = 0.15;
+const TRIPLE_STACK_SHRINK_DURATION = 0.2;
+const TRIPLE_STACK_SHRINK_SCALE = 0.88;
+const TRIPLE_STACK_UNBLUR_DELAY = 0.1; // direct user spec: "0.1s after the shrink"
+const TRIPLE_STACK_UNBLUR_DURATION = 0.18;
+const TRIPLE_STACK_BLUR_RADIUS_ICON = 13;
+const TRIPLE_STACK_NODE_FIXED_BG = '#18140F';
+// Real last-landing moment: SHRINK ends at ENTER_DURATION+SETTLE_HOLD+
+// SHRINK_DURATION, unblur starts UNBLUR_DELAY after that and runs
+// UNBLUR_DURATION - see clampMographDuration's own call site below.
+const TRIPLE_STACK_COMPLETE_TIME = TRIPLE_STACK_ENTER_DURATION + TRIPLE_STACK_SETTLE_HOLD
+  + TRIPLE_STACK_SHRINK_DURATION + TRIPLE_STACK_UNBLUR_DELAY + TRIPLE_STACK_UNBLUR_DURATION;
+
+/**
+ * A headline built from the beat's OWN narration text (never a separate
+ * model-authored field - guarantees the word count narrationPrefetch.js's
+ * applyRealWordTimingToText needs to match exactly, so the real-audio-
+ * timed reveal it unconditionally attaches to any matching text layer
+ * lands on THIS layer for free, no bespoke reveal wiring needed here).
+ *
+ * The reference's own top caption doesn't just fade each word in - the
+ * CURRENT word pops noticeably bigger than the ones already settled,
+ * shrinking back down once the next word takes over. `properties.scale`
+ * animators in this engine are a static multiplier (renderAnimatedText),
+ * so the "pop" has to come from the SELECTOR itself varying in time, not
+ * the property - a narrow `rangeSelector` window (shape:'triangle', so
+ * strength ramps 0->1->0) whose start/end keyframes sweep across word-
+ * index space, landing exactly centered on word i's own index at word
+ * i's own reveal time. Between two words the window drifts continuously
+ * from one center to the next (ordinary keyframe interpolation), so each
+ * word gets a real, correctly-timed pop as the window passes over it.
+ * Authored here with an ESTIMATED even split (real narration timing
+ * doesn't exist yet at generation time) - narrationPrefetch.js's
+ * applyRealWordTimingToText re-times this SAME animator (identified by
+ * `properties.scale`) once real per-word audio timing is available, the
+ * same real-timing upgrade already applied to the reveal itself.
+ */
+const TRIPLE_STACK_CAPTION_POP_SCALE = 1.16;
+const TRIPLE_STACK_CAPTION_WINDOW_HALF_WIDTH_DIVISOR = 2.6; // half-width = 100/(usedCount*this) - a bit under one word's own slot
+function buildWordCascadeCaptionLayer(narrationText, estimatedDuration) {
+  const words = narrationText.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+  const usedCount = words.length;
+  const revealWindow = Math.max(0.4, estimatedDuration - 0.3);
+  const halfWidthPct = 100 / (usedCount * TRIPLE_STACK_CAPTION_WINDOW_HALF_WIDTH_DIVISOR);
+
+  const startKfs = [];
+  const endKfs = [];
+  const revealKfs = [];
+  for (let i = 0; i < usedCount; i++) {
+    const t = usedCount > 1 ? (i / (usedCount - 1)) * revealWindow : 0;
+    const centerPct = ((i + 0.5) / usedCount) * 100;
+    startKfs.push({ time: t, value: centerPct - halfWidthPct });
+    endKfs.push({ time: t, value: centerPct + halfWidthPct });
+    revealKfs.push({ time: t, value: Math.round(((i + 1) / usedCount) * 10000) / 100, interpolation: 'hold' });
+  }
+
+  return {
+    id: '__stack_caption__',
+    type: 'text',
+    text: narrationText,
+    fontFamily: 'Poppins Bold',
+    fontWeight: '700',
+    fontSize: 26,
+    lineHeight: 32,
+    fillStyle: ICON_BRIGHT_TINT,
+    textAlign: 'center',
+    maxWidth: CANVAS_WIDTH - EDGE_MARGIN_PX * 2 - 40,
+    position: [CANVAS_WIDTH / 2, 150],
+    animators: [
+      {
+        selector: {
+          type: 'range', start: 0, end: { keyframes: revealKfs }, basedOn: 'words',
+        },
+        properties: { opacity: -1 },
+      },
+      {
+        selector: {
+          type: 'range', start: { keyframes: startKfs }, end: { keyframes: endKfs }, basedOn: 'words', shape: 'triangle',
+        },
+        // buildAnimator's own default is invert:true (correct for the
+        // reveal animator above - "0=hidden struck, 1=fully applied,
+        // sweeping forward reduces the delta"), but this animator wants
+        // the RAW triangle bump used directly (strength 1 exactly at a
+        // word's own reveal moment = full pop, 0 between words = no
+        // pop) - inverting it would turn the intended bump into a dip.
+        invert: false,
+        properties: { scale: TRIPLE_STACK_CAPTION_POP_SCALE },
+      },
+    ],
+  };
+}
+
+function buildTripleStackLayers({ items, accentColor, narrationText }) {
+  const layers = [];
+
+  const stackTop = CANVAS_HEIGHT / 2 - (TRIPLE_STACK_NODE_HEIGHT * 3) / 2;
+  const centerX = EDGE_MARGIN_PX + TRIPLE_STACK_NODE_WIDTH / 2;
+  const rowY = [
+    stackTop + TRIPLE_STACK_NODE_HEIGHT * 0.5,
+    stackTop + TRIPLE_STACK_NODE_HEIGHT * 1.5,
+    stackTop + TRIPLE_STACK_NODE_HEIGHT * 2.5,
+  ];
+  const finalPos = [
+    [centerX, rowY[0]],
+    [centerX + TRIPLE_STACK_OFFSET_X, rowY[1]],
+    [centerX, rowY[2]],
+  ];
+  // Direct user spec: "the first and last coming in from the left to
+  // the middle and the middle node coming in from the right."
+  const startPos = [
+    [-TRIPLE_STACK_NODE_WIDTH, rowY[0]],
+    [CANVAS_WIDTH + TRIPLE_STACK_NODE_WIDTH, rowY[1]],
+    [-TRIPLE_STACK_NODE_WIDTH, rowY[2]],
+  ];
+
+  const ENTER_END = TRIPLE_STACK_ENTER_DURATION;
+  const SHRINK_START = ENTER_END + TRIPLE_STACK_SETTLE_HOLD;
+  const SHRINK_END = SHRINK_START + TRIPLE_STACK_SHRINK_DURATION;
+  const UNBLUR_START = SHRINK_END + TRIPLE_STACK_UNBLUR_DELAY;
+  const UNBLUR_END = UNBLUR_START + TRIPLE_STACK_UNBLUR_DURATION;
+
+  // Shared 1->1->0 "still blurred" -> "unblur" shape, reused for both the
+  // icon's real gaussianBlur radius (via scaledBlur below) and the
+  // text's own scale/opacity "bloom" substitute (see __stack_text_i__'s
+  // own doc comment for why text doesn't use a real blur effect here).
+  const blurTrack = () => ({
+    keyframes: [
+      { time: 0, value: 1 },
+      { time: UNBLUR_START, value: 1, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: UNBLUR_END, value: 0 },
+    ],
+  });
+  // gaussianBlur's own radius is a flat number, not a 0-1 fraction - the
+  // shared 0->1 shape above gets scaled to the icon's own real radius.
+  function scaledBlur(track, radius) {
+    return { keyframes: track.keyframes.map((kf) => ({ ...kf, value: kf.value * radius })) };
+  }
+
+  items.forEach((item, i) => {
+    const groupId = `__stack_group_${i}__`;
+    layers.push({
+      id: groupId,
+      type: 'null',
+      position: {
+        keyframes: [
+          { time: 0, value: startPos[i], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: ENTER_END, value: finalPos[i] },
+        ],
+      },
+      scale: {
+        keyframes: [
+          { time: 0, value: [1, 1] },
+          { time: SHRINK_START, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: SHRINK_END, value: [TRIPLE_STACK_SHRINK_SCALE, TRIPLE_STACK_SHRINK_SCALE] },
+        ],
+      },
+    });
+
+    const iconLocalX = -TRIPLE_STACK_NODE_WIDTH / 2 + 26 + TRIPLE_STACK_ICON_SIZE / 2;
+    const textLocalX = iconLocalX + TRIPLE_STACK_ICON_SIZE / 2 + 18;
+
+    layers.push({
+      id: `__stack_node_${i}__`,
+      type: 'shape',
+      parent: groupId,
+      width: TRIPLE_STACK_NODE_WIDTH,
+      height: TRIPLE_STACK_NODE_HEIGHT,
+      position: [0, 0],
+      contents: [
+        { type: 'path', shape: { kind: 'rectangle', params: { width: TRIPLE_STACK_NODE_WIDTH, height: TRIPLE_STACK_NODE_HEIGHT } } },
+        { type: 'fill', color: TRIPLE_STACK_NODE_FIXED_BG },
+        { type: 'stroke', color: accentColor, width: 1.5, opacity: 0.85 },
+      ],
+    });
+    layers.push({
+      id: `__stack_icon_${i}__`,
+      type: 'image',
+      parent: groupId,
+      icon: item.icon,
+      iconColor: ICON_BRIGHT_TINT,
+      width: TRIPLE_STACK_ICON_SIZE,
+      height: TRIPLE_STACK_ICON_SIZE,
+      position: [iconLocalX, 0],
+      effects: [{ type: 'gaussianBlur', params: { radius: scaledBlur(blurTrack(), TRIPLE_STACK_BLUR_RADIUS_ICON) } }],
+    });
+    const textMaxWidth = TRIPLE_STACK_NODE_WIDTH / 2 - (textLocalX - (-TRIPLE_STACK_NODE_WIDTH / 2)) - 16;
+    // Real, confirmed-live engine bug found building this template: a
+    // PARENTED text layer with a non-empty "effects" array (gaussianBlur
+    // OR outerGlow, either alone) renders a small ghost duplicate of
+    // itself elsewhere on screen - reproduced with instrumentation down
+    // to withEffects' own buffered-compositing path (sceneBuilder.js),
+    // narrowed to TEXT specifically (the same effect on this template's
+    // OWN icon layers, same parent, never ghosts) - most likely a native
+    // font-glyph-cache interaction with the reused effects buffer canvas,
+    // not anything wrong in this file. Filing this as its own follow-up
+    // rather than blocking the template on a full engine fix. Text gets
+    // a native scale+opacity "soft bloom" instead - no effects array at
+    // all, so it can never hit this path - which reads as "not yet in
+    // focus" without literal blur: slightly larger + faint while
+    // `blurTrack` would have been active, snapping to 1x/full opacity
+    // over the exact same UNBLUR_START->UNBLUR_END window so the timing
+    // story (icons defocus, then everything sharpens together) is
+    // unchanged even though text's OWN mechanism differs from the icon's.
+    const textBloom = blurTrack();
+    layers.push({
+      id: `__stack_text_${i}__`,
+      type: 'text',
+      parent: groupId,
+      text: item.text,
+      fontFamily: 'Poppins Bold',
+      fontWeight: '700',
+      fontSize: 19,
+      fillStyle: ICON_BRIGHT_TINT,
+      textAlign: 'left',
+      maxWidth: textMaxWidth,
+      position: [textLocalX, 0],
+      opacity: { keyframes: textBloom.keyframes.map((kf) => ({ ...kf, value: 1 - kf.value * 0.55 })) },
+      scale: { keyframes: textBloom.keyframes.map((kf) => ({ ...kf, value: [1 + kf.value * 0.1, 1 + kf.value * 0.1] })) },
+    });
+  });
+
+  const estimatedDuration = TRIPLE_STACK_COMPLETE_TIME;
+  const caption = narrationText ? buildWordCascadeCaptionLayer(narrationText, estimatedDuration) : null;
+  if (caption) layers.push(caption);
+
+  return layers;
+}
+
 const MOGRAPH_ICON_RE = /^[a-z0-9-]+:[a-z0-9-]+$/i;
 
 /**
@@ -7465,6 +7717,16 @@ function buildMographBeatVisual(beat) {
     const text = truncateAtWordBoundary(spec.text.trim(), 40);
     layers = buildSquareSpinLayers({ text, icon1: spec.icon1, icon2: spec.icon2, accentColor });
     clampMographDuration(beat, SQUARE_SPIN_COMPLETE_TIME);
+  } else if (spec.type === 'tripleStack' && Array.isArray(spec.items)) {
+    const items = spec.items
+      .filter((it) => isPlainObject(it) && typeof it.icon === 'string' && MOGRAPH_ICON_RE.test(it.icon) && typeof it.text === 'string' && it.text.trim())
+      .slice(0, 3)
+      .map((it) => ({ icon: it.icon, text: truncateAtWordBoundary(it.text.trim().toUpperCase(), 20) }));
+    if (items.length === 3) {
+      const narrationText = isPlainObject(beat.params) && typeof beat.params.narration === 'string' ? beat.params.narration : '';
+      layers = buildTripleStackLayers({ items, accentColor, narrationText });
+      clampMographDuration(beat, TRIPLE_STACK_COMPLETE_TIME);
+    }
   } else if (spec.type === 'nodeClusterExtended' && Array.isArray(spec.icons) && typeof spec.newIcon === 'string' && MOGRAPH_ICON_RE.test(spec.newIcon)) {
     const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 8);
     if (icons.length >= 3) {
@@ -7633,7 +7895,7 @@ function validateSceneJSON(sceneJSON) {
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
     } else if (seen.size < 5) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin). Add more template beats to reach at least 5.`);
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack). Add more template beats to reach at least 5.`);
     } else if (seen.size > 7) {
       errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 7. Trim beats down to 7 or fewer distinct templates.`);
     }
@@ -9594,5 +9856,6 @@ module.exports = {
   buildMergeClusterLayers,
   buildTextPopOutLayers,
   buildSquareSpinLayers,
+  buildTripleStackLayers,
   buildMographBeatVisual,
 };
