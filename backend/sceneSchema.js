@@ -6406,6 +6406,40 @@ function buildSplitConvergeLayers({ icon, accentColor, label }) {
     { time: ARRIVE_TIME, value: 1, interpolation: 'easing', easing: 'easeOutCubic' },
   ] };
   const layers = [
+    // Real, confirmed-live bug (2026-09-10, direct user report with the
+    // actual video attached: a whole beat rendering completely blank
+    // except its own label text). Root cause: every OTHER visible layer
+    // in this template is icon-IMAGE-based (the two matte-clipped
+    // halves, the unmasked glow source) - unlike nodeCluster/
+    // connectorList, which each have their own independent background/
+    // outline SHAPE that stays visible even if the icon image itself
+    // fails to load (a real, occasional failure mode - Iconify rate
+    // limits, a transient network blip, a hallucinated icon name that
+    // slips past generation-time validation). This template had no such
+    // fallback: the ring pulse below is only ever visible for ~0.4s
+    // right at arrival, so once an icon fails here, the ENTIRE REST of
+    // the beat shows nothing at all. This container circle is the
+    // fallback - a plain, persistent shape (never icon-dependent) that
+    // stays visible for the whole beat once arrived, so a failed icon
+    // degrades to "a circle with nothing inside it" (same as every
+    // other template's own failure mode) instead of "total blank screen".
+    {
+      id: '__split_container_bg__',
+      type: 'shape',
+      width: ICON_SIZE * 1.15,
+      height: ICON_SIZE * 1.15,
+      position: [...CENTER],
+      scale: { expression: breatheExpr, base: cloneTrack(settleScale) },
+      opacity: { keyframes: [
+        { time: 0, value: 0 },
+        { time: ARRIVE_TIME - 0.01, value: 0 },
+        { time: ARRIVE_TIME, value: 1, interpolation: 'easing', easing: 'easeOutCubic' },
+      ] },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: ICON_SIZE * 1.15, height: ICON_SIZE * 1.15 } } },
+        { type: 'stroke', color: accentColor, width: 3 },
+      ],
+    },
     {
       id: '__split_icon_glow_source__',
       type: 'image',
