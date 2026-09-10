@@ -269,12 +269,15 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 /**
  * Drop-in replacement for calling renderLongFormVideo directly - tries
- * to spread a long video's chunks across this worker and EVERY currently
- * available sibling before falling back to rendering every chunk
- * itself, exactly as renderLongFormVideo already does. Short videos (no
- * chunking needed at all) and the case where no sibling has room both
- * fall through to the ORIGINAL, unchanged solo path - this only changes
- * behavior when there's real chunked work AND real help available.
+ * to spread a long video's chunks across this worker plus a LIMITED
+ * number of siblings (see MAX_WORKERS_PER_JOB above - capped, not
+ * "every available one", direct user requirement to keep the rest of
+ * the fleet free for other users generating at the same time) before
+ * falling back to rendering every chunk itself, exactly as
+ * renderLongFormVideo already does. Short videos (no chunking needed at
+ * all) and the case where no sibling has room both fall through to the
+ * ORIGINAL, unchanged solo path - this only changes behavior when
+ * there's real chunked work AND real help available.
  *
  * Rebuilt as a work-stealing pool (2026-09-10, direct user request,
  * replacing a fixed-upfront-split design entirely - not layered on top
@@ -355,6 +358,21 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 // still sends this same sceneJSON unchanged; each worker's own
 // prefetchIcons calls now just decode already-embedded bytes locally,
 // no network fetch at all in the common case.
+// Direct user instruction (2026-09-10): a single job used to grab EVERY
+// currently-free sibling - real, measured speedup for that one job
+// (~3.5x with all 5 workers), but a real, confirmed problem for anyone
+// else: while that job's pool holds all 5 workers, a second user's
+// generation starting at the same moment finds nothing free to help it,
+// and falls back to near-solo speed. The explicit design principle
+// going forward (direct user statement): assume many users could be
+// generating at the exact same time, not just one - a single job's own
+// speed is not worth starving the rest of the fleet for. Capped so one
+// job uses at most this many workers total (itself + siblings), no
+// matter how many more are sitting idle - the other workers stay free
+// for whoever else shows up, even if that means this one job doesn't
+// get the fastest theoretically possible time.
+const MAX_WORKERS_PER_JOB = 2;
+
 async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled) {
   const chunkRanges = computeChunkRanges(sceneJSON);
 
@@ -366,11 +384,23 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
     return renderLongFormVideo(jobId, renderSceneJSON, onProgress, isCancelled);
   }
 
-  const siblingUrls = await getAvailableSiblings();
-  if (siblingUrls.length === 0) {
+  const availableSiblings = await getAvailableSiblings();
+  if (availableSiblings.length === 0) {
     const renderSceneJSON = await prefetchIconsIsolated(sceneJSON, jobId);
     return renderLongFormVideo(jobId, renderSceneJSON, onProgress, isCancelled);
   }
+
+  // Picked RANDOMLY out of everyone available, not just the first N in
+  // RENDER_WORKER_URL_1/2/... order - always taking the same fixed
+  // prefix would load-balance unevenly across the fleet over time (the
+  // early-numbered workers would get chosen as "the helper" far more
+  // often than the later ones whenever more than MAX_WORKERS_PER_JOB-1
+  // are free). A simple shuffle-then-slice spreads that fairly.
+  const siblingUrls = availableSiblings
+    .map((url) => ({ url, sortKey: Math.random() }))
+    .sort((a, b) => a.sortKey - b.sortKey)
+    .slice(0, MAX_WORKERS_PER_JOB - 1)
+    .map(({ url }) => url);
 
   console.log(`[chunkDispatch] job ${jobId} pooling ${chunkRanges.length} chunks across this worker + ${siblingUrls.length} sibling(s): ${siblingUrls.join(', ')}`);
 

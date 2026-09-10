@@ -363,8 +363,10 @@ async function generateWholeSceneJSON(userPrompt, targetDurationSeconds, treatme
 // kept defined but no longer called from generateSceneJSON - see their
 // own doc comments) with ONE call against Cloudflare Workers AI's
 // compact prompt (buildCompactGenerationSystemPrompt, scenePrompts.js -
-// real, tokenizer-measured 494 tokens, under the user's own 750-token
-// ceiling), then a pure-JS compile step into the real schema.
+// real, tokenizer-measured, kept under the user's own token ceiling,
+// 750 -> 1000 as of 2026-09-10 - see that function's own doc comment
+// for the current real count), then a pure-JS compile step into the
+// real schema.
 
 // No real narration-audio timing is available to size a beat's duration
 // from (TTS is currently disabled - see narrationPrefetch.js), so each

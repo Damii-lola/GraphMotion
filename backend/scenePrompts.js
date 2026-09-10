@@ -1770,8 +1770,13 @@ function listTreatmentBeatHeaders(treatment) {
 // buildMographBeatVisual expects (duration, per-template field
 // validation, etc.) - this prompt only needs to teach the model what
 // to pick and how to name real fields, not the full engine schema.
-// Kept under the user's own explicit 750-token ceiling - verified with
-// a real tokenizer count (gpt-tokenizer), not estimated.
+// Kept under the user's own explicit token ceiling (750 -> 1000,
+// 2026-09-10, raised to make room for the phoneSwap/textPopOut worked
+// examples below - both templates' own "text" field was the single most
+// common thing real generations left empty, and a concrete example
+// measurably fixed the same problem for connectorList's own nested
+// shape earlier) - verified with a real tokenizer count (gpt-tokenizer),
+// not estimated.
 function buildCompactGenerationSystemPrompt() {
   return `You pick short-form video templates for a topic and fill in their real fields. Respond with ONLY one valid JSON object - no markdown fences, no commentary.
 
@@ -1793,8 +1798,8 @@ RULES:
 - The FIRST beat's narration must do ONE of: contain "you"/"your", end with "?" or "!", or start with Stop/Imagine/Picture/Wait/Guess/"What if"/Never - never a flat statement of fact.
 - "accentColor" is optional per beat, a hex string like "#8B5CF6" - omit it to auto-pick one.
 
-OUTPUT SHAPE (one line, no extra keys - these are 2 of the 6 beats you must output, just to show the shape; connectorList's "items" is a list of {icon,label} OBJECTS, not two separate lists):
-{"beats":[{"template":"nodeCluster","narration":"Which one actually works?","vars":{"icons":["mdi:water","mdi:run","mdi:book-open-page-variant"],"chosenIndex":1},"accentColor":"#8B5CF6"},{"template":"connectorList","narration":"Sleep, protein, then consistency.","vars":{"items":[{"icon":"mdi:sleep","label":"Sleep"},{"icon":"mdi:food-drumstick","label":"Protein"},{"icon":"mdi:calendar-check","label":"Routine"}]},"accentColor":"#8B5CF6"}]} (write your OWN narration matching your topic - never copy this example's wording)`;
+OUTPUT SHAPE (one line, no extra keys - these are 4 of the 6 beats you must output, just to show the shape; connectorList's "items" is a list of {icon,label} OBJECTS, not two separate lists; phoneSwap/textPopOut's own "text" is filled in below, never left out):
+{"beats":[{"template":"nodeCluster","narration":"Which one actually works?","vars":{"icons":["mdi:water","mdi:run","mdi:book-open-page-variant"],"chosenIndex":1},"accentColor":"#8B5CF6"},{"template":"connectorList","narration":"Sleep, protein, then consistency.","vars":{"items":[{"icon":"mdi:sleep","label":"Sleep"},{"icon":"mdi:food-drumstick","label":"Protein"},{"icon":"mdi:calendar-check","label":"Routine"}]},"accentColor":"#8B5CF6"},{"template":"phoneSwap","narration":"Watch what happens next.","vars":{"text":"7 Day Streak","icon":"mdi:fire"},"accentColor":"#8B5CF6"},{"template":"textPopOut","narration":"Small wins add up fast.","vars":{"text":"Progress beats perfection"}}]} (write your OWN narration/text matching your topic - never copy this example's wording)`;
 }
 
 module.exports = {
