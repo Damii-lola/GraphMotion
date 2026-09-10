@@ -1793,7 +1793,7 @@ squareSpin: text*(2-5w, sits inside the shapes), icon1, icon2
 Icons must be REAL Iconify names, format "prefix:name" - "mdi:concept-name" for general ideas (e.g. mdi:rocket-launch, mdi:calendar-check), "simple-icons:brandname" for real brand logos. Never invent a name.
 
 RULES:
-- "beats" MUST have EXACTLY 6 entries - 6 DIFFERENT templates from the 8 above, never repeat one.
+- "beats" MUST have EXACTLY 6 entries - 6 DIFFERENT templates from the 8 above, never repeat one. STOP at 6 - do NOT use all 8, pick your best 6 and leave 2 out.
 - Every beat needs "narration": a short SPOKEN line, 8 words max, matching what's on screen.
 - phoneSwap/textPopOut/squareSpin ALSO need their own "text" in "vars" - a SEPARATE on-screen string, even if it overlaps with narration. Never skip it.
 - FIRST beat's narration must contain "you"/"your", end "?"/"!", or start Stop/Imagine/Picture/Wait/Guess/"What if"/Never - never a flat statement of fact.
