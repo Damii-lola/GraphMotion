@@ -6776,52 +6776,60 @@ function buildMergeClusterLayers({
 /**
  * New template (2026-09-10), direct user spec with a real reference
  * video attached: three nested square outlines pop in from nothing,
- * then spin extremely fast (several full rotations) and land EXACTLY
- * on a 45-degree diamond orientation - "the outermost square spins
- * normal, the middle square spins with a 0.1sec delay and the
- * innermost square spins normal." Center text and two icon badges are
- * the changeable variables.
+ * TOGETHER, then each simply turns clockwise 45 degrees to become a
+ * diamond - NOT a multi-rotation spin (a real, direct user correction,
+ * 2026-09-10, after seeing a version that spun a full 360+ degrees:
+ * "why is the square spining like that... it's literally doing a whole
+ * 360+ degree turn... it should just be squares moving in clockwise
+ * direction to become a diamond shape"). Delay is staggered per-square,
+ * per that same correction: outer turns immediately, middle turns
+ * 0.2s later, inner turns 0.1s later. Center text and two icon badges
+ * are the changeable variables.
  *
  * Built from a real frame-by-frame read of the attached reference (see
  * this project's own "never reproduce copyrighted reference-video
  * content beyond style analysis" rule - this is an original
  * implementation inspired by the described motion, not a pixel copy):
  * the reference's own icon badges stay upright/readable even once the
- * squares finish spinning at 45 degrees, which rules out literally
- * parenting them to a spinning square (they'd tilt to 45 degrees too,
+ * squares finish turning to 45 degrees, which rules out literally
+ * parenting them to a turning square (they'd tilt to 45 degrees too,
  * unreadable) - built here as independent layers with their own fixed
  * position + pop-in, placed where the MIDDLE square's own settled
  * diamond edge sits, never inheriting the squares' own rotation.
  */
-// Real, direct user follow-up (2026-09-10, after watching a real
-// render): "it's a bit too fast, slow it down a bit." Pop/spin both
-// stretched modestly (0.15->0.18, 0.45->0.65) - still reads as a real
-// fast spin (SQUARE_SPIN_TARGET_ROTATION is unchanged, so it's still
-// genuinely 3 full rotations, just given enough real time to actually
-// perceive the multi-square desync instead of blurring past it).
 const SQUARE_SPIN_POP_DURATION = 0.18;
-const SQUARE_SPIN_SPIN_DURATION = 0.65;
-const SQUARE_SPIN_MIDDLE_DELAY = 0.1; // direct user spec, literal: "the middle square spins with a 0.1sec delay"
-const SQUARE_SPIN_TARGET_ROTATION = 3 * 360 + 45; // several full spins ("extremely fast") landing exactly on a diamond (45deg square = visual diamond)
+// Real, direct user correction (2026-09-10): a single, real 45-degree
+// clockwise turn, not a multi-rotation spin - "extremely fast" now
+// means a brisk, snappy turn, not many rotations blurred together.
+const SQUARE_SPIN_TURN_DURATION = 0.35;
+const SQUARE_SPIN_TARGET_ROTATION = 45; // exactly one clockwise quarter-turn - axis-aligned square -> diamond
+// Direct user spec, literal (2026-09-10 correction): outer turns
+// immediately (no delay), middle turns 0.2s later, inner turns 0.1s
+// later - each delay applied AFTER the shared simultaneous pop-in, not
+// stacked on top of a per-square pop stagger (the reference's own
+// squares all appear together, only the TURN itself is staggered).
+const SQUARE_SPIN_OUTER_TURN_DELAY = 0;
+const SQUARE_SPIN_MIDDLE_TURN_DELAY = 0.2;
+const SQUARE_SPIN_INNER_TURN_DELAY = 0.1;
 // Real, direct user requirement, applies to every template project-wide
-// (see MOGRAPH_MAX_HOLD_AFTER_SETTLE below) - recomputed after the
-// 2026-09-10 slow-down above (was 1.15 against the old, faster spin
-// timing): SETTLE_TIME is now 0.98 (middle square, its own delay makes
-// it the last to land), badges land last at ~1.35 (SETTLE_TIME-0.05
-// appear + 0.34 pop + 0.08 stagger) - this constant tracks THAT real
+// (see MOGRAPH_MAX_HOLD_AFTER_SETTLE below) - recomputed for the
+// 2026-09-10 "just a 45-degree turn, not a spin" correction above:
+// SETTLE_TIME is now 0.53s + 0.2 (middle's own delay makes it the last
+// to land) = 0.73s; badges land last at ~1.13 (SETTLE_TIME-0.05 appear
+// + 0.34 pop + 0.08 stagger) - this constant tracks THAT real
 // last-landing moment, not a guess.
-const SQUARE_SPIN_COMPLETE_TIME = 1.4;
+const SQUARE_SPIN_COMPLETE_TIME = 1.15;
 function buildSquareSpinLayers({
   text, icon1, icon2, accentColor,
 }) {
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
   const SIZES = { outer: 280, middle: 228, inner: 176 };
   const breatheExpr = 'wiggle(0.22, 0.02)';
+  const POP_END = SQUARE_SPIN_POP_DURATION;
 
-  function buildSquare(id, size, popDelay, spinDelay) {
-    const popEnd = popDelay + SQUARE_SPIN_POP_DURATION;
-    const spinStart = popEnd + spinDelay;
-    const spinEnd = spinStart + SQUARE_SPIN_SPIN_DURATION;
+  function buildSquare(id, size, turnDelay) {
+    const turnStart = POP_END + turnDelay;
+    const turnEnd = turnStart + SQUARE_SPIN_TURN_DURATION;
     return {
       id,
       type: 'shape',
@@ -6831,20 +6839,20 @@ function buildSquareSpinLayers({
       scale: {
         expression: breatheExpr,
         base: { keyframes: [
-          { time: popDelay, value: [0.3, 0.3], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: popEnd, value: [1, 1] },
+          { time: 0, value: [0.3, 0.3], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: POP_END, value: [1, 1] },
         ] },
       },
       opacity: { keyframes: [
-        { time: popDelay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: popEnd, value: 1 },
+        { time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: POP_END, value: 1 },
       ] },
       // easeOutCubic (fast start, decelerating into the landing) reads
-      // as a real object spinning hard and catching itself exactly on
-      // the diamond, rather than a robotic linear spin that just stops.
+      // as a real snappy turn that catches itself exactly on the
+      // diamond, rather than a robotic linear rotation.
       rotation: { keyframes: [
-        { time: spinStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: spinEnd, value: SQUARE_SPIN_TARGET_ROTATION },
+        { time: turnStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: turnEnd, value: SQUARE_SPIN_TARGET_ROTATION },
       ] },
       contents: [
         { type: 'path', shape: { kind: 'rectangle', params: { width: size, height: size } } },
@@ -6856,16 +6864,14 @@ function buildSquareSpinLayers({
     };
   }
 
-  const outer = buildSquare('__spin_outer__', SIZES.outer, 0, 0);
-  const middle = buildSquare('__spin_middle__', SIZES.middle, 0.05, SQUARE_SPIN_MIDDLE_DELAY);
-  const inner = buildSquare('__spin_inner__', SIZES.inner, 0.1, 0);
-  // Middle's own delayed start pushes its own settle later too (a real
-  // implementation of the delay, not a cosmetic one) - the max of all
-  // three is when the WHOLE group is finally motionless.
-  const SETTLE_TIME = Math.max(
-    0 + SQUARE_SPIN_POP_DURATION + SQUARE_SPIN_SPIN_DURATION,
-    0.05 + SQUARE_SPIN_POP_DURATION + SQUARE_SPIN_MIDDLE_DELAY + SQUARE_SPIN_SPIN_DURATION,
-    0.1 + SQUARE_SPIN_POP_DURATION + SQUARE_SPIN_SPIN_DURATION,
+  const outer = buildSquare('__spin_outer__', SIZES.outer, SQUARE_SPIN_OUTER_TURN_DELAY);
+  const middle = buildSquare('__spin_middle__', SIZES.middle, SQUARE_SPIN_MIDDLE_TURN_DELAY);
+  const inner = buildSquare('__spin_inner__', SIZES.inner, SQUARE_SPIN_INNER_TURN_DELAY);
+  // Each square's own delayed turn-start pushes its own settle later
+  // too (a real implementation of the delay, not a cosmetic one) - the
+  // max of all three is when the WHOLE group is finally motionless.
+  const SETTLE_TIME = POP_END + SQUARE_SPIN_TURN_DURATION + Math.max(
+    SQUARE_SPIN_OUTER_TURN_DELAY, SQUARE_SPIN_MIDDLE_TURN_DELAY, SQUARE_SPIN_INNER_TURN_DELAY,
   );
 
   const layers = [outer, middle, inner];
