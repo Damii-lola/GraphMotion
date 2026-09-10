@@ -14,11 +14,18 @@
 // this one step into its own disposable fork buys back, the same way
 // chunk workers already reclaim @napi-rs/canvas's own native memory.
 
-const { prefetchIcons } = require('./iconFetch');
+const { prefetchIcons, embedIconDataInScene } = require('./iconFetch');
 
-process.on('message', async ({ sceneJSON, jobId }) => {
+// mode: 'embed' runs embedIconDataInScene instead - kept in sync with
+// render-worker/iconFetchWorker.js's own copy even though this backend
+// path doesn't currently call it with 'embed' (the backend's own local-
+// fallback render never chunk-splits, so it never hit the per-chunk
+// re-fetch bug embedIconDataInScene fixes - see iconFetch.js's own doc
+// comment). Kept here anyway so both copies stay genuinely identical,
+// not just "identical except where one file happened to need more."
+process.on('message', async ({ sceneJSON, jobId, mode }) => {
   try {
-    const renderSceneJSON = await prefetchIcons(sceneJSON, jobId);
+    const renderSceneJSON = mode === 'embed' ? await embedIconDataInScene(sceneJSON) : await prefetchIcons(sceneJSON, jobId);
     if (process.send) process.send({ ok: true, renderSceneJSON });
   } catch (err) {
     if (process.send) process.send({ ok: false, error: String((err && err.message) || err) });

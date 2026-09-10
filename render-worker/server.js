@@ -108,8 +108,8 @@ function cleanupIcons(jobId) {
   fs.rm(iconsDirFor(jobId), { recursive: true, force: true }, () => {});
 }
 
-/** Same disposable-child-process isolation as ../backend/renderWorker.js's own prefetchIconsIsolated - @resvg/resvg-js's native SVG rasterizer cost is paid and reclaimed in a throwaway process rather than sitting in this long-lived worker for its whole uptime. */
-function prefetchIconsIsolated(sceneJSON, jobId) {
+/** Same disposable-child-process isolation as ../backend/renderWorker.js's own prefetchIconsIsolated - @resvg/resvg-js's native SVG rasterizer cost is paid and reclaimed in a throwaway process rather than sitting in this long-lived worker for its whole uptime. `mode:'embed'` (jobId unused/null) runs embedIconDataInScene instead of the original per-job-directory prefetchIcons - see iconFetchWorker.js's own doc comment. */
+function prefetchIconsIsolated(sceneJSON, jobId, mode) {
   return new Promise((resolve, reject) => {
     const child = fork(path.join(__dirname, 'iconFetchWorker.js'), {
       execArgv: ['--max-old-space-size=150'],
@@ -142,8 +142,22 @@ function prefetchIconsIsolated(sceneJSON, jobId) {
       reject(err);
     });
 
-    child.send({ sceneJSON, jobId });
+    child.send({ sceneJSON, jobId, mode });
   });
+}
+
+/**
+ * Real, confirmed-live bug fixed here (2026-09-10, see iconFetch.js's
+ * own embedIconDataInScene doc comment for the full picture): resolves
+ * every distinct icon in the WHOLE job exactly ONCE, embedding the PNG
+ * bytes directly into the returned scene JSON, before ANY chunk-level
+ * work (this worker's own render, or any sibling's /render-chunks call)
+ * begins. Every downstream prefetchIcons call then just decodes already-
+ * embedded bytes locally - zero further Iconify calls per chunk, no
+ * matter how many chunks or workers the job ends up splitting across.
+ */
+function embedIconDataInSceneIsolated(sceneJSON) {
+  return prefetchIconsIsolated(sceneJSON, null, 'embed');
 }
 
 function narrationDirFor(jobId) {
@@ -188,16 +202,24 @@ function withRenderLock(fn) {
  * Handles a sibling's help request (see chunkDispatch.js and
  * renderWithPossibleHelp below) - renders exactly the chunk ranges
  * asked for and returns them as base64, nothing else. Does its OWN
- * full image/icon prefetch even though it's only rendering a SUBSET of
- * the video's beats - a chunk's own rendered frames can still
+ * image/icon "prefetch" pass even though it's only rendering a SUBSET
+ * of the video's beats - a chunk's own rendered frames can still
  * reference any beat's image/icon depending on where that beat's own
- * on-screen time falls, and these fetches use free keyless URLs, so
- * redundant fetching across the primary and this helper costs a little
- * duplicate network time, never correctness. Goes through the SAME
- * withRenderLock as a normal /render job - a help request is exactly
- * as memory-heavy as a normal one while it's actually rendering, and
- * this worker still only has room for one such active render at a time
- * regardless of which route asked for it.
+ * on-screen time falls. Icons cost nothing extra here: by the time this
+ * runs, the sceneJSON's icon layers already carry embedded PNG bytes
+ * (see handleRenderJob's own embedIconDataInSceneIsolated call and
+ * iconFetch.js's embedIconDataInScene doc comment for why - a REAL,
+ * confirmed-live bug once had this call independently re-fetch every
+ * icon from Iconify on every single chunk request, which is exactly
+ * what triggered Iconify's own rate limiting in production), so this is
+ * a local decode+write, not a network call. Hero images are the one
+ * piece still genuinely redundant here (imagePrefetch.js's own free,
+ * keyless, un-rate-limited fetch) - a little duplicate network time,
+ * never correctness. Goes through the SAME withRenderLock as a normal
+ * /render job - a help request is exactly as memory-heavy as a normal
+ * one while it's actually rendering, and this worker still only has
+ * room for one such active render at a time regardless of which route
+ * asked for it.
  */
 async function handleRenderChunksRequest(jobId, sceneJSON, chunkRanges) {
   const imageResolvedSceneJSON = await prefetchBeatImages(sceneJSON, jobId);
@@ -319,11 +341,20 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 // "src" pointing at a file that doesn't exist on ITS filesystem -
 // silently producing an invisible icon for every frame it renders.
 //
-// Fixed by deferring icon resolution until AFTER the split decision:
-// `sceneJSON` here stays icon-RAW (the "icon" field intact) all the way
-// through until it's actually needed - every sibling task below sends
-// this same icon-raw copy, and each worker (this one included) resolves
-// its own separate local copy per chunk it actually renders.
+// Original fix: deferred icon resolution until AFTER the split decision
+// (icon names stayed raw here, each worker resolved its own local copy
+// per chunk). Superseded 2026-09-10 by a stronger fix one level up -
+// handleRenderJob now resolves every icon ONCE for the whole job via
+// embedIconDataInScene and embeds the actual PNG bytes (`iconDataBase64`)
+// into the sceneJSON THIS function receives, before ever calling this.
+// Embedded bytes are portable across every worker's disk by construction
+// (they're not a path at all), which fixes both bugs at once: the
+// original "src points to a file only the resolving worker has" issue,
+// AND the newer Iconify-rate-limit issue redundant per-chunk re-fetching
+// caused (see iconFetch.js's own doc comment). Every sibling task below
+// still sends this same sceneJSON unchanged; each worker's own
+// prefetchIcons calls now just decode already-embedded bytes locally,
+// no network fetch at all in the common case.
 async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled) {
   const chunkRanges = computeChunkRanges(sceneJSON);
 
@@ -492,18 +523,28 @@ async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
     // and then deletes that field outright, so harmonizing colors any
     // later than this leaves every icon's own glow effect harmonized to
     // a different color than the icon itself ends up baked as. Mutates
-    // sceneJSON in place; everything below (image prefetch, a possible
-    // sibling's own icon-raw copy, this worker's own icon prefetch) all
-    // derives from this same already-harmonized object.
+    // sceneJSON in place; everything below (icon embedding, image
+    // prefetch, every worker's own icon decode) all derives from this
+    // same already-harmonized object.
     harmonizeSceneColors(sceneJSON);
 
-    // Icons deliberately NOT resolved here anymore - see
-    // renderWithPossibleHelp's own doc comment for the real, confirmed-
-    // live bug this fixes. Hero images stay resolved this early since
-    // imagePrefetch.js never deletes "imagePrompt", so a sibling
-    // worker's own redundant re-resolution of it is harmless (just a
-    // little duplicate work), unlike icons.
-    const imageResolvedSceneJSON = await prefetchBeatImages(sceneJSON, jobId);
+    // Icons resolved ONCE here, for the whole job, before any chunk-level
+    // work begins - see iconFetch.js's own embedIconDataInScene doc
+    // comment for the real Iconify-rate-limit bug this fixes (each
+    // chunk used to trigger its own full re-fetch of every icon in the
+    // whole video). The result carries the actual PNG bytes embedded
+    // (`iconDataBase64`), not a local file path, so it's exactly as
+    // valid on a sibling's own disk as on this worker's - every
+    // downstream prefetchIcons call (this worker's own render, or any
+    // sibling's /render-chunks handling) just decodes it locally.
+    const iconEmbeddedSceneJSON = await embedIconDataInSceneIsolated(sceneJSON);
+
+    // Hero images stay resolved this early too since imagePrefetch.js
+    // never deletes "imagePrompt", so a sibling worker's own redundant
+    // re-resolution of it is harmless (just a little duplicate work) -
+    // unlike icons before the fix above, this was never the cause of
+    // any real problem.
+    const imageResolvedSceneJSON = await prefetchBeatImages(iconEmbeddedSceneJSON, jobId);
 
     const renderedPath = await withRenderLock(() => renderWithPossibleHelp(jobId, imageResolvedSceneJSON, (pct) => {
       const now = Date.now();
@@ -517,12 +558,11 @@ async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
       }
     }, () => cancelledJobs.has(jobId)));
 
-    // imageResolvedSceneJSON, not any icon-resolved copy - confirmed
-    // muxNarrationOntoVideo never reads per-beat image/icon fields at
-    // all (only narration/duration timing), so the icon-raw version is
-    // exactly as good here and there's no single "the" resolved copy
-    // anymore now that the primary and a possible sibling each hold
-    // their own.
+    // imageResolvedSceneJSON, not any per-worker icon-resolved copy -
+    // confirmed muxNarrationOntoVideo never reads per-beat image/icon
+    // fields at all (only narration/duration timing), so this
+    // icon-embedded-but-not-yet-locally-decoded version is exactly as
+    // good here as any worker's own fully-resolved copy would be.
     const muxedPath = await muxNarrationOntoVideo(renderedPath, imageResolvedSceneJSON, audioFiles, jobId, os.tmpdir());
 
     // Direct user request: speed up the finished video (video + audio

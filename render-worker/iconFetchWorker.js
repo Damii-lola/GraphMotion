@@ -14,11 +14,17 @@
 // this one step into its own disposable fork buys back, the same way
 // chunk workers already reclaim @napi-rs/canvas's own native memory.
 
-const { prefetchIcons } = require('./iconFetch');
+const { prefetchIcons, embedIconDataInScene } = require('./iconFetch');
 
-process.on('message', async ({ sceneJSON, jobId }) => {
+// mode: 'embed' (2026-09-10, new) runs embedIconDataInScene - resolves
+// every distinct icon ONCE per job and returns a sceneJSON with the PNG
+// bytes embedded (no jobId, no local file writes - see that function's
+// own doc comment for the real Iconify-rate-limit bug this exists to
+// fix). Any other/missing mode keeps the ORIGINAL behavior: prefetchIcons
+// writes resolved icons to jobId's own local disk directory.
+process.on('message', async ({ sceneJSON, jobId, mode }) => {
   try {
-    const renderSceneJSON = await prefetchIcons(sceneJSON, jobId);
+    const renderSceneJSON = mode === 'embed' ? await embedIconDataInScene(sceneJSON) : await prefetchIcons(sceneJSON, jobId);
     if (process.send) process.send({ ok: true, renderSceneJSON });
   } catch (err) {
     if (process.send) process.send({ ok: false, error: String((err && err.message) || err) });
