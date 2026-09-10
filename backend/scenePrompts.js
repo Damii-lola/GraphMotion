@@ -1777,39 +1777,105 @@ function listTreatmentBeatHeaders(treatment) {
 // measurably fixed the same problem for connectorList's own nested
 // shape earlier) - verified with a real tokenizer count (gpt-tokenizer),
 // not estimated.
-function buildCompactGenerationSystemPrompt() {
-  return `You pick short-form video templates for a topic and fill in their real fields. Respond with ONLY one valid JSON object - no markdown fences, no commentary.
+// Real, direct user requirement (2026-09-10), after two separate live
+// production incidents caused by asking the model to BOTH choose which
+// 6-of-8 templates to use AND fill them in, in one shot: "the scenes
+// chosen AINT FUCKING FIXED, they are randomizeddd, make them
+// randomize but make it that if a scene is chosen at random it cant be
+// chosen again." Moved template SELECTION out of the model's job
+// entirely - a real, deterministic, zero-error sample-without-
+// replacement in CODE (pickRandomTemplates below) now picks the 6
+// templates for a given video BEFORE the model ever sees the prompt,
+// and the model is simply TOLD which 6 to write, one beat each. This
+// doesn't just work around the model's own unreliability at this task
+// (confirmed live, twice: it defaulted to the same 4 "familiar"
+// templates, then even after fixing that, frequently overshot to using
+// all 8 instead of stopping at 6) - it makes the whole "wrong
+// count/wrong distinctness" failure class structurally impossible, not
+// just less likely. Bonus: the prompt only ever needs to explain 6
+// templates now, not 8, so per-call token cost actually goes DOWN
+// versus showing all 8 every time, real headroom for other
+// improvements instead of a growing ceiling fight.
+const COMPACT_TEMPLATE_INFO = {
+  nodeCluster: {
+    fields: 'icons(3-8), chosenIndex(0-based), introText(opt,<=5w)',
+    example: { template: 'nodeCluster', narration: 'Which one actually works?', vars: { icons: ['mdi:water', 'mdi:run', 'mdi:book-open-page-variant'], chosenIndex: 1 }, accentColor: '#8B5CF6' },
+  },
+  connectorList: {
+    fields: 'items(2-6 of {icon,label}, label 1-2w), outroText(opt,<=6w)',
+    example: { template: 'connectorList', narration: 'Sleep, protein, then consistency.', vars: { items: [{ icon: 'mdi:sleep', label: 'Sleep' }, { icon: 'mdi:food-drumstick', label: 'Protein' }, { icon: 'mdi:calendar-check', label: 'Routine' }] }, accentColor: '#8B5CF6' },
+  },
+  phoneSwap: {
+    fields: 'text*(2-4w phone headline), icon',
+    example: { template: 'phoneSwap', narration: 'Watch what happens next.', vars: { text: '7 Day Streak', icon: 'mdi:fire' }, accentColor: '#8B5CF6' },
+  },
+  splitConverge: {
+    fields: 'icon, label(opt,1-3w)',
+    example: { template: 'splitConverge', narration: 'This is the one thing that matters.', vars: { icon: 'mdi:lightbulb-on', label: 'The Big Idea' }, accentColor: '#8B5CF6' },
+  },
+  mergeCluster: {
+    fields: 'icons(2-5), resultIcon, label(opt,1-3w)',
+    example: { template: 'mergeCluster', narration: 'These all come together as one.', vars: { icons: ['mdi:microphone', 'mdi:video', 'mdi:cloud-upload'], resultIcon: 'mdi:movie-open', label: 'Content Creation' }, accentColor: '#8B5CF6' },
+  },
+  nodeClusterExtended: {
+    fields: 'icons(3-8), chosenIndex, mergeText*, newIcon*, newLabel(opt,1-3w)',
+    example: { template: 'nodeClusterExtended', narration: 'Together, they become something bigger.', vars: { icons: ['mdi:microphone', 'mdi:video', 'mdi:cloud-upload'], chosenIndex: 0, mergeText: 'Content Strategy', newIcon: 'mdi:forum', newLabel: 'The Plan' }, accentColor: '#8B5CF6' },
+  },
+  textPopOut: {
+    fields: 'text*(3-6w punchy statement)',
+    example: { template: 'textPopOut', narration: 'Small wins add up fast.', vars: { text: 'Progress beats perfection' } },
+  },
+  squareSpin: {
+    fields: 'text*(2-5w, sits inside the shapes), icon1, icon2',
+    example: { template: 'squareSpin', narration: 'Here are your two go-to tools.', vars: { text: 'Pro Tips', icon1: 'mdi:video', icon2: 'mdi:microphone' }, accentColor: '#8B5CF6' },
+  },
+};
+const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);
+
+// Real Fisher-Yates shuffle, not Math.random()-sort (the classic
+// "sort by random comparator" trick is a well-documented non-uniform
+// shuffle) - picked ONCE per generation, not re-rolled per retry (see
+// sceneGenClient.js's own generateCompactBeatSpec), so a retry only
+// ever fixes narration/vars issues, never the template set itself.
+// Real, direct user follow-up: the BEAT COUNT itself should also be
+// randomized (5, 6, or 7 - the same range this project's own
+// validateSceneJSON has always required), not fixed at 6 every time -
+// picked first, then that many distinct templates are sampled.
+function pickRandomTemplates(rand = Math.random) {
+  const count = 5 + Math.floor(rand() * 3);
+  const pool = [...COMPACT_TEMPLATE_NAMES];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, count);
+}
+
+function buildCompactGenerationSystemPrompt(chosenTemplates) {
+  const fieldLines = chosenTemplates.map((t) => `${t}: ${COMPACT_TEMPLATE_INFO[t].fields}`).join('\n');
+  const exampleLines = chosenTemplates.map((t) => JSON.stringify(COMPACT_TEMPLATE_INFO[t].example)).join('\n');
+  const nameList = chosenTemplates.join(', ');
+  const needsOwnText = chosenTemplates.filter((t) => ['phoneSwap', 'textPopOut', 'squareSpin'].includes(t));
+  const n = chosenTemplates.length;
+  return `You write one short-form video beat per template below, for a topic. Respond with ONLY one valid JSON object - no markdown fences, no commentary.
+
+YOUR ${n} TEMPLATES FOR THIS VIDEO (already chosen, fixed - write EXACTLY one beat for EACH, no substitutes, no repeats, no skipping any): ${nameList}
 
 TEMPLATES (name: fields; * = required, never leave blank):
-nodeCluster: icons(3-8), chosenIndex(0-based), introText(opt,<=5w)
-connectorList: items(2-6 of {icon,label}, label 1-2w), outroText(opt,<=6w)
-phoneSwap: text*(2-4w phone headline), icon
-splitConverge: icon, label(opt,1-3w)
-mergeCluster: icons(2-5), resultIcon, label(opt,1-3w)
-nodeClusterExtended: icons(3-8), chosenIndex, mergeText*, newIcon*, newLabel(opt,1-3w)
-textPopOut: text*(3-6w punchy statement)
-squareSpin: text*(2-5w, sits inside the shapes), icon1, icon2
+${fieldLines}
 
 Icons must be REAL Iconify names, format "prefix:name" - "mdi:concept-name" for general ideas (e.g. mdi:rocket-launch, mdi:calendar-check), "simple-icons:brandname" for real brand logos. Never invent a name.
 
 RULES:
-- "beats" MUST have EXACTLY 6 entries - 6 DIFFERENT templates from the 8 above, never repeat one. STOP at 6 - do NOT use all 8, pick your best 6 and leave 2 out.
-- Every beat needs "narration": a short SPOKEN line, 8 words max, matching what's on screen.
-- phoneSwap/textPopOut/squareSpin ALSO need their own "text" in "vars" - a SEPARATE on-screen string, even if it overlaps with narration. Never skip it.
+- "beats" MUST have EXACTLY ${n} entries, one for EACH template listed above - not a subset, no extras, no repeats.
+- Every beat needs "narration": a short SPOKEN line, 8 words max, matching what's on screen.${needsOwnText.length ? `\n- ${needsOwnText.join('/')} ALSO need${needsOwnText.length === 1 ? 's' : ''} their own "text" in "vars" - a SEPARATE on-screen string, even if it overlaps with narration. Never skip it.` : ''}
 - FIRST beat's narration must contain "you"/"your", end "?"/"!", or start Stop/Imagine/Picture/Wait/Guess/"What if"/Never - never a flat statement of fact.
 - "accentColor" is optional per beat, a hex string like "#8B5CF6" - omit it to auto-pick one.
 
-EXAMPLE SHAPES - one worked example per template, all 8 (a template with no example here gets picked far less and filled in wrong - real, confirmed-live failure). NOT your output - pick 6 of these 8 for your real answer below:
-{"template":"nodeCluster","narration":"Which one actually works?","vars":{"icons":["mdi:water","mdi:run","mdi:book-open-page-variant"],"chosenIndex":1},"accentColor":"#8B5CF6"}
-{"template":"connectorList","narration":"Sleep, protein, then consistency.","vars":{"items":[{"icon":"mdi:sleep","label":"Sleep"},{"icon":"mdi:food-drumstick","label":"Protein"},{"icon":"mdi:calendar-check","label":"Routine"}]},"accentColor":"#8B5CF6"}
-{"template":"phoneSwap","narration":"Watch what happens next.","vars":{"text":"7 Day Streak","icon":"mdi:fire"},"accentColor":"#8B5CF6"}
-{"template":"splitConverge","narration":"This is the one thing that matters.","vars":{"icon":"mdi:lightbulb-on","label":"The Big Idea"},"accentColor":"#8B5CF6"}
-{"template":"mergeCluster","narration":"These all come together as one.","vars":{"icons":["mdi:microphone","mdi:video","mdi:cloud-upload"],"resultIcon":"mdi:movie-open","label":"Content Creation"},"accentColor":"#8B5CF6"}
-{"template":"nodeClusterExtended","narration":"Together, they become something bigger.","vars":{"icons":["mdi:microphone","mdi:video","mdi:cloud-upload"],"chosenIndex":0,"mergeText":"Content Strategy","newIcon":"mdi:forum","newLabel":"The Plan"},"accentColor":"#8B5CF6"}
-{"template":"textPopOut","narration":"Small wins add up fast.","vars":{"text":"Progress beats perfection"}}
-{"template":"squareSpin","narration":"Here are your two go-to tools.","vars":{"text":"Pro Tips","icon1":"mdi:video","icon2":"mdi:microphone"},"accentColor":"#8B5CF6"}
+EXAMPLE SHAPES - one worked example per template, matching YOUR ${n} above exactly (NOT your output, just to show each one's shape):
+${exampleLines}
 
-Now output ONE line, {"beats":[...]}, EXACTLY 6 entries shaped like the examples above, your OWN narration/text for your topic - never copy the example wording.`;
+Now output ONE line, {"beats":[...]}, EXACTLY ${n} entries (one per template above) shaped like the examples, your OWN narration/text for your topic - never copy the example wording.`;
 }
 
 module.exports = {
@@ -1821,4 +1887,6 @@ module.exports = {
   buildCompactGenerationSystemPrompt,
   buildEditSystemPrompt,
   listTreatmentBeatHeaders,
+  pickRandomTemplates,
+  COMPACT_TEMPLATE_NAMES,
 };

@@ -3,6 +3,7 @@ const fetch = require('node-fetch');
 const { validateSceneJSON, buildMographBeatVisual } = require('./sceneSchema');
 const {
   buildTreatmentSystemPrompt, buildMinimalGenerationSystemPrompt, buildCompactGenerationSystemPrompt, buildEditSystemPrompt,
+  pickRandomTemplates,
 } = require('./scenePrompts');
 const { callOpenRouterRaw } = require('./openRouterClient');
 const { callCloudflareRaw } = require('./cloudflareClient');
@@ -404,7 +405,7 @@ const COMPACT_BASE_DURATION = {
  * own existing type/shape checks are what actually validate them, not
  * duplicated here.
  */
-function compileCompactSpecToSceneJSON(compact) {
+function compileCompactSpecToSceneJSON(compact, chosenTemplates) {
   if (!compact || !Array.isArray(compact.beats) || compact.beats.length === 0) {
     throw new Error('compact spec is missing a real, non-empty "beats" array');
   }
@@ -427,6 +428,35 @@ function compileCompactSpecToSceneJSON(compact) {
       mograph,
     };
   });
+
+  // Real, direct user requirement (2026-09-10, after two separate live
+  // incidents where the model's own template SELECTION was the
+  // dominant failure cause): the 5-7 templates for this video are now
+  // picked in CODE (pickRandomTemplates, scenePrompts.js) before the
+  // model ever sees the prompt - it's just told which ones to write.
+  // Verified here that it actually did, alongside the per-field errors
+  // above (one combined retry message instead of ping-ponging between
+  // error types across multiple retries) - this is what makes the whole
+  // "wrong count/wrong distinctness" failure class structurally
+  // impossible rather than just less likely.
+  if (Array.isArray(chosenTemplates) && chosenTemplates.length > 0) {
+    const used = compact.beats
+      .map((b) => (b && typeof b.template === 'string' ? b.template.trim() : null))
+      .filter(Boolean);
+    const usedSet = new Set(used);
+    const chosenSet = new Set(chosenTemplates);
+    const missing = chosenTemplates.filter((t) => !usedSet.has(t));
+    const extra = [...usedSet].filter((t) => !chosenSet.has(t));
+    const dupes = [...usedSet].filter((t) => used.filter((u) => u === t).length > 1);
+    if (missing.length > 0 || extra.length > 0 || dupes.length > 0) {
+      const parts = [];
+      if (missing.length) parts.push(`missing: ${missing.join(', ')}`);
+      if (extra.length) parts.push(`not in your assigned list: ${extra.join(', ')}`);
+      if (dupes.length) parts.push(`repeated: ${dupes.join(', ')}`);
+      fieldErrors.push(`"beats" must use EXACTLY your assigned ${chosenTemplates.length} templates (${chosenTemplates.join(', ')}), one each - ${parts.join('; ')}`);
+    }
+  }
+
   // Thrown BEFORE handing anything to buildMographBeatVisual - see
   // validateCompactBeatVars' own doc comment for why: its silent-drop
   // behavior turns exactly this into an unhelpful generic error later,
@@ -606,8 +636,17 @@ const COMPACT_RETRY_BUDGET = 18;
  * 3-6s per call) rather than the 60-100s+ round trips the old OpenRouter
  * path paid for every retry.
  */
-async function generateCompactBeatSpec(userPrompt, { retriesLeft = COMPACT_RETRY_BUDGET, priorErrors = null } = {}) {
-  const systemPrompt = buildCompactGenerationSystemPrompt();
+async function generateCompactBeatSpec(userPrompt, {
+  retriesLeft = COMPACT_RETRY_BUDGET, priorErrors = null, chosenTemplates = null,
+} = {}) {
+  // Picked ONCE per generation, not re-rolled per retry - a real,
+  // direct user requirement: "make them randomize but make it that if
+  // a scene is chosen at random it cant be chosen again." A retry
+  // passes the SAME chosenTemplates back through (see every recursive
+  // call below) so it only ever fixes narration/vars issues, never
+  // re-picks the template set mid-generation.
+  const templates = chosenTemplates || pickRandomTemplates();
+  const systemPrompt = buildCompactGenerationSystemPrompt(templates);
   let userMessage = `Topic: ${userPrompt}\n\nCreative angle for this generation: ${pickRandomCreativeAngle()}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt was invalid:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON.`;
 
@@ -639,7 +678,7 @@ async function generateCompactBeatSpec(userPrompt, { retriesLeft = COMPACT_RETRY
     // JSON shape from the SAME call already gets retried below.
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] Cloudflare call failed (${err.message}), retrying (${retriesLeft - 1} left)...`);
-      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors });
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors, chosenTemplates: templates });
     }
     throw err;
   }
@@ -649,18 +688,18 @@ async function generateCompactBeatSpec(userPrompt, { retriesLeft = COMPACT_RETRY
   } catch (err) {
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] compact spec JSON parse failed (${err.message}), retrying (${retriesLeft - 1} left)...`);
-      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [`Your last response was not valid JSON: ${err.message}`] });
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [`Your last response was not valid JSON: ${err.message}`], chosenTemplates: templates });
     }
     throw err;
   }
 
   let sceneJSON;
   try {
-    sceneJSON = compileCompactSpecToSceneJSON(compact);
+    sceneJSON = compileCompactSpecToSceneJSON(compact, templates);
   } catch (err) {
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] compact spec shape invalid (${err.message}), retrying (${retriesLeft - 1} left)...`);
-      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [err.message] });
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [err.message], chosenTemplates: templates });
     }
     throw err;
   }
@@ -670,7 +709,7 @@ async function generateCompactBeatSpec(userPrompt, { retriesLeft = COMPACT_RETRY
   if (!valid) {
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] compiled scene JSON failed validation (${errors.length} error(s)), retrying (${retriesLeft - 1} left): ${errors.slice(0, 3).join('; ')}`);
-      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: errors });
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: errors, chosenTemplates: templates });
     }
     throw new Error(`Generated scene JSON failed schema validation after retries: ${errors.join('; ')}`);
   }
@@ -682,6 +721,7 @@ async function generateCompactBeatSpec(userPrompt, { retriesLeft = COMPACT_RETRY
       return generateCompactBeatSpec(userPrompt, {
         retriesLeft: retriesLeft - 1,
         priorErrors: [`These icon names don't exist on Iconify and must be replaced with real ones: ${notFoundIcons.join(', ')}`],
+        chosenTemplates: templates,
       });
     }
     console.warn(`[sceneGenClient] ${notFoundIcons.length} icon(s) don't exist after exhausting retries (${notFoundIcons.join(', ')}) - shipping anyway, render-time fallback will drop them`);
