@@ -1780,27 +1780,36 @@ function listTreatmentBeatHeaders(treatment) {
 function buildCompactGenerationSystemPrompt() {
   return `You pick short-form video templates for a topic and fill in their real fields. Respond with ONLY one valid JSON object - no markdown fences, no commentary.
 
-TEMPLATES (name: fields):
-nodeCluster: icons (3-8 real Iconify "prefix:name"), chosenIndex (0-based, which icon wins), introText (optional hook line, <=5 words)
-connectorList: items (2-6 of {icon,label}, label is 1-2 words), outroText (optional closing line, <=6 words)
-phoneSwap: text (REQUIRED, 2-4 word on-screen phone headline - never leave blank), icon (real Iconify name it swaps to)
-splitConverge: icon (real Iconify name), label (optional, 1-3 words)
-mergeCluster: icons (2-5 real Iconify names), resultIcon (real Iconify name), label (optional, 1-3 words)
-nodeClusterExtended: icons (3-8), chosenIndex, mergeText (required short phrase), newIcon (required), newLabel (optional, 1-3 words)
-textPopOut: text (REQUIRED, a short punchy on-screen statement, 3-6 words - never leave blank)
-squareSpin: text (REQUIRED, 2-5 word on-screen phrase, sits inside the shapes - never leave blank), icon1 (real Iconify name), icon2 (real Iconify name)
+TEMPLATES (name: fields; * = required, never leave blank):
+nodeCluster: icons(3-8), chosenIndex(0-based), introText(opt,<=5w)
+connectorList: items(2-6 of {icon,label}, label 1-2w), outroText(opt,<=6w)
+phoneSwap: text*(2-4w phone headline), icon
+splitConverge: icon, label(opt,1-3w)
+mergeCluster: icons(2-5), resultIcon, label(opt,1-3w)
+nodeClusterExtended: icons(3-8), chosenIndex, mergeText*, newIcon*, newLabel(opt,1-3w)
+textPopOut: text*(3-6w punchy statement)
+squareSpin: text*(2-5w, sits inside the shapes), icon1, icon2
 
 Icons must be REAL Iconify names, format "prefix:name" - "mdi:concept-name" for general ideas (e.g. mdi:rocket-launch, mdi:calendar-check), "simple-icons:brandname" for real brand logos. Never invent a name.
 
 RULES:
-- Your "beats" array MUST have EXACTLY 6 entries - not fewer, not more. Pick 6 DIFFERENT templates from the 8 above (each used at most once - never repeat one), whichever 6 fit the topic best.
-- Every beat needs "narration": a short SPOKEN line, 8 words max, that matches what's happening on screen.
+- "beats" MUST have EXACTLY 6 entries - 6 DIFFERENT templates from the 8 above, never repeat one.
+- Every beat needs "narration": a short SPOKEN line, 8 words max, matching what's on screen.
 - phoneSwap/textPopOut/squareSpin ALSO need their own "text" in "vars" - a SEPARATE on-screen string, even if it overlaps with narration. Never skip it.
-- The FIRST beat's narration must do ONE of: contain "you"/"your", end with "?" or "!", or start with Stop/Imagine/Picture/Wait/Guess/"What if"/Never - never a flat statement of fact.
+- FIRST beat's narration must contain "you"/"your", end "?"/"!", or start Stop/Imagine/Picture/Wait/Guess/"What if"/Never - never a flat statement of fact.
 - "accentColor" is optional per beat, a hex string like "#8B5CF6" - omit it to auto-pick one.
 
-OUTPUT SHAPE (one line, no extra keys - these are 4 of the 6 beats you must output, just to show the shape; connectorList's "items" is a list of {icon,label} OBJECTS, not two separate lists; phoneSwap/textPopOut's own "text" is filled in below, never left out):
-{"beats":[{"template":"nodeCluster","narration":"Which one actually works?","vars":{"icons":["mdi:water","mdi:run","mdi:book-open-page-variant"],"chosenIndex":1},"accentColor":"#8B5CF6"},{"template":"connectorList","narration":"Sleep, protein, then consistency.","vars":{"items":[{"icon":"mdi:sleep","label":"Sleep"},{"icon":"mdi:food-drumstick","label":"Protein"},{"icon":"mdi:calendar-check","label":"Routine"}]},"accentColor":"#8B5CF6"},{"template":"phoneSwap","narration":"Watch what happens next.","vars":{"text":"7 Day Streak","icon":"mdi:fire"},"accentColor":"#8B5CF6"},{"template":"textPopOut","narration":"Small wins add up fast.","vars":{"text":"Progress beats perfection"}}]} (write your OWN narration/text matching your topic - never copy this example's wording)`;
+EXAMPLE SHAPES - one worked example per template, all 8 (a template with no example here gets picked far less and filled in wrong - real, confirmed-live failure). NOT your output - pick 6 of these 8 for your real answer below:
+{"template":"nodeCluster","narration":"Which one actually works?","vars":{"icons":["mdi:water","mdi:run","mdi:book-open-page-variant"],"chosenIndex":1},"accentColor":"#8B5CF6"}
+{"template":"connectorList","narration":"Sleep, protein, then consistency.","vars":{"items":[{"icon":"mdi:sleep","label":"Sleep"},{"icon":"mdi:food-drumstick","label":"Protein"},{"icon":"mdi:calendar-check","label":"Routine"}]},"accentColor":"#8B5CF6"}
+{"template":"phoneSwap","narration":"Watch what happens next.","vars":{"text":"7 Day Streak","icon":"mdi:fire"},"accentColor":"#8B5CF6"}
+{"template":"splitConverge","narration":"This is the one thing that matters.","vars":{"icon":"mdi:lightbulb-on","label":"The Big Idea"},"accentColor":"#8B5CF6"}
+{"template":"mergeCluster","narration":"These all come together as one.","vars":{"icons":["mdi:microphone","mdi:video","mdi:cloud-upload"],"resultIcon":"mdi:movie-open","label":"Content Creation"},"accentColor":"#8B5CF6"}
+{"template":"nodeClusterExtended","narration":"Together, they become something bigger.","vars":{"icons":["mdi:microphone","mdi:video","mdi:cloud-upload"],"chosenIndex":0,"mergeText":"Content Strategy","newIcon":"mdi:forum","newLabel":"The Plan"},"accentColor":"#8B5CF6"}
+{"template":"textPopOut","narration":"Small wins add up fast.","vars":{"text":"Progress beats perfection"}}
+{"template":"squareSpin","narration":"Here are your two go-to tools.","vars":{"text":"Pro Tips","icon1":"mdi:video","icon2":"mdi:microphone"},"accentColor":"#8B5CF6"}
+
+Now output ONE line, {"beats":[...]}, EXACTLY 6 entries shaped like the examples above, your OWN narration/text for your topic - never copy the example wording.`;
 }
 
 module.exports = {
