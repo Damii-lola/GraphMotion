@@ -384,12 +384,13 @@ const COMPACT_BASE_DURATION = {
   nodeClusterExtended: 3.0,
   textPopOut: 3.0,
   // Deliberately tiny - this template's own real motion (3 squares pop
-  // in, spin extremely fast, land on a diamond) fully completes in
-  // ~1.15s (SQUARE_SPIN_COMPLETE_TIME, sceneSchema.js) - a bigger base
-  // here would just be clamped back down by buildMographBeatVisual's
-  // own clampMographDuration anyway, so starting close to the real
-  // value avoids relying on that clamp to do all the work.
-  squareSpin: 1.8,
+  // in, spin, land on a diamond) fully completes in ~1.4s
+  // (SQUARE_SPIN_COMPLETE_TIME, sceneSchema.js, after the 2026-09-10
+  // slow-down) - a bigger base here would just be clamped back down by
+  // buildMographBeatVisual's own clampMographDuration anyway, so
+  // starting close to the real value avoids relying on that clamp to do
+  // all the work.
+  squareSpin: 2.0,
 };
 
 /**

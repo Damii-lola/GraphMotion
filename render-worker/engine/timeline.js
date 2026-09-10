@@ -17,14 +17,35 @@
  * real, uncounted-for contributor to total memory that had nothing to
  * do with actual frame rendering.
  */
+// Real, direct user requirement (2026-09-10): "the scene shouldn't
+// start until the camera has finished moving to that scene position."
+// Before this, the incoming beat's own content clock and the camera's
+// pan-in both started counting from the SAME localT=0 at once - so a
+// fast entrance (squareSpin's own sub-1s spin, most notably) could
+// finish, or nearly finish, BEFORE the camera had actually arrived,
+// leaving little or nothing left to see once it did. Every beat except
+// the first now reserves this much REAL EXTRA time up front
+// specifically for the incoming pan - renderEngine.js's own frame loop
+// clamps the beat's own content clock to hold at its very first frame
+// for exactly this long before it starts advancing (see its own
+// `beatLocalT` comment). Single source of truth for both files -
+// renderEngine.js imports this rather than keeping its own copy, so
+// the timeline math here and the frame loop's own pan math can never
+// silently drift out of sync with each other.
+const DEFAULT_PAN_DURATION_SECONDS = 0.75;
+const MAX_PAN_DURATION_SECONDS = 2.0;
+
 function buildTimeline(sceneJSON) {
   let cursor = 0;
-  const beatRanges = (sceneJSON.scenes || []).map((scene) => {
-    const duration = Math.max(0.4, Number(scene.params?.duration) || 3);
+  const beatRanges = (sceneJSON.scenes || []).map((scene, i) => {
+    const contentDuration = Math.max(0.4, Number(scene.params?.duration) || 3);
+    const requestedPanDuration = Number(scene.visual?.transitionIn?.duration) || DEFAULT_PAN_DURATION_SECONDS;
+    const panDuration = i > 0 ? Math.min(Math.max(0.05, requestedPanDuration), MAX_PAN_DURATION_SECONDS) : 0;
+    const duration = contentDuration + panDuration;
     const start = cursor;
     cursor += duration;
     return {
-      scene, duration, start, end: cursor,
+      scene, duration, contentDuration, panDuration, start, end: cursor,
     };
   });
   return { totalDuration: cursor, beatRanges };
@@ -38,4 +59,6 @@ function findActiveBeatIndex(beatRanges, t) {
   return beatRanges.length - 1;
 }
 
-module.exports = { buildTimeline, findActiveBeatIndex };
+module.exports = {
+  buildTimeline, findActiveBeatIndex, DEFAULT_PAN_DURATION_SECONDS, MAX_PAN_DURATION_SECONDS,
+};

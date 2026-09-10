@@ -6793,18 +6793,24 @@ function buildMergeClusterLayers({
  * position + pop-in, placed where the MIDDLE square's own settled
  * diamond edge sits, never inheriting the squares' own rotation.
  */
-const SQUARE_SPIN_POP_DURATION = 0.15;
-const SQUARE_SPIN_SPIN_DURATION = 0.45;
+// Real, direct user follow-up (2026-09-10, after watching a real
+// render): "it's a bit too fast, slow it down a bit." Pop/spin both
+// stretched modestly (0.15->0.18, 0.45->0.65) - still reads as a real
+// fast spin (SQUARE_SPIN_TARGET_ROTATION is unchanged, so it's still
+// genuinely 3 full rotations, just given enough real time to actually
+// perceive the multi-square desync instead of blurring past it).
+const SQUARE_SPIN_POP_DURATION = 0.18;
+const SQUARE_SPIN_SPIN_DURATION = 0.65;
 const SQUARE_SPIN_MIDDLE_DELAY = 0.1; // direct user spec, literal: "the middle square spins with a 0.1sec delay"
 const SQUARE_SPIN_TARGET_ROTATION = 3 * 360 + 45; // several full spins ("extremely fast") landing exactly on a diamond (45deg square = visual diamond)
 // Real, direct user requirement, applies to every template project-wide
-// (see MOGRAPH_MAX_HOLD_AFTER_SETTLE below): this template's own total
-// runtime is deliberately tiny (well under 1s of actual motion,
-// matching the reference's own sub-1s runtime) specifically so its
-// final authored duration can stay short too, per that same fast-
-// pacing requirement - a slow, padded-out version of this beat would
-// defeat the entire point of a "spin extremely fast" reveal.
-const SQUARE_SPIN_COMPLETE_TIME = 1.15;
+// (see MOGRAPH_MAX_HOLD_AFTER_SETTLE below) - recomputed after the
+// 2026-09-10 slow-down above (was 1.15 against the old, faster spin
+// timing): SETTLE_TIME is now 0.98 (middle square, its own delay makes
+// it the last to land), badges land last at ~1.35 (SETTLE_TIME-0.05
+// appear + 0.34 pop + 0.08 stagger) - this constant tracks THAT real
+// last-landing moment, not a guess.
+const SQUARE_SPIN_COMPLETE_TIME = 1.4;
 function buildSquareSpinLayers({
   text, icon1, icon2, accentColor,
 }) {

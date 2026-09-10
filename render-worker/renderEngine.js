@@ -832,6 +832,88 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
       }
     }
   }
+
+  // Real, direct user report with a real rendered video attached
+  // (2026-09-10): "some of the icons can't be seen cuz the shape behind
+  // the icon color were too similar to the icon color" - confirmed via
+  // direct frame extraction, connectorList's node icons (chicken
+  // drumstick, calendar-check) were essentially invisible: near-white
+  // icons on top of a `fill: accentColor` circle, and this video's own
+  // board background happened to be dark enough that
+  // buildHarmoniousAccentPalette's own "needsDarkAccent" branch picked
+  // a LIGHT accent (its "always readable against a dark background"
+  // design) - light accent fill + hardcoded white icon = exactly this
+  // clash. Every mograph template with an icon drawn directly on an
+  // accentColor-filled circle (nodeCluster/nodeClusterExtended's hero,
+  // connectorList's nodes, mergeCluster's result circle) hardcodes
+  // '#FFFFFF' for that icon - correct ONLY when accent was picked DARK,
+  // silently wrong whenever it's picked LIGHT instead. Mirrors
+  // buildHarmoniousAccentPalette's OWN exact "is accent picked light"
+  // formula (same bgRefColor input) so this can never disagree with
+  // what that function actually decided - duplicated rather than
+  // exported/shared since it's one line and keeping renderEngine.js's
+  // internal call graph simple here outweighs a tiny bit of duplication.
+  const [, , bgRefL] = hexToHsl(bgRefColor);
+  const accentPickedLight = bgRefL <= 0.5;
+  const ICON_DARK_TINT = '#1A1712';
+  for (const scene of sceneJSON.scenes || []) {
+    const layers = scene?.visual?.layers;
+    if (!Array.isArray(layers)) continue;
+    for (const layer of layers) {
+      if (!layer || typeof layer !== 'object') continue;
+      if (layer.type === 'image' && typeof layer.iconColor === 'string') {
+        // '#FFFFFF' (icon on an accentColor-filled circle - nodeCluster/
+        // nodeClusterExtended's hero, connectorList's nodes,
+        // mergeCluster's result circle - all hardcode exactly this
+        // literal) needs to flip dark when the accent itself was picked
+        // light, or it disappears into its own background.
+        if (layer.iconColor === '#FFFFFF' && accentPickedLight) {
+          layer.iconColor = ICON_DARK_TINT;
+        // '#E9E4FF' (mergeCluster's small orbiting icons - these sit on
+        // a STROKE-ONLY ring with no fill, rendering directly against
+        // the BOARD's own background, not an accent fill) needs the
+        // SAME flip, but keyed off the board background's own
+        // lightness instead of the accent's.
+        } else if (layer.iconColor === '#E9E4FF' && isLightBackground) {
+          layer.iconColor = ICON_DARK_TINT;
+        // phoneSwap's icon is tinted WITH accentColor (not a fixed
+        // sentinel) and sits on the phone's own FIXED near-white screen
+        // fill (`#F5F3FF`) - a light accent color there is the same
+        // clash by a different mechanism (already-harmonized accent
+        // color, not a hardcoded white), so it's matched by this
+        // layer's own fixed id instead of by color value.
+        } else if (layer.id === '__phone_icon__' && accentPickedLight) {
+          layer.iconColor = ICON_DARK_TINT;
+        // '#F5F3FF' (ICON_BRIGHT_TINT, sceneSchema.js) is used in TWO
+        // different visual contexts that need OPPOSITE checks - real,
+        // confirmed-live finding verifying the fix above (2026-09-10,
+        // same investigation): splitConverge's icon rendered completely
+        // invisible, a near-white glyph on top of its own now-filled
+        // (see the 2026-09-10 splitConverge fallback-badge fix)
+        // accentColor container, once that fill was also picked light.
+        // nodeCluster/nodeClusterExtended's OWN "__node_icon_N__" (the
+        // pre-explosion state, distinct from "..._selected") is a
+        // DIFFERENT context - it sits on an UNFILLED ring (stroke only,
+        // no fill until the hero explosion), rendering directly against
+        // the BOARD background instead, so it needs isLightBackground,
+        // not accentPickedLight, or it would flip based on the wrong
+        // color entirely.
+        } else if (layer.iconColor === '#F5F3FF' && layer.id.startsWith('__split_icon_') && accentPickedLight) {
+          layer.iconColor = ICON_DARK_TINT;
+        } else if (layer.iconColor === '#F5F3FF' && layer.id.startsWith('__node_icon_') && isLightBackground) {
+          layer.iconColor = ICON_DARK_TINT;
+        }
+      // Real, confirmed-live SIBLING bug found verifying the fix above
+      // (2026-09-10, same rendered video): phoneSwap's OWN headline text
+      // (__phone_text__) is also fillStyle:accentColor sitting on that
+      // same fixed near-white screen - a light accent color there reads
+      // as pale, barely-legible text for exactly the same reason as the
+      // icon, just via "fillStyle" instead of "iconColor".
+      } else if (layer.type === 'text' && layer.id === '__phone_text__' && accentPickedLight && typeof layer.fillStyle === 'string') {
+        layer.fillStyle = ICON_DARK_TINT;
+      }
+    }
+  }
 }
 
 /**
@@ -1190,7 +1272,9 @@ function easeInOutCubic(t) {
 // coupled zoom in the pan-compositing step below (drawZoomed) rather
 // than relied on alone - a longer pan with no other change would just
 // be the same flat slide taking longer, not a fix for "flat" itself.
-const DEFAULT_PAN_DURATION_SECONDS = 0.75;
+// (The actual pan-duration VALUE now lives solely in ./engine/
+// timeline.js, computed once per beat as `range.panDuration` alongside
+// `range.contentDuration` - see that file's own doc comment for why.)
 
 /**
  * Real, root-cause finding behind a persistent brutal vision-judge
@@ -1259,7 +1343,13 @@ function withBeatZoom(drawFn, beatDuration, width, height) {
  */
 async function buildOneBeat(range) {
   const beatContext = {
-    width: LOGICAL_WIDTH, height: LOGICAL_HEIGHT, duration: range.duration, imagePath: range.scene.params?.imagePath || null,
+    // contentDuration (the beat's own authored duration, NOT
+    // range.duration - which now also includes the incoming camera
+    // pan's own reserved time, see engine/timeline.js) - anything a
+    // template anchors to "the beat's own real end" (textPopOut's exit,
+    // most notably) needs to mean the content's own end, not the padded
+    // total, or it'd silently drift later by a full pan-duration.
+    width: LOGICAL_WIDTH, height: LOGICAL_HEIGHT, duration: range.contentDuration, imagePath: range.scene.params?.imagePath || null,
   };
   const loadedImages = await loadBeatImages(range.scene.visual, beatContext);
   const visualObj = buildBeatVisual(range.scene.visual, { ...beatContext, loadedImages });
@@ -1441,16 +1531,23 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       const { range, visualObj } = built.get(beatIndex);
       const localT = globalT - range.start;
 
-      // Pan duration still honors an authored "transitionIn.duration"
-      // for pacing control (the TYPE field is ignored entirely now -
-      // every beat-to-beat change pans, unconditionally, not just
-      // beats that set one). Clamped to the CURRENT beat's own
-      // duration so a short beat can't end while still mid-pan into
-      // itself, which would leave it overlapping the NEXT beat's own
-      // incoming pan.
-      const requestedPanDuration = Number(range.scene.visual?.transitionIn?.duration) || DEFAULT_PAN_DURATION_SECONDS;
-      const panDuration = beatIndex > 0 ? Math.min(Math.max(0.05, requestedPanDuration), range.duration * 0.8) : 0;
+      // Precomputed once per beat in engine/timeline.js (buildTimeline),
+      // NOT recomputed here - range.duration already reserves this much
+      // real extra time up front (see that file's own doc comment), so
+      // it has to be the exact same value both places or the timeline
+      // math and this frame loop's own pan math would silently drift.
+      const panDuration = range.panDuration;
       const inPan = beatIndex > 0 && localT < panDuration;
+      // Real, direct user requirement (2026-09-10): "the scene shouldn't
+      // start until the camera has finished moving to that scene
+      // position." The beat's own CONTENT clock (as opposed to localT,
+      // which the camera's own pan math above still needs raw) now
+      // holds flat at its very first frame for the whole pan window,
+      // only starting to advance once the camera has actually finished
+      // arriving - so the incoming beat's own entrance animation is
+      // never partway (or, for a fast template like squareSpin,
+      // entirely) burned before it's even visible.
+      const beatLocalT = Math.max(0, localT - panDuration);
 
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
 
@@ -1522,11 +1619,16 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         let prevCanvas = frozenFrameCache.get(beatIndex - 1);
         if (!prevCanvas) {
           prevCanvas = createCanvas(WIDTH, HEIGHT);
-          withLogicalScale((c, t) => prevBeat.visualObj.render(c, t))(prevCanvas.getContext('2d'), prevBeat.range.duration);
+          // contentDuration, not range.duration - the outgoing beat's
+          // own truly-final content frame (its keyframes hold their
+          // last value past this point regardless, but this is the
+          // precise, correct moment, not one padded by ITS OWN incoming
+          // pan from when it was the current beat).
+          withLogicalScale((c, t) => prevBeat.visualObj.render(c, t))(prevCanvas.getContext('2d'), prevBeat.range.contentDuration);
           frozenFrameCache.set(beatIndex - 1, prevCanvas);
         }
         transitionCurrCtx.clearRect(0, 0, WIDTH, HEIGHT);
-        renderWithMotionBlur(transitionCurrCtx, WIDTH, HEIGHT, localT, FRAME_DURATION, withLogicalScale(withBeatZoom((c, st) => visualObj.render(c, st), range.duration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
+        renderWithMotionBlur(transitionCurrCtx, WIDTH, HEIGHT, beatLocalT, FRAME_DURATION, withLogicalScale(withBeatZoom((c, st) => visualObj.render(c, st), range.contentDuration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
 
         // Drawing each beat's canvas at (itsBoardPos - camera) is what
         // actually produces the pan: at progress 0 the previous beat's
@@ -1578,7 +1680,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         drawZoomed(prevCanvas, prevPos.x - camX, prevPos.y - camY, outScale, 1 - panProgress);
         drawZoomed(transitionCurrCanvas, currPos.x - camX, currPos.y - camY, inScale, panProgress);
       } else {
-        renderWithMotionBlur(ctx, WIDTH, HEIGHT, localT, FRAME_DURATION, withLogicalScale(withBeatZoom((c, st) => visualObj.render(c, st), range.duration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
+        renderWithMotionBlur(ctx, WIDTH, HEIGHT, beatLocalT, FRAME_DURATION, withLogicalScale(withBeatZoom((c, st) => visualObj.render(c, st), range.contentDuration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
       }
 
       // JPEG, not PNG: measured directly (not assumed) via a controlled
