@@ -6858,8 +6858,15 @@ function buildSquareSpinLayers({
         { type: 'path', shape: { kind: 'rectangle', params: { width: size, height: size } } },
         { type: 'stroke', color: accentColor, width: 2.5 },
       ],
+      // Tight bright core + a wider soft falloff - real, direct user
+      // request (2026-09-10, a "god-tier upgrades" list): "rebuild the
+      // central glow as a multi-layer system... tight bright core...
+      // wide atmospheric outer falloff." Two layers, not the full
+      // three-layer stack other templates use - kept lean since THREE
+      // squares each carry this, not one hero element.
       effects: [
-        { type: 'outerGlow', params: { color: accentColor, opacity: 0.5, blur: 10, blendMode: 'screen' } },
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.85, blur: 5, blendMode: 'screen' } },
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.3, blur: 22, blendMode: 'screen' } },
       ],
     };
   }
@@ -6874,19 +6881,82 @@ function buildSquareSpinLayers({
     SQUARE_SPIN_OUTER_TURN_DELAY, SQUARE_SPIN_MIDDLE_TURN_DELAY, SQUARE_SPIN_INNER_TURN_DELAY,
   );
 
-  const layers = [outer, middle, inner];
+  // Real, direct user follow-up (2026-09-10, a "god-tier upgrades"
+  // wishlist, then explicitly clarified: "dont ignore it, just make it
+  // fit in this our fastpace one, DONT SLOW IT DOWN... just speed up
+  // the part of the upgrade list that's slow"). Deliberately selective,
+  // not the full list verbatim - everything below keeps the EXACT same
+  // timing as the plain turn above, nothing stretched into a slower/
+  // breathing loop. Skipped: repeating "sonar" pulses (this whole beat
+  // is ~1.15s, a pulse "every 1-1.5s" wouldn't even fire twice),
+  // chromatic fringe/fine grain (not a real primitive this engine's
+  // effects system has), dashed/segmented perimeter travel and grid
+  // reactivity (the grid is a GLOBAL background layer shared by every
+  // template, not something one template can own). Kept: a real depth
+  // layer, richer glow (above), and ONE fast accent - the wishlist's
+  // own "Rhythm Accents" section asks for exactly this ("one clear
+  // moment... then settle back, keep the rest calm"), just sized and
+  // timed much smaller/faster than the shockwave ring removed earlier
+  // (that one spanned outer*1.3 over 0.35s at 0.5 opacity and read as a
+  // big lingering halo - this one is tight to the middle square's own
+  // size, 0.16s, peaking at 0.3).
+  const DEPTH_SIZE = SIZES.outer * 1.22;
+  const depthTurnStart = POP_END;
+  const depthTurnEnd = depthTurnStart + SQUARE_SPIN_TURN_DURATION;
+  const depth = {
+    id: '__spin_depth__',
+    type: 'shape',
+    width: DEPTH_SIZE,
+    height: DEPTH_SIZE,
+    position: [...CENTER],
+    scale: {
+      expression: breatheExpr,
+      base: { keyframes: [
+        { time: 0, value: [0.3, 0.3], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: POP_END, value: [1, 1] },
+      ] },
+    },
+    opacity: { keyframes: [
+      { time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: POP_END, value: 0.32 },
+    ] },
+    // Counter-rotates (negative target) instead of a 4th identical
+    // clockwise ring - real depth/contrast, same turn timing as the
+    // outer square so it never reads as "slow."
+    rotation: { keyframes: [
+      { time: depthTurnStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: depthTurnEnd, value: -SQUARE_SPIN_TARGET_ROTATION },
+    ] },
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: DEPTH_SIZE, height: DEPTH_SIZE } } },
+      { type: 'stroke', color: accentColor, width: 1.5 },
+    ],
+  };
 
-  // Real, direct user follow-up (2026-09-10, after watching a real
-  // render): "it's buggy and too over the place, not like how
-  // simplistic it is in the reference vid." A big soft shockwave-ring
-  // flash + a particle burst were added here earlier as "miniature
-  // details" - neither exists in the actual reference video (re-checked
-  // its own frames directly: just the spinning squares, the text, and
-  // the two badges, nothing else), and a large indistinct halo blooming
-  // in behind everything reads as clutter at best, an actual rendering
-  // glitch at worst. Removed entirely - this template's own real
-  // "detail" is the pop-in + spin + settle + badge-bounce sequence
-  // itself, not an extra flourish layered on top of it.
+  const layers = [depth, outer, middle, inner];
+
+  layers.push({
+    id: '__spin_pulse__',
+    type: 'shape',
+    width: SIZES.middle * 1.1,
+    height: SIZES.middle * 1.1,
+    position: [...CENTER],
+    scale: { keyframes: [
+      { time: SETTLE_TIME - 0.01, value: [0.85, 0.85] },
+      { time: SETTLE_TIME, value: [0.85, 0.85], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: SETTLE_TIME + 0.16, value: [1.08, 1.08] },
+    ] },
+    opacity: { keyframes: [
+      { time: SETTLE_TIME - 0.01, value: 0 },
+      { time: SETTLE_TIME, value: 0.3, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: SETTLE_TIME + 0.16, value: 0 },
+    ] },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: SIZES.middle * 1.1, height: SIZES.middle * 1.1 } } },
+      { type: 'stroke', color: accentColor, width: 1.5 },
+    ],
+  });
+  layers.push(...buildIconBurstParticles(0, CENTER[0], CENTER[1], ICON_BRIGHT_TINT, SETTLE_TIME));
 
   // Center text - the beat's own required real words (MANDATORY per
   // this file's own "every beat needs real text" rule), landing right
