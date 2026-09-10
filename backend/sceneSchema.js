@@ -6435,8 +6435,26 @@ function buildSplitConvergeLayers({ icon, accentColor, label }) {
         { time: ARRIVE_TIME - 0.01, value: 0 },
         { time: ARRIVE_TIME, value: 1, interpolation: 'easing', easing: 'easeOutCubic' },
       ] },
+      // Real, direct user follow-up (2026-09-10, screenshot attached: "what
+      // the fuck is wrong with this scene" - a real splitConverge render
+      // where the icon failed, showing only this container's own ring and
+      // the label). A STROKE-only ring was a real, confirmed mistake: it
+      // technically satisfies "not a total blank screen" but still reads
+      // as visibly broken/empty to an actual viewer - a thin hollow outline
+      // with nothing inside it looks like something failed to load,
+      // because that's exactly what happened. nodeCluster/connectorList's
+      // own nodes never have this problem even when their icon fails,
+      // because their background is a SOLID filled disc (__node_hero_fill__
+      // et al) with the icon layered on top - the circle alone already
+      // reads as a deliberate, finished badge. Adding the same solid fill
+      // here matches that already-proven, already-shipped visual language
+      // instead of inventing a new one, and fixes the failure case for
+      // free: worst case now degrades to "a solid colored badge with no
+      // glyph on it" (reads as intentional) rather than "an empty ring"
+      // (reads as broken).
       contents: [
         { type: 'path', shape: { kind: 'ellipse', params: { width: ICON_SIZE * 1.15, height: ICON_SIZE * 1.15 } } },
+        { type: 'fill', color: accentColor },
         { type: 'stroke', color: accentColor, width: 3 },
       ],
     },
