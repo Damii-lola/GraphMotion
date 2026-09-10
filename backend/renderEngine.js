@@ -858,7 +858,7 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
   // then measure REAL WCAG contrast ratios for candidate tints against
   // THAT specific color and pick whichever genuinely wins - not a
   // light/dark binary guess keyed off the accent's own polarity.
-  ensureIconContrast(sceneJSON, bgRefColor);
+  ensureIconContrast(sceneJSON, bgRefColor, harmonize);
 }
 
 const ICON_TINT_DARK = '#1A1712';
@@ -880,28 +880,65 @@ const MIN_ICON_CONTRAST_RATIO = 4.5;
 // these two ranges overlap and together cover the ENTIRE [0,1]
 // lightness range ONLY when using TRUE #000000/#FFFFFF; the softer
 // off-tones shrink the achievable range just enough to leave a real
-// gap in the middle. Used only as the LAST resort below, after the
-// nicer soft tones both fail, so the common case still gets the softer
-// look and this only kicks in for that real medium-lightness edge case.
+// gap in the middle. Used only as the LAST resort below, after both the
+// accent hue AND the soft neutral tones fail, so the common case still
+// gets a genuinely colorful look and this only kicks in for that real
+// medium-lightness edge case.
 const ICON_TINT_TRUE_BLACK = '#000000';
 const ICON_TINT_TRUE_WHITE = '#FFFFFF';
 
 /**
- * Picks whichever of {a fixed dark neutral, a fixed light neutral, and
- * optionally the layer's OWN already-harmonized color} has the
- * strongest REAL measured contrast against `behindHex` - not a light/
- * dark binary guess. `preferredHex` (when given) lets an on-brand
- * colorful tint (phoneSwap/squareSpin's own accentColor-tinted icons)
- * win and stay colorful whenever it's ALREADY good enough, rather than
- * always flattening to a neutral even when the colorful version would
- * have read fine. Falls back to true black/white (see their own doc
- * comment above) on the rare background where neither soft tone alone
- * clears the minimum - this is what makes the guarantee actually
- * unconditional rather than "usually works."
+ * Real, direct user follow-up (2026-09-10) right after the contrast
+ * system above shipped: "Must the icon color be hardcoded to be black
+ * like seriously they are now bland... they are meant to be a color
+ * similar to the bg cant we do the same contrast system for the icons
+ * but have them be a similar color to the bg but still have
+ * visibility." Correct - flattening every icon to a flat neutral
+ * whenever the ORIGINAL literal didn't clear contrast was over-
+ * correcting. This project's own standing rule is that accent colors
+ * are always analogous to the background (never complementary - see
+ * this file's own harmonize() above), so "a color similar to the bg"
+ * and "a shade of this beat's own accent" are the SAME thing by
+ * design here. Walks the SAME hue/saturation as `baseHex` (the beat's
+ * own harmonized accentColor) up and down in lightness until it clears
+ * the contrast minimum against `behindHex`, staying visually
+ * recognizable as that same accent family rather than jumping straight
+ * to black/white. Returns null only if genuinely no lightness along
+ * that hue clears it (mathematically rare - see pickContrastSafeTint's
+ * own true-black/white fallback for the guarantee of last resort).
  */
-function pickContrastSafeTint(behindHex, preferredHex) {
-  if (preferredHex && contrastRatio(preferredHex, behindHex) >= MIN_ICON_CONTRAST_RATIO) {
-    return preferredHex;
+function deriveContrastSafeHueVariant(baseHex, behindHex) {
+  const [h, s, baseL] = hexToHsl(baseHex);
+  function search(step) {
+    let light = baseL;
+    let hex = hslToHex(h, s, light);
+    let guard = 0;
+    while (contrastRatio(hex, behindHex) < MIN_ICON_CONTRAST_RATIO && guard < 20 && light > 0.02 && light < 0.98) {
+      light = step < 0 ? Math.max(0.02, light + step) : Math.min(0.98, light + step);
+      hex = hslToHex(h, s, light);
+      guard += 1;
+    }
+    return { hex, ratio: contrastRatio(hex, behindHex) };
+  }
+  const darker = search(-0.05);
+  const lighter = search(0.05);
+  const best = darker.ratio >= lighter.ratio ? darker : lighter;
+  return best.ratio >= MIN_ICON_CONTRAST_RATIO ? best.hex : null;
+}
+
+/**
+ * Picks a contrast-safe icon tint against `behindHex`, colorful first:
+ * (1) a shade of `baseAccentHex` (this beat's own harmonized accent,
+ * see deriveContrastSafeHueVariant above) whenever some lightness of
+ * it clears the minimum: (2) otherwise the better of the two soft
+ * neutral tones, if THAT clears the minimum; (3) true black/white as
+ * the final, mathematically-guaranteed resort (see its own doc comment
+ * above) for the rare background where nothing softer works.
+ */
+function pickContrastSafeTint(behindHex, baseAccentHex) {
+  if (baseAccentHex) {
+    const variant = deriveContrastSafeHueVariant(baseAccentHex, behindHex);
+    if (variant) return variant;
   }
   const darkRatio = contrastRatio(ICON_TINT_DARK, behindHex);
   const lightRatio = contrastRatio(ICON_TINT_LIGHT, behindHex);
@@ -940,7 +977,7 @@ function resolveIconBackdropRule(layerId) {
   return null;
 }
 
-function ensureIconContrast(sceneJSON, bgRefColor) {
+function ensureIconContrast(sceneJSON, bgRefColor, harmonize) {
   for (const scene of sceneJSON.scenes || []) {
     const layers = scene?.visual?.layers;
     if (!Array.isArray(layers)) continue;
@@ -956,6 +993,29 @@ function ensureIconContrast(sceneJSON, bgRefColor) {
       if (fillItem) fillById.set(layer.id, fillItem.color);
     }
 
+    // This beat's own harmonized accent - the SAME hue every ring/fill
+    // in this beat already uses (harmonize()'s own remap Map, keyed by
+    // the raw literal, guarantees this matches exactly). Icons default
+    // to a shade of THIS, not a flat neutral - see pickContrastSafeTint's
+    // own doc comment for why "similar to the bg" and "this beat's own
+    // accent" are the same thing in this project.
+    const rawAccent = scene.mograph && typeof scene.mograph === 'object' && typeof scene.mograph.accentColor === 'string' ? scene.mograph.accentColor : null;
+    let beatAccentHex = rawAccent ? harmonize(rawAccent) : null;
+    if (!beatAccentHex) {
+      // "accentColor" is OPTIONAL in the compact spec - sceneSchema.js
+      // auto-picks one when omitted and bakes it directly into this
+      // beat's own fills/strokes without ever writing it back onto
+      // mograph.accentColor. Fall back to whatever color this beat's
+      // own shapes already resolved to (fill first, then stroke - covers
+      // squareSpin's stroke-only squares, which have no fill at all) so
+      // icons still match this beat's real on-screen accent either way.
+      for (const layer of layers) {
+        if (!layer || layer.type !== 'shape' || !Array.isArray(layer.contents)) continue;
+        const colorItem = layer.contents.find((c) => c && (c.type === 'fill' || c.type === 'stroke') && typeof c.color === 'string');
+        if (colorItem) { beatAccentHex = colorItem.color; break; }
+      }
+    }
+
     for (const layer of layers) {
       if (!layer || typeof layer !== 'object') continue;
       if (layer.type === 'image' && typeof layer.iconColor === 'string' && typeof layer.id === 'string') {
@@ -963,12 +1023,12 @@ function ensureIconContrast(sceneJSON, bgRefColor) {
         const behindHex = rule
           ? (rule.fixed || fillById.get(rule.fill) || bgRefColor)
           : bgRefColor;
-        layer.iconColor = pickContrastSafeTint(behindHex, layer.iconColor);
+        layer.iconColor = pickContrastSafeTint(behindHex, beatAccentHex);
       } else if (layer.type === 'text' && layer.id === '__phone_text__' && typeof layer.fillStyle === 'string') {
         // phoneSwap's own headline text sits on the exact same fixed
         // near-white screen as __phone_icon__ above - same treatment,
         // via "fillStyle" instead of "iconColor".
-        layer.fillStyle = pickContrastSafeTint('#F5F3FF', layer.fillStyle);
+        layer.fillStyle = pickContrastSafeTint('#F5F3FF', beatAccentHex);
       }
     }
   }
