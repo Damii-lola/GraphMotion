@@ -6870,31 +6870,17 @@ function buildSquareSpinLayers({
 
   const layers = [outer, middle, inner];
 
-  // Impact flash + shockwave ring right as the group lands - "miniature
-  // details" the user explicitly asked for, same proven pattern every
-  // other template's own settle-moment already uses.
-  layers.push({
-    id: '__spin_shockwave__',
-    type: 'shape',
-    width: SIZES.outer * 1.3,
-    height: SIZES.outer * 1.3,
-    position: [...CENTER],
-    scale: { keyframes: [
-      { time: SETTLE_TIME - 0.01, value: [0.7, 0.7] },
-      { time: SETTLE_TIME, value: [0.7, 0.7], interpolation: 'easing', easing: 'easeOutCubic' },
-      { time: SETTLE_TIME + 0.35, value: [1.15, 1.15] },
-    ] },
-    opacity: { keyframes: [
-      { time: SETTLE_TIME - 0.01, value: 0 },
-      { time: SETTLE_TIME, value: 0.5, interpolation: 'easing', easing: 'easeOutCubic' },
-      { time: SETTLE_TIME + 0.35, value: 0 },
-    ] },
-    contents: [
-      { type: 'path', shape: { kind: 'ellipse', params: { width: SIZES.outer * 1.3, height: SIZES.outer * 1.3 } } },
-      { type: 'stroke', color: accentColor, width: 2 },
-    ],
-  });
-  layers.push(...buildIconBurstParticles(0, CENTER[0], CENTER[1], ICON_BRIGHT_TINT, SETTLE_TIME));
+  // Real, direct user follow-up (2026-09-10, after watching a real
+  // render): "it's buggy and too over the place, not like how
+  // simplistic it is in the reference vid." A big soft shockwave-ring
+  // flash + a particle burst were added here earlier as "miniature
+  // details" - neither exists in the actual reference video (re-checked
+  // its own frames directly: just the spinning squares, the text, and
+  // the two badges, nothing else), and a large indistinct halo blooming
+  // in behind everything reads as clutter at best, an actual rendering
+  // glitch at worst. Removed entirely - this template's own real
+  // "detail" is the pop-in + spin + settle + badge-bounce sequence
+  // itself, not an extra flourish layered on top of it.
 
   // Center text - the beat's own required real words (MANDATORY per
   // this file's own "every beat needs real text" rule), landing right
