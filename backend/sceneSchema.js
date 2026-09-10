@@ -6773,6 +6773,223 @@ function buildMergeClusterLayers({
   return layers;
 }
 
+/**
+ * New template (2026-09-10), direct user spec with a real reference
+ * video attached: three nested square outlines pop in from nothing,
+ * then spin extremely fast (several full rotations) and land EXACTLY
+ * on a 45-degree diamond orientation - "the outermost square spins
+ * normal, the middle square spins with a 0.1sec delay and the
+ * innermost square spins normal." Center text and two icon badges are
+ * the changeable variables.
+ *
+ * Built from a real frame-by-frame read of the attached reference (see
+ * this project's own "never reproduce copyrighted reference-video
+ * content beyond style analysis" rule - this is an original
+ * implementation inspired by the described motion, not a pixel copy):
+ * the reference's own icon badges stay upright/readable even once the
+ * squares finish spinning at 45 degrees, which rules out literally
+ * parenting them to a spinning square (they'd tilt to 45 degrees too,
+ * unreadable) - built here as independent layers with their own fixed
+ * position + pop-in, placed where the MIDDLE square's own settled
+ * diamond edge sits, never inheriting the squares' own rotation.
+ */
+const SQUARE_SPIN_POP_DURATION = 0.15;
+const SQUARE_SPIN_SPIN_DURATION = 0.45;
+const SQUARE_SPIN_MIDDLE_DELAY = 0.1; // direct user spec, literal: "the middle square spins with a 0.1sec delay"
+const SQUARE_SPIN_TARGET_ROTATION = 3 * 360 + 45; // several full spins ("extremely fast") landing exactly on a diamond (45deg square = visual diamond)
+// Real, direct user requirement, applies to every template project-wide
+// (see MOGRAPH_MAX_HOLD_AFTER_SETTLE below): this template's own total
+// runtime is deliberately tiny (well under 1s of actual motion,
+// matching the reference's own sub-1s runtime) specifically so its
+// final authored duration can stay short too, per that same fast-
+// pacing requirement - a slow, padded-out version of this beat would
+// defeat the entire point of a "spin extremely fast" reveal.
+const SQUARE_SPIN_COMPLETE_TIME = 1.15;
+function buildSquareSpinLayers({
+  text, icon1, icon2, accentColor,
+}) {
+  const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
+  const SIZES = { outer: 280, middle: 228, inner: 176 };
+  const breatheExpr = 'wiggle(0.22, 0.02)';
+
+  function buildSquare(id, size, popDelay, spinDelay) {
+    const popEnd = popDelay + SQUARE_SPIN_POP_DURATION;
+    const spinStart = popEnd + spinDelay;
+    const spinEnd = spinStart + SQUARE_SPIN_SPIN_DURATION;
+    return {
+      id,
+      type: 'shape',
+      width: size,
+      height: size,
+      position: [...CENTER],
+      scale: {
+        expression: breatheExpr,
+        base: { keyframes: [
+          { time: popDelay, value: [0.3, 0.3], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: popEnd, value: [1, 1] },
+        ] },
+      },
+      opacity: { keyframes: [
+        { time: popDelay, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: popEnd, value: 1 },
+      ] },
+      // easeOutCubic (fast start, decelerating into the landing) reads
+      // as a real object spinning hard and catching itself exactly on
+      // the diamond, rather than a robotic linear spin that just stops.
+      rotation: { keyframes: [
+        { time: spinStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: spinEnd, value: SQUARE_SPIN_TARGET_ROTATION },
+      ] },
+      contents: [
+        { type: 'path', shape: { kind: 'rectangle', params: { width: size, height: size } } },
+        { type: 'stroke', color: accentColor, width: 2.5 },
+      ],
+      effects: [
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.5, blur: 10, blendMode: 'screen' } },
+      ],
+    };
+  }
+
+  const outer = buildSquare('__spin_outer__', SIZES.outer, 0, 0);
+  const middle = buildSquare('__spin_middle__', SIZES.middle, 0.05, SQUARE_SPIN_MIDDLE_DELAY);
+  const inner = buildSquare('__spin_inner__', SIZES.inner, 0.1, 0);
+  // Middle's own delayed start pushes its own settle later too (a real
+  // implementation of the delay, not a cosmetic one) - the max of all
+  // three is when the WHOLE group is finally motionless.
+  const SETTLE_TIME = Math.max(
+    0 + SQUARE_SPIN_POP_DURATION + SQUARE_SPIN_SPIN_DURATION,
+    0.05 + SQUARE_SPIN_POP_DURATION + SQUARE_SPIN_MIDDLE_DELAY + SQUARE_SPIN_SPIN_DURATION,
+    0.1 + SQUARE_SPIN_POP_DURATION + SQUARE_SPIN_SPIN_DURATION,
+  );
+
+  const layers = [outer, middle, inner];
+
+  // Impact flash + shockwave ring right as the group lands - "miniature
+  // details" the user explicitly asked for, same proven pattern every
+  // other template's own settle-moment already uses.
+  layers.push({
+    id: '__spin_shockwave__',
+    type: 'shape',
+    width: SIZES.outer * 1.3,
+    height: SIZES.outer * 1.3,
+    position: [...CENTER],
+    scale: { keyframes: [
+      { time: SETTLE_TIME - 0.01, value: [0.7, 0.7] },
+      { time: SETTLE_TIME, value: [0.7, 0.7], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: SETTLE_TIME + 0.35, value: [1.15, 1.15] },
+    ] },
+    opacity: { keyframes: [
+      { time: SETTLE_TIME - 0.01, value: 0 },
+      { time: SETTLE_TIME, value: 0.5, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: SETTLE_TIME + 0.35, value: 0 },
+    ] },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: SIZES.outer * 1.3, height: SIZES.outer * 1.3 } } },
+      { type: 'stroke', color: accentColor, width: 2 },
+    ],
+  });
+  layers.push(...buildIconBurstParticles(0, CENTER[0], CENTER[1], ICON_BRIGHT_TINT, SETTLE_TIME));
+
+  // Center text - the beat's own required real words (MANDATORY per
+  // this file's own "every beat needs real text" rule), landing right
+  // as the spin catches itself for one continuous, uninterrupted beat
+  // of motion rather than a dead pause between the spin and the text.
+  const TEXT_APPEAR = SETTLE_TIME - 0.1;
+  layers.push({
+    id: '__spin_text__',
+    type: 'text',
+    text,
+    fontFamily: 'Playfair Display Bold',
+    fontWeight: '700',
+    fontSize: 34,
+    fillStyle: '#FFFFFF',
+    textAlign: 'center',
+    maxWidth: SIZES.inner - 36,
+    position: [...CENTER],
+    effects: [
+      { type: 'outerGlow', params: { blur: 14, color: accentColor, opacity: 0.8, blendMode: 'screen' } },
+    ],
+    opacity: { keyframes: [
+      { time: TEXT_APPEAR, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: TEXT_APPEAR + 0.35, value: 1 },
+    ] },
+    scale: {
+      expression: 'wiggle(0.3, 0.012)',
+      base: { keyframes: [
+        { time: TEXT_APPEAR, value: [0.85, 0.85], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: TEXT_APPEAR + 0.35, value: [1, 1] },
+      ] },
+    },
+  });
+
+  // Two icon badges - dark rounded-square badges sitting where the
+  // MIDDLE square's own settled diamond edge lands (see this function's
+  // own doc comment for why they're independent layers, not children of
+  // a spinning square). A fixed near-black fill (not accentColor, not
+  // background-derived) is deliberate: it reads as a real, deliberate
+  // "badge" object regardless of what background/accent this specific
+  // generation lands on, the same reasoning splitConverge's own fixed-
+  // neutral icon tint already relies on.
+  const H = SIZES.middle / 2;
+  const DIAG = H * Math.SQRT2;
+  const top = [CENTER[0], CENTER[1] - DIAG];
+  const left = [CENTER[0] - DIAG, CENTER[1]];
+  const bottom = [CENTER[0], CENTER[1] + DIAG];
+  const right = [CENTER[0] + DIAG, CENTER[1]];
+  const lerp = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+  const badge1Pos = lerp(top, left, 0.55);
+  const badge2Pos = lerp(bottom, right, 0.55);
+
+  const BADGE_SIZE = 76;
+  const BADGE_BG = '#18140F';
+  const BADGE_APPEAR = SETTLE_TIME - 0.05;
+  function buildBadge(idPrefix, pos, icon, stagger) {
+    const appearAt = BADGE_APPEAR + stagger;
+    const scaleBase = { keyframes: [
+      { time: appearAt, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: appearAt + 0.22, value: [1.15, 1.15], interpolation: 'easing', easing: 'easeInOutCubic' },
+      { time: appearAt + 0.34, value: [1, 1] },
+    ] };
+    const opacityKf = { keyframes: [
+      { time: appearAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+      { time: appearAt + 0.15, value: 1 },
+    ] };
+    return [
+      {
+        id: `${idPrefix}_bg__`,
+        type: 'shape',
+        width: BADGE_SIZE,
+        height: BADGE_SIZE,
+        position: pos,
+        scale: { expression: 'wiggle(0.3, 0.015)', base: scaleBase },
+        opacity: opacityKf,
+        contents: [
+          { type: 'path', shape: { kind: 'rectangle', params: { width: BADGE_SIZE, height: BADGE_SIZE, roundness: 18 } } },
+          { type: 'fill', color: BADGE_BG },
+        ],
+        effects: [
+          { type: 'dropShadow', params: { color: '#000000', opacity: 0.35, blur: 10, offsetX: 0, offsetY: 3 } },
+        ],
+      },
+      {
+        id: `${idPrefix}_icon__`,
+        type: 'image',
+        icon,
+        iconColor: accentColor,
+        width: BADGE_SIZE * 0.55,
+        height: BADGE_SIZE * 0.55,
+        position: pos,
+        scale: cloneTrack(scaleBase),
+        opacity: cloneTrack(opacityKf),
+      },
+    ];
+  }
+  layers.push(...buildBadge('__spin_badge1', badge1Pos, icon1, 0));
+  layers.push(...buildBadge('__spin_badge2', badge2Pos, icon2, 0.08));
+
+  return layers;
+}
+
 const MOGRAPH_ICON_RE = /^[a-z0-9-]+:[a-z0-9-]+$/i;
 
 /**
@@ -7066,6 +7283,32 @@ function applyMographGlow(layers) {
   }
 }
 
+// Real, direct user requirement (2026-09-10): "the delay between when
+// the scene template animation is done and the next scene playing
+// shouldn't be more than 1.5sec" - applies to EVERY template, not just
+// one. Mechanically enforced here (same "mechanical enforcement beats
+// prompt guidance alone" lesson this file already leans on everywhere
+// else) rather than trusted to the AI's own authored duration, since
+// the AI never even chooses per-beat duration for compact-spec videos
+// in the first place (see COMPACT_BASE_DURATION in sceneGenClient.js) -
+// only fixed per-template constants and a few icon/item-count-driven
+// floors do. `completeTime` is each template's own real, hand-computed
+// moment its last element finishes landing (verified against that
+// template's own internal timing constants, not guessed) - clamping the
+// final duration into [completeTime+minHold, completeTime+1.5] both
+// prevents a cut-off animation (a REAL pre-existing bug found in the
+// same pass - mergeCluster/connectorList at their own higher icon/item
+// counts previously finished AFTER the beat itself had already ended,
+// cutting the last element's own pop-in off mid-motion) and now also
+// caps dead-air hold at the end.
+const MOGRAPH_MAX_HOLD_AFTER_SETTLE = 1.5;
+function clampMographDuration(beat, completeTime, minHold = 0.4) {
+  if (!isPlainObject(beat.params) || typeof beat.params.duration !== 'number') return;
+  const lo = completeTime + minHold;
+  const hi = completeTime + MOGRAPH_MAX_HOLD_AFTER_SETTLE;
+  beat.params.duration = Math.min(Math.max(beat.params.duration, lo), hi);
+}
+
 function buildMographBeatVisual(beat) {
   if (!isPlainObject(beat) || !isPlainObject(beat.mograph)) return;
   if (isPlainObject(beat.visual) && Array.isArray(beat.visual.layers) && beat.visual.layers.length > 0) return;
@@ -7090,6 +7333,7 @@ function buildMographBeatVisual(beat) {
       if (introText && isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
         beat.params.duration += INTRO_TEXT_DURATION;
       }
+      clampMographDuration(beat, HERO_SETTLE_TIME + (introText ? INTRO_TEXT_DURATION : 0));
     }
   } else if (spec.type === 'connectorList' && Array.isArray(spec.items)) {
     const items = spec.items
@@ -7106,16 +7350,53 @@ function buildMographBeatVisual(beat) {
       if (outroText && isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
         beat.params.duration += OUTRO_TEXT_DURATION;
       }
+      // Closed-form mirror of buildConnectorListLayers' own real timing
+      // (totalRevealTime/lastAppearAt/outro landing - see that
+      // function's own comments for the source constants). The LAST
+      // item's own line-arrival fraction is always exactly 1 (it's the
+      // drawn path's own endpoint by construction), which is what makes
+      // this closed form exact rather than an approximation. Real,
+      // confirmed-live finding: at this template's own max item count
+      // (6), the OLD flat base duration finished a full ~1s BEFORE this
+      // real completion time, cutting the last item's own reveal off
+      // mid-animation.
+      const totalRevealTime = 0.5 + items.length * 0.5;
+      const completeTime = outroText ? totalRevealTime + 2.1 : totalRevealTime + 0.95;
+      clampMographDuration(beat, completeTime);
     }
   } else if (spec.type === 'phoneSwap' && typeof spec.text === 'string' && spec.text.trim() && typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon)) {
     layers = buildPhoneSwapLayers({ text: truncateAtWordBoundary(spec.text.trim().toUpperCase(), 26), icon: spec.icon, accentColor });
+    // Mirrors buildPhoneSwapLayers' own SWAP_TIME(1.4) + light-sweep
+    // window (SWEEP_START=SWAP_TIME+0.6, SWEEP_DURATION=0.55) - the
+    // sweep is the actual LAST scripted motion in that template, not
+    // the swap itself.
+    clampMographDuration(beat, 2.55);
   } else if (spec.type === 'splitConverge' && typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon)) {
     const label = typeof spec.label === 'string' && spec.label.trim() ? truncateAtWordBoundary(spec.label.trim().toUpperCase(), 24) : null;
     layers = buildSplitConvergeLayers({ icon: spec.icon, accentColor, label });
+    // Mirrors buildSplitConvergeLayers' own ARRIVE_TIME(0.9)/
+    // SETTLE_TIME(1.22) and, when a label is present, its own
+    // buildOutroTextLayer landing time (SETTLE_TIME+0.35+0.4).
+    clampMographDuration(beat, label ? 1.97 : 1.42);
   } else if (spec.type === 'mergeCluster' && Array.isArray(spec.icons) && typeof spec.resultIcon === 'string' && MOGRAPH_ICON_RE.test(spec.resultIcon)) {
     const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 5);
     const label = typeof spec.label === 'string' && spec.label.trim() ? truncateAtWordBoundary(spec.label.trim().toUpperCase(), 24) : null;
-    if (icons.length >= 2) layers = buildMergeClusterLayers({ icons, resultIcon: spec.resultIcon, accentColor, label });
+    if (icons.length >= 2) {
+      layers = buildMergeClusterLayers({ icons, resultIcon: spec.resultIcon, accentColor, label });
+      // Mirrors buildMergeClusterLayers' own CAMERA_SETTLE_DELAY(0.75)/
+      // REVEAL_INTERVAL(0.4)/ICON_SETTLE_TIME(0.25)/HOLD_BEFORE_CONVERGE
+      // (0.35) CONVERGE_TIME formula, plus the result circle's own
+      // +0.45s arrival bounce after that. Real, confirmed-live finding:
+      // at this template's own max icon count (5), the OLD flat base
+      // duration finished BEFORE this real completion time, cutting the
+      // result circle's own pop-in off mid-motion.
+      const convergeTime = 0.75 + 0.4 * (icons.length - 1) + 0.25 + 0.35;
+      clampMographDuration(beat, convergeTime + 0.45);
+    }
+  } else if (spec.type === 'squareSpin' && typeof spec.text === 'string' && spec.text.trim() && typeof spec.icon1 === 'string' && MOGRAPH_ICON_RE.test(spec.icon1) && typeof spec.icon2 === 'string' && MOGRAPH_ICON_RE.test(spec.icon2)) {
+    const text = truncateAtWordBoundary(spec.text.trim(), 40);
+    layers = buildSquareSpinLayers({ text, icon1: spec.icon1, icon2: spec.icon2, accentColor });
+    clampMographDuration(beat, SQUARE_SPIN_COMPLETE_TIME);
   } else if (spec.type === 'nodeClusterExtended' && Array.isArray(spec.icons) && typeof spec.newIcon === 'string' && MOGRAPH_ICON_RE.test(spec.newIcon)) {
     const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 8);
     if (icons.length >= 3) {
@@ -7148,7 +7429,23 @@ function buildMographBeatVisual(beat) {
     // own doc comment for the dead-air bug this fixes.
     const wordCount = text.split(' ').filter((w) => w.length > 0).length;
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-      beat.params.duration = Math.max(beat.params.duration, textPopOutMinDuration(wordCount));
+      // Real, direct user complaint fix (2026-09-10, "fast paced... no
+      // more than 1.5sec" of dead hold after the animation finishes):
+      // this used to be Math.max(authored, minDuration) - since
+      // COMPACT_BASE_DURATION.textPopOut (3.0) is ALWAYS bigger than
+      // textPopOutMinDuration ever computes even at the top of its own
+      // realistic word-count range (~2.9s at 10 words, less for
+      // anything shorter), Math.max always kept the flat 3.0 regardless
+      // of actual word count - and since this template's own EXIT_END
+      // anchors near the very END of whatever duration is authored (see
+      // buildTextPopOutLayers' own doc comment), that flat 3.0 was
+      // directly padding out real, visible dead time between the text
+      // finishing its build and the exit even starting, EVERY time,
+      // confirmed-live: not a rare edge case. minDuration already IS
+      // this template's own complete, correct "just enough time"
+      // formula (build + a real hold + exit + a small buffer) - using
+      // it directly removes the padding instead of only capping it.
+      beat.params.duration = textPopOutMinDuration(wordCount);
     }
     const duration = isPlainObject(beat.params) && typeof beat.params.duration === 'number'
       ? beat.params.duration
@@ -7268,7 +7565,7 @@ function validateSceneJSON(sceneJSON) {
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
     } else if (seen.size < 5) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut). Add more template beats to reach at least 5.`);
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin). Add more template beats to reach at least 5.`);
     } else if (seen.size > 7) {
       errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 7. Trim beats down to 7 or fewer distinct templates.`);
     }
@@ -9228,5 +9525,6 @@ module.exports = {
   buildSplitConvergeLayers,
   buildMergeClusterLayers,
   buildTextPopOutLayers,
+  buildSquareSpinLayers,
   buildMographBeatVisual,
 };

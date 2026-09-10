@@ -383,6 +383,13 @@ const COMPACT_BASE_DURATION = {
   mergeCluster: 3.0,
   nodeClusterExtended: 3.0,
   textPopOut: 3.0,
+  // Deliberately tiny - this template's own real motion (3 squares pop
+  // in, spin extremely fast, land on a diamond) fully completes in
+  // ~1.15s (SQUARE_SPIN_COMPLETE_TIME, sceneSchema.js) - a bigger base
+  // here would just be clamped back down by buildMographBeatVisual's
+  // own clampMographDuration anyway, so starting close to the real
+  // value avoids relying on that clamp to do all the work.
+  squareSpin: 1.8,
 };
 
 /**
@@ -478,8 +485,13 @@ function validateCompactBeatVars(template, vars) {
     case 'textPopOut':
       if (typeof vars.text !== 'string' || !vars.text.trim()) return 'needs a non-empty "text"';
       return null;
+    case 'squareSpin':
+      if (typeof vars.text !== 'string' || !vars.text.trim()) return 'needs a non-empty "text"';
+      if (!isRealIcon(vars.icon1)) return 'needs a real Iconify "icon1"';
+      if (!isRealIcon(vars.icon2)) return 'needs a real Iconify "icon2"';
+      return null;
     default:
-      return `"${template}" is not one of the 7 real template names`;
+      return `"${template}" is not one of the 8 real template names`;
   }
 }
 

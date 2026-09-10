@@ -1788,13 +1788,14 @@ splitConverge: icon (real Iconify name), label (optional, 1-3 words)
 mergeCluster: icons (2-5 real Iconify names), resultIcon (real Iconify name), label (optional, 1-3 words)
 nodeClusterExtended: icons (3-8), chosenIndex, mergeText (required short phrase), newIcon (required), newLabel (optional, 1-3 words)
 textPopOut: text (REQUIRED, a short punchy on-screen statement, 3-6 words - never leave blank)
+squareSpin: text (REQUIRED, 2-5 word on-screen phrase, sits inside the shapes - never leave blank), icon1 (real Iconify name), icon2 (real Iconify name)
 
 Icons must be REAL Iconify names, format "prefix:name" - "mdi:concept-name" for general ideas (e.g. mdi:rocket-launch, mdi:calendar-check), "simple-icons:brandname" for real brand logos. Never invent a name.
 
 RULES:
-- Your "beats" array MUST have EXACTLY 6 entries - not fewer, not more. Pick 6 DIFFERENT templates from the 7 above (each used at most once - never repeat one), whichever 6 fit the topic best.
+- Your "beats" array MUST have EXACTLY 6 entries - not fewer, not more. Pick 6 DIFFERENT templates from the 8 above (each used at most once - never repeat one), whichever 6 fit the topic best.
 - Every beat needs "narration": a short SPOKEN line, 8 words max, that matches what's happening on screen.
-- phoneSwap/textPopOut ALSO need their own "text" in "vars" - a SEPARATE on-screen string, even if it overlaps with narration. Never skip it.
+- phoneSwap/textPopOut/squareSpin ALSO need their own "text" in "vars" - a SEPARATE on-screen string, even if it overlaps with narration. Never skip it.
 - The FIRST beat's narration must do ONE of: contain "you"/"your", end with "?" or "!", or start with Stop/Imagine/Picture/Wait/Guess/"What if"/Never - never a flat statement of fact.
 - "accentColor" is optional per beat, a hex string like "#8B5CF6" - omit it to auto-pick one.
 
