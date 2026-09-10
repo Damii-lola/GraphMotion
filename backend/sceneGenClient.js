@@ -518,6 +518,17 @@ function collectIconNamesFromScenes(scenes) {
   return names;
 }
 
+// Real gap found (2026-09-10, direct user follow-up after the
+// splitConverge fallback fix: "have u fix this" re: icons still
+// occasionally rendering blank): this used to silently give up
+// verification for a whole prefix on ANY single failure (a transient
+// 429/500, a timeout) via a bare `if (!res.ok) return`, no retry at
+// all - a bad/hallucinated icon name hitting that exact moment would
+// slip through completely unverified and only surface later as a blank
+// icon at render time. Retries with the same backoff-with-jitter
+// pattern fetchAndRasterizeIcon (iconFetch.js) already uses, so a
+// transient hiccup here no longer means "skip verification entirely".
+const ICON_EXISTENCE_CHECK_MAX_ATTEMPTS = 3;
 async function findNonexistentIcons(iconNames) {
   const uniqueNames = [...new Set(iconNames)].filter(isRealIcon);
   if (uniqueNames.length === 0) return [];
@@ -530,14 +541,25 @@ async function findNonexistentIcons(iconNames) {
   }
   const notFound = [];
   await Promise.all([...byPrefix.entries()].map(async ([prefix, names]) => {
-    try {
-      const url = `https://api.iconify.design/${encodeURIComponent(prefix)}.json?icons=${names.map(encodeURIComponent).join(',')}`;
-      const res = await fetch(url, { timeout: 8000 });
-      if (!res.ok) return;
-      const data = await res.json();
-      for (const missing of data.not_found || []) notFound.push(`${prefix}:${missing}`);
-    } catch (err) {
-      console.warn(`[sceneGenClient] icon existence check failed for prefix "${prefix}" (${err.message}) - skipping verification for these`);
+    const url = `https://api.iconify.design/${encodeURIComponent(prefix)}.json?icons=${names.map(encodeURIComponent).join(',')}`;
+    for (let attempt = 1; attempt <= ICON_EXISTENCE_CHECK_MAX_ATTEMPTS; attempt++) {
+      try {
+        const res = await fetch(url, { timeout: 8000 });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        for (const missing of data.not_found || []) notFound.push(`${prefix}:${missing}`);
+        return;
+      } catch (err) {
+        if (attempt < ICON_EXISTENCE_CHECK_MAX_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, 300 * 2 ** (attempt - 1) + Math.random() * 200));
+          continue;
+        }
+        // Fails OPEN only after exhausting real retries, not on the
+        // first hiccup - a genuinely down Iconify shouldn't block
+        // generation outright (the render-time fallback still catches
+        // a truly-bad icon, just less gracefully than catching it here).
+        console.warn(`[sceneGenClient] icon existence check failed for prefix "${prefix}" after ${attempt} attempt(s) (${err.message}) - skipping verification for these`);
+      }
     }
   }));
   return notFound;
