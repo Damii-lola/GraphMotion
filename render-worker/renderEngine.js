@@ -553,7 +553,17 @@ function isVividAccentColor(hex) {
   return s >= VIVID_ACCENT_MIN_SATURATION && l >= VIVID_ACCENT_MIN_LIGHTNESS && l <= VIVID_ACCENT_MAX_LIGHTNESS;
 }
 
-const MIN_ACCENT_CONTRAST_RATIO = 3.2; // real WCAG large-UI-component minimum (3:1) plus a small safety margin
+// 3.2 -> 4.5 (2026-09-10, direct user complaint after a real live
+// render: "the bg and the shapes/rings color are very similar making
+// the shapes/rings hard to see"). The old value was WCAG's "large UI
+// component" floor (3:1) - technically passing, but a thin 2-3px ring
+// stroke or icon glyph reads as fine detail, not a large filled block,
+// and a bare-minimum-contrast fine line can still look "hard to see"
+// to a real viewer even while numerically clearing 3:1. Raised to
+// WCAG's stronger "normal text" AA standard (4.5:1) instead, applied
+// project-wide (every fill/stroke/ring that goes through harmonize()/
+// harmonizeMaybeRing() below) - not a per-template patch.
+const MIN_ACCENT_CONTRAST_RATIO = 4.5;
 
 // Real color-theory fix (2026-09-07, direct user complaint after seeing
 // an actual render: "how does red and dark green match with orange" -
@@ -835,82 +845,130 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
 
   // Real, direct user report with a real rendered video attached
   // (2026-09-10): "some of the icons can't be seen cuz the shape behind
-  // the icon color were too similar to the icon color" - confirmed via
-  // direct frame extraction, connectorList's node icons (chicken
-  // drumstick, calendar-check) were essentially invisible: near-white
-  // icons on top of a `fill: accentColor` circle, and this video's own
-  // board background happened to be dark enough that
-  // buildHarmoniousAccentPalette's own "needsDarkAccent" branch picked
-  // a LIGHT accent (its "always readable against a dark background"
-  // design) - light accent fill + hardcoded white icon = exactly this
-  // clash. Every mograph template with an icon drawn directly on an
-  // accentColor-filled circle (nodeCluster/nodeClusterExtended's hero,
-  // connectorList's nodes, mergeCluster's result circle) hardcodes
-  // '#FFFFFF' for that icon - correct ONLY when accent was picked DARK,
-  // silently wrong whenever it's picked LIGHT instead. Mirrors
-  // buildHarmoniousAccentPalette's OWN exact "is accent picked light"
-  // formula (same bgRefColor input) so this can never disagree with
-  // what that function actually decided - duplicated rather than
-  // exported/shared since it's one line and keeping renderEngine.js's
-  // internal call graph simple here outweighs a tiny bit of duplication.
-  const [, , bgRefL] = hexToHsl(bgRefColor);
-  const accentPickedLight = bgRefL <= 0.5;
-  const ICON_DARK_TINT = '#1A1712';
+  // the icon color were too similar to the icon color." First fix here
+  // was a set of specific hardcoded exceptions (this literal color, on
+  // this specific template, flip if the accent happened to be picked
+  // light) - the user directly and correctly rejected that approach on
+  // the NEXT live render ("u just hardcoded the icon color as black...
+  // YOU GAT SOLVE IT ONCE AND FOR ALL, create a system that finds the
+  // right node colors... based on the chosen bg"). Replaced entirely
+  // with a real system: for every icon layer, figure out what color is
+  // ACTUALLY behind it (a sibling shape's own resolved fill, the board
+  // background, or a fixed neutral surface like a badge/phone screen),
+  // then measure REAL WCAG contrast ratios for candidate tints against
+  // THAT specific color and pick whichever genuinely wins - not a
+  // light/dark binary guess keyed off the accent's own polarity.
+  ensureIconContrast(sceneJSON, bgRefColor);
+}
+
+const ICON_TINT_DARK = '#1A1712';
+const ICON_TINT_LIGHT = '#F5F3FF';
+// Matches this file's own MIN_ACCENT_CONTRAST_RATIO reasoning (see its
+// doc comment) - an icon glyph is fine detail, held to the same
+// stronger "normal text" AA standard as thin ring strokes, not the
+// weaker "large component" floor.
+const MIN_ICON_CONTRAST_RATIO = 4.5;
+// Real, direct mathematical gap found via an exhaustive automated
+// sweep across many random backgrounds (built specifically because the
+// user demanded a real system, not spot patches - "solve it once and
+// for all"): for a background sitting at MEDIUM relative luminance
+// (roughly 0.17-0.19), the two soft off-black/off-white tones above
+// can BOTH fall short of 4.5 at once (confirmed live: a ~0.164-luminance
+// green background scored only 4.30 against the light tint and worse
+// against the dark one). contrastRatio(white,L)>=4.5 exactly when
+// L<=0.1833, and contrastRatio(black,L)>=4.5 exactly when L>=0.175 -
+// these two ranges overlap and together cover the ENTIRE [0,1]
+// lightness range ONLY when using TRUE #000000/#FFFFFF; the softer
+// off-tones shrink the achievable range just enough to leave a real
+// gap in the middle. Used only as the LAST resort below, after the
+// nicer soft tones both fail, so the common case still gets the softer
+// look and this only kicks in for that real medium-lightness edge case.
+const ICON_TINT_TRUE_BLACK = '#000000';
+const ICON_TINT_TRUE_WHITE = '#FFFFFF';
+
+/**
+ * Picks whichever of {a fixed dark neutral, a fixed light neutral, and
+ * optionally the layer's OWN already-harmonized color} has the
+ * strongest REAL measured contrast against `behindHex` - not a light/
+ * dark binary guess. `preferredHex` (when given) lets an on-brand
+ * colorful tint (phoneSwap/squareSpin's own accentColor-tinted icons)
+ * win and stay colorful whenever it's ALREADY good enough, rather than
+ * always flattening to a neutral even when the colorful version would
+ * have read fine. Falls back to true black/white (see their own doc
+ * comment above) on the rare background where neither soft tone alone
+ * clears the minimum - this is what makes the guarantee actually
+ * unconditional rather than "usually works."
+ */
+function pickContrastSafeTint(behindHex, preferredHex) {
+  if (preferredHex && contrastRatio(preferredHex, behindHex) >= MIN_ICON_CONTRAST_RATIO) {
+    return preferredHex;
+  }
+  const darkRatio = contrastRatio(ICON_TINT_DARK, behindHex);
+  const lightRatio = contrastRatio(ICON_TINT_LIGHT, behindHex);
+  const best = darkRatio >= lightRatio ? { hex: ICON_TINT_DARK, ratio: darkRatio } : { hex: ICON_TINT_LIGHT, ratio: lightRatio };
+  if (best.ratio >= MIN_ICON_CONTRAST_RATIO) return best.hex;
+  const trueBlackRatio = contrastRatio(ICON_TINT_TRUE_BLACK, behindHex);
+  const trueWhiteRatio = contrastRatio(ICON_TINT_TRUE_WHITE, behindHex);
+  return trueBlackRatio >= trueWhiteRatio ? ICON_TINT_TRUE_BLACK : ICON_TINT_TRUE_WHITE;
+}
+
+// Declarative map of every icon-bearing layer this engine's own
+// templates author (sceneSchema.js) to what's ACTUALLY behind it -
+// audited directly against every `type: 'image'` layer in that file,
+// not guessed. `fill: id` means "the resolved fill color of the sibling
+// shape layer with this id, in the SAME beat" (built fresh per-scene
+// below, since it depends on that beat's own real harmonized colors);
+// `fixed: hex` means a surface that's never harmonized (a badge, a
+// phone screen) and always has this literal color; omitted entirely
+// means "sits directly on the board background" (an unfilled ring, or
+// no container shape at all).
+function resolveIconBackdropRule(layerId) {
+  if (layerId === '__phone_icon__') return { fixed: '#F5F3FF' };
+  if (/^__spin_badge\d+_icon__$/.test(layerId)) return { fixed: '#18140F' };
+  if (/^__node_icon_\d+__selected$/.test(layerId)) return { fill: '__node_hero_fill__' };
+  if (layerId === '__nce_result_icon__') return { fill: '__nce_result_bg__' };
+  if (layerId === '__merge_result_icon__') return { fill: '__merge_result_bg__' };
+  const listMatch = layerId.match(/^__list_icon_(\d+)__$/);
+  if (listMatch) return { fill: `__list_node_${listMatch[1]}__` };
+  if (layerId.startsWith('__split_icon_')) return { fill: '__split_container_bg__' };
+  // Everything else authored (nodeCluster/nodeClusterExtended's OWN
+  // "__node_icon_N__" pre-explosion state, mergeCluster's small
+  // orbiting "__merge_icon_N__", the decorative "__topic_icon__" card)
+  // sits directly on the board background - an unfilled ring, or (for
+  // the topic card) a fill translucent enough (opacity 0.14) that the
+  // board background dominates what's actually behind the glyph.
+  return null;
+}
+
+function ensureIconContrast(sceneJSON, bgRefColor) {
   for (const scene of sceneJSON.scenes || []) {
     const layers = scene?.visual?.layers;
     if (!Array.isArray(layers)) continue;
+
+    // Built once per beat: every shape layer's own resolved fill color,
+    // by id - these are already POST-harmonize by the time this runs
+    // (the main loop above already resolved every `contents[].fill`),
+    // so this reflects the REAL final color, not the raw authored one.
+    const fillById = new Map();
+    for (const layer of layers) {
+      if (!layer || layer.type !== 'shape' || !Array.isArray(layer.contents)) continue;
+      const fillItem = layer.contents.find((c) => c && c.type === 'fill' && typeof c.color === 'string');
+      if (fillItem) fillById.set(layer.id, fillItem.color);
+    }
+
     for (const layer of layers) {
       if (!layer || typeof layer !== 'object') continue;
-      if (layer.type === 'image' && typeof layer.iconColor === 'string') {
-        // '#FFFFFF' (icon on an accentColor-filled circle - nodeCluster/
-        // nodeClusterExtended's hero, connectorList's nodes,
-        // mergeCluster's result circle - all hardcode exactly this
-        // literal) needs to flip dark when the accent itself was picked
-        // light, or it disappears into its own background.
-        if (layer.iconColor === '#FFFFFF' && accentPickedLight) {
-          layer.iconColor = ICON_DARK_TINT;
-        // '#E9E4FF' (mergeCluster's small orbiting icons - these sit on
-        // a STROKE-ONLY ring with no fill, rendering directly against
-        // the BOARD's own background, not an accent fill) needs the
-        // SAME flip, but keyed off the board background's own
-        // lightness instead of the accent's.
-        } else if (layer.iconColor === '#E9E4FF' && isLightBackground) {
-          layer.iconColor = ICON_DARK_TINT;
-        // phoneSwap's icon is tinted WITH accentColor (not a fixed
-        // sentinel) and sits on the phone's own FIXED near-white screen
-        // fill (`#F5F3FF`) - a light accent color there is the same
-        // clash by a different mechanism (already-harmonized accent
-        // color, not a hardcoded white), so it's matched by this
-        // layer's own fixed id instead of by color value.
-        } else if (layer.id === '__phone_icon__' && accentPickedLight) {
-          layer.iconColor = ICON_DARK_TINT;
-        // '#F5F3FF' (ICON_BRIGHT_TINT, sceneSchema.js) is used in TWO
-        // different visual contexts that need OPPOSITE checks - real,
-        // confirmed-live finding verifying the fix above (2026-09-10,
-        // same investigation): splitConverge's icon rendered completely
-        // invisible, a near-white glyph on top of its own now-filled
-        // (see the 2026-09-10 splitConverge fallback-badge fix)
-        // accentColor container, once that fill was also picked light.
-        // nodeCluster/nodeClusterExtended's OWN "__node_icon_N__" (the
-        // pre-explosion state, distinct from "..._selected") is a
-        // DIFFERENT context - it sits on an UNFILLED ring (stroke only,
-        // no fill until the hero explosion), rendering directly against
-        // the BOARD background instead, so it needs isLightBackground,
-        // not accentPickedLight, or it would flip based on the wrong
-        // color entirely.
-        } else if (layer.iconColor === '#F5F3FF' && layer.id.startsWith('__split_icon_') && accentPickedLight) {
-          layer.iconColor = ICON_DARK_TINT;
-        } else if (layer.iconColor === '#F5F3FF' && layer.id.startsWith('__node_icon_') && isLightBackground) {
-          layer.iconColor = ICON_DARK_TINT;
-        }
-      // Real, confirmed-live SIBLING bug found verifying the fix above
-      // (2026-09-10, same rendered video): phoneSwap's OWN headline text
-      // (__phone_text__) is also fillStyle:accentColor sitting on that
-      // same fixed near-white screen - a light accent color there reads
-      // as pale, barely-legible text for exactly the same reason as the
-      // icon, just via "fillStyle" instead of "iconColor".
-      } else if (layer.type === 'text' && layer.id === '__phone_text__' && accentPickedLight && typeof layer.fillStyle === 'string') {
-        layer.fillStyle = ICON_DARK_TINT;
+      if (layer.type === 'image' && typeof layer.iconColor === 'string' && typeof layer.id === 'string') {
+        const rule = resolveIconBackdropRule(layer.id);
+        const behindHex = rule
+          ? (rule.fixed || fillById.get(rule.fill) || bgRefColor)
+          : bgRefColor;
+        layer.iconColor = pickContrastSafeTint(behindHex, layer.iconColor);
+      } else if (layer.type === 'text' && layer.id === '__phone_text__' && typeof layer.fillStyle === 'string') {
+        // phoneSwap's own headline text sits on the exact same fixed
+        // near-white screen as __phone_icon__ above - same treatment,
+        // via "fillStyle" instead of "iconColor".
+        layer.fillStyle = pickContrastSafeTint('#F5F3FF', layer.fillStyle);
       }
     }
   }
