@@ -1356,6 +1356,11 @@ async function buildOneBeat(range) {
   return { range, visualObj };
 }
 
+// See the RSS-check call site inside the frame loop below for the full
+// reasoning - a real production incident (2026-09-10, a genuine Render
+// "exceeded memory limit" platform alert), not a guessed value.
+const RENDER_MEMORY_SAFETY_LIMIT_MB = 420;
+
 async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, onProgress) {
   const startFrame = Math.floor(timeStart * FPS);
   const endFrame = Math.ceil(timeEnd * FPS);
@@ -1775,6 +1780,31 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         // another blind guess.
         const rssMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
         console.log(`[renderEngine] frame ${frameIndex}/${totalFrames}, +${((Date.now() - renderStartedAt) / 1000).toFixed(1)}s, rss=${rssMB}MB`);
+        // Real, direct production incident (2026-09-10, a genuine Render
+        // "exceeded memory limit" platform alert, not assumed): RSS was
+        // only ever LOGGED here, never CHECKED against anything - the
+        // only thing standing between one chunk's memory climbing
+        // dangerously high and Render's own platform-level OOM-killing
+        // the ENTIRE container (taking down every other in-flight job on
+        // that worker too, not just the one heavy chunk) was nothing at
+        // all. Throwing here instead turns that into a normal, already-
+        // handled event: this rejects renderTimelineRange's own promise,
+        // renderChunkWorker.js's existing catch reports it as a clean
+        // "chunk_failed" IPC message, and server.js's existing
+        // requeueOrGiveUp retries it (possibly on a different, less-
+        // loaded worker) - the SAME path a real render error already
+        // takes, just triggered proactively instead of waiting for the
+        // platform to do it destructively. This protects against ANY
+        // unexpectedly memory-heavy chunk without needing certainty
+        // about why it got heavy in the first place. 420MB: real free-
+        // tier ceiling is 512MB, leaving ~90MB margin for the parent
+        // process + ffmpeg's own encode-time memory + OS overhead -
+        // sized directly off the real incident's own numbers (a chunk
+        // sitting at 404-407MB, right at the edge, died once ffmpeg's
+        // own encode-time memory stacked on top of that).
+        if (rssMB > RENDER_MEMORY_SAFETY_LIMIT_MB) {
+          throw new Error(`memory safety limit exceeded: rss=${rssMB}MB > ${RENDER_MEMORY_SAFETY_LIMIT_MB}MB at frame ${frameIndex}/${totalFrames} - aborting this chunk so it gets requeued instead of risking a platform-level OOM kill of the whole worker`);
+        }
       }
     }
 
