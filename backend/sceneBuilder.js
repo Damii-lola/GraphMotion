@@ -620,6 +620,15 @@ function withEffects(rawDraw, layerDef, contentWidth, contentHeight, centered = 
       bufferCtx.scale(superSample, superSample);
       bufferCtx.translate(pad, pad);
       rawDraw(bufferCtx, t);
+      // See render-worker/sceneBuilder.js's own copy of this function for
+      // the full real-bug writeup: @napi-rs/canvas's getImageData/
+      // putImageData don't ignore the context's current transform the
+      // way the spec requires, so a leftover translate here made
+      // IMAGE_DATA_EFFECTS (gaussianBlur/boxBlur) read/write pixels at a
+      // shifted offset - a real, confirmed ghost-duplicate bug found
+      // building the tripleStack template. Reset before any effect ever
+      // touches this buffer sidesteps it entirely.
+      bufferCtx.resetTransform();
       const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t, superSample);
       ctx.drawImage(finalCanvas, -pad, -pad, bufferW, bufferH);
     };
@@ -634,6 +643,10 @@ function withEffects(rawDraw, layerDef, contentWidth, contentHeight, centered = 
     bufferCtx.scale(superSample, superSample);
     bufferCtx.translate(offsetX, offsetY);
     rawDraw(bufferCtx, t);
+    // See the sibling !centered branch above for the full writeup - same
+    // real @napi-rs/canvas getImageData/putImageData-vs-transform bug,
+    // same fix (reset before any effect ever touches this buffer).
+    bufferCtx.resetTransform();
     const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t, superSample);
     ctx.drawImage(finalCanvas, -offsetX, -offsetY, bufferW, bufferH);
   };

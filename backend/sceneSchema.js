@@ -7223,10 +7223,8 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
   const UNBLUR_START = SHRINK_END + TRIPLE_STACK_UNBLUR_DELAY;
   const UNBLUR_END = UNBLUR_START + TRIPLE_STACK_UNBLUR_DURATION;
 
-  // Shared 1->1->0 "still blurred" -> "unblur" shape, reused for both the
-  // icon's and the text's own scale/opacity "bloom" substitute (see
-  // __stack_icon_i__/__stack_text_i__'s own doc comments for why neither
-  // uses a real blur effect here - a real, confirmed engine bug).
+  // Shared 1->1->0 "still blurred" -> "unblur" shape, scaled per-layer to
+  // its own real gaussianBlur radius via scaledBlur just below.
   const blurTrack = () => ({
     keyframes: [
       { time: 0, value: 1 },
@@ -7234,6 +7232,11 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
       { time: UNBLUR_END, value: 0 },
     ],
   });
+  // gaussianBlur's own radius is a flat number, not a 0-1 fraction - the
+  // shared 0->1 shape above gets scaled to each layer's own real radius.
+  function scaledBlur(track, radius) {
+    return { keyframes: track.keyframes.map((kf) => ({ ...kf, value: kf.value * radius })) };
+  }
 
   items.forEach((item, i) => {
     const groupId = `__stack_group_${i}__`;
@@ -7286,16 +7289,6 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
         { type: 'fill', color: accentColor },
       ],
     });
-    // Real, direct user report against a live render: small stray
-    // fragments (a triangle, a short line) appearing right at each
-    // node's own bottom edge, most visible on the "chart-line" icon's
-    // own diagonal strokes. This is the SAME parented-layer-with-effects
-    // ghost-duplicate engine bug already found and worked around on the
-    // text layer below (see its own doc comment) - just harder to
-    // notice on a simple filled icon shape than on a thin zigzag line.
-    // Same fix: no `effects` array at all, a native scale+opacity
-    // "bloom" substitutes for the real gaussianBlur this used to have.
-    const iconBloom = blurTrack();
     layers.push({
       id: `__stack_icon_${i}__`,
       type: 'image',
@@ -7305,27 +7298,8 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
       width: TRIPLE_STACK_ICON_SIZE,
       height: TRIPLE_STACK_ICON_SIZE,
       position: [iconLocalX, 0],
-      opacity: { keyframes: iconBloom.keyframes.map((kf) => ({ ...kf, value: 1 - kf.value * 0.55 })) },
-      scale: { keyframes: iconBloom.keyframes.map((kf) => ({ ...kf, value: [1 + kf.value * 0.12, 1 + kf.value * 0.12] })) },
+      effects: [{ type: 'gaussianBlur', params: { radius: scaledBlur(blurTrack(), 13) } }],
     });
-    // Real, confirmed-live engine bug found building this template: a
-    // PARENTED text layer with a non-empty "effects" array (gaussianBlur
-    // OR outerGlow, either alone) renders a small ghost duplicate of
-    // itself elsewhere on screen - reproduced with instrumentation down
-    // to withEffects' own buffered-compositing path (sceneBuilder.js),
-    // narrowed to TEXT specifically (the same effect on this template's
-    // OWN icon layers, same parent, never ghosts) - most likely a native
-    // font-glyph-cache interaction with the reused effects buffer canvas,
-    // not anything wrong in this file. Filing this as its own follow-up
-    // rather than blocking the template on a full engine fix. Text gets
-    // a native scale+opacity "soft bloom" instead - no effects array at
-    // all, so it can never hit this path - which reads as "not yet in
-    // focus" without literal blur: slightly larger + faint while
-    // `blurTrack` would have been active, snapping to 1x/full opacity
-    // over the exact same UNBLUR_START->UNBLUR_END window so the timing
-    // story (icons defocus, then everything sharpens together) is
-    // unchanged even though text's OWN mechanism differs from the icon's.
-    const textBloom = blurTrack();
     layers.push({
       id: `__stack_text_${i}__`,
       type: 'text',
@@ -7338,8 +7312,7 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
       textAlign: 'left',
       maxWidth: textBoxWidth,
       position: [textLocalX, 0],
-      opacity: { keyframes: textBloom.keyframes.map((kf) => ({ ...kf, value: 1 - kf.value * 0.55 })) },
-      scale: { keyframes: textBloom.keyframes.map((kf) => ({ ...kf, value: [1 + kf.value * 0.1, 1 + kf.value * 0.1] })) },
+      effects: [{ type: 'gaussianBlur', params: { radius: scaledBlur(blurTrack(), 9) } }],
     });
   });
 

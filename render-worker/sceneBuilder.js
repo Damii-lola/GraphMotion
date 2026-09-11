@@ -637,6 +637,32 @@ function withEffects(rawDraw, layerDef, contentWidth, contentHeight, centered = 
       bufferCtx.scale(superSample, superSample);
       bufferCtx.translate(pad, pad);
       rawDraw(bufferCtx, t);
+      // Real, confirmed-live engine bug (2026-09-11, found building the
+      // tripleStack template, backend/sceneSchema.js): @napi-rs/canvas's
+      // getImageData/putImageData do NOT ignore the context's current
+      // transform the way the Canvas 2D spec requires (both are meant to
+      // operate purely in device-pixel space regardless of any active
+      // scale/translate) - with the translate(pad, pad) above still
+      // active, IMAGE_DATA_EFFECTS (blurEffects.js's gaussianBlur/
+      // boxBlur, called via applyEffectsToCanvas just below) read and/or
+      // write pixels at a transform-shifted offset, producing a second,
+      // fainter, blurred GHOST DUPLICATE of the layer's own content
+      // elsewhere in the buffer. Root-caused via direct before/after-
+      // effect buffer dumps (a clean single copy right after rawDraw,
+      // the duplicate only appears once applyEffectsToCanvas has run),
+      // then confirmed the SAME duplicate is completely ABSENT when
+      // blurEffects.js's own convolution math is exercised on a
+      // synthetic ImageData with no real canvas/transform involved at
+      // all - isolating the bug to this transform-vs-pixel-readback
+      // interaction specifically, not this project's own blur math (both
+      // gaussianBlur and boxBlur reproduced it identically, ruling out
+      // buildGaussianKernel too). Resetting the transform right here,
+      // AFTER drawing but BEFORE any IMAGE_DATA_EFFECT touches the
+      // buffer, sidesteps the library bug entirely - the drawImage below
+      // doesn't depend on this buffer's own leftover transform state
+      // anyway. Also fixes the sibling `centered` branch just below,
+      // same bug, same reasoning.
+      bufferCtx.resetTransform();
       const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t, superSample);
       ctx.drawImage(finalCanvas, -pad, -pad, bufferW, bufferH);
     };
@@ -651,6 +677,10 @@ function withEffects(rawDraw, layerDef, contentWidth, contentHeight, centered = 
     bufferCtx.scale(superSample, superSample);
     bufferCtx.translate(offsetX, offsetY);
     rawDraw(bufferCtx, t);
+    // See the sibling !centered branch above for the full writeup - same
+    // real @napi-rs/canvas getImageData/putImageData-vs-transform bug,
+    // same fix (reset before any effect ever touches this buffer).
+    bufferCtx.resetTransform();
     const finalCanvas = applyEffectsToCanvas(buffer, layerDef.effects, t, superSample);
     ctx.drawImage(finalCanvas, -offsetX, -offsetY, bufferW, bufferH);
   };
