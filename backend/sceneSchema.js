@@ -7062,19 +7062,28 @@ function buildSquareSpinLayers({
  * Built from a real frame-by-frame read of a user-attached reference
  * video (A6.mp4 - "Video Editors" intro): three rectangular icon+text
  * nodes fly in blurred (top and bottom from the LEFT, middle from the
- * RIGHT - direct user spec), land in a stacked, brick-offset layout
- * (top/bottom flush left, middle shifted right so it overlaps both),
- * settle, shrink slightly as a group, then - 0.1s later, also direct
- * spec - the icon/text blur clears. A word-cascading caption runs across
- * the top the whole time, independent of the node motion (see
- * buildWordCascadeCaptionLayer's own doc comment).
+ * RIGHT - direct user spec), land STACKED, all sharing the exact same
+ * horizontal center (a direct user correction - the reference's own
+ * brick-offset layout was rejected outright: "THE NODES NEED TO BE ALL
+ * AT THE SAME MIDDLE ALIGNMENT"), settle, shrink slightly as a group,
+ * then - 0.1s later, also direct spec - the icon/text blur clears. A
+ * word-cascading caption runs across the top the whole time, independent
+ * of the node motion (see buildWordCascadeCaptionLayer's own doc
+ * comment).
  *
- * Node fill is a FIXED dark neutral (not accentColor-tinted, not
- * translucent) deliberately: resolveIconBackdropRule/ensureIconContrast
- * (renderEngine.js) need a stable, opaque, KNOWN color to guarantee
- * icon/text contrast against - the same reasoning squareSpin's own
- * badges already use (`{fixed: '#18140F'}`), reused verbatim here for
- * one less magic number in the contrast system.
+ * Node fill is the beat's own harmonized `accentColor` - a direct,
+ * emphatic user correction after the first pass shipped with a FIXED
+ * dark neutral instead ("WHAT THE FUCK IS THIS DARK COLOR, I THOUGHT WE
+ * JUST DEALT WITH COLOR"): this project's own standing rule is every
+ * container's own fill tracks the scene's harmonized accent (connectorList's
+ * node circles, splitConverge's container, mergeCluster's result circle -
+ * none of them use a fixed literal), and a fixed dark card was a real
+ * regression from that, not a deliberate exception. Icon/text contrast
+ * against this now-variable fill is handled the SAME way those other
+ * templates already do it - `resolveIconBackdropRule` points at
+ * `{fill: '__stack_node_N__'}`, `ensureIconContrast` looks up that
+ * node's own resolved fill color at render time, same declarative system,
+ * no fixed value needed.
  */
 // Real pixel measurements off a coordinate-gridded reference frame
 // (A6.mp4, settled pre-shrink frame) - direct user correction after the
@@ -7086,7 +7095,6 @@ function buildSquareSpinLayers({
 // into this project's own CANVAS_WIDTH/HEIGHT.
 const TRIPLE_STACK_NODE_WIDTH = 435;
 const TRIPLE_STACK_NODE_HEIGHT = 108;
-const TRIPLE_STACK_OFFSET_X = 58; // middle node's rightward shift over top/bottom
 const TRIPLE_STACK_ICON_SIZE = 64;
 const TRIPLE_STACK_ENTER_DURATION = 0.5;
 const TRIPLE_STACK_SETTLE_HOLD = 0.15;
@@ -7095,7 +7103,6 @@ const TRIPLE_STACK_SHRINK_SCALE = 0.88;
 const TRIPLE_STACK_UNBLUR_DELAY = 0.1; // direct user spec: "0.1s after the shrink"
 const TRIPLE_STACK_UNBLUR_DURATION = 0.18;
 const TRIPLE_STACK_BLUR_RADIUS_ICON = 13;
-const TRIPLE_STACK_NODE_FIXED_BG = '#18140F';
 // Real last-landing moment: SHRINK ends at ENTER_DURATION+SETTLE_HOLD+
 // SHRINK_DURATION, unblur starts UNBLUR_DELAY after that and runs
 // UNBLUR_DURATION - see clampMographDuration's own call site below.
@@ -7186,12 +7193,13 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
   const layers = [];
 
   const stackTop = CANVAS_HEIGHT / 2 - (TRIPLE_STACK_NODE_HEIGHT * 3) / 2;
-  // A bit more than EDGE_MARGIN_PX on purpose - direct user correction
-  // ("they are meant to move to the middle") after the first pass let
-  // the middle node's own right edge sit flush against the canvas edge,
-  // reading as stuck to the border rather than a settled, centered
-  // group with real breathing room on both sides.
-  const centerX = 20 + TRIPLE_STACK_NODE_WIDTH / 2;
+  // Direct user correction, twice over: "move to the middle" first
+  // meant a brick-offset layout with more breathing room, then an
+  // explicit, unambiguous follow-up rejected the brick offset entirely
+  // - "THE NODES NEED TO BE ALL AT THE SAME MIDDLE ALIGNMENT." All 3
+  // now share the exact same centerX, dead center on the canvas - no
+  // stagger at all.
+  const centerX = CANVAS_WIDTH / 2;
   const rowY = [
     stackTop + TRIPLE_STACK_NODE_HEIGHT * 0.5,
     stackTop + TRIPLE_STACK_NODE_HEIGHT * 1.5,
@@ -7199,7 +7207,7 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
   ];
   const finalPos = [
     [centerX, rowY[0]],
-    [centerX + TRIPLE_STACK_OFFSET_X, rowY[1]],
+    [centerX, rowY[1]],
     [centerX, rowY[2]],
   ];
   // Direct user spec: "the first and last coming in from the left to
@@ -7281,8 +7289,7 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
       position: [0, 0],
       contents: [
         { type: 'path', shape: { kind: 'rectangle', params: { width: TRIPLE_STACK_NODE_WIDTH, height: TRIPLE_STACK_NODE_HEIGHT } } },
-        { type: 'fill', color: TRIPLE_STACK_NODE_FIXED_BG },
-        { type: 'stroke', color: accentColor, width: 1.5, opacity: 0.85 },
+        { type: 'fill', color: accentColor },
       ],
     });
     layers.push({

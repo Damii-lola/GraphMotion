@@ -968,11 +968,15 @@ function resolveIconBackdropRule(layerId) {
   const listMatch = layerId.match(/^__list_icon_(\d+)__$/);
   if (listMatch) return { fill: `__list_node_${listMatch[1]}__` };
   if (layerId.startsWith('__split_icon_')) return { fill: '__split_container_bg__' };
-  // tripleStack's own nodes: a fixed dark card interior (sceneSchema.js's
-  // own TRIPLE_STACK_NODE_FIXED_BG), same reasoning as the spin badges
-  // above - a stable, known, opaque surface the contrast system can rely
-  // on rather than a translucent/harmonized fill.
-  if (/^__stack_icon_\d+__$/.test(layerId) || /^__stack_text_\d+__$/.test(layerId)) return { fixed: '#18140F' };
+  // tripleStack's own nodes: direct user correction (2026-09-11) after
+  // the first pass used a fixed dark card interior - "I THOUGHT WE JUST
+  // DEALT WITH COLOR." The node's own fill is now the beat's harmonized
+  // accentColor (sceneSchema.js), same as every other filled container
+  // in this file (connectorList's list nodes, splitConverge's container),
+  // so icon/text contrast resolves against THAT sibling fill, not a
+  // fixed literal.
+  const stackMatch = layerId.match(/^__stack_(?:icon|text)_(\d+)__$/);
+  if (stackMatch) return { fill: `__stack_node_${stackMatch[1]}__` };
   // Everything else authored (nodeCluster/nodeClusterExtended's OWN
   // "__node_icon_N__" pre-explosion state, mergeCluster's small
   // orbiting "__merge_icon_N__", the decorative "__topic_icon__" card)
