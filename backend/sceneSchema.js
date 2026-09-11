@@ -7930,7 +7930,11 @@ const TEXT_TIERS_BLUR_START_RADIUS = 8;
 // the scale/overshoot settles) - a real "snap into focus, then a tiny
 // settle" rather than blur and bounce both still resolving at once.
 const TEXT_TIERS_BLUR_CLEAR_FRACTION = 0.55;
-const TEXT_TIERS_DIM_COLOR = 'rgba(245,243,255,0.55)';
+// "Dim" words (line 1's own secondary words, line 3's small first word)
+// are expressed as a lower RESTING opacity on top of the SAME real hex
+// fillStyle every other word uses (see the line1/line3 doc comment
+// above for why) - never a translucent color literal.
+const TEXT_TIERS_DIM_OPACITY = 0.55;
 // The engine's own text renderer always middle-anchors a text layer on
 // its own `position` (textAnimator.js's `ctx.textBaseline = 'middle'`,
 // unconditional) - fine when every word on a line shares one font size,
@@ -7957,7 +7961,14 @@ const TEXT_TIERS_EXIT_END_SCALE = 0.72;
 // 2 line-to-line gaps (3 lines) + one word's own exit travel - the real
 // total time the staggered exit needs end-to-end.
 const TEXT_TIERS_EXIT_DURATION = TEXT_TIERS_EXIT_LINE_STAGGER * 2 + TEXT_TIERS_EXIT_WORD_DURATION;
-const TEXT_TIERS_MIN_HOLD_AFTER_BUILD = 0.5;
+// 0.5 -> 2.0 (2026-09-11): direct user ask, "make the text last 1.5s
+// longer before the outro kicks in" - a real, deliberate +1.5s on top
+// of the original hold, not a re-derivation from anything else. Same
+// "explicit user pacing override, not governed by the generic
+// MOGRAPH_MAX_HOLD_AFTER_SETTLE clamp" reasoning as nodeAbsorb's own
+// NODE_ABSORB_PRE_EAT_DELAY - this template sets its own duration
+// directly via textTiersMinDuration, never through clampMographDuration.
+const TEXT_TIERS_MIN_HOLD_AFTER_BUILD = 2.0;
 const TEXT_TIERS_END_BUFFER = 0.15;
 
 // Distributes words across the 3 lines as evenly as this template's own
@@ -7996,11 +8007,30 @@ function buildTextTiersLayers({ text, accentColor, duration }) {
   const sansFont = pairing.sans.bold;
   const serifFont = pairing.serif.heavy;
 
+  // Real, direct-measurement bug found via a real render + pixel
+  // sampling (2026-09-11): the "dim" words used to carry a literal
+  // translucent rgba() fillStyle. ensureTextContrastAgainstBackground's
+  // own fixColor (renderEngine.js) only ever matches a strict 6-hex
+  // string - an rgba() literal fails that regex and passes through
+  // COMPLETELY UNCHANGED regardless of the board's own lightness, so on
+  // a light board the dim words stayed near-white against a near-white
+  // background (measured (242,230,242) text on a (205,198,182) board -
+  // functionally invisible) while every OTHER word on the same line
+  // (a real hex literal) correctly flipped dark. Not a bug in the
+  // shared contrast system - it's applying its own well-defined hex-only
+  // rule exactly as designed; the bug was this template opting its own
+  // "dim" words out of that system entirely by using a color shape it
+  // doesn't recognize. Fixed by keeping `fillStyle` a real hex literal
+  // (ICON_BRIGHT_TINT, contrast-safe like every other word) for EVERY
+  // word and expressing "dim" purely as a lower RESTING opacity instead
+  // (see restOpacity below) - the same underlying color now correctly
+  // flips dark-on-light for dim and bright words alike.
   const line1 = line1Words.map((w, i) => ({
     word: w,
     fontFamily: sansFont,
     fontSize: TEXT_TIERS_SMALL_SIZE,
-    color: i === 0 ? ICON_BRIGHT_TINT : TEXT_TIERS_DIM_COLOR,
+    color: ICON_BRIGHT_TINT,
+    dim: i !== 0,
   }));
   const line2 = line2Words.map((w) => ({
     word: w, fontFamily: serifFont, fontSize: TEXT_TIERS_BIG_SIZE, color: accentColor,
@@ -8009,7 +8039,8 @@ function buildTextTiersLayers({ text, accentColor, duration }) {
     word: w,
     fontFamily: i === 0 ? sansFont : serifFont,
     fontSize: i === 0 ? TEXT_TIERS_SMALL_SIZE + (TEXT_TIERS_BIG_SIZE - TEXT_TIERS_SMALL_SIZE) * 0.35 : TEXT_TIERS_BIGGEST_SIZE,
-    color: i === 0 ? TEXT_TIERS_DIM_COLOR : ICON_BRIGHT_TINT,
+    color: ICON_BRIGHT_TINT,
+    dim: i === 0,
     small: i === 0,
   }));
   const allLines = [line1, line2, line3];
@@ -8088,6 +8119,7 @@ function buildTextTiersLayers({ text, accentColor, duration }) {
       const blurClear = popStart + TEXT_TIERS_POP_DURATION * TEXT_TIERS_BLUR_CLEAR_FRACTION;
       const wordExitStart = lineExitStart[lineIdx];
       const wordExitEnd = wordExitStart + TEXT_TIERS_EXIT_WORD_DURATION;
+      const restOpacity = w.dim ? TEXT_TIERS_DIM_OPACITY : 1;
       layers.push({
         id: `__tiers_word_${lineIdx}_${wordIdx}__`,
         type: 'text',
@@ -8119,8 +8151,8 @@ function buildTextTiersLayers({ text, accentColor, duration }) {
         opacity: {
           keyframes: [
             { time: popStart, value: 0, interpolation: 'hold' },
-            { time: popStart + 0.02, value: 1 },
-            { time: wordExitStart, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+            { time: popStart + 0.02, value: restOpacity },
+            { time: wordExitStart, value: restOpacity, interpolation: 'easing', easing: 'easeInCubic' },
             { time: wordExitEnd, value: 0 },
           ],
         },

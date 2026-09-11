@@ -411,8 +411,9 @@ const COMPACT_BASE_DURATION = {
   // sceneSchema.js's own dispatch branch (same "resolve the real
   // duration before building" pattern textPopOut already established) -
   // this is just a reasonable seed, ~textTiersMinDuration(7) for a
-  // typical 7-word phrase.
-  textTiers: 2.0,
+  // typical 7-word phrase (bumped 2.0->3.2 alongside the hold's own
+  // 0.5->2.0 increase, direct user ask for 1.5s more hold time).
+  textTiers: 3.2,
 };
 
 /**
@@ -555,8 +556,22 @@ function validateCompactBeatVars(template, vars) {
       return null;
     }
     case 'textTiers': {
+      // Real, confirmed-live failure (2026-09-11, a real local generation
+      // for the topic "Money"): the model repeatedly missed the 5-10
+      // word window on this specific field across 8+ separate attempts
+      // (11, 3, 12, 16, 4, 29, 13, 4 words observed), exhausting the
+      // whole retry budget and failing the generation outright. The
+      // UPPER bound here was actively counterproductive: sceneSchema.js's
+      // own dispatch branch already does `.slice(0, 10)` before ever
+      // calling the builder, so an over-length phrase was ALWAYS
+      // perfectly recoverable - this check was rejecting-and-retrying
+      // something the builder could already handle for free. Dropped the
+      // upper bound entirely; only the lower bound (a real correctness
+      // requirement - splitTextTiersLines needs at least ~4-5 words to
+      // produce a real, non-degenerate 3-line split) remains a hard
+      // reject.
       const words = typeof vars.text === 'string' ? vars.text.trim().split(/\s+/).filter((w) => w.length > 0) : [];
-      if (words.length < 5 || words.length > 10) return `needs "text": a real phrase of 5-10 words, one clean sentence split across 3 lines by the template itself (got ${words.length} words)`;
+      if (words.length < 5) return `needs "text": a real phrase of at least 5 words (got ${words.length} words) - it gets auto-split into 3 lines and auto-capped at 10 words if longer, no need to count precisely`;
       return null;
     }
     default:
