@@ -1837,6 +1837,10 @@ const COMPACT_TEMPLATE_INFO = {
     fields: 'headerIcon, headerText*, items(EXACTLY 4 {icon,text*2-4w}) - things you get, not names/scores',
     example: { template: 'nodeAbsorb', narration: 'What you get.', vars: { headerIcon: 'mdi:gift', headerText: 'What You Get', items: [{ icon: 'mdi:truck-fast', text: 'Free Shipping' }, { icon: 'mdi:shield-check', text: 'Warranty' }, { icon: 'mdi:refresh', text: 'Free Returns' }, { icon: 'mdi:headset', text: '24/7 Support' }] }, accentColor: '#8B5CF6' },
   },
+  textTiers: {
+    fields: 'text*(5-10w plain statement, auto-split into 3 lines)',
+    example: { template: 'textTiers', narration: "Here's an honest take.", vars: { text: 'The last one might be the best' }, accentColor: '#8B5CF6' },
+  },
 };
 const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);
 

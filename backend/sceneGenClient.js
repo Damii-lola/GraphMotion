@@ -407,6 +407,12 @@ const COMPACT_BASE_DURATION = {
   // (MOGRAPH_MAX_HOLD_AFTER_SETTLE), which only governs time AFTER
   // RETURN_END, not motion still happening before it.
   nodeAbsorb: 4.0,
+  // Immediately overwritten by textTiersMinDuration(wordCount) in
+  // sceneSchema.js's own dispatch branch (same "resolve the real
+  // duration before building" pattern textPopOut already established) -
+  // this is just a reasonable seed, ~textTiersMinDuration(7) for a
+  // typical 7-word phrase.
+  textTiers: 2.0,
 };
 
 /**
@@ -548,8 +554,13 @@ function validateCompactBeatVars(template, vars) {
       if (items.length !== 4) return `needs "items": exactly 4 entries, each a real {icon,text} (got ${items.length} valid ones)`;
       return null;
     }
+    case 'textTiers': {
+      const words = typeof vars.text === 'string' ? vars.text.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      if (words.length < 5 || words.length > 10) return `needs "text": a real phrase of 5-10 words, one clean sentence split across 3 lines by the template itself (got ${words.length} words)`;
+      return null;
+    }
     default:
-      return `"${template}" is not one of the 10 real template names`;
+      return `"${template}" is not one of the 11 real template names`;
   }
 }
 
