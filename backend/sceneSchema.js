@@ -7905,9 +7905,31 @@ const TEXT_TIERS_BIGGEST_SIZE = 51;
 const TEXT_TIERS_LINE_HEIGHT_RATIO = 1.15;
 const TEXT_TIERS_LINE_GAP = 8;
 const TEXT_TIERS_WORD_GAP_RATIO = 0.3;
-const TEXT_TIERS_WORD_STAGGER = 0.11;
-const TEXT_TIERS_POP_DURATION = 0.22;
-const TEXT_TIERS_BLUR_START_RADIUS = 14;
+// Direct user correction after the first render ("only line 1 should be
+// centered, line 2 shifted a bit right, line 3 shifted a bit more") -
+// each line's own local X gets one of these added on top of its own
+// centered layout, a simple progressive rightward cascade.
+const TEXT_TIERS_LINE2_X_SHIFT = 26;
+const TEXT_TIERS_LINE3_X_SHIFT = 48;
+// Direct user correction after the first render ("the typewriting
+// animation isn't clean enough") - the first cut's pop (0.6->1 scale,
+// 14px blur, 0.22s, 0.11s stagger) read as a soft, slightly mushy bloom:
+// blur and scale resolved on the SAME timeline so a word looked both
+// hazy AND still growing at once, and the stagger was loose enough that
+// consecutive words visibly overlapped mid-pop instead of reading as
+// discrete typewriter hits. Retuned for a tighter, snappier "hit": less
+// blur, less overshoot travel distance, the blur specifically clears
+// EARLY (see TEXT_TIERS_BLUR_CLEAR_FRACTION below) so the word is
+// already sharp while its own tiny overshoot bounce finishes, and a
+// tighter stagger so each word's own hit doesn't blur into the next.
+const TEXT_TIERS_WORD_STAGGER = 0.085;
+const TEXT_TIERS_POP_DURATION = 0.16;
+const TEXT_TIERS_POP_START_SCALE = 0.72;
+const TEXT_TIERS_BLUR_START_RADIUS = 8;
+// Blur clears at this fraction of the pop's own duration (well before
+// the scale/overshoot settles) - a real "snap into focus, then a tiny
+// settle" rather than blur and bounce both still resolving at once.
+const TEXT_TIERS_BLUR_CLEAR_FRACTION = 0.55;
 const TEXT_TIERS_DIM_COLOR = 'rgba(245,243,255,0.55)';
 // The engine's own text renderer always middle-anchors a text layer on
 // its own `position` (textAnimator.js's `ctx.textBaseline = 'middle'`,
@@ -7921,7 +7943,20 @@ const TEXT_TIERS_DIM_COLOR = 'rgba(245,243,255,0.55)';
 // font ascent/descent split), verify visually if a very different-
 // looking font pairing ever makes it look off.
 const TEXT_TIERS_BASELINE_COMPENSATION = 0.27;
-const TEXT_TIERS_EXIT_DURATION = 0.35;
+// Direct user correction: "the outro is lacking" - the first cut just
+// shrunk/faded the WHOLE group uniformly, a flat, generic exit with none
+// of the per-word richness the entrance has. Replaced with a per-WORD
+// exit (blur back out + fade + settle down), staggered by LINE in
+// REVERSE build order (line 3 first, line 1 last) - a "typewriter
+// erasing itself backward" bookend to the entrance's own forward build,
+// each line getting its own visible beat instead of one flat dissolve.
+const TEXT_TIERS_EXIT_LINE_STAGGER = 0.09;
+const TEXT_TIERS_EXIT_WORD_DURATION = 0.22;
+const TEXT_TIERS_EXIT_BLUR_RADIUS = 10;
+const TEXT_TIERS_EXIT_END_SCALE = 0.72;
+// 2 line-to-line gaps (3 lines) + one word's own exit travel - the real
+// total time the staggered exit needs end-to-end.
+const TEXT_TIERS_EXIT_DURATION = TEXT_TIERS_EXIT_LINE_STAGGER * 2 + TEXT_TIERS_EXIT_WORD_DURATION;
 const TEXT_TIERS_MIN_HOLD_AFTER_BUILD = 0.5;
 const TEXT_TIERS_END_BUFFER = 0.15;
 
@@ -7985,7 +8020,12 @@ function buildTextTiersLayers({ text, accentColor, duration }) {
     measureCtx.font = `700 ${fontSize}px ${fontFamily}`;
     return measureCtx.measureText(word).width;
   }
-  const lineLayouts = allLines.map((line) => {
+  // Direct user correction: "only line 1 should be aligned at the
+  // middle, the middle line shifted a bit right, the last line shifted
+  // a bit more right than the middle line" - a flat per-line offset
+  // added on top of each line's own centered layout.
+  const LINE_X_SHIFT = [0, TEXT_TIERS_LINE2_X_SHIFT, TEXT_TIERS_LINE3_X_SHIFT];
+  const lineLayouts = allLines.map((line, lineIdx) => {
     const widths = line.map((w) => measureWordWidth(w.word, w.fontFamily, w.fontSize));
     let cursor = 0;
     const startX = [];
@@ -7995,7 +8035,7 @@ function buildTextTiersLayers({ text, accentColor, duration }) {
       cursor += widths[i];
     });
     const totalWidth = cursor;
-    const localX = startX.map((x, i) => x + widths[i] / 2 - totalWidth / 2);
+    const localX = startX.map((x, i) => x + widths[i] / 2 - totalWidth / 2 + LINE_X_SHIFT[lineIdx]);
     const maxFontSize = Math.max(...line.map((w) => w.fontSize));
     return { localX, lineHeight: maxFontSize * TEXT_TIERS_LINE_HEIGHT_RATIO };
   });
@@ -8019,24 +8059,21 @@ function buildTextTiersLayers({ text, accentColor, duration }) {
   const EXIT_START = EXIT_END - TEXT_TIERS_EXIT_DURATION;
 
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
+  // No group-level exit animation anymore (see TEXT_TIERS_EXIT_* consts'
+  // own doc comment) - each word carries its own exit now, so the group
+  // itself only ever needs to hold the shared position.
   const layers = [{
     id: '__tiers_group__',
     type: 'null',
     position: CENTER,
-    scale: {
-      keyframes: [
-        { time: 0, value: [1, 1] },
-        { time: EXIT_START, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
-        { time: EXIT_END, value: [0.15, 0.15] },
-      ],
-    },
-    opacity: {
-      keyframes: [
-        { time: EXIT_START, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
-        { time: EXIT_END, value: 0 },
-      ],
-    },
   }];
+
+  // Line 3 exits first, line 1 last - reverse of build order.
+  const lineExitOrder = [2, 1, 0];
+  const lineExitStart = [];
+  lineExitOrder.forEach((lineIdx, orderPos) => {
+    lineExitStart[lineIdx] = EXIT_START + orderPos * TEXT_TIERS_EXIT_LINE_STAGGER;
+  });
 
   let flatIndex = 0;
   allLines.forEach((line, lineIdx) => {
@@ -8048,6 +8085,9 @@ function buildTextTiersLayers({ text, accentColor, duration }) {
       }
       const popStart = TEXT_TIERS_WORD_STAGGER * flatIndex;
       const popEnd = popStart + TEXT_TIERS_POP_DURATION;
+      const blurClear = popStart + TEXT_TIERS_POP_DURATION * TEXT_TIERS_BLUR_CLEAR_FRACTION;
+      const wordExitStart = lineExitStart[lineIdx];
+      const wordExitEnd = wordExitStart + TEXT_TIERS_EXIT_WORD_DURATION;
       layers.push({
         id: `__tiers_word_${lineIdx}_${wordIdx}__`,
         type: 'text',
@@ -8062,29 +8102,46 @@ function buildTextTiersLayers({ text, accentColor, duration }) {
         position: [localX, localY],
         // Popup + overshoot (direct ask): easeOutBack naturally overshoots
         // past 1x before settling, no separate overshoot keyframe needed.
+        // Tightened travel distance (0.72 vs the first cut's 0.6) for a
+        // cleaner, less floppy snap - direct user correction ("the
+        // typewriting animation isn't clean enough"). Settles back down
+        // on its own line's own exit beat, staggered in REVERSE build
+        // order (line 3 first) - direct correction ("the outro is
+        // lacking").
         scale: {
           keyframes: [
-            { time: popStart, value: [0.6, 0.6], interpolation: 'easing', easing: 'easeOutBack' },
-            { time: popEnd, value: [1, 1] },
+            { time: popStart, value: [TEXT_TIERS_POP_START_SCALE, TEXT_TIERS_POP_START_SCALE], interpolation: 'easing', easing: 'easeOutBack' },
+            { time: popEnd, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+            { time: wordExitStart, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+            { time: wordExitEnd, value: [TEXT_TIERS_EXIT_END_SCALE, TEXT_TIERS_EXIT_END_SCALE] },
           ],
         },
         opacity: {
           keyframes: [
             { time: popStart, value: 0, interpolation: 'hold' },
             { time: popStart + 0.02, value: 1 },
+            { time: wordExitStart, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+            { time: wordExitEnd, value: 0 },
           ],
         },
         // Blur-to-sharp pop (direct reference detail, also this file's
         // own established "blur pop in" motif - see tripleStack) - a
         // keyframed radius, same resolveParamsAtTime mechanism proven
-        // for nodeAbsorb's glow-pulse track.
+        // for nodeAbsorb's glow-pulse track. Clears well BEFORE the
+        // scale/overshoot settles (TEXT_TIERS_BLUR_CLEAR_FRACTION) so the
+        // word is already sharp while its own tiny bounce finishes,
+        // instead of blur and bounce both resolving at once - the "not
+        // clean enough" fix. Blurs back OUT on its own line's exit beat,
+        // mirroring the entrance.
         effects: [{
           type: 'gaussianBlur',
           params: {
             radius: {
               keyframes: [
                 { time: popStart, value: TEXT_TIERS_BLUR_START_RADIUS, interpolation: 'easing', easing: 'easeOutCubic' },
-                { time: popEnd, value: 0 },
+                { time: blurClear, value: 0 },
+                { time: wordExitStart, value: 0, interpolation: 'easing', easing: 'easeInCubic' },
+                { time: wordExitEnd, value: TEXT_TIERS_EXIT_BLUR_RADIUS },
               ],
             },
           },
