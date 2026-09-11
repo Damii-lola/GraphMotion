@@ -7102,7 +7102,6 @@ const TRIPLE_STACK_SHRINK_DURATION = 0.2;
 const TRIPLE_STACK_SHRINK_SCALE = 0.88;
 const TRIPLE_STACK_UNBLUR_DELAY = 0.1; // direct user spec: "0.1s after the shrink"
 const TRIPLE_STACK_UNBLUR_DURATION = 0.18;
-const TRIPLE_STACK_BLUR_RADIUS_ICON = 13;
 // Real last-landing moment: SHRINK ends at ENTER_DURATION+SETTLE_HOLD+
 // SHRINK_DURATION, unblur starts UNBLUR_DELAY after that and runs
 // UNBLUR_DURATION - see clampMographDuration's own call site below.
@@ -7225,9 +7224,9 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
   const UNBLUR_END = UNBLUR_START + TRIPLE_STACK_UNBLUR_DURATION;
 
   // Shared 1->1->0 "still blurred" -> "unblur" shape, reused for both the
-  // icon's real gaussianBlur radius (via scaledBlur below) and the
-  // text's own scale/opacity "bloom" substitute (see __stack_text_i__'s
-  // own doc comment for why text doesn't use a real blur effect here).
+  // icon's and the text's own scale/opacity "bloom" substitute (see
+  // __stack_icon_i__/__stack_text_i__'s own doc comments for why neither
+  // uses a real blur effect here - a real, confirmed engine bug).
   const blurTrack = () => ({
     keyframes: [
       { time: 0, value: 1 },
@@ -7235,11 +7234,6 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
       { time: UNBLUR_END, value: 0 },
     ],
   });
-  // gaussianBlur's own radius is a flat number, not a 0-1 fraction - the
-  // shared 0->1 shape above gets scaled to the icon's own real radius.
-  function scaledBlur(track, radius) {
-    return { keyframes: track.keyframes.map((kf) => ({ ...kf, value: kf.value * radius })) };
-  }
 
   items.forEach((item, i) => {
     const groupId = `__stack_group_${i}__`;
@@ -7292,6 +7286,16 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
         { type: 'fill', color: accentColor },
       ],
     });
+    // Real, direct user report against a live render: small stray
+    // fragments (a triangle, a short line) appearing right at each
+    // node's own bottom edge, most visible on the "chart-line" icon's
+    // own diagonal strokes. This is the SAME parented-layer-with-effects
+    // ghost-duplicate engine bug already found and worked around on the
+    // text layer below (see its own doc comment) - just harder to
+    // notice on a simple filled icon shape than on a thin zigzag line.
+    // Same fix: no `effects` array at all, a native scale+opacity
+    // "bloom" substitutes for the real gaussianBlur this used to have.
+    const iconBloom = blurTrack();
     layers.push({
       id: `__stack_icon_${i}__`,
       type: 'image',
@@ -7301,7 +7305,8 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
       width: TRIPLE_STACK_ICON_SIZE,
       height: TRIPLE_STACK_ICON_SIZE,
       position: [iconLocalX, 0],
-      effects: [{ type: 'gaussianBlur', params: { radius: scaledBlur(blurTrack(), TRIPLE_STACK_BLUR_RADIUS_ICON) } }],
+      opacity: { keyframes: iconBloom.keyframes.map((kf) => ({ ...kf, value: 1 - kf.value * 0.55 })) },
+      scale: { keyframes: iconBloom.keyframes.map((kf) => ({ ...kf, value: [1 + kf.value * 0.12, 1 + kf.value * 0.12] })) },
     });
     // Real, confirmed-live engine bug found building this template: a
     // PARENTED text layer with a non-empty "effects" array (gaussianBlur
