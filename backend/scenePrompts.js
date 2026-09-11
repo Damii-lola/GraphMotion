@@ -1841,6 +1841,10 @@ const COMPACT_TEMPLATE_INFO = {
     fields: 'text*(5-10w plain statement, auto-split into 3 lines)',
     example: { template: 'textTiers', narration: "Here's an honest take.", vars: { text: 'The last one might be the best' }, accentColor: '#8B5CF6' },
   },
+  blueprintText: {
+    fields: 'sentence1*, sentence2*(2 short phrases, 3-6w each)',
+    example: { template: 'blueprintText', narration: 'Every detail matters here.', vars: { sentence1: 'Precision in every curve', sentence2: 'Power in every detail' }, accentColor: '#8B5CF6' },
+  },
 };
 const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);
 

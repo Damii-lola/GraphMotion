@@ -414,6 +414,11 @@ const COMPACT_BASE_DURATION = {
   // typical 7-word phrase (bumped 2.0->3.2 alongside the hold's own
   // 0.5->2.0 increase, direct user ask for 1.5s more hold time).
   textTiers: 3.2,
+  // Immediately overwritten by blueprintTextMinDuration(sentence1,
+  // sentence2) in sceneSchema.js's own dispatch branch - this is just a
+  // reasonable seed, ~blueprintTextMinDuration for two typical 4-word
+  // sentences (matching the reference's own real word counts).
+  blueprintText: 3.3,
 };
 
 /**
@@ -574,8 +579,19 @@ function validateCompactBeatVars(template, vars) {
       if (words.length < 5) return `needs "text": a real phrase of at least 5 words (got ${words.length} words) - it gets auto-split into 3 lines and auto-capped at 10 words if longer, no need to count precisely`;
       return null;
     }
+    case 'blueprintText': {
+      // Same "no redundant upper-bound reject" lesson as textTiers above
+      // - sceneSchema.js's own dispatch branch already truncates each
+      // sentence to 8 words, so only a real lower-bound floor (a single
+      // word isn't a "sentence") is worth hard-rejecting here.
+      const w1 = typeof vars.sentence1 === 'string' ? vars.sentence1.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      const w2 = typeof vars.sentence2 === 'string' ? vars.sentence2.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      if (w1.length < 2) return `needs "sentence1": at least 2 words (got ${w1.length})`;
+      if (w2.length < 2) return `needs "sentence2": at least 2 words (got ${w2.length})`;
+      return null;
+    }
     default:
-      return `"${template}" is not one of the 11 real template names`;
+      return `"${template}" is not one of the 12 real template names`;
   }
 }
 

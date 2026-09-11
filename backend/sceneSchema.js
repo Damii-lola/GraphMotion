@@ -8186,6 +8186,378 @@ function buildTextTiersLayers({ text, accentColor, duration }) {
   return layers;
 }
 
+/**
+ * Built from a real frame-by-frame read of a user-attached reference
+ * video (A6.mp4): two short sentences, each wrapped into real multi-line
+ * text, each framed by its own dashed rectangle with a solid dot at
+ * every corner - the box GROWS to encompass its own text as the text's
+ * own words reveal (width settles first, height steps up each time a
+ * new wrapped LINE appears), then only once fully settled does the
+ * SECOND sentence begin building in below it - direct user spec: "after
+ * the box has fully encompassed the text, will the next sentence
+ * appear." Two rotating gear shapes sit at two opposite canvas corners
+ * (top-right/bottom-left - the only two corners the reference itself
+ * ever actually shows content in across its whole runtime, confirmed by
+ * checking many frames, not assumed to be all 4).
+ *
+ * Real engine constraint that shaped the whole approach: a shape's own
+ * PATH geometry (sceneBuilder.js's buildShapePathDef) is resolved ONCE,
+ * statically, at build time - a rectangle's width/height can't be
+ * keyframed directly. The box is therefore built at its own FULL final
+ * size and "grows" via a keyframed `scale` instead (the same technique
+ * every other template's own grow-in already uses) - the 4 corner dots
+ * are separate, unparented layers with their own POSITION tracks
+ * DERIVED from that exact same scale-keyframe timeline (same time
+ * points, transformed into absolute corner coordinates), so they always
+ * sit exactly on the box's own current corner regardless of how it's
+ * currently scaled, without inheriting any of the box's own transform.
+ *
+ * Real text-wrap prediction reused, not reinvented: measureTextWrapAndBreaks
+ * below mirrors this file's own existing measureTextWrap (used by
+ * fixFramingBoxSize) - same algorithm, same real `ctx.measureText`
+ * against the actually-registered fonts, extended to also report which
+ * WORD INDEX starts each wrapped line (needed to time the box's own
+ * per-line height steps against the text's own real per-word reveal,
+ * which measureTextWrap alone doesn't expose).
+ *
+ * Color: the reference's own flat dark-navy ink only reads correctly
+ * against ITS OWN fixed light background - this project's own board
+ * background is randomized per video (sometimes dark, sometimes light),
+ * and neither ensureTextContrastAgainstBackground nor ensureIconContrast
+ * currently cover a shape layer's own `contents[].fill` the way they
+ * cover text `fillStyle`/image `iconColor` (a real, unfixed asymmetry
+ * that would need its own separate change to close safely). Rather than
+ * risk the exact invisible-on-some-boards bug textTiers' own "dim
+ * words" just got caught doing, text/box/dots/gears here all use the
+ * beat's own harmonized `accentColor` uniformly instead - a deliberate
+ * departure from the reference's flat monochrome ink toward this
+ * project's own already-proven, guaranteed-contrast-safe accent system.
+ */
+const BLUEPRINT_TEXT_FONT_SIZE = 30;
+const BLUEPRINT_TEXT_LINE_HEIGHT_RATIO = 1.28;
+// Direct user spec: "the text is text wrapped into 2 line" - 320 was too
+// generous relative to BLUEPRINT_TEXT_FONT_SIZE and let a typical 3-6
+// word phrase fit on one line (measured directly: "Precision in every
+// curve" is only 315px wide at this font, so it rendered as ONE line,
+// not the reference's own real 2-line wrap). A first attempt at 150
+// overcorrected into 3 lines instead ("Precision" / "in every" /
+// "curve" - "in every curve" together is 190px, wider than what a
+// single shared maxWidth can force "Precision" alone to break at, so
+// there's genuinely no ONE maxWidth that reproduces the reference's own
+// exact break for this specific sentence - it was very likely a hand-
+// authored break, not a generic algorithm's output). Retargeted at what
+// the user actually asked for (clean 2-line wraps in general) rather
+// than chasing an unreproducible exact match: 180, verified via real
+// ctx.measureText against both reference sentences, gives a clean,
+// balanced 2-line split for each ("Precision in" / "every curve" and
+// "Power in" / "every detail").
+const BLUEPRINT_TEXT_MAX_WIDTH = 180;
+const BLUEPRINT_BOX_PAD_X = 30;
+const BLUEPRINT_BOX_PAD_Y = 22;
+const BLUEPRINT_DOT_RADIUS = 7;
+const BLUEPRINT_BOX_DASH = [7, 6];
+const BLUEPRINT_BOX_STROKE_WIDTH = 2.5;
+const BLUEPRINT_WORD_STAGGER = 0.13;
+const BLUEPRINT_WORD_POP_DURATION = 0.22;
+const BLUEPRINT_WIDTH_GROW_DURATION = 0.22;
+const BLUEPRINT_HEIGHT_STEP_DURATION = 0.22;
+const BLUEPRINT_SENTENCE_GAP = 0.35;
+const BLUEPRINT_VERTICAL_GAP = 64;
+const BLUEPRINT_HOLD_AFTER_BUILD = 1.0;
+const BLUEPRINT_EXIT_SENTENCE_STAGGER = 0.15;
+const BLUEPRINT_EXIT_DURATION = 0.4;
+const BLUEPRINT_END_BUFFER = 0.15;
+const BLUEPRINT_GEAR_OUTER_RADIUS = 130;
+const BLUEPRINT_GEAR_INNER_RADIUS = 102;
+const BLUEPRINT_GEAR_TEETH = 10;
+const BLUEPRINT_GEAR_SPEED_DEG_PER_SEC = 22;
+
+/** Same real per-word wrap algorithm as this file's own measureTextWrap (fixFramingBoxSize's own real-wrap predictor) - extended to ALSO report which word index starts each line, needed to time the box's own per-line height steps against the text's real per-word reveal. */
+function measureTextWrapAndBreaks(text, {
+  fontFamily, fontWeight, fontSize, maxWidth,
+}) {
+  const ctx = createCanvas(10, 10).getContext('2d');
+  ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+  const words = text.split(' ').filter((w) => w.length > 0);
+  const lineWidths = [];
+  const lineStartWordIndex = [];
+  let current = 0;
+  let currentWidth = 0;
+  words.forEach((word, i) => {
+    const wordWidth = ctx.measureText(`${word} `).width;
+    if (currentWidth + wordWidth > maxWidth && current > 0) {
+      lineWidths.push(currentWidth);
+      current = 0; currentWidth = 0;
+    }
+    if (current === 0) lineStartWordIndex.push(i);
+    current += 1;
+    currentWidth += wordWidth;
+  });
+  if (current > 0) lineWidths.push(currentWidth);
+  return {
+    lineCount: Math.max(1, lineWidths.length),
+    maxLineWidth: Math.max(0, ...lineWidths),
+    lineStartWordIndex,
+    wordCount: words.length,
+  };
+}
+
+function buildGearLayer(id, cx, cy, phaseOffsetDeg, color) {
+  return {
+    id,
+    type: 'shape',
+    width: BLUEPRINT_GEAR_OUTER_RADIUS * 2,
+    height: BLUEPRINT_GEAR_OUTER_RADIUS * 2,
+    position: [cx, cy],
+    // A generous, far-future keyframe range at a constant angular
+    // velocity (not a real "loop" primitive - this engine doesn't have
+    // one) - linear interpolation between 2 points already IS constant-
+    // speed motion, so the rotation just keeps going smoothly for as
+    // long as this beat's own real duration happens to run, however
+    // long that turns out to be.
+    rotation: {
+      keyframes: [
+        { time: 0, value: phaseOffsetDeg },
+        { time: 60, value: phaseOffsetDeg + BLUEPRINT_GEAR_SPEED_DEG_PER_SEC * 60 },
+      ],
+    },
+    contents: [
+      {
+        type: 'path',
+        shape: {
+          kind: 'star',
+          params: {
+            points: BLUEPRINT_GEAR_TEETH,
+            innerRadius: BLUEPRINT_GEAR_INNER_RADIUS,
+            outerRadius: BLUEPRINT_GEAR_OUTER_RADIUS,
+            innerRoundness: 6,
+            outerRoundness: 8,
+          },
+        },
+      },
+      { type: 'fill', color },
+    ],
+  };
+}
+
+/** Mirrors buildBlueprintTextLayers' own internal timing exactly (same pattern as textTiersMinDuration/textPopOutMinDuration) - the minimum real screen time this template's full build (both sentences) + hold + exit needs. */
+function blueprintTextMinDuration(sentence1, sentence2) {
+  const { buildEnd } = computeBlueprintTiming(sentence1, sentence2);
+  return buildEnd + BLUEPRINT_HOLD_AFTER_BUILD + BLUEPRINT_EXIT_SENTENCE_STAGGER + BLUEPRINT_EXIT_DURATION + BLUEPRINT_END_BUFFER;
+}
+
+/** Shared by both blueprintTextMinDuration and buildBlueprintTextLayers so the two can never drift out of sync - computes each sentence's own wrap + build timing, and the real time the SECOND sentence's own build finishes. */
+function computeBlueprintTiming(sentence1, sentence2) {
+  const fontOpts = { fontFamily: 'Playfair Display Italic', fontWeight: '400', fontSize: BLUEPRINT_TEXT_FONT_SIZE, maxWidth: BLUEPRINT_TEXT_MAX_WIDTH };
+  const wrap1 = measureTextWrapAndBreaks(sentence1, fontOpts);
+  const wrap2 = measureTextWrapAndBreaks(sentence2, fontOpts);
+
+  function sentenceBuildEnd(wrap, startTime) {
+    const widthGrowEnd = startTime + BLUEPRINT_WIDTH_GROW_DURATION;
+    const lastWordStart = startTime + (wrap.wordCount - 1) * BLUEPRINT_WORD_STAGGER;
+    const wordsEnd = lastWordStart + BLUEPRINT_WORD_POP_DURATION;
+    let cursor = widthGrowEnd;
+    for (let line = 2; line <= wrap.lineCount; line++) {
+      const desired = startTime + wrap.lineStartWordIndex[line - 1] * BLUEPRINT_WORD_STAGGER;
+      cursor = Math.max(desired, cursor + 0.05) + BLUEPRINT_HEIGHT_STEP_DURATION;
+    }
+    return Math.max(wordsEnd, cursor);
+  }
+
+  const s1BuildEnd = sentenceBuildEnd(wrap1, 0);
+  const s2Start = s1BuildEnd + BLUEPRINT_SENTENCE_GAP;
+  const s2BuildEnd = sentenceBuildEnd(wrap2, s2Start);
+  return {
+    wrap1, wrap2, s1Start: 0, s1BuildEnd, s2Start, s2BuildEnd, buildEnd: s2BuildEnd,
+  };
+}
+
+function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
+  const layers = [];
+  const fontFamily = 'Playfair Display Italic';
+  const lineHeight = BLUEPRINT_TEXT_FONT_SIZE * BLUEPRINT_TEXT_LINE_HEIGHT_RATIO;
+
+  const timing = computeBlueprintTiming(sentence1, sentence2);
+  const { wrap1, wrap2 } = timing;
+
+  function boxSize(wrap) {
+    return {
+      width: wrap.maxLineWidth + BLUEPRINT_BOX_PAD_X * 2,
+      height: wrap.lineCount * lineHeight + BLUEPRINT_BOX_PAD_Y * 2,
+    };
+  }
+  const s1Size = boxSize(wrap1);
+  const s2Size = boxSize(wrap2);
+  const totalHeight = s1Size.height + BLUEPRINT_VERTICAL_GAP + s2Size.height;
+  const topY = CANVAS_HEIGHT / 2 - totalHeight / 2;
+  const centerX = CANVAS_WIDTH / 2;
+  const s1CenterY = topY + s1Size.height / 2;
+  const s2CenterY = topY + s1Size.height + BLUEPRINT_VERTICAL_GAP + s2Size.height / 2;
+
+  const EXIT_START_2 = timing.buildEnd + BLUEPRINT_HOLD_AFTER_BUILD;
+  const EXIT_END_2 = EXIT_START_2 + BLUEPRINT_EXIT_DURATION;
+  const EXIT_START_1 = EXIT_START_2 + BLUEPRINT_EXIT_SENTENCE_STAGGER;
+  const EXIT_END_1 = EXIT_START_1 + BLUEPRINT_EXIT_DURATION;
+
+  /** Builds every layer (box, 4 dots, text, particles) for ONE sentence. */
+  function buildSentence({
+    idPrefix, text, wrap, centerY, boxW, boxH, startTime, exitStart, exitEnd,
+  }) {
+    // ---- box growth keyframes (own scale, box built at full size) ----
+    const heightAt = (n) => (n * lineHeight + BLUEPRINT_BOX_PAD_Y * 2) / boxH;
+    const scaleKfs = [
+      { time: startTime, value: [0.12, heightAt(1) * 0.5], interpolation: 'easing', easing: 'easeOutCubic' },
+    ];
+    let cursor = Math.max(startTime + BLUEPRINT_WIDTH_GROW_DURATION, startTime + 0.05);
+    scaleKfs.push({ time: cursor, value: [1, heightAt(1)], interpolation: 'easing', easing: 'easeOutCubic' });
+    for (let line = 2; line <= wrap.lineCount; line++) {
+      const desired = startTime + wrap.lineStartWordIndex[line - 1] * BLUEPRINT_WORD_STAGGER;
+      cursor = Math.max(desired, cursor + 0.05);
+      scaleKfs.push({ time: cursor, value: [1, heightAt(line)], interpolation: 'easing', easing: 'easeOutBack' });
+    }
+    // Hold at full size, then exit (scale down + fade) - see this
+    // function's own outer doc comment for the reverse-sentence-order
+    // exit stagger.
+    scaleKfs.push({ time: exitStart, value: [1, 1], interpolation: 'easing', easing: 'easeInBack' });
+    scaleKfs.push({ time: exitEnd, value: [0.55, 0.55] });
+
+    const opacityKfs = [
+      { time: startTime, value: 0, interpolation: 'hold' },
+      { time: startTime + 0.04, value: 1 },
+      { time: exitStart, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+      { time: exitEnd, value: 0 },
+    ];
+
+    layers.push({
+      id: `__bp_${idPrefix}_box__`,
+      type: 'shape',
+      width: boxW,
+      height: boxH,
+      position: [centerX, centerY],
+      scale: { keyframes: scaleKfs },
+      opacity: { keyframes: opacityKfs },
+      contents: [
+        { type: 'path', shape: { kind: 'rectangle', params: { width: boxW, height: boxH, roundness: 0 } } },
+        {
+          type: 'stroke', color: accentColor, width: BLUEPRINT_BOX_STROKE_WIDTH, dash: BLUEPRINT_BOX_DASH,
+        },
+      ],
+    });
+
+    // ---- 4 corner dots - own position tracks DERIVED from the box's
+    // own scale keyframes (same time points), never parented to the box
+    // itself (a parented dot would inherit the box's own scale and
+    // shrink/distort along with it, instead of staying a constant small
+    // dot that just repositions to track the box's current corner).
+    const corners = [
+      ['tl', -1, -1], ['tr', 1, -1], ['bl', -1, 1], ['br', 1, 1],
+    ];
+    corners.forEach(([corner, sx, sy]) => {
+      const posKfs = scaleKfs.map((kf) => ({
+        time: kf.time,
+        value: [centerX + sx * (boxW * kf.value[0]) / 2, centerY + sy * (boxH * kf.value[1]) / 2],
+        interpolation: kf.interpolation,
+        easing: kf.easing,
+      }));
+      layers.push({
+        id: `__bp_${idPrefix}_dot_${corner}__`,
+        type: 'shape',
+        width: BLUEPRINT_DOT_RADIUS * 2,
+        height: BLUEPRINT_DOT_RADIUS * 2,
+        position: { keyframes: posKfs },
+        opacity: { keyframes: opacityKfs },
+        contents: [
+          { type: 'path', shape: { kind: 'ellipse', params: { width: BLUEPRINT_DOT_RADIUS * 2, height: BLUEPRINT_DOT_RADIUS * 2 } } },
+          { type: 'fill', color: accentColor },
+        ],
+      });
+    });
+
+    // ---- text: ONE real auto-wrapped layer (never manually split into
+    // per-word layers the way textTiers does it - this template needs
+    // the engine's OWN real multi-line wrap, which is only predictable
+    // in advance via measureTextWrapAndBreaks above, not reproducible by
+    // hand-authoring per-word positions). Word-by-word reveal + a per-
+    // word overshoot pop both come from `animators` with a `words`-based
+    // range selector - the exact same proven mechanism
+    // buildWordCascadeCaptionLayer already uses for tripleStack's own
+    // caption, just re-timed against this template's own per-word
+    // stagger instead of a proportional reveal window.
+    const revealKfs = [];
+    const popStartKfs = [];
+    const popEndKfs = [];
+    const halfWidthPct = 100 / (wrap.wordCount * 6);
+    for (let i = 0; i < wrap.wordCount; i++) {
+      const t = startTime + i * BLUEPRINT_WORD_STAGGER;
+      const centerPct = ((i + 0.5) / wrap.wordCount) * 100;
+      revealKfs.push({ time: t, value: Math.round(((i + 1) / wrap.wordCount) * 10000) / 100, interpolation: 'hold' });
+      popStartKfs.push({ time: t, value: centerPct - halfWidthPct });
+      popEndKfs.push({ time: t, value: centerPct + halfWidthPct });
+    }
+    layers.push({
+      id: `__bp_${idPrefix}_text__`,
+      type: 'text',
+      text,
+      fontFamily,
+      fontWeight: '400',
+      fontSize: BLUEPRINT_TEXT_FONT_SIZE,
+      lineHeight,
+      fillStyle: accentColor,
+      textAlign: 'center',
+      maxWidth: BLUEPRINT_TEXT_MAX_WIDTH,
+      position: [centerX, centerY],
+      opacity: {
+        keyframes: [
+          { time: exitStart, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+          { time: exitEnd, value: 0 },
+        ],
+      },
+      scale: {
+        keyframes: [
+          { time: exitStart, value: [1, 1], interpolation: 'easing', easing: 'easeInBack' },
+          { time: exitEnd, value: [0.55, 0.55] },
+        ],
+      },
+      animators: [
+        {
+          selector: {
+            type: 'range', start: 0, end: { keyframes: revealKfs }, basedOn: 'words',
+          },
+          properties: { opacity: -1 },
+        },
+        {
+          selector: {
+            type: 'range', start: { keyframes: popStartKfs }, end: { keyframes: popEndKfs }, basedOn: 'words', shape: 'triangle',
+          },
+          invert: false,
+          properties: { scale: 1.35 },
+        },
+      ],
+    });
+
+    // Direct user ask: "add the other miniature details" - a tiny
+    // particle burst right as the box finishes settling, the same
+    // reusable pop effect other templates already use.
+    const settleTime = cursor;
+    layers.push(...buildIconBurstParticles(idPrefix === 's1' ? 20 : 21, centerX, centerY, accentColor, settleTime));
+  }
+
+  buildSentence({
+    idPrefix: 's1', text: sentence1, wrap: wrap1, centerY: s1CenterY, boxW: s1Size.width, boxH: s1Size.height, startTime: timing.s1Start, exitStart: EXIT_START_1, exitEnd: EXIT_END_1,
+  });
+  buildSentence({
+    idPrefix: 's2', text: sentence2, wrap: wrap2, centerY: s2CenterY, boxW: s2Size.width, boxH: s2Size.height, startTime: timing.s2Start, exitStart: EXIT_START_2, exitEnd: EXIT_END_2,
+  });
+
+  // Two gears at the two corners the reference itself actually shows
+  // content in (top-right, bottom-left) - checked across many frames,
+  // not all 4 assumed.
+  layers.push(buildGearLayer('__bp_gear_tr__', CANVAS_WIDTH - 30, 60, 0, accentColor));
+  layers.push(buildGearLayer('__bp_gear_bl__', 30, CANVAS_HEIGHT - 60, 180, accentColor));
+
+  return layers;
+}
+
 const MOGRAPH_ICON_RE = /^[a-z0-9-]+:[a-z0-9-]+$/i;
 
 /**
@@ -8685,6 +9057,22 @@ function buildMographBeatVisual(beat) {
         : textTiersMinDuration(words.length);
       layers = buildTextTiersLayers({ text, accentColor, duration });
     }
+  } else if (spec.type === 'blueprintText' && typeof spec.sentence1 === 'string' && spec.sentence1.trim() && typeof spec.sentence2 === 'string' && spec.sentence2.trim()) {
+    // Same "no redundant upper-bound reject" lesson textTiers' own
+    // retry-exhaustion bug just taught - truncate gracefully here
+    // instead of hard-rejecting an over-length sentence.
+    const sentence1 = spec.sentence1.trim().split(/\s+/).filter((w) => w.length > 0).slice(0, 8).join(' ');
+    const sentence2 = spec.sentence2.trim().split(/\s+/).filter((w) => w.length > 0).slice(0, 8).join(' ');
+    if (sentence1.split(' ').length >= 2 && sentence2.split(' ').length >= 2) {
+      // Unlike textTiers/textPopOut, this builder's own exit timing is
+      // NOT anchored to the beat's authored duration (both sentences'
+      // own build+hold+exit are fully self-timed) - duration is set
+      // directly to exactly what it needs, nothing is read back.
+      if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+        beat.params.duration = blueprintTextMinDuration(sentence1, sentence2);
+      }
+      layers = buildBlueprintTextLayers({ sentence1, sentence2, accentColor });
+    }
   }
 
   if (layers) {
@@ -8799,7 +9187,7 @@ function validateSceneJSON(sceneJSON) {
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
     } else if (seen.size < 5) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers). Add more template beats to reach at least 5.`);
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText). Add more template beats to reach at least 5.`);
     } else if (seen.size > 7) {
       errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 7. Trim beats down to 7 or fewer distinct templates.`);
     }
@@ -10763,5 +11151,6 @@ module.exports = {
   buildTripleStackLayers,
   buildNodeAbsorbLayers,
   buildTextTiersLayers,
+  buildBlueprintTextLayers,
   buildMographBeatVisual,
 };
