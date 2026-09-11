@@ -8265,12 +8265,41 @@ const BLUEPRINT_SENTENCE_GAP = 0.35;
 const BLUEPRINT_VERTICAL_GAP = 64;
 const BLUEPRINT_HOLD_AFTER_BUILD = 1.0;
 const BLUEPRINT_EXIT_SENTENCE_STAGGER = 0.15;
-const BLUEPRINT_EXIT_DURATION = 0.4;
+// Direct user follow-up after watching the first render: "the outro is
+// lackingg." The original outro moved box+dots+text as ONE rigid block
+// (a single flat scale-to-0.55 + fade, all three in perfect lockstep) -
+// a stark contrast against the entrance, where the box visibly grows
+// line-by-line and each word pops in individually. Replaced with a
+// per-WORD reverse "erase" (last word vanishes first, first word last -
+// same reverse-build-order bookend idea already proven for textTiers'
+// own outro fix) via `BLUEPRINT_EXIT_WORD_STAGGER`/`BLUEPRINT_EXIT_TAIL`
+// below (see exitDurationFor) instead of one flat duration - a longer
+// sentence now gets a proportionally longer, still legible erase instead
+// of every sentence collapsing in the same fixed window regardless of
+// word count.
+const BLUEPRINT_EXIT_WORD_STAGGER = 0.055;
+const BLUEPRINT_EXIT_TAIL = 0.22;
+const BLUEPRINT_EXIT_WORD_SHRINK = 0.55;
 const BLUEPRINT_END_BUFFER = 0.15;
 const BLUEPRINT_GEAR_OUTER_RADIUS = 130;
 const BLUEPRINT_GEAR_INNER_RADIUS = 102;
 const BLUEPRINT_GEAR_TEETH = 10;
 const BLUEPRINT_GEAR_SPEED_DEG_PER_SEC = 22;
+// Direct user follow-up: "why are the text already rendered in before the
+// scene has even started?? work to get an introoo... increase the gears
+// visibility to 35% and make it that in the intro they popup and start
+// moving then 0.25s later will the text and everything other animation
+// start... for the outro, they will popout." The gears now lead the
+// whole scene: they pop in (scale 0->overshoot->1) and start spinning at
+// t=0, sentence 1's own build only begins BLUEPRINT_TEXT_START_DELAY
+// later - a real, deliberate breathing room before any text appears,
+// not the old "everything starts at frame 0" cold open. Symmetrically,
+// once BOTH sentences have fully exited, the gears themselves pop back
+// OUT (scale up-then-down to 0) rather than just spinning forever and
+// getting cut off mid-rotation when the beat ends.
+const BLUEPRINT_TEXT_START_DELAY = 0.25;
+const BLUEPRINT_GEAR_POP_IN_DURATION = 0.3;
+const BLUEPRINT_GEAR_POP_OUT_DURATION = 0.32;
 
 /** Same real per-word wrap algorithm as this file's own measureTextWrap (fixFramingBoxSize's own real-wrap predictor) - extended to ALSO report which word index starts each line, needed to time the box's own per-line height steps against the text's real per-word reveal. */
 function measureTextWrapAndBreaks(text, {
@@ -8302,7 +8331,8 @@ function measureTextWrapAndBreaks(text, {
   };
 }
 
-function buildGearLayer(id, cx, cy, phaseOffsetDeg, color) {
+/** popOutStart is real per-call timing (timing.gearPopOutStart, identical for both gears since they always exit together) - everything else about the pop-in/pop-out shape is fixed via the BLUEPRINT_GEAR_POP_* module constants. */
+function buildGearLayer(id, cx, cy, phaseOffsetDeg, color, popOutStart) {
   return {
     id,
     type: 'shape',
@@ -8323,6 +8353,56 @@ function buildGearLayer(id, cx, cy, phaseOffsetDeg, color) {
     width: BLUEPRINT_GEAR_OUTER_RADIUS * 2,
     height: BLUEPRINT_GEAR_OUTER_RADIUS * 2,
     position: [cx, cy],
+    // Direct user follow-up: "in the intro they popup and start moving
+    // then 0.25s later will the text... start... for the outro, they
+    // will popout." Pop IN with a quick overshoot right at t=0 (the
+    // gears now lead the whole scene, not the text), hold at rest
+    // through the entire build/hold/exit of both sentences, then pop
+    // OUT (a small anticipation bump, then collapse to nothing) once
+    // `popOutStart` (both sentences' own real exit end) arrives - same
+    // anticipation-then-collapse shape the box's own outro uses, for a
+    // consistent "how things leave this scene" language.
+    // Keyframes.js's own real convention (confirmed by reading engine/
+    // keyframes.js directly, matching After Effects): interpolation/
+    // easing is read off the EARLIER keyframe of each pair and describes
+    // how THAT keyframe transitions to the NEXT one - not how the value
+    // arrives at the keyframe it's attached to. An earlier draft of this
+    // exact block had it backwards (`hold` on the t:0 keyframe, easing
+    // on the target) - real, confirmed-live consequence: the gear sat at
+    // scale [0,0] (invisible) for the ENTIRE pop-in window, then
+    // INSTANT-SNAPPED to full overshoot size exactly at the target time,
+    // instead of smoothly growing - caught via real frame-accurate pixel
+    // sampling (max luma barely 195 mid-"ramp", vs a real ~250 once
+    // settled) that made no sense until re-reading keyframes.js's own
+    // doc comment.
+    scale: {
+      keyframes: [
+        {
+          time: 0, value: [0, 0], interpolation: 'easing', easing: 'easeOutBack',
+        },
+        {
+          time: BLUEPRINT_GEAR_POP_IN_DURATION, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: BLUEPRINT_GEAR_POP_IN_DURATION + 0.12, value: [1, 1], interpolation: 'hold' },
+        {
+          time: popOutStart, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        {
+          time: popOutStart + BLUEPRINT_GEAR_POP_OUT_DURATION * 0.35, value: [1.1, 1.1], interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: popOutStart + BLUEPRINT_GEAR_POP_OUT_DURATION, value: [0, 0] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: BLUEPRINT_GEAR_POP_IN_DURATION * 0.4, value: 1, interpolation: 'hold' },
+        {
+          time: popOutStart + BLUEPRINT_GEAR_POP_OUT_DURATION * 0.5, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: popOutStart + BLUEPRINT_GEAR_POP_OUT_DURATION, value: 0 },
+      ],
+    },
     // A generous, far-future keyframe range at a constant angular
     // velocity (not a real "loop" primitive - this engine doesn't have
     // one) - linear interpolation between 2 points already IS constant-
@@ -8354,10 +8434,15 @@ function buildGearLayer(id, cx, cy, phaseOffsetDeg, color) {
   };
 }
 
-/** Mirrors buildBlueprintTextLayers' own internal timing exactly (same pattern as textTiersMinDuration/textPopOutMinDuration) - the minimum real screen time this template's full build (both sentences) + hold + exit needs. */
+/** A longer sentence's own reverse-word-erase legitimately needs more screen time than a short one - see BLUEPRINT_EXIT_WORD_STAGGER's own doc comment. Shared by computeBlueprintTiming AND buildSentence's own per-word exit-animator construction so neither can drift out of sync with the other. */
+function exitDurationFor(wrap) {
+  return (wrap.wordCount - 1) * BLUEPRINT_EXIT_WORD_STAGGER + BLUEPRINT_EXIT_TAIL;
+}
+
+/** Mirrors buildBlueprintTextLayers' own internal timing exactly (same pattern as textTiersMinDuration/textPopOutMinDuration) - the minimum real screen time this template's full build (both sentences) + hold + exit + the gears' own closing pop-out needs. */
 function blueprintTextMinDuration(sentence1, sentence2) {
-  const { buildEnd } = computeBlueprintTiming(sentence1, sentence2);
-  return buildEnd + BLUEPRINT_HOLD_AFTER_BUILD + BLUEPRINT_EXIT_SENTENCE_STAGGER + BLUEPRINT_EXIT_DURATION + BLUEPRINT_END_BUFFER;
+  const { gearPopOutEnd } = computeBlueprintTiming(sentence1, sentence2);
+  return gearPopOutEnd + BLUEPRINT_END_BUFFER;
 }
 
 /** Shared by both blueprintTextMinDuration and buildBlueprintTextLayers so the two can never drift out of sync - computes each sentence's own wrap + build timing, and the real time the SECOND sentence's own build finishes. */
@@ -8378,11 +8463,44 @@ function computeBlueprintTiming(sentence1, sentence2) {
     return Math.max(wordsEnd, cursor);
   }
 
-  const s1BuildEnd = sentenceBuildEnd(wrap1, 0);
+  const s1BuildEnd = sentenceBuildEnd(wrap1, BLUEPRINT_TEXT_START_DELAY);
   const s2Start = s1BuildEnd + BLUEPRINT_SENTENCE_GAP;
   const s2BuildEnd = sentenceBuildEnd(wrap2, s2Start);
+  const buildEnd = s2BuildEnd;
+
+  // Sentence 2 leads the exit by BLUEPRINT_EXIT_SENTENCE_STAGGER (offset
+  // from its own START, not its finish - same deliberate overlapping-
+  // cascade feel as the original flat-duration version, just now each
+  // sentence's own erase can legitimately run longer or shorter than the
+  // other depending on its real word count instead of both being forced
+  // into the same fixed window).
+  const EXIT_START_2 = buildEnd + BLUEPRINT_HOLD_AFTER_BUILD;
+  const EXIT_END_2 = EXIT_START_2 + exitDurationFor(wrap2);
+  const EXIT_START_1 = EXIT_START_2 + BLUEPRINT_EXIT_SENTENCE_STAGGER;
+  const EXIT_END_1 = EXIT_START_1 + exitDurationFor(wrap1);
+
+  const exitEnd = Math.max(EXIT_END_2, EXIT_END_1);
+  // Gears pop back OUT only once both sentences are genuinely gone -
+  // reads as "the content wraps up, then the gears leave too" rather
+  // than the gears vanishing mid-scene while text is still on screen.
+  const gearPopOutStart = exitEnd;
+  const gearPopOutEnd = gearPopOutStart + BLUEPRINT_GEAR_POP_OUT_DURATION;
+
   return {
-    wrap1, wrap2, s1Start: 0, s1BuildEnd, s2Start, s2BuildEnd, buildEnd: s2BuildEnd,
+    wrap1,
+    wrap2,
+    s1Start: BLUEPRINT_TEXT_START_DELAY,
+    s1BuildEnd,
+    s2Start,
+    s2BuildEnd,
+    buildEnd,
+    EXIT_START_2,
+    EXIT_END_2,
+    EXIT_START_1,
+    EXIT_END_1,
+    exitEnd,
+    gearPopOutStart,
+    gearPopOutEnd,
   };
 }
 
@@ -8408,10 +8526,9 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
   const s1CenterY = topY + s1Size.height / 2;
   const s2CenterY = topY + s1Size.height + BLUEPRINT_VERTICAL_GAP + s2Size.height / 2;
 
-  const EXIT_START_2 = timing.buildEnd + BLUEPRINT_HOLD_AFTER_BUILD;
-  const EXIT_END_2 = EXIT_START_2 + BLUEPRINT_EXIT_DURATION;
-  const EXIT_START_1 = EXIT_START_2 + BLUEPRINT_EXIT_SENTENCE_STAGGER;
-  const EXIT_END_1 = EXIT_START_1 + BLUEPRINT_EXIT_DURATION;
+  const {
+    EXIT_START_2, EXIT_END_2, EXIT_START_1, EXIT_END_1,
+  } = timing;
 
   /** Builds every layer (box, 4 dots, text, particles) for ONE sentence. */
   function buildSentence({
@@ -8429,16 +8546,40 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
       cursor = Math.max(desired, cursor + 0.05);
       scaleKfs.push({ time: cursor, value: [1, heightAt(line)], interpolation: 'easing', easing: 'easeOutBack' });
     }
-    // Hold at full size, then exit (scale down + fade) - see this
-    // function's own outer doc comment for the reverse-sentence-order
-    // exit stagger.
+    // Hold at full size, then exit - see this function's own outer doc
+    // comment for the reverse-sentence-order exit stagger. Direct user
+    // follow-up ("the outro is lackingg"): a flat instant scale-to-0.55
+    // read as one rigid block sliding away, nothing like the entrance's
+    // own line-by-line growth. Replaced with a quick outward "snap"
+    // (anticipation, matching the entrance's own easeOutBack overshoot
+    // on each line landing) immediately followed by a real shutting-
+    // aperture COLLAPSE down to a narrow sliver - mirroring the box's own
+    // narrow STARTING scale at build time ([0.12, heightAt(1)*0.5]) - so
+    // the box visibly closes back down to roughly where it began, rather
+    // than just shrinking to an arbitrary mid-size and fading.
+    const exitDur = exitEnd - exitStart;
     scaleKfs.push({ time: exitStart, value: [1, 1], interpolation: 'easing', easing: 'easeInBack' });
-    scaleKfs.push({ time: exitEnd, value: [0.55, 0.55] });
+    scaleKfs.push({
+      time: exitStart + exitDur * 0.18, value: [1.06, 1.06], interpolation: 'easing', easing: 'easeOutCubic',
+    });
+    scaleKfs.push({
+      time: exitEnd, value: [0.08, heightAt(1) * 0.3], interpolation: 'easing', easing: 'easeInCubic',
+    });
 
+    // Opacity stays fully solid through the shrink itself (so the
+    // collapse actually reads as motion, not a fade masking it) and only
+    // dissolves in the final stretch, right as the sliver disappears.
+    // The 3rd entry's own `interpolation` (NOT the 4th's) governs THIS
+    // segment per keyframes.js's real convention - marking it 'hold'
+    // here (an earlier draft's mistake, same class as the gear's own
+    // pop-in bug above) would hold opacity at 1 for the entire final
+    // stretch and then hard-CUT to 0 in a single frame, not fade.
     const opacityKfs = [
       { time: startTime, value: 0, interpolation: 'hold' },
-      { time: startTime + 0.04, value: 1 },
-      { time: exitStart, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+      { time: startTime + 0.04, value: 1, interpolation: 'hold' },
+      {
+        time: exitStart + exitDur * 0.6, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+      },
       { time: exitEnd, value: 0 },
     ];
 
@@ -8497,9 +8638,25 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
     // buildWordCascadeCaptionLayer already uses for tripleStack's own
     // caption, just re-timed against this template's own per-word
     // stagger instead of a proportional reveal window.
-    const revealKfs = [];
-    const popStartKfs = [];
-    const popEndKfs = [];
+    // A real, confirmed-live bug found chasing "the 2nd sentence is
+    // already rendered in before the 1st has finished": these selector
+    // tracks' FIRST entry used to sit at `startTime` itself, already at
+    // word 0's OWN post-reveal value (e.g. 20% for a 5-word sentence) -
+    // for any time BEFORE that (the entire span from t=0 up to
+    // `startTime`, which is exactly sentence 2's own real gap), keyframe
+    // resolution holds/extrapolates that FIRST value backward, so word 0
+    // read as "already revealed" from the very start of the video, not
+    // from `startTime` as intended. Only ever visible on a layer whose
+    // own `startTime` isn't already 0 (sentence 1 masked this completely
+    // - it starts at 0 anyway) - confirmed via a frame-accurate real
+    // render extraction (input-seeking `-ss` before `-i` was ALSO
+    // silently misleading here, landing on the wrong keyframe - had to
+    // re-extract with `-ss` after `-i` to get the true frame-0 pixels).
+    // Fixed by explicitly anchoring every such track at `time: 0` with
+    // the real "nothing yet" value whenever `startTime > 0`.
+    const revealKfs = startTime > 0 ? [{ time: 0, value: 0, interpolation: 'hold' }] : [];
+    const popStartKfs = startTime > 0 ? [{ time: 0, value: -1000, interpolation: 'hold' }] : [];
+    const popEndKfs = startTime > 0 ? [{ time: 0, value: -1000, interpolation: 'hold' }] : [];
     const halfWidthPct = 100 / (wrap.wordCount * 6);
     for (let i = 0; i < wrap.wordCount; i++) {
       const t = startTime + i * BLUEPRINT_WORD_STAGGER;
@@ -8508,6 +8665,28 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
       popStartKfs.push({ time: t, value: centerPct - halfWidthPct });
       popEndKfs.push({ time: t, value: centerPct + halfWidthPct });
     }
+
+    // ---- exit: per-WORD reverse erase (last word vanishes first, first
+    // word last) via the SAME range-selector mechanism, just sweeping
+    // `end` DOWN instead of up - mirrors textTiers' own reverse-order
+    // outro fix for the same "the outro is lacking" complaint. Each
+    // word also gets a quick shrink pulse (properties.scale below 1)
+    // right as it vanishes, the exit-side mirror of the entrance's own
+    // overshoot pop. Both tracks anchor at t:0 with a neutral/inactive
+    // value so they can never affect anything during the build phase,
+    // same lesson as the entrance anchors just above.
+    const exitEndKfs = [{ time: 0, value: 100, interpolation: 'hold' }];
+    const exitShrinkStartKfs = [{ time: 0, value: -1000, interpolation: 'hold' }];
+    const exitShrinkEndKfs = [{ time: 0, value: -1000, interpolation: 'hold' }];
+    for (let rank = 0; rank < wrap.wordCount; rank++) {
+      const i = wrap.wordCount - 1 - rank;
+      const t = exitStart + rank * BLUEPRINT_EXIT_WORD_STAGGER;
+      const centerPct = ((i + 0.5) / wrap.wordCount) * 100;
+      exitEndKfs.push({ time: t, value: Math.round((i / wrap.wordCount) * 10000) / 100, interpolation: 'hold' });
+      exitShrinkStartKfs.push({ time: t, value: centerPct - halfWidthPct });
+      exitShrinkEndKfs.push({ time: t, value: centerPct + halfWidthPct });
+    }
+
     layers.push({
       id: `__bp_${idPrefix}_text__`,
       type: 'text',
@@ -8520,18 +8699,6 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
       textAlign: 'center',
       maxWidth: BLUEPRINT_TEXT_MAX_WIDTH,
       position: [centerX, centerY],
-      opacity: {
-        keyframes: [
-          { time: exitStart, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
-          { time: exitEnd, value: 0 },
-        ],
-      },
-      scale: {
-        keyframes: [
-          { time: exitStart, value: [1, 1], interpolation: 'easing', easing: 'easeInBack' },
-          { time: exitEnd, value: [0.55, 0.55] },
-        ],
-      },
       animators: [
         {
           selector: {
@@ -8546,6 +8713,19 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
           invert: false,
           properties: { scale: 1.35 },
         },
+        {
+          selector: {
+            type: 'range', start: 0, end: { keyframes: exitEndKfs }, basedOn: 'words',
+          },
+          properties: { opacity: -1 },
+        },
+        {
+          selector: {
+            type: 'range', start: { keyframes: exitShrinkStartKfs }, end: { keyframes: exitShrinkEndKfs }, basedOn: 'words', shape: 'triangle',
+          },
+          invert: false,
+          properties: { scale: BLUEPRINT_EXIT_WORD_SHRINK },
+        },
       ],
     });
 
@@ -8554,6 +8734,11 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
     // reusable pop effect other templates already use.
     const settleTime = cursor;
     layers.push(...buildIconBurstParticles(idPrefix === 's1' ? 20 : 21, centerX, centerY, accentColor, settleTime));
+    // Same reusable burst again right as the box finishes its own
+    // closing collapse, a small "poof" bookending the outro the same
+    // way the entrance gets one - distinct numeric ids (22/23) so they
+    // don't collide with the entrance bursts (20/21) above.
+    layers.push(...buildIconBurstParticles(idPrefix === 's1' ? 22 : 23, centerX, centerY, accentColor, exitEnd));
   }
 
   buildSentence({
@@ -8594,7 +8779,13 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
   // literal 25% area (which would mean well over half the gear's own
   // diameter sitting on-canvas - not "tucked into the corner" anymore).
   // offset=30 lands at ~12.2% overlap in that same model.
-  const GEAR_CORNER_OFFSET = 30;
+  // UPDATE: direct follow-up in the same message as the intro/outro pop
+  // asks below - "increase the gears visibility to 35%." Same model,
+  // same cumulative-against-the-ORIGINAL-10%-baseline interpretation as
+  // the 10->25 change above (35% of the original ~4.6% overlap is
+  // ~16.1%) - offset=19 lands at ~16.5% in a re-run of the same
+  // numerical circle/corner overlap integration.
+  const GEAR_CORNER_OFFSET = 19;
   layers.push({
     id: '__bp_gear_anchor__', type: 'null', position: [0, 0],
   });
@@ -8615,8 +8806,8 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
   // render crisp and bright, so this also keeps the gears visually
   // consistent with the rest of this template's "ink" color instead of
   // introducing a second, muted tone.
-  layers.push(buildGearLayer('__bp_gear_tr__', CANVAS_WIDTH + GEAR_CORNER_OFFSET, -GEAR_CORNER_OFFSET, 0, ICON_BRIGHT_TINT));
-  layers.push(buildGearLayer('__bp_gear_bl__', -GEAR_CORNER_OFFSET, CANVAS_HEIGHT + GEAR_CORNER_OFFSET, 180, ICON_BRIGHT_TINT));
+  layers.push(buildGearLayer('__bp_gear_tr__', CANVAS_WIDTH + GEAR_CORNER_OFFSET, -GEAR_CORNER_OFFSET, 0, ICON_BRIGHT_TINT, timing.gearPopOutStart));
+  layers.push(buildGearLayer('__bp_gear_bl__', -GEAR_CORNER_OFFSET, CANVAS_HEIGHT + GEAR_CORNER_OFFSET, 180, ICON_BRIGHT_TINT, timing.gearPopOutStart));
 
   return layers;
 }
