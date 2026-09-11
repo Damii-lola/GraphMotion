@@ -8584,7 +8584,17 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
   // renders using drastically different offsets). Once THAT was fixed,
   // this same offset (55) reproduced the real "small tucked-in sliver"
   // the isolated test had already shown.
-  const GEAR_CORNER_OFFSET = 55;
+  // UPDATE: direct user follow-up - "increase it from 10% to 25%." Solved
+  // geometrically rather than re-guessing another render blind: modeled
+  // the gear as a plain circle (radius BLUEPRINT_GEAR_OUTER_RADIUS)
+  // against the canvas corner's own two edges and numerically integrated
+  // the overlap area as a fraction of the full circle - offset=55 comes
+  // out to ~4.6% overlap (the actual geometric number behind the "10%"
+  // the user was eyeballing), so target ~2.5x that (~11.5%) rather than a
+  // literal 25% area (which would mean well over half the gear's own
+  // diameter sitting on-canvas - not "tucked into the corner" anymore).
+  // offset=30 lands at ~12.2% overlap in that same model.
+  const GEAR_CORNER_OFFSET = 30;
   layers.push({
     id: '__bp_gear_anchor__', type: 'null', position: [0, 0],
   });
