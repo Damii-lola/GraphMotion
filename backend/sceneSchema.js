@@ -8306,6 +8306,20 @@ function buildGearLayer(id, cx, cy, phaseOffsetDeg, color) {
   return {
     id,
     type: 'shape',
+    // Real, confirmed-live bug found while tuning how far into the
+    // corner these sit: an UNPARENTED shape/image layer whose declared
+    // width/height box would extend past the canvas edge gets
+    // automatically clamped back to a safely-inset position by
+    // clampSettledPositionToCanvas (validateBeatVisual's own "decorative
+    // shape clipping off the edge" repair) - correct for a genuine
+    // mistake, but it was silently overriding every position this
+    // function tried, no matter how far out, since a corner-tucked gear
+    // is BY DESIGN mostly off-canvas. That check explicitly skips any
+    // layer with a `parent` (a parented layer's own position is a local
+    // offset, not a raw canvas landing spot) - parented here to an
+    // identity (position [0,0], no transform) null purely to opt out of
+    // that clamp, not for any real hierarchy reason.
+    parent: '__bp_gear_anchor__',
     width: BLUEPRINT_GEAR_OUTER_RADIUS * 2,
     height: BLUEPRINT_GEAR_OUTER_RADIUS * 2,
     position: [cx, cy],
@@ -8552,8 +8566,47 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
   // Two gears at the two corners the reference itself actually shows
   // content in (top-right, bottom-left) - checked across many frames,
   // not all 4 assumed.
-  layers.push(buildGearLayer('__bp_gear_tr__', CANVAS_WIDTH - 30, 60, 0, accentColor));
-  layers.push(buildGearLayer('__bp_gear_bl__', 30, CANVAS_HEIGHT - 60, 180, accentColor));
+  // Direct user correction after the first render: "the gears should be
+  // very into the corners and be showing only 10%" - found empirically
+  // (a diagonal-distance formula based on outerRadius alone kept missing
+  // the canvas corner entirely at every value tried, confirmed by
+  // checking the real computed position numbers rather than re-guessing
+  // another render blind - a star's own alternating tooth/valley radius
+  // makes exactly how far it reaches rotation-dependent, not a clean
+  // closed form). Re-verified across several different rotation angles
+  // via real cropped frame extraction from an ISOLATED single-beat test
+  // - but that isolated test turned out to be measuring the wrong
+  // thing: a SEPARATE real bug (see buildGearLayer's own `parent` doc
+  // comment) meant the real multi-beat pipeline was silently clamping
+  // this position back onto the canvas the whole time, so every offset
+  // tried rendered identically there regardless of value, confirmed via
+  // an exact pixel-diff (0 of 1,027,520 pixels differed between two
+  // renders using drastically different offsets). Once THAT was fixed,
+  // this same offset (55) reproduced the real "small tucked-in sliver"
+  // the isolated test had already shown.
+  const GEAR_CORNER_OFFSET = 55;
+  layers.push({
+    id: '__bp_gear_anchor__', type: 'null', position: [0, 0],
+  });
+  // ICON_BRIGHT_TINT, not accentColor: found via real pixel sampling on a
+  // full-pipeline render after the position fix above - a solid `fill`
+  // content carrying the raw accentColor gets muted by renderEngine.js's
+  // own ensureHarmoniousColors() (harmonize() remaps any "vivid accent"
+  // color toward a board-matching tone), while the box/dot `stroke`
+  // layers right above render bright because ensureTextContrastAgainstBackground
+  // already promotes THEM to a contrast-safe tint before harmonize() ever
+  // sees them - a gear isn't text-adjacent so it never got that pass, so
+  // at this template's tiny "10%" corner-sliver size the muted fill was
+  // reading as almost invisible against the board (confirmed via edge-
+  // detection on the actual rendered pixels: the gear silhouette WAS
+  // there, just low-contrast). ICON_BRIGHT_TINT is a near-white that
+  // isVividAccentColor() doesn't match, so harmonize() leaves it alone -
+  // same reason the dashed boxes/dots/text in this same template already
+  // render crisp and bright, so this also keeps the gears visually
+  // consistent with the rest of this template's "ink" color instead of
+  // introducing a second, muted tone.
+  layers.push(buildGearLayer('__bp_gear_tr__', CANVAS_WIDTH + GEAR_CORNER_OFFSET, -GEAR_CORNER_OFFSET, 0, ICON_BRIGHT_TINT));
+  layers.push(buildGearLayer('__bp_gear_bl__', -GEAR_CORNER_OFFSET, CANVAS_HEIGHT + GEAR_CORNER_OFFSET, 180, ICON_BRIGHT_TINT));
 
   return layers;
 }
