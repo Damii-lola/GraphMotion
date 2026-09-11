@@ -7134,7 +7134,7 @@ const TRIPLE_STACK_COMPLETE_TIME = TRIPLE_STACK_ENTER_DURATION + TRIPLE_STACK_SE
  */
 const TRIPLE_STACK_CAPTION_POP_SCALE = 1.16;
 const TRIPLE_STACK_CAPTION_WINDOW_HALF_WIDTH_DIVISOR = 2.6; // half-width = 100/(usedCount*this) - a bit under one word's own slot
-function buildWordCascadeCaptionLayer(narrationText, estimatedDuration, accentColor) {
+function buildWordCascadeCaptionLayer(narrationText, estimatedDuration) {
   const words = narrationText.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return null;
   const usedCount = words.length;
@@ -7152,7 +7152,7 @@ function buildWordCascadeCaptionLayer(narrationText, estimatedDuration, accentCo
     revealKfs.push({ time: t, value: Math.round(((i + 1) / usedCount) * 10000) / 100, interpolation: 'hold' });
   }
 
-  const caption = {
+  return {
     id: '__stack_caption__',
     type: 'text',
     text: narrationText,
@@ -7164,18 +7164,6 @@ function buildWordCascadeCaptionLayer(narrationText, estimatedDuration, accentCo
     textAlign: 'center',
     maxWidth: CANVAS_WIDTH - EDGE_MARGIN_PX * 2 - 40,
     position: [CANVAS_WIDTH / 2, 150],
-    // Real, direct user ask (2D-upgrade pass): "reveal it with a fast
-    // kinetic treatment: slight scale overshoot." A whole-block pop as
-    // the FIRST word lands - independent of (and layered on top of) the
-    // per-word pop animator below, which is a per-CHARACTER selector
-    // effect, not this layer's own outer transform.
-    scale: {
-      keyframes: [
-        { time: 0, value: [0.9, 0.9], interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: 0.18, value: [1.04, 1.04], interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: 0.28, value: [1, 1] },
-      ],
-    },
     animators: [
       {
         selector: {
@@ -7198,48 +7186,6 @@ function buildWordCascadeCaptionLayer(narrationText, estimatedDuration, accentCo
       },
     ],
   };
-
-  // Real, direct user ask: "soft underline or thin light streak that
-  // draws under the text very quickly" - a real `trim` draw-on (the
-  // same reveal mechanism connectorList's own connector line uses),
-  // timed to start right as the LAST word finishes revealing.
-  const underline = {
-    id: '__stack_caption_underline__',
-    type: 'shape',
-    width: 130,
-    height: 3,
-    position: [CANVAS_WIDTH / 2, 195],
-    opacity: {
-      keyframes: [
-        { time: Math.max(0, revealWindow - 0.02), value: 0 },
-        { time: revealWindow, value: 0.85 },
-      ],
-    },
-    contents: [
-      { type: 'path', shape: { kind: 'rectangle', params: { width: 130, height: 3, roundness: 1.5 } } },
-      // Real, direct fix: this is a `type:'shape'` fill, not a text
-      // layer's own fillStyle - ensureTextContrastAgainstBackground
-      // (renderEngine.js) only ever touches fillStyle, so a fixed
-      // near-white literal here would have the SAME light-background
-      // invisibility risk the icon-contrast system was built to solve
-      // for icons. accentColor already goes through the real harmonize()
-      // pass every other shape fill in this file relies on - safe, and
-      // ties the underline's own color to the same cards it sits under.
-      { type: 'fill', color: accentColor },
-      {
-        type: 'trim',
-        start: 0,
-        end: {
-          keyframes: [
-            { time: revealWindow, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-            { time: revealWindow + 0.22, value: 100 },
-          ],
-        },
-      },
-    ],
-  };
-
-  return [caption, underline];
 }
 
 function buildTripleStackLayers({ items, accentColor, narrationText }) {
@@ -7303,16 +7249,9 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
           { time: ENTER_END, value: finalPos[i] },
         ],
       },
-      // Real, direct user ask (2D-upgrade pass): "quick, punchy reveals -
-      // scale up from 85-90% with strong overshoot + fast settle,"
-      // layered directly onto the existing slide (same ENTER_END landing
-      // moment) rather than a separate motion - spawns a bit small,
-      // overshoots past 1x exactly as it lands, snaps back to 1x fast.
       scale: {
         keyframes: [
-          { time: 0, value: [0.86, 0.86], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: ENTER_END, value: [1.08, 1.08], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: ENTER_END + 0.1, value: [1, 1] },
+          { time: 0, value: [1, 1] },
           { time: SHRINK_START, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' },
           { time: SHRINK_END, value: [TRIPLE_STACK_SHRINK_SCALE, TRIPLE_STACK_SHRINK_SCALE] },
         ],
@@ -7348,45 +7287,8 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
       contents: [
         { type: 'path', shape: { kind: 'rectangle', params: { width: TRIPLE_STACK_NODE_WIDTH, height: TRIPLE_STACK_NODE_HEIGHT } } },
         { type: 'fill', color: accentColor },
-        // Real, direct user ask (2D-upgrade pass): "thin bright outer
-        // stroke... so they lift off the background" - a translucent
-        // white edge on top of the solid accent fill, the same "glass"
-        // treatment __content_card__ already uses elsewhere in this file.
-        { type: 'stroke', color: '#FFFFFF', width: 1.5, opacity: 0.4 },
       ],
     });
-    // Real, direct user ask: "on each card's arrival, trigger a small
-    // soft radial pulse or short particle burst from its center." All 3
-    // cards land at the SAME moment (ENTER_END, direct spec - not
-    // staggered, see the group's own scale comment above), so this one
-    // burst-per-card reads as a single collective flash across the whole
-    // stack for free, no separate "all three are in" layer needed.
-    const arrivalTime = ENTER_END + 0.1;
-    layers.push({
-      id: `__stack_pulse_${i}__`,
-      type: 'shape',
-      width: TRIPLE_STACK_NODE_WIDTH,
-      height: TRIPLE_STACK_NODE_HEIGHT,
-      position: finalPos[i],
-      scale: {
-        keyframes: [
-          { time: arrivalTime, value: [0.94, 0.94], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: arrivalTime + 0.22, value: [1.08, 1.08] },
-        ],
-      },
-      opacity: {
-        keyframes: [
-          { time: arrivalTime, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: arrivalTime + 0.03, value: 0.55 },
-          { time: arrivalTime + 0.22, value: 0 },
-        ],
-      },
-      contents: [
-        { type: 'path', shape: { kind: 'rectangle', params: { width: TRIPLE_STACK_NODE_WIDTH, height: TRIPLE_STACK_NODE_HEIGHT } } },
-        { type: 'stroke', color: accentColor, width: 2 },
-      ],
-    });
-    layers.push(...buildIconBurstParticles(i, finalPos[i][0], finalPos[i][1], ICON_BRIGHT_TINT, arrivalTime));
     layers.push({
       id: `__stack_icon_${i}__`,
       type: 'image',
@@ -7415,8 +7317,8 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
   });
 
   const estimatedDuration = TRIPLE_STACK_COMPLETE_TIME;
-  const captionLayers = narrationText ? buildWordCascadeCaptionLayer(narrationText, estimatedDuration, accentColor) : null;
-  if (captionLayers) layers.push(...captionLayers);
+  const caption = narrationText ? buildWordCascadeCaptionLayer(narrationText, estimatedDuration) : null;
+  if (caption) layers.push(caption);
 
   return layers;
 }
