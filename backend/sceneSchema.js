@@ -7406,6 +7406,55 @@ const NODE_ABSORB_RETURN_DURATION = 0.25;
 // values so the 4 rows read as visually distinct from one another.
 const NODE_ABSORB_BADGE_SEED_COLORS = ['#FF4D6D', '#4CC9F0', '#FFD166', '#7BE495'];
 
+// Selective "god-tier 2D upgrade" pass (direct user wishlist, same
+// "implement a tasteful subset, not the whole list" precedent as
+// squareSpin's own wishlist arc) - a real layered-depth treatment for
+// every pill using this engine's existing layerStyles.js primitives
+// (innerGlow/layerStroke/outerGlow - none of the earlier templates had
+// used any of the three before this): a soft white inner sheen near the
+// top, a thin bright "glass" rim just inside the edge, then a soft outer
+// glow in the pill's own accent hue. `glowIntensity` lets the header ask
+// for a visibly stronger glow than the rows (ask #3 - "keep the header
+// pill clearly dominant") without a second near-duplicate function.
+// `color` is the SAME literal accentColor used for the pill's own fill -
+// harmonize() (renderEngine.js) remaps effects[].params.color through
+// its own literal-keyed Map exactly like it does contents[].fill, so the
+// glow always lands on the identical final hue as the pill beneath it,
+// never a mismatched one. The rgba() white literals are NOT valid 6-hex
+// colors, so harmonize()'s own isVividAccentColor check passes them
+// through unchanged - a deliberately neutral sheen/rim, not accent-tied.
+//
+// `glow` is either a flat number (constant intensity) or a keyframe
+// TRACK ({keyframes:[...]}) - effect params support animatable tracks
+// the same way any other layer property does (`resolveParamsAtTime`
+// resolves them per-frame; tripleStack's own `scaledBlur` already
+// proved this pattern for a blur radius). Direct follow-up user ask:
+// "make the bg ie the borders be vibrant as the nodes are moving" - the
+// header's own glow is keyframed to its own motion timeline (built in
+// buildNodeAbsorbLayers, where the timing is already known) so it
+// visibly brightens while flying/rising/travelling and calms back down
+// the instant it's actually holding still, rather than staying one flat
+// brightness the whole beat.
+function scaleTrack(track, mult) {
+  return { keyframes: track.keyframes.map((kf) => ({ ...kf, value: kf.value * mult })) };
+}
+function nodeAbsorbPillEffects(color, glow = 1) {
+  const isTrack = glow && typeof glow === 'object' && Array.isArray(glow.keyframes);
+  return [
+    { type: 'innerGlow', params: { color: 'rgba(255,255,255,0.5)', opacity: 0.35, blur: 10, blendMode: 'screen' } },
+    { type: 'layerStroke', params: { color: 'rgba(255,255,255,0.4)', width: 2, align: 'inside' } },
+    {
+      type: 'outerGlow',
+      params: {
+        color,
+        opacity: isTrack ? scaleTrack(glow, 0.4) : 0.4 * glow,
+        blur: isTrack ? scaleTrack(glow, 14) : 14 * glow,
+        blendMode: 'screen',
+      },
+    },
+  ];
+}
+
 function buildNodeAbsorbLayers({
   headerIcon, headerText, items, accentColor,
 }) {
@@ -7501,13 +7550,44 @@ function buildNodeAbsorbLayers({
   });
 
   // A quick "gulp" scale squish exactly as the header lands on each row,
-  // fully recovered before it departs again.
+  // fully recovered before it departs again - slightly more pronounced
+  // than the first cut (direct ask: "the main pill can do a small
+  // reactive scale pulse so it feels connected to the action").
   const headerScaleKfs = [{ time: RISE_END, value: [1, 1] }];
   items.forEach((_, i) => {
     headerScaleKfs.push({ time: eatArriveAt[i] - 0.04, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' });
-    headerScaleKfs.push({ time: eatArriveAt[i], value: [1.12, 0.9] });
+    headerScaleKfs.push({ time: eatArriveAt[i], value: [1.16, 0.86] });
     headerScaleKfs.push({ time: eatArriveAt[i] + 0.07, value: [1, 1] });
   });
+
+  // Direct user ask: "make the bg ie the borders be vibrant as the nodes
+  // are moving" - a glow-intensity MULTIPLIER track (fed into
+  // nodeAbsorbPillEffects below) that rises to GLOW_VIVID for every
+  // window the header is actually travelling (fly-in, rise, each
+  // eat-travel leg, the final return) and eases back down to GLOW_CALM
+  // the instant it's genuinely holding still (the CENTER hold, the
+  // pre-eat pause, each row's own eat-dwell) - reuses the exact same
+  // arrival/departure times the position/rotation/scale tracks above
+  // already computed, so it always stays in sync with the real motion.
+  const GLOW_CALM = 0.7;
+  const GLOW_VIVID = 1.6;
+  const glowKfs = [
+    { time: 0, value: GLOW_CALM, interpolation: 'easing', easing: 'easeOutCubic' },
+    { time: FLYIN_END, value: GLOW_VIVID, interpolation: 'easing', easing: 'easeInOutCubic' },
+    { time: FLYIN_END + 0.1, value: GLOW_CALM },
+    { time: RISE_START, value: GLOW_CALM, interpolation: 'easing', easing: 'easeInOutCubic' },
+    { time: RISE_END, value: GLOW_VIVID, interpolation: 'easing', easing: 'easeInOutCubic' },
+    { time: RISE_END + 0.1, value: GLOW_CALM },
+  ];
+  items.forEach((_, i) => {
+    const travelStart = i === 0 ? EAT_START : eatDepartAt[i - 1];
+    glowKfs.push({ time: travelStart, value: GLOW_CALM, interpolation: 'easing', easing: 'easeInOutCubic' });
+    glowKfs.push({ time: eatArriveAt[i], value: GLOW_VIVID, interpolation: 'easing', easing: 'easeInOutCubic' });
+    glowKfs.push({ time: eatDepartAt[i], value: GLOW_CALM });
+  });
+  glowKfs.push({ time: RETURN_END, value: GLOW_VIVID, interpolation: 'easing', easing: 'easeOutCubic' });
+  glowKfs.push({ time: RETURN_END + 0.15, value: GLOW_CALM });
+  const headerGlowTrack = { keyframes: glowKfs };
 
   layers.push({
     id: '__absorb_header__',
@@ -7538,10 +7618,32 @@ function buildNodeAbsorbLayers({
       { type: 'path', shape: { kind: 'rectangle', params: { width: NODE_ABSORB_HEADER_WIDTH, height: NODE_ABSORB_HEADER_HEIGHT, roundness: NODE_ABSORB_HEADER_ROUNDNESS } } },
       { type: 'fill', color: accentColor },
     ],
+    // Direct user ask: "keep the main node pill clearly dominant...
+    // brighter glow" - the header is already bigger/differently-shaped,
+    // this adds the same hierarchy cue through light, not just size.
+    // Originally also applied (at lower intensity) to the 4 row pills,
+    // but a real measured render showed that cost 211MB peak on the
+    // chunk containing this beat (at/over the 170-210MB budget) and
+    // ~40-50% slower per-chunk render time, for a payoff that read as
+    // subtle on a dark-pill/light-board pairing - direct user decision:
+    // scale back to the header ONLY, which is 1/5th the layers paying
+    // for it instead of 5/5. `headerGlowTrack` (built above, alongside
+    // the header's own position/rotation/scale tracks) makes the glow
+    // itself pulse brighter while actually moving and calmer at rest.
+    effects: nodeAbsorbPillEffects(accentColor, headerGlowTrack),
     scale: {
       keyframes: [
         { time: 0, value: [0.05, 0.05], interpolation: 'easing', easing: 'easeInCubic' },
-        { time: FLYIN_END, value: [1, 1] },
+        // Scale-overshoot + fast settle right on arrival (direct ask:
+        // "main pill should scale up with a clear overshoot + fast
+        // settle"), then a tiny anticipation squash right as it starts
+        // rising into the list ("a tiny anticipation before the main
+        // pill expands into the full list").
+        { time: FLYIN_END, value: [1.07, 1.07], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: FLYIN_END + 0.1, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic' },
+        { time: RISE_START - 0.06, value: [1, 1] },
+        { time: RISE_START, value: [1.04, 0.93] },
+        { time: RISE_START + 0.08, value: [1, 1] },
       ],
     },
   });
@@ -7616,6 +7718,13 @@ function buildNodeAbsorbLayers({
     },
   });
 
+  // Direct user ask: "tiny particle accents that emit from the main pill
+  // on expand and on final settle" - reuses the SAME burst helper the
+  // row-eating already uses, just fired at the header's own arrival and
+  // its final return-to-center instead of a row's position. Indices
+  // 10/11 (rows use 0-3) so their particle layer ids never collide.
+  layers.push(...buildIconBurstParticles(10, CENTER[0], CENTER[1], ICON_BRIGHT_TINT, FLYIN_END));
+
   // ---- the 4 rows: appear staggered, get eaten in the same order ----
   // Real user spec: "4 nodes expand downwards from it [the header]" - each
   // row's own position (not just scale/opacity) animates in, dropping down
@@ -7669,6 +7778,14 @@ function buildNodeAbsorbLayers({
         { type: 'path', shape: { kind: 'rectangle', params: { width: NODE_ABSORB_ROW_WIDTH, height: NODE_ABSORB_ROW_HEIGHT, roundness: NODE_ABSORB_ROW_HEIGHT / 2 } } },
         { type: 'fill', color: accentColor },
       ],
+      // Direct user decision after a real measured cost: the layered
+      // glow/stroke treatment on all 5 pills pushed the chunk containing
+      // this beat to 211MB (right at/over the 170-210MB budget) and
+      // ~40-50% slower per-chunk render time, for a payoff that read as
+      // subtle rather than dramatic on a dark-pill/light-board pairing.
+      // Scaled back to the header pill ONLY (nodeAbsorbPillEffects call
+      // below) - rows stay plain, keeping the cost to one layer instead
+      // of five while the header still gets the richer treatment.
     });
     const badgeLocalX = -NODE_ABSORB_ROW_WIDTH / 2 + 28 + NODE_ABSORB_ROW_BADGE_SIZE / 2;
     layers.push({
@@ -7722,6 +7839,7 @@ function buildNodeAbsorbLayers({
     // eaten, the same reusable pop effect other templates already use.
     layers.push(...buildIconBurstParticles(i, rowPos[0], rowPos[1], ICON_BRIGHT_TINT, eatenAt));
   });
+  layers.push(...buildIconBurstParticles(11, CENTER[0], CENTER[1], ICON_BRIGHT_TINT, RETURN_END));
 
   return { layers, completeTime: RETURN_END };
 }
