@@ -999,7 +999,7 @@ function resolveIconBackdropRule(layerId) {
   if (layerId === '__absorb_header_text__' || layerId === '__absorb_header_icon__' || /^__absorb_cycle_icon_\d+__$/.test(layerId)) return { fill: '__absorb_header_bg__' };
   const absorbRowIconMatch = layerId.match(/^__absorb_row_icon_(\d+)__$/);
   if (absorbRowIconMatch) return { fill: `__absorb_row_badge_${absorbRowIconMatch[1]}__` };
-  const absorbRowTextMatch = layerId.match(/^__absorb_row_(?:name|value)_(\d+)__$/);
+  const absorbRowTextMatch = layerId.match(/^__absorb_row_text_(\d+)__$/);
   if (absorbRowTextMatch) return { fill: `__absorb_row_bg_${absorbRowTextMatch[1]}__` };
   // Everything else authored (nodeCluster/nodeClusterExtended's OWN
   // "__node_icon_N__" pre-explosion state, mergeCluster's small

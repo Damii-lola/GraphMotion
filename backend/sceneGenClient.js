@@ -396,11 +396,17 @@ const COMPACT_BASE_DURATION = {
   // completes in ~1.13s (TRIPLE_STACK_COMPLETE_TIME, sceneSchema.js) -
   // same "start close to the real value" reasoning as squareSpin above.
   tripleStack: 2.0,
-  // Real motion (fly-in, icon-cycle, rise, 4-row cascade, sequential eat,
-  // return-to-center) fully completes in ~2.3s (RETURN_END inside
+  // Real motion (fly-in, icon-cycle, rise, 4-row cascade, a direct-user-
+  // requested 1.5s pre-eat pause, sequential eat with a per-row dwell,
+  // return-to-center) fully completes in ~4.0s (RETURN_END inside
   // buildNodeAbsorbLayers, sceneSchema.js) - same "start close to the real
-  // value" reasoning as squareSpin/tripleStack above.
-  nodeAbsorb: 2.5,
+  // value" reasoning as squareSpin/tripleStack above. Deliberately longer
+  // than every other template here - the 1.5s pause is a real, explicit
+  // user requirement for THIS beat's own internal pacing, not a violation
+  // of the project's separate "≤1.5s hold after everything settles" rule
+  // (MOGRAPH_MAX_HOLD_AFTER_SETTLE), which only governs time AFTER
+  // RETURN_END, not motion still happening before it.
+  nodeAbsorb: 4.0,
 };
 
 /**
@@ -538,8 +544,8 @@ function validateCompactBeatVars(template, vars) {
     case 'nodeAbsorb': {
       if (!isRealIcon(vars.headerIcon)) return 'needs a real Iconify "headerIcon"';
       if (typeof vars.headerText !== 'string' || !vars.headerText.trim()) return 'needs a non-empty "headerText"';
-      const items = Array.isArray(vars.items) ? vars.items.filter((it) => isPlainObjectLocal(it) && isRealIcon(it.icon) && typeof it.name === 'string' && it.name.trim() && typeof it.value === 'string' && it.value.trim()) : [];
-      if (items.length !== 4) return `needs "items": exactly 4 entries, each a real {icon,name,value} (got ${items.length} valid ones)`;
+      const items = Array.isArray(vars.items) ? vars.items.filter((it) => isPlainObjectLocal(it) && isRealIcon(it.icon) && typeof it.text === 'string' && it.text.trim()) : [];
+      if (items.length !== 4) return `needs "items": exactly 4 entries, each a real {icon,text} (got ${items.length} valid ones)`;
       return null;
     }
     default:

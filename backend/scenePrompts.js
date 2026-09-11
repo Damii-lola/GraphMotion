@@ -1834,8 +1834,8 @@ const COMPACT_TEMPLATE_INFO = {
     example: { template: 'tripleStack', narration: "Here's what you get.", vars: { items: [{ icon: 'mdi:image', text: 'PNG Docs' }, { icon: 'mdi:account-group', text: 'Icon Icons' }, { icon: 'mdi:comment-quote', text: 'Quotes' }] }, accentColor: '#8B5CF6' },
   },
   nodeAbsorb: {
-    fields: 'headerIcon, headerText*, items(EXACTLY 4 {icon,name*1-2w,value*})',
-    example: { template: 'nodeAbsorb', narration: 'Rankings.', vars: { headerIcon: 'mdi:trophy', headerText: 'Platinum', items: [{ icon: 'mdi:account', name: 'John', value: '+15' }, { icon: 'mdi:account', name: 'Meg', value: '+18' }, { icon: 'mdi:account', name: 'Kev', value: '+23' }, { icon: 'mdi:account', name: 'Sal', value: '+29' }] }, accentColor: '#8B5CF6' },
+    fields: 'headerIcon, headerText*, items(EXACTLY 4 {icon,text*2-4w}) - things you get, not names/scores',
+    example: { template: 'nodeAbsorb', narration: 'What you get.', vars: { headerIcon: 'mdi:gift', headerText: 'What You Get', items: [{ icon: 'mdi:truck-fast', text: 'Free Shipping' }, { icon: 'mdi:shield-check', text: 'Warranty' }, { icon: 'mdi:refresh', text: 'Free Returns' }, { icon: 'mdi:headset', text: '24/7 Support' }] }, accentColor: '#8B5CF6' },
   },
 };
 const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);

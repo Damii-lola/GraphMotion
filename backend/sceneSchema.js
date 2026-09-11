@@ -7347,13 +7347,28 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
  * placeholder accent literals, each harmonizing to its own distinct
  * palette slot the same way this file's harmonize() already does for
  * every other accent-carrying color.
+ *
+ * Each row is a single icon + one changeable text field - direct user
+ * correction: this ISN'T a name+score leaderboard, the reference's own
+ * "+15"-style numbers were only ever a placeholder for whatever the model
+ * actually fills in, which is a generic "list of things you get" (a
+ * feature/benefit label), so there's no separate numeric column at all.
  */
-const NODE_ABSORB_HEADER_WIDTH = 300;
-const NODE_ABSORB_HEADER_HEIGHT = 76;
+// Direct user correction: "the main node should look bigger and more
+// like a header bar and not much like the other nodes" - the first cut
+// (300x76 vs rows' 280x62) was too close in size to actually read as a
+// distinct header. Now meaningfully bigger (both wider and taller than a
+// row) AND a different SHAPE, not just a scaled-up copy: rows stay full
+// pill capsules (roundness = height/2), the header uses a much shallower
+// roundness so it reads as a rectangular bar, the way a real list header
+// looks distinct from its own list items.
+const NODE_ABSORB_HEADER_WIDTH = 380;
+const NODE_ABSORB_HEADER_HEIGHT = 100;
+const NODE_ABSORB_HEADER_ROUNDNESS = 26;
 const NODE_ABSORB_ROW_WIDTH = 280;
 const NODE_ABSORB_ROW_HEIGHT = 62;
 const NODE_ABSORB_ROW_GAP = 18;
-const NODE_ABSORB_HEADER_ICON_SIZE = 32;
+const NODE_ABSORB_HEADER_ICON_SIZE = 42;
 const NODE_ABSORB_ROW_ICON_SIZE = 26;
 const NODE_ABSORB_ROW_BADGE_SIZE = 42;
 const NODE_ABSORB_FLYIN_DURATION = 0.35;
@@ -7367,6 +7382,22 @@ const NODE_ABSORB_RISE_DURATION = 0.25;
 const NODE_ABSORB_ROW_STAGGER = 0.09;
 const NODE_ABSORB_ROW_POP_DURATION = 0.18;
 const NODE_ABSORB_EAT_STEP_DURATION = 0.15;
+// Direct user ask: "1.5s delay btw all the nodes finish expanding
+// downwards and the main node starting to eat them" - a real, deliberate
+// PAUSE inside the beat's own motion (not the post-settle hold every
+// template's own duration is separately clamped to, see
+// clampMographDuration) - the user wants the full row list to sit and
+// be readable before the header starts moving again.
+const NODE_ABSORB_PRE_EAT_DELAY = 1.5;
+// A brief stationary beat AT each row before continuing to the next -
+// direct user feedback on the first render ("the eating animation isn't
+// clean"): the header used to glide non-stop through all 4 rows with its
+// tilt continuously flipping sign mid-glide, which read as a wobbly slide
+// rather than 4 distinct "bites." Now each row is a discrete beat: travel
+// in, tilt peaks and the row vanishes exactly on arrival, tilt settles
+// back to upright and the squash recovers DURING this dwell, then the
+// next travel leg starts upright.
+const NODE_ABSORB_EAT_DWELL = 0.12;
 const NODE_ABSORB_RETURN_DURATION = 0.25;
 // Small, distinct placeholder literals for each row's own icon badge -
 // harmonize() (renderEngine.js) remaps each DIFFERENT literal to its
@@ -7408,9 +7439,24 @@ function buildNodeAbsorbLayers({
   // well clear of where row 0 lands.
   const rowAppearAt = items.map((_, i) => RISE_END - 0.05 + i * NODE_ABSORB_ROW_STAGGER);
   const lastRowDone = rowAppearAt[rowAppearAt.length - 1] + NODE_ABSORB_ROW_POP_DURATION;
-  const EAT_START = lastRowDone + 0.05;
-  const eatArriveAt = items.map((_, i) => EAT_START + (i + 1) * NODE_ABSORB_EAT_STEP_DURATION);
-  const RETURN_START = eatArriveAt[eatArriveAt.length - 1];
+  const EAT_START = lastRowDone + NODE_ABSORB_PRE_EAT_DELAY;
+  // Each row is now its own discrete travel-in + arrive + dwell beat (see
+  // NODE_ABSORB_EAT_DWELL's own doc comment above) rather than one
+  // continuous glide through all 4 - eatArriveAt[i] is the instant the
+  // header actually lands on (and eats) row i; eatDepartAt[i] is when it
+  // leaves again for the next row (or for home, on the last one).
+  const eatArriveAt = [];
+  const eatDepartAt = [];
+  {
+    let t = EAT_START;
+    items.forEach(() => {
+      t += NODE_ABSORB_EAT_STEP_DURATION;
+      eatArriveAt.push(t);
+      t += NODE_ABSORB_EAT_DWELL;
+      eatDepartAt.push(t);
+    });
+  }
+  const RETURN_START = eatDepartAt[eatDepartAt.length - 1];
   const RETURN_END = RETURN_START + NODE_ABSORB_RETURN_DURATION;
 
   // ---- header group: one continuous position track for the WHOLE
@@ -7422,26 +7468,40 @@ function buildNodeAbsorbLayers({
     { time: RISE_START, value: CENTER, interpolation: 'easing', easing: 'easeInOutCubic' },
     { time: RISE_END, value: [CENTER[0], HEADER_UP_Y] },
   ];
-  let prevY = HEADER_UP_Y;
+  // Travel leg i runs from eatDepartAt[i-1] (or EAT_START, for the first
+  // leg) to eatArriveAt[i]; the header then sits still through the dwell
+  // (eatArriveAt[i] -> eatDepartAt[i]) before the next leg starts - see
+  // NODE_ABSORB_EAT_DWELL's own doc comment for why this is now a
+  // discrete per-row beat instead of one continuous glide.
+  headerPosKfs.push({ time: EAT_START, value: [CENTER[0], HEADER_UP_Y], interpolation: 'easing', easing: 'easeInOutCubic' });
   items.forEach((_, i) => {
-    const moveStart = eatArriveAt[i] - NODE_ABSORB_EAT_STEP_DURATION;
-    headerPosKfs.push({ time: moveStart, value: [CENTER[0], prevY], interpolation: 'easing', easing: 'easeInOutCubic' });
+    const isLast = i === items.length - 1;
     headerPosKfs.push({ time: eatArriveAt[i], value: [CENTER[0], rowY[i]] });
-    prevY = rowY[i];
+    headerPosKfs.push({
+      time: eatDepartAt[i],
+      value: [CENTER[0], rowY[i]],
+      interpolation: 'easing',
+      easing: isLast ? 'easeOutCubic' : 'easeInOutCubic',
+    });
   });
-  headerPosKfs.push({ time: RETURN_START, value: [CENTER[0], prevY], interpolation: 'easing', easing: 'easeOutCubic' });
   headerPosKfs.push({ time: RETURN_END, value: CENTER });
 
-  // A small alternating tilt while descending through the rows - direct
-  // reference detail (the header visibly wobbles as it eats its way
-  // down the list) - settles back to 0 by the time it returns to CENTER.
+  // A small alternating tilt PEAKING right at impact on each row (not a
+  // continuous wobble through the whole descent) - settles back to
+  // upright during that row's own dwell before the next travel leg
+  // starts, so each "bite" reads as a distinct beat rather than the
+  // header sliding through with its tilt flipping sign mid-glide (direct
+  // user feedback on the first render: "the eating animation isn't
+  // clean").
   const headerRotKfs = [{ time: RISE_END, value: 0, interpolation: 'easing', easing: 'easeInOutCubic' }];
   items.forEach((_, i) => {
-    headerRotKfs.push({ time: eatArriveAt[i], value: i % 2 === 0 ? -7 : 7, interpolation: 'easing', easing: 'easeInOutCubic' });
+    const tilt = i % 2 === 0 ? -7 : 7;
+    headerRotKfs.push({ time: eatArriveAt[i], value: tilt, interpolation: 'easing', easing: 'easeOutCubic' });
+    headerRotKfs.push({ time: eatDepartAt[i], value: 0, interpolation: 'easing', easing: 'easeInOutCubic' });
   });
-  headerRotKfs.push({ time: RETURN_END, value: 0 });
 
-  // A quick "gulp" scale squish exactly as the header lands on each row.
+  // A quick "gulp" scale squish exactly as the header lands on each row,
+  // fully recovered before it departs again.
   const headerScaleKfs = [{ time: RISE_END, value: [1, 1] }];
   items.forEach((_, i) => {
     headerScaleKfs.push({ time: eatArriveAt[i] - 0.04, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' });
@@ -7464,16 +7524,23 @@ function buildNodeAbsorbLayers({
     width: NODE_ABSORB_HEADER_WIDTH,
     height: NODE_ABSORB_HEADER_HEIGHT,
     position: [0, 0],
-    // Real reference detail: growing from tiny/far as it flies in - a
-    // scale ramp on top of the group's own position move, not the
-    // group's own scale (already spent on the eat-squish above).
+    // Real reference detail, direct user correction after the first
+    // render ("the main node didn't start out big, check the vid, it
+    // just expanded out"): an easeOutCubic ramp grows MOST of its size in
+    // the very first fraction of the flight, so the pill already reads as
+    // "big" while still barely into its move - the opposite of the
+    // reference's own look, where it stays small for most of the flight
+    // and visibly EXPANDS OUT only right as it arrives. Swapped to
+    // easeInCubic (slow start, fast finish) off a smaller starting scale
+    // so growth is back-loaded onto the last portion of the flight
+    // instead.
     contents: [
-      { type: 'path', shape: { kind: 'rectangle', params: { width: NODE_ABSORB_HEADER_WIDTH, height: NODE_ABSORB_HEADER_HEIGHT, roundness: NODE_ABSORB_HEADER_HEIGHT / 2 } } },
+      { type: 'path', shape: { kind: 'rectangle', params: { width: NODE_ABSORB_HEADER_WIDTH, height: NODE_ABSORB_HEADER_HEIGHT, roundness: NODE_ABSORB_HEADER_ROUNDNESS } } },
       { type: 'fill', color: accentColor },
     ],
     scale: {
       keyframes: [
-        { time: 0, value: [0.15, 0.15], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: 0, value: [0.05, 0.05], interpolation: 'easing', easing: 'easeInCubic' },
         { time: FLYIN_END, value: [1, 1] },
       ],
     },
@@ -7535,7 +7602,7 @@ function buildNodeAbsorbLayers({
     text: headerText,
     fontFamily: 'Poppins Bold',
     fontWeight: '700',
-    fontSize: 24,
+    fontSize: 28,
     fillStyle: ICON_BRIGHT_TINT,
     textAlign: 'left',
     maxWidth: NODE_ABSORB_HEADER_WIDTH / 2 - 30,
@@ -7628,32 +7695,25 @@ function buildNodeAbsorbLayers({
       scale: cloneTrack(popKf),
       opacity: cloneTrack(opacityKf),
     });
+    // Direct user correction: "remove the numbers, the text there is a
+    // changeable variable... what will be there is a list of things u
+    // get" - this isn't a name+score ranking, it's a single benefit/
+    // feature label per row. The separate right-aligned "value" column
+    // is gone entirely; the label now gets the FULL width freed up by
+    // its removal instead of sharing the row with it.
     const nameLocalX = badgeLocalX + NODE_ABSORB_ROW_BADGE_SIZE / 2 + 16;
+    const rowTextMaxWidth = NODE_ABSORB_ROW_WIDTH / 2 - 20 - nameLocalX;
     layers.push({
-      id: `__absorb_row_name_${i}__`,
+      id: `__absorb_row_text_${i}__`,
       type: 'text',
-      text: item.name,
+      text: item.text,
       fontFamily: 'Poppins Bold',
       fontWeight: '700',
       fontSize: 18,
       fillStyle: ICON_BRIGHT_TINT,
       textAlign: 'left',
-      maxWidth: 110,
-      position: rowPosTrack(rowPos[0] + nameLocalX + 55, rowPos[1]),
-      scale: cloneTrack(popKf),
-      opacity: cloneTrack(opacityKf),
-    });
-    layers.push({
-      id: `__absorb_row_value_${i}__`,
-      type: 'text',
-      text: item.value,
-      fontFamily: 'Poppins Bold',
-      fontWeight: '700',
-      fontSize: 18,
-      fillStyle: ICON_BRIGHT_TINT,
-      textAlign: 'right',
-      maxWidth: 80,
-      position: rowPosTrack(NODE_ABSORB_ROW_WIDTH / 2 - 24 - 40 + rowPos[0], rowPos[1]),
+      maxWidth: rowTextMaxWidth,
+      position: rowPosTrack(rowPos[0] + nameLocalX + rowTextMaxWidth / 2, rowPos[1]),
       scale: cloneTrack(popKf),
       opacity: cloneTrack(opacityKf),
     });
@@ -8085,9 +8145,9 @@ function buildMographBeatVisual(beat) {
     }
   } else if (spec.type === 'nodeAbsorb' && typeof spec.headerIcon === 'string' && MOGRAPH_ICON_RE.test(spec.headerIcon) && typeof spec.headerText === 'string' && spec.headerText.trim() && Array.isArray(spec.items)) {
     const items = spec.items
-      .filter((it) => isPlainObject(it) && typeof it.icon === 'string' && MOGRAPH_ICON_RE.test(it.icon) && typeof it.name === 'string' && it.name.trim() && typeof it.value === 'string' && it.value.trim())
+      .filter((it) => isPlainObject(it) && typeof it.icon === 'string' && MOGRAPH_ICON_RE.test(it.icon) && typeof it.text === 'string' && it.text.trim())
       .slice(0, 4)
-      .map((it) => ({ icon: it.icon, name: truncateAtWordBoundary(it.name.trim(), 14), value: truncateAtWordBoundary(it.value.trim(), 8) }));
+      .map((it) => ({ icon: it.icon, text: truncateAtWordBoundary(it.text.trim(), 20) }));
     if (items.length === 4) {
       const headerText = truncateAtWordBoundary(spec.headerText.trim(), 16);
       const result = buildNodeAbsorbLayers({
