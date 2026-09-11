@@ -396,6 +396,11 @@ const COMPACT_BASE_DURATION = {
   // completes in ~1.13s (TRIPLE_STACK_COMPLETE_TIME, sceneSchema.js) -
   // same "start close to the real value" reasoning as squareSpin above.
   tripleStack: 2.0,
+  // Real motion (fly-in, icon-cycle, rise, 4-row cascade, sequential eat,
+  // return-to-center) fully completes in ~2.3s (RETURN_END inside
+  // buildNodeAbsorbLayers, sceneSchema.js) - same "start close to the real
+  // value" reasoning as squareSpin/tripleStack above.
+  nodeAbsorb: 2.5,
 };
 
 /**
@@ -530,8 +535,15 @@ function validateCompactBeatVars(template, vars) {
       if (items.length !== 3) return `needs "items": exactly 3 entries, each a real {icon,text} (got ${items.length} valid ones)`;
       return null;
     }
+    case 'nodeAbsorb': {
+      if (!isRealIcon(vars.headerIcon)) return 'needs a real Iconify "headerIcon"';
+      if (typeof vars.headerText !== 'string' || !vars.headerText.trim()) return 'needs a non-empty "headerText"';
+      const items = Array.isArray(vars.items) ? vars.items.filter((it) => isPlainObjectLocal(it) && isRealIcon(it.icon) && typeof it.name === 'string' && it.name.trim() && typeof it.value === 'string' && it.value.trim()) : [];
+      if (items.length !== 4) return `needs "items": exactly 4 entries, each a real {icon,name,value} (got ${items.length} valid ones)`;
+      return null;
+    }
     default:
-      return `"${template}" is not one of the 9 real template names`;
+      return `"${template}" is not one of the 10 real template names`;
   }
 }
 

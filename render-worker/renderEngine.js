@@ -526,7 +526,21 @@ function ensureTextContrastAgainstBackground(sceneJSON, boardBackgroundDef) {
     if (!Array.isArray(layers)) continue;
     for (const layer of layers) {
       if (!layer || typeof layer !== 'object') continue;
-      if (typeof layer.fillStyle === 'string') layer.fillStyle = fixColor(layer.fillStyle);
+      if (typeof layer.fillStyle !== 'string') continue;
+      // A text layer with a resolveIconBackdropRule entry sits on a KNOWN
+      // sibling surface (a node/row's own filled pill, a fixed badge/phone
+      // screen) rather than directly on the board background - forcing it
+      // dark here based on the board's own luma is wrong when that sibling
+      // fill is itself dark (nodeAbsorb/tripleStack row & node text on a
+      // dark accentColor pill, discovered via a real render of nodeAbsorb
+      // landing on a light-classified board background: near-white text
+      // got flattened to charcoal even though it was sitting on a dark
+      // purple pill, unreadable-by-being-invisible in the OTHER direction).
+      // ensureIconContrast (below, via ensureHarmoniousColors) already
+      // measures real contrast against that sibling's own resolved fill -
+      // defer to it entirely instead of guessing from the board here.
+      if (typeof layer.id === 'string' && resolveIconBackdropRule(layer.id)) continue;
+      layer.fillStyle = fixColor(layer.fillStyle);
     }
   }
 }
@@ -977,6 +991,16 @@ function resolveIconBackdropRule(layerId) {
   // fixed literal.
   const stackMatch = layerId.match(/^__stack_(?:icon|text)_(\d+)__$/);
   if (stackMatch) return { fill: `__stack_node_${stackMatch[1]}__` };
+  // nodeAbsorb's own header (icon-cycle glyphs + real icon + text) sits on
+  // its own pill background; each row's name/value text sits on the row's
+  // own pill, while a row's icon sits on its own small colored badge, not
+  // the row pill itself - same "sibling fill, not board bg" reasoning as
+  // tripleStack above.
+  if (layerId === '__absorb_header_text__' || layerId === '__absorb_header_icon__' || /^__absorb_cycle_icon_\d+__$/.test(layerId)) return { fill: '__absorb_header_bg__' };
+  const absorbRowIconMatch = layerId.match(/^__absorb_row_icon_(\d+)__$/);
+  if (absorbRowIconMatch) return { fill: `__absorb_row_badge_${absorbRowIconMatch[1]}__` };
+  const absorbRowTextMatch = layerId.match(/^__absorb_row_(?:name|value)_(\d+)__$/);
+  if (absorbRowTextMatch) return { fill: `__absorb_row_bg_${absorbRowTextMatch[1]}__` };
   // Everything else authored (nodeCluster/nodeClusterExtended's OWN
   // "__node_icon_N__" pre-explosion state, mergeCluster's small
   // orbiting "__merge_icon_N__", the decorative "__topic_icon__" card)
@@ -1047,6 +1071,13 @@ function ensureIconContrast(sceneJSON, bgRefColor, harmonize) {
         const rule = resolveIconBackdropRule(layer.id);
         if (rule && rule.fixed) {
           layer.fillStyle = pickContrastSafeTint(rule.fixed, beatAccentHex);
+        } else if (rule && rule.fill) {
+          // Same sibling-fill lookup the icon branch above uses - a text
+          // layer with a `fill` rule sits on a real filled shape (a
+          // node/row pill), not the raw board background, so measure
+          // contrast against THAT color the same way.
+          const behindHex = fillById.get(rule.fill) || bgRefColor;
+          layer.fillStyle = pickContrastSafeTint(behindHex, beatAccentHex);
         }
       }
     }

@@ -7323,6 +7323,349 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
   return layers;
 }
 
+/**
+ * Built from a real frame-by-frame read of a user-attached reference
+ * video (A9.mp4): a single pill-shaped header node flies in from off-
+ * screen to the canvas center, holds briefly while its own icon
+ * flickers through a couple of placeholders (a "slot machine" roll)
+ * before landing on its real icon+text, then shoots UP to a "list
+ * header" position while 4 smaller rows expand DOWNWARD from it one at
+ * a time. Once all 4 have landed, the header descends again, visiting
+ * each row in turn and "eating" it (a quick absorb pop + tiny particle
+ * burst) before continuing to the next, finally returning to its own
+ * original center position to rest - direct user spec: "the main node
+ * start moving downwards eating them." Real motion/choreography copied
+ * from the reference; overall pacing compressed hard from the
+ * reference's own ~3.7s to fit this project's own standing fast-pace
+ * rule (every template's post-settle hold capped at 1.5s).
+ *
+ * Row/header fills are the beat's own harmonized `accentColor` (never a
+ * fixed literal - this project's own hard-learned standing rule, see
+ * tripleStack's own build history) - the reference's own dark row
+ * background is deliberately NOT copied 1:1 for this reason; each row's
+ * own icon "badge" instead gets visual variety via a small set of
+ * placeholder accent literals, each harmonizing to its own distinct
+ * palette slot the same way this file's harmonize() already does for
+ * every other accent-carrying color.
+ */
+const NODE_ABSORB_HEADER_WIDTH = 300;
+const NODE_ABSORB_HEADER_HEIGHT = 76;
+const NODE_ABSORB_ROW_WIDTH = 280;
+const NODE_ABSORB_ROW_HEIGHT = 62;
+const NODE_ABSORB_ROW_GAP = 18;
+const NODE_ABSORB_HEADER_ICON_SIZE = 32;
+const NODE_ABSORB_ROW_ICON_SIZE = 26;
+const NODE_ABSORB_ROW_BADGE_SIZE = 42;
+const NODE_ABSORB_FLYIN_DURATION = 0.35;
+// Generic, always-real Iconify names (not AI-authored) used purely as
+// quick flickering placeholders before the header lands on its own
+// real icon - matches the reference's own brief "icon roll" before
+// settling, no extra model-facing field needed for it.
+const NODE_ABSORB_CYCLE_ICONS = ['mdi:circle-outline', 'mdi:square-rounded-outline'];
+const NODE_ABSORB_CYCLE_STEP = 0.09;
+const NODE_ABSORB_RISE_DURATION = 0.25;
+const NODE_ABSORB_ROW_STAGGER = 0.09;
+const NODE_ABSORB_ROW_POP_DURATION = 0.18;
+const NODE_ABSORB_EAT_STEP_DURATION = 0.15;
+const NODE_ABSORB_RETURN_DURATION = 0.25;
+// Small, distinct placeholder literals for each row's own icon badge -
+// harmonize() (renderEngine.js) remaps each DIFFERENT literal to its
+// own analogous palette slot, the same mechanism every other accent
+// color in this file already goes through, just fed 4 different seed
+// values so the 4 rows read as visually distinct from one another.
+const NODE_ABSORB_BADGE_SEED_COLORS = ['#FF4D6D', '#4CC9F0', '#FFD166', '#7BE495'];
+
+function buildNodeAbsorbLayers({
+  headerIcon, headerText, items, accentColor,
+}) {
+  const layers = [];
+  const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
+  const HEADER_UP_Y = CANVAS_HEIGHT / 2 - 150;
+
+  const rowY = items.map((_, i) => HEADER_UP_Y + NODE_ABSORB_HEADER_HEIGHT / 2 + NODE_ABSORB_ROW_GAP
+    + NODE_ABSORB_ROW_HEIGHT / 2 + i * (NODE_ABSORB_ROW_HEIGHT + NODE_ABSORB_ROW_GAP));
+
+  // ---- timeline ----
+  const FLYIN_END = NODE_ABSORB_FLYIN_DURATION;
+  const cycleCount = NODE_ABSORB_CYCLE_ICONS.length;
+  // cycleCount steps (one per placeholder icon), no extra trailing step -
+  // the real icon's own opacity keyframe fires at CYCLE_END, exactly when
+  // the last placeholder's disappears, so there's no blank frame between
+  // them (a trailing "+1" step here left one CYCLE_STEP of dead air with
+  // nothing on the pill at all, confirmed via a real render).
+  const CYCLE_END = FLYIN_END + cycleCount * NODE_ABSORB_CYCLE_STEP;
+  const RISE_START = CYCLE_END;
+  const RISE_END = RISE_START + NODE_ABSORB_RISE_DURATION;
+  // Rows start cascading right as the header FINISHES its rise (not
+  // partway through, per a real render that caught the bug this avoids):
+  // starting a row at e.g. 30% into the rise put it fully in its own
+  // final list-row slot while the header was still floating near CENTER,
+  // so the header's own "Platinum" text and the row's "John +15" text
+  // visually overlapped on top of each other. A small negative lead here
+  // (row 0 starts just before RISE_END) still reads as "expanding as it
+  // arrives" per the user's own spec, without the header/row collision -
+  // by RISE_END-0.05 the header is already ~95% risen (easeInOutCubic),
+  // well clear of where row 0 lands.
+  const rowAppearAt = items.map((_, i) => RISE_END - 0.05 + i * NODE_ABSORB_ROW_STAGGER);
+  const lastRowDone = rowAppearAt[rowAppearAt.length - 1] + NODE_ABSORB_ROW_POP_DURATION;
+  const EAT_START = lastRowDone + 0.05;
+  const eatArriveAt = items.map((_, i) => EAT_START + (i + 1) * NODE_ABSORB_EAT_STEP_DURATION);
+  const RETURN_START = eatArriveAt[eatArriveAt.length - 1];
+  const RETURN_END = RETURN_START + NODE_ABSORB_RETURN_DURATION;
+
+  // ---- header group: one continuous position track for the WHOLE
+  // beat - fly in, hold, rise, then descend through each row in turn
+  // before returning to CENTER.
+  const headerPosKfs = [
+    { time: 0, value: [-NODE_ABSORB_HEADER_WIDTH, CANVAS_HEIGHT + 200], interpolation: 'easing', easing: 'easeOutCubic' },
+    { time: FLYIN_END, value: CENTER },
+    { time: RISE_START, value: CENTER, interpolation: 'easing', easing: 'easeInOutCubic' },
+    { time: RISE_END, value: [CENTER[0], HEADER_UP_Y] },
+  ];
+  let prevY = HEADER_UP_Y;
+  items.forEach((_, i) => {
+    const moveStart = eatArriveAt[i] - NODE_ABSORB_EAT_STEP_DURATION;
+    headerPosKfs.push({ time: moveStart, value: [CENTER[0], prevY], interpolation: 'easing', easing: 'easeInOutCubic' });
+    headerPosKfs.push({ time: eatArriveAt[i], value: [CENTER[0], rowY[i]] });
+    prevY = rowY[i];
+  });
+  headerPosKfs.push({ time: RETURN_START, value: [CENTER[0], prevY], interpolation: 'easing', easing: 'easeOutCubic' });
+  headerPosKfs.push({ time: RETURN_END, value: CENTER });
+
+  // A small alternating tilt while descending through the rows - direct
+  // reference detail (the header visibly wobbles as it eats its way
+  // down the list) - settles back to 0 by the time it returns to CENTER.
+  const headerRotKfs = [{ time: RISE_END, value: 0, interpolation: 'easing', easing: 'easeInOutCubic' }];
+  items.forEach((_, i) => {
+    headerRotKfs.push({ time: eatArriveAt[i], value: i % 2 === 0 ? -7 : 7, interpolation: 'easing', easing: 'easeInOutCubic' });
+  });
+  headerRotKfs.push({ time: RETURN_END, value: 0 });
+
+  // A quick "gulp" scale squish exactly as the header lands on each row.
+  const headerScaleKfs = [{ time: RISE_END, value: [1, 1] }];
+  items.forEach((_, i) => {
+    headerScaleKfs.push({ time: eatArriveAt[i] - 0.04, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic' });
+    headerScaleKfs.push({ time: eatArriveAt[i], value: [1.12, 0.9] });
+    headerScaleKfs.push({ time: eatArriveAt[i] + 0.07, value: [1, 1] });
+  });
+
+  layers.push({
+    id: '__absorb_header__',
+    type: 'null',
+    position: { keyframes: headerPosKfs },
+    rotation: { keyframes: headerRotKfs },
+    scale: { keyframes: headerScaleKfs },
+  });
+
+  layers.push({
+    id: '__absorb_header_bg__',
+    type: 'shape',
+    parent: '__absorb_header__',
+    width: NODE_ABSORB_HEADER_WIDTH,
+    height: NODE_ABSORB_HEADER_HEIGHT,
+    position: [0, 0],
+    // Real reference detail: growing from tiny/far as it flies in - a
+    // scale ramp on top of the group's own position move, not the
+    // group's own scale (already spent on the eat-squish above).
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: NODE_ABSORB_HEADER_WIDTH, height: NODE_ABSORB_HEADER_HEIGHT, roundness: NODE_ABSORB_HEADER_HEIGHT / 2 } } },
+      { type: 'fill', color: accentColor },
+    ],
+    scale: {
+      keyframes: [
+        { time: 0, value: [0.15, 0.15], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: FLYIN_END, value: [1, 1] },
+      ],
+    },
+  });
+
+  // Icon "slot machine" roll: 2 quick generic placeholders, hard-toggled
+  // (hold interpolation - a real flicker, not a crossfade), before the
+  // real headerIcon takes over and stays for the rest of the beat.
+  // Centered while cycling (no text yet), then steps LEFT the instant
+  // the real icon lands, making room for the header's own text.
+  const centeredX = 0;
+  const withTextX = -NODE_ABSORB_HEADER_WIDTH / 2 + 44;
+  NODE_ABSORB_CYCLE_ICONS.forEach((cycleIcon, ci) => {
+    const visibleStart = FLYIN_END + ci * NODE_ABSORB_CYCLE_STEP;
+    const visibleEnd = visibleStart + NODE_ABSORB_CYCLE_STEP;
+    layers.push({
+      id: `__absorb_cycle_icon_${ci}__`,
+      type: 'image',
+      parent: '__absorb_header__',
+      icon: cycleIcon,
+      iconColor: ICON_BRIGHT_TINT,
+      width: NODE_ABSORB_HEADER_ICON_SIZE,
+      height: NODE_ABSORB_HEADER_ICON_SIZE,
+      position: [centeredX, 0],
+      opacity: {
+        keyframes: [
+          { time: 0, value: 0, interpolation: 'hold' },
+          { time: visibleStart, value: 1, interpolation: 'hold' },
+          { time: visibleEnd, value: 0, interpolation: 'hold' },
+        ],
+      },
+    });
+  });
+  layers.push({
+    id: '__absorb_header_icon__',
+    type: 'image',
+    parent: '__absorb_header__',
+    icon: headerIcon,
+    iconColor: ICON_BRIGHT_TINT,
+    width: NODE_ABSORB_HEADER_ICON_SIZE,
+    height: NODE_ABSORB_HEADER_ICON_SIZE,
+    position: {
+      keyframes: [
+        { time: CYCLE_END, value: [centeredX, 0], interpolation: 'hold' },
+        { time: CYCLE_END + 0.08, value: [withTextX, 0] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        { time: CYCLE_END, value: 1 },
+      ],
+    },
+  });
+  layers.push({
+    id: '__absorb_header_text__',
+    type: 'text',
+    parent: '__absorb_header__',
+    text: headerText,
+    fontFamily: 'Poppins Bold',
+    fontWeight: '700',
+    fontSize: 24,
+    fillStyle: ICON_BRIGHT_TINT,
+    textAlign: 'left',
+    maxWidth: NODE_ABSORB_HEADER_WIDTH / 2 - 30,
+    position: [withTextX + NODE_ABSORB_HEADER_ICON_SIZE / 2 + 16 + (NODE_ABSORB_HEADER_WIDTH / 2 - 30 - withTextX - NODE_ABSORB_HEADER_ICON_SIZE / 2 - 16) / 2, 0],
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        { time: CYCLE_END + 0.05, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: CYCLE_END + 0.18, value: 1 },
+      ],
+    },
+  });
+
+  // ---- the 4 rows: appear staggered, get eaten in the same order ----
+  // Real user spec: "4 nodes expand downwards from it [the header]" - each
+  // row's own position (not just scale/opacity) animates in, dropping down
+  // a short distance into its own final list slot. Slid ALL the way down
+  // from the header's own position originally, but a real render caught a
+  // genuine bug with that: a later row travelling that whole distance
+  // visibly passed straight through/over the earlier rows already resting
+  // in their slots along the way, producing a garbled double-exposure of
+  // overlapping text for a frame or two. Each row now only travels a short
+  // local distance ending at its own slot - well under one row's own
+  // height+gap - so it never crosses another row's territory at all, while
+  // still reading as "dropping into place" rather than a flat fade-in.
+  const ROW_SLIDE_DISTANCE = 40;
+  items.forEach((item, i) => {
+    const appearAt = rowAppearAt[i];
+    const eatenAt = eatArriveAt[i];
+    const rowPosTrack = (x, finalY) => ({
+      keyframes: [
+        { time: appearAt, value: [x, finalY - ROW_SLIDE_DISTANCE], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: appearAt + NODE_ABSORB_ROW_POP_DURATION, value: [x, finalY] },
+      ],
+    });
+    const popKf = {
+      keyframes: [
+        { time: appearAt, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: appearAt + NODE_ABSORB_ROW_POP_DURATION * 0.7, value: [1.08, 1.08], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: appearAt + NODE_ABSORB_ROW_POP_DURATION, value: [1, 1] },
+        { time: eatenAt - 0.03, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+        { time: eatenAt, value: [0.2, 0.2] },
+      ],
+    };
+    const opacityKf = {
+      keyframes: [
+        { time: appearAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: appearAt + NODE_ABSORB_ROW_POP_DURATION * 0.6, value: 1 },
+        { time: eatenAt - 0.03, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+        { time: eatenAt, value: 0 },
+      ],
+    };
+    const rowPos = [CENTER[0], rowY[i]];
+
+    layers.push({
+      id: `__absorb_row_bg_${i}__`,
+      type: 'shape',
+      width: NODE_ABSORB_ROW_WIDTH,
+      height: NODE_ABSORB_ROW_HEIGHT,
+      position: rowPosTrack(rowPos[0], rowPos[1]),
+      scale: cloneTrack(popKf),
+      opacity: cloneTrack(opacityKf),
+      contents: [
+        { type: 'path', shape: { kind: 'rectangle', params: { width: NODE_ABSORB_ROW_WIDTH, height: NODE_ABSORB_ROW_HEIGHT, roundness: NODE_ABSORB_ROW_HEIGHT / 2 } } },
+        { type: 'fill', color: accentColor },
+      ],
+    });
+    const badgeLocalX = -NODE_ABSORB_ROW_WIDTH / 2 + 28 + NODE_ABSORB_ROW_BADGE_SIZE / 2;
+    layers.push({
+      id: `__absorb_row_badge_${i}__`,
+      type: 'shape',
+      width: NODE_ABSORB_ROW_BADGE_SIZE,
+      height: NODE_ABSORB_ROW_BADGE_SIZE,
+      position: rowPosTrack(rowPos[0] + badgeLocalX, rowPos[1]),
+      scale: cloneTrack(popKf),
+      opacity: cloneTrack(opacityKf),
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: NODE_ABSORB_ROW_BADGE_SIZE, height: NODE_ABSORB_ROW_BADGE_SIZE } } },
+        { type: 'fill', color: NODE_ABSORB_BADGE_SEED_COLORS[i % NODE_ABSORB_BADGE_SEED_COLORS.length] },
+      ],
+    });
+    layers.push({
+      id: `__absorb_row_icon_${i}__`,
+      type: 'image',
+      icon: item.icon,
+      iconColor: ICON_BRIGHT_TINT,
+      width: NODE_ABSORB_ROW_ICON_SIZE,
+      height: NODE_ABSORB_ROW_ICON_SIZE,
+      position: rowPosTrack(rowPos[0] + badgeLocalX, rowPos[1]),
+      scale: cloneTrack(popKf),
+      opacity: cloneTrack(opacityKf),
+    });
+    const nameLocalX = badgeLocalX + NODE_ABSORB_ROW_BADGE_SIZE / 2 + 16;
+    layers.push({
+      id: `__absorb_row_name_${i}__`,
+      type: 'text',
+      text: item.name,
+      fontFamily: 'Poppins Bold',
+      fontWeight: '700',
+      fontSize: 18,
+      fillStyle: ICON_BRIGHT_TINT,
+      textAlign: 'left',
+      maxWidth: 110,
+      position: rowPosTrack(rowPos[0] + nameLocalX + 55, rowPos[1]),
+      scale: cloneTrack(popKf),
+      opacity: cloneTrack(opacityKf),
+    });
+    layers.push({
+      id: `__absorb_row_value_${i}__`,
+      type: 'text',
+      text: item.value,
+      fontFamily: 'Poppins Bold',
+      fontWeight: '700',
+      fontSize: 18,
+      fillStyle: ICON_BRIGHT_TINT,
+      textAlign: 'right',
+      maxWidth: 80,
+      position: rowPosTrack(NODE_ABSORB_ROW_WIDTH / 2 - 24 - 40 + rowPos[0], rowPos[1]),
+      scale: cloneTrack(popKf),
+      opacity: cloneTrack(opacityKf),
+    });
+    // Real, direct user ask: "add the other miniature details like the
+    // popup animation" - a tiny particle burst right as each row gets
+    // eaten, the same reusable pop effect other templates already use.
+    layers.push(...buildIconBurstParticles(i, rowPos[0], rowPos[1], ICON_BRIGHT_TINT, eatenAt));
+  });
+
+  return { layers, completeTime: RETURN_END };
+}
+
 const MOGRAPH_ICON_RE = /^[a-z0-9-]+:[a-z0-9-]+$/i;
 
 /**
@@ -7740,6 +8083,19 @@ function buildMographBeatVisual(beat) {
       layers = buildTripleStackLayers({ items, accentColor, narrationText });
       clampMographDuration(beat, TRIPLE_STACK_COMPLETE_TIME);
     }
+  } else if (spec.type === 'nodeAbsorb' && typeof spec.headerIcon === 'string' && MOGRAPH_ICON_RE.test(spec.headerIcon) && typeof spec.headerText === 'string' && spec.headerText.trim() && Array.isArray(spec.items)) {
+    const items = spec.items
+      .filter((it) => isPlainObject(it) && typeof it.icon === 'string' && MOGRAPH_ICON_RE.test(it.icon) && typeof it.name === 'string' && it.name.trim() && typeof it.value === 'string' && it.value.trim())
+      .slice(0, 4)
+      .map((it) => ({ icon: it.icon, name: truncateAtWordBoundary(it.name.trim(), 14), value: truncateAtWordBoundary(it.value.trim(), 8) }));
+    if (items.length === 4) {
+      const headerText = truncateAtWordBoundary(spec.headerText.trim(), 16);
+      const result = buildNodeAbsorbLayers({
+        headerIcon: spec.headerIcon, headerText, items, accentColor,
+      });
+      layers = result.layers;
+      clampMographDuration(beat, result.completeTime);
+    }
   } else if (spec.type === 'nodeClusterExtended' && Array.isArray(spec.icons) && typeof spec.newIcon === 'string' && MOGRAPH_ICON_RE.test(spec.newIcon)) {
     const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 8);
     if (icons.length >= 3) {
@@ -7908,7 +8264,7 @@ function validateSceneJSON(sceneJSON) {
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
     } else if (seen.size < 5) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack). Add more template beats to reach at least 5.`);
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb). Add more template beats to reach at least 5.`);
     } else if (seen.size > 7) {
       errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 7. Trim beats down to 7 or fewer distinct templates.`);
     }
@@ -9870,5 +10226,6 @@ module.exports = {
   buildTextPopOutLayers,
   buildSquareSpinLayers,
   buildTripleStackLayers,
+  buildNodeAbsorbLayers,
   buildMographBeatVisual,
 };

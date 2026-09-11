@@ -1798,12 +1798,12 @@ function listTreatmentBeatHeaders(treatment) {
 // improvements instead of a growing ceiling fight.
 const COMPACT_TEMPLATE_INFO = {
   nodeCluster: {
-    fields: 'icons(3-8), chosenIndex(0-based), introText(opt,<=5w)',
-    example: { template: 'nodeCluster', narration: 'Which one actually works?', vars: { icons: ['mdi:water', 'mdi:run', 'mdi:book-open-page-variant'], chosenIndex: 1 }, accentColor: '#8B5CF6' },
+    fields: 'icons(3-8), chosenIndex(0-based), introText(opt<=5w)',
+    example: { template: 'nodeCluster', narration: 'Which one actually works?', vars: { icons: ['mdi:water', 'mdi:run', 'mdi:book'], chosenIndex: 1 }, accentColor: '#8B5CF6' },
   },
   connectorList: {
-    fields: 'items(2-6 of {icon,label}, label 1-2w), outroText(opt,<=6w)',
-    example: { template: 'connectorList', narration: 'Sleep, protein, then consistency.', vars: { items: [{ icon: 'mdi:sleep', label: 'Sleep' }, { icon: 'mdi:food-drumstick', label: 'Protein' }, { icon: 'mdi:calendar-check', label: 'Routine' }] }, accentColor: '#8B5CF6' },
+    fields: 'items(2-6 {icon,label*1-2w}), outroText(opt<=6w)',
+    example: { template: 'connectorList', narration: 'Sleep, protein, routine.', vars: { items: [{ icon: 'mdi:sleep', label: 'Sleep' }, { icon: 'mdi:food-drumstick', label: 'Protein' }] }, accentColor: '#8B5CF6' },
   },
   phoneSwap: {
     fields: 'text*(2-4w phone headline), icon',
@@ -1811,27 +1811,31 @@ const COMPACT_TEMPLATE_INFO = {
   },
   splitConverge: {
     fields: 'icon, label(opt,1-3w)',
-    example: { template: 'splitConverge', narration: 'This is the one thing that matters.', vars: { icon: 'mdi:lightbulb-on', label: 'The Big Idea' }, accentColor: '#8B5CF6' },
+    example: { template: 'splitConverge', narration: 'This is what matters.', vars: { icon: 'mdi:lightbulb-on', label: 'The Big Idea' }, accentColor: '#8B5CF6' },
   },
   mergeCluster: {
     fields: 'icons(2-5), resultIcon, label(opt,1-3w)',
-    example: { template: 'mergeCluster', narration: 'These all come together as one.', vars: { icons: ['mdi:microphone', 'mdi:video', 'mdi:cloud-upload'], resultIcon: 'mdi:movie-open', label: 'Content Creation' }, accentColor: '#8B5CF6' },
+    example: { template: 'mergeCluster', narration: 'They come together as one.', vars: { icons: ['mdi:microphone', 'mdi:video'], resultIcon: 'mdi:movie-open', label: 'Content Creation' }, accentColor: '#8B5CF6' },
   },
   nodeClusterExtended: {
     fields: 'icons(3-8), chosenIndex, mergeText*, newIcon*, newLabel(opt,1-3w)',
-    example: { template: 'nodeClusterExtended', narration: 'Together, they become something bigger.', vars: { icons: ['mdi:microphone', 'mdi:video', 'mdi:cloud-upload'], chosenIndex: 0, mergeText: 'Content Strategy', newIcon: 'mdi:forum', newLabel: 'The Plan' }, accentColor: '#8B5CF6' },
+    example: { template: 'nodeClusterExtended', narration: 'They become one.', vars: { icons: ['mdi:microphone', 'mdi:video', 'mdi:cloud'], chosenIndex: 0, mergeText: 'Content Strategy', newIcon: 'mdi:forum', newLabel: 'Plan' }, accentColor: '#8B5CF6' },
   },
   textPopOut: {
     fields: 'text*(3-6w punchy statement)',
     example: { template: 'textPopOut', narration: 'Small wins add up fast.', vars: { text: 'Progress beats perfection' } },
   },
   squareSpin: {
-    fields: 'text*(2-5w, sits inside the shapes), icon1, icon2',
-    example: { template: 'squareSpin', narration: 'Here are your two go-to tools.', vars: { text: 'Pro Tips', icon1: 'mdi:video', icon2: 'mdi:microphone' }, accentColor: '#8B5CF6' },
+    fields: 'text*(2-5w, in shapes), icon1, icon2',
+    example: { template: 'squareSpin', narration: 'Two go-to tools.', vars: { text: 'Pro Tips', icon1: 'mdi:video', icon2: 'mdi:microphone' }, accentColor: '#8B5CF6' },
   },
   tripleStack: {
-    fields: 'items(EXACTLY 3 of {icon,text}, text 1-3w) - "narration" itself is shown on screen as this beat\'s own caption, so keep it short and exact',
-    example: { template: 'tripleStack', narration: "Here's what you get.", vars: { items: [{ icon: 'mdi:file-image', text: 'PNG Docs' }, { icon: 'mdi:account-group', text: 'Icon Icons' }, { icon: 'mdi:format-quote-close', text: 'Quotes' }] }, accentColor: '#8B5CF6' },
+    fields: 'items(EXACTLY 3 {icon,text*1-3w}); narration=on-screen caption, keep short',
+    example: { template: 'tripleStack', narration: "Here's what you get.", vars: { items: [{ icon: 'mdi:image', text: 'PNG Docs' }, { icon: 'mdi:account-group', text: 'Icon Icons' }, { icon: 'mdi:comment-quote', text: 'Quotes' }] }, accentColor: '#8B5CF6' },
+  },
+  nodeAbsorb: {
+    fields: 'headerIcon, headerText*, items(EXACTLY 4 {icon,name*1-2w,value*})',
+    example: { template: 'nodeAbsorb', narration: 'Rankings.', vars: { headerIcon: 'mdi:trophy', headerText: 'Platinum', items: [{ icon: 'mdi:account', name: 'John', value: '+15' }, { icon: 'mdi:account', name: 'Meg', value: '+18' }, { icon: 'mdi:account', name: 'Kev', value: '+23' }, { icon: 'mdi:account', name: 'Sal', value: '+29' }] }, accentColor: '#8B5CF6' },
   },
 };
 const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);
