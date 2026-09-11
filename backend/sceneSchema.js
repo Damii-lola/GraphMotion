@@ -8254,14 +8254,40 @@ const BLUEPRINT_TEXT_LINE_HEIGHT_RATIO = 1.28;
 const BLUEPRINT_TEXT_MAX_WIDTH = 180;
 const BLUEPRINT_BOX_PAD_X = 30;
 const BLUEPRINT_BOX_PAD_Y = 22;
-const BLUEPRINT_DOT_RADIUS = 7;
-const BLUEPRINT_BOX_DASH = [7, 6];
-const BLUEPRINT_BOX_STROKE_WIDTH = 2.5;
+// "God-tier 2D upgrade" pass, direct user request ("just make it, if it
+// ain't good I'll tell you to revert" - explicit go-ahead, not asking
+// for a selective/trimmed subset the way earlier upgrade wishlists in
+// this file got scoped down). Corner dots enlarged + given real
+// presence (own outer glow, see buildSentence), stroke thickened and
+// given a soft lift-off glow of its own, plus a secondary inset dashed
+// line for refinement (BLUEPRINT_BOX_INSET_DASH) - the "traveling
+// highlight sweep" ask has no real primitive in this engine (no dash-
+// offset animation support in engine/shapeLayer.js's drawStroke),
+// substituted with a quick glow-intensity flash right as each box lands
+// instead (see BOX_LAND_GLOW_PEAK below).
+const BLUEPRINT_DOT_RADIUS = 9;
+const BLUEPRINT_BOX_DASH = [8, 6];
+const BLUEPRINT_BOX_INSET_DASH = [4, 5];
+const BLUEPRINT_BOX_STROKE_WIDTH = 3;
 const BLUEPRINT_WORD_STAGGER = 0.13;
 const BLUEPRINT_WORD_POP_DURATION = 0.22;
 const BLUEPRINT_WIDTH_GROW_DURATION = 0.22;
 const BLUEPRINT_HEIGHT_STEP_DURATION = 0.22;
-const BLUEPRINT_SENTENCE_GAP = 0.35;
+// Direct spec: "second box should enter with a tight delay (0.15-0.25s
+// max)" - was 0.35, now within the requested range.
+const BLUEPRINT_SENTENCE_GAP = 0.2;
+// Corner dots pop in slightly AFTER the stroke itself (their own
+// opacity/scale, kept independent of the position track which must
+// still share the box's own scale keyframes to track its corners) and
+// lead the exit by the same small margin - "control points can pop in a
+// couple of frames after the box stroke... scale down or fade slightly
+// ahead of the stroke."
+const BLUEPRINT_DOT_ENTRANCE_DELAY = 0.06;
+const BLUEPRINT_DOT_EXIT_LEAD = 0.07;
+// A barely-there scale oscillation while a box is just sitting there
+// built ("almost imperceptible... continuous micro-scale breathing").
+const BLUEPRINT_BREATHE_AMPLITUDE = 0.012;
+const BLUEPRINT_BREATHE_PERIOD = 1.1;
 const BLUEPRINT_VERTICAL_GAP = 64;
 const BLUEPRINT_HOLD_AFTER_BUILD = 1.0;
 const BLUEPRINT_EXIT_SENTENCE_STAGGER = 0.15;
@@ -8281,6 +8307,33 @@ const BLUEPRINT_EXIT_WORD_STAGGER = 0.055;
 const BLUEPRINT_EXIT_TAIL = 0.22;
 const BLUEPRINT_EXIT_WORD_SHRINK = 0.55;
 const BLUEPRINT_END_BUFFER = 0.15;
+// Glow tuning for the "god-tier" pass - kept deliberately soft (this is
+// meant to lift content off the board, not turn it into a neon sign).
+// Explicit width/height on every layer that carries one of these is
+// REQUIRED - withEffects (sceneBuilder.js) falls back to the FULL FRAME
+// size for the effects buffer on any layer missing width/height, a real
+// documented perf bug elsewhere in this same file's own history (an
+// image layer with effects and no width/height cost 1768ms/frame).
+const BLUEPRINT_BOX_GLOW_BLUR = 14;
+const BLUEPRINT_BOX_GLOW_OPACITY = 0.4;
+const BLUEPRINT_DOT_GLOW_BLUR = 8;
+const BLUEPRINT_DOT_GLOW_OPACITY = 0.6;
+const BLUEPRINT_TEXT_GLOW_BLUR = 7;
+const BLUEPRINT_TEXT_GLOW_OPACITY = 0.4;
+// "Quick blur-to-sharp" on each text block's own arrival - a real
+// gaussianBlur effect (not the per-word engine, which has no blur
+// property - see textAnimator.js's own properties list) with a
+// keyframed radius, clearing fast right as the sentence starts building.
+const BLUEPRINT_TEXT_ENTRANCE_BLUR = 10;
+const BLUEPRINT_TEXT_ENTRANCE_BLUR_CLEAR = 0.18;
+// The "traveling highlight sweep" substitute: a quick glow-intensity
+// flash right as each box finishes landing, instead of a literal sweep
+// (no dash-offset primitive exists to animate one along the stroke).
+const BLUEPRINT_BOX_LAND_GLOW_PEAK = 0.85;
+const BLUEPRINT_BOX_LAND_GLOW_DURATION = 0.22;
+// "First box does a tiny reactive scale pulse when the second appears."
+const BLUEPRINT_REACTIVE_PULSE_SCALE = 1.035;
+const BLUEPRINT_REACTIVE_PULSE_DURATION = 0.16;
 const BLUEPRINT_GEAR_OUTER_RADIUS = 130;
 const BLUEPRINT_GEAR_INNER_RADIUS = 102;
 const BLUEPRINT_GEAR_TEETH = 10;
@@ -8530,9 +8583,14 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
     EXIT_START_2, EXIT_END_2, EXIT_START_1, EXIT_END_1,
   } = timing;
 
-  /** Builds every layer (box, 4 dots, text, particles) for ONE sentence. */
+  /**
+   * Builds every layer (box, 4 dots, text, particles) for ONE sentence.
+   * `reactivePulseAt` (sentence 1 only) is the moment sentence 2 starts
+   * building - direct spec: "when the second box appears, the first box
+   * can do a tiny reactive scale pulse so they feel connected."
+   */
   function buildSentence({
-    idPrefix, text, wrap, centerY, boxW, boxH, startTime, exitStart, exitEnd,
+    idPrefix, text, wrap, centerY, boxW, boxH, startTime, exitStart, exitEnd, reactivePulseAt,
   }) {
     // ---- box growth keyframes (own scale, box built at full size) ----
     const heightAt = (n) => (n * lineHeight + BLUEPRINT_BOX_PAD_Y * 2) / boxH;
@@ -8546,6 +8604,38 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
       cursor = Math.max(desired, cursor + 0.05);
       scaleKfs.push({ time: cursor, value: [1, heightAt(line)], interpolation: 'easing', easing: 'easeOutBack' });
     }
+    // The box has fully landed here - `cursor` is reused below both for
+    // the entrance particle burst (pre-existing) AND the new land-glow
+    // flash / micro-breathing window (god-tier upgrade pass).
+    const landedAt = cursor;
+    const restValue = [1, heightAt(wrap.lineCount)];
+
+    // ---- "almost imperceptible continuous micro-scale breathing" while
+    // the box just sits there built, plus (sentence 1 only) one bigger,
+    // deliberate reactive pulse the instant sentence 2 starts building -
+    // both expressed as small extra keyframes woven into the SAME scale
+    // track the corner dots already derive their own position from, so
+    // both effects apply to the dots too for free, no extra bookkeeping.
+    const halfPeriod = BLUEPRINT_BREATHE_PERIOD / 2;
+    let breatheT = landedAt + halfPeriod;
+    let breatheUp = true;
+    while (breatheT < exitStart - halfPeriod * 0.5) {
+      const amp = breatheUp ? 1 + BLUEPRINT_BREATHE_AMPLITUDE : 1;
+      scaleKfs.push({
+        time: breatheT, value: [amp, heightAt(wrap.lineCount) * amp], interpolation: 'easing', easing: 'easeInOutCubic',
+      });
+      breatheT += halfPeriod;
+      breatheUp = !breatheUp;
+    }
+    if (typeof reactivePulseAt === 'number' && reactivePulseAt > landedAt && reactivePulseAt < exitStart - 0.1) {
+      scaleKfs.push({
+        time: reactivePulseAt, value: [BLUEPRINT_REACTIVE_PULSE_SCALE, heightAt(wrap.lineCount) * BLUEPRINT_REACTIVE_PULSE_SCALE], interpolation: 'easing', easing: 'easeOutCubic',
+      });
+      scaleKfs.push({
+        time: reactivePulseAt + BLUEPRINT_REACTIVE_PULSE_DURATION, value: restValue, interpolation: 'easing', easing: 'easeInOutCubic',
+      });
+    }
+
     // Hold at full size, then exit - see this function's own outer doc
     // comment for the reverse-sentence-order exit stagger. Direct user
     // follow-up ("the outro is lackingg"): a flat instant scale-to-0.55
@@ -8558,7 +8648,7 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
     // the box visibly closes back down to roughly where it began, rather
     // than just shrinking to an arbitrary mid-size and fading.
     const exitDur = exitEnd - exitStart;
-    scaleKfs.push({ time: exitStart, value: [1, 1], interpolation: 'easing', easing: 'easeInBack' });
+    scaleKfs.push({ time: exitStart, value: restValue, interpolation: 'easing', easing: 'easeInBack' });
     scaleKfs.push({
       time: exitStart + exitDur * 0.18, value: [1.06, 1.06], interpolation: 'easing', easing: 'easeOutCubic',
     });
@@ -8583,6 +8673,18 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
       { time: exitEnd, value: 0 },
     ];
 
+    // "God-tier" pass, direct user go-ahead: sharper/brighter stroke
+    // (BLUEPRINT_BOX_STROKE_WIDTH bumped, see its own const comment), a
+    // secondary inset dashed line at lower per-CONTENT opacity for
+    // refinement (drawStroke/drawFill in engine/shapeLayer.js both
+    // resolve a real, independent `item.opacity`, confirmed by reading
+    // the engine directly - this doesn't need a second layer), and a
+    // soft outer glow that "lifts the box off the background," its own
+    // opacity KEYFRAMED to briefly flash right as the box lands
+    // (`landedAt`) - the substitute for the "traveling highlight sweep"
+    // ask, which has no real primitive here (no dash-offset animation
+    // support in drawStroke).
+    const insetMargin = BLUEPRINT_BOX_STROKE_WIDTH + 7;
     layers.push({
       id: `__bp_${idPrefix}_box__`,
       type: 'shape',
@@ -8596,6 +8698,32 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
         {
           type: 'stroke', color: accentColor, width: BLUEPRINT_BOX_STROKE_WIDTH, dash: BLUEPRINT_BOX_DASH,
         },
+        {
+          type: 'path',
+          shape: {
+            kind: 'rectangle', params: { width: boxW - insetMargin * 2, height: boxH - insetMargin * 2, roundness: 0 },
+          },
+        },
+        {
+          type: 'stroke', color: accentColor, width: 1.5, dash: BLUEPRINT_BOX_INSET_DASH, opacity: 0.4,
+        },
+      ],
+      effects: [
+        {
+          type: 'outerGlow',
+          params: {
+            color: accentColor,
+            blur: BLUEPRINT_BOX_GLOW_BLUR,
+            blendMode: 'screen',
+            opacity: {
+              keyframes: [
+                { time: startTime, value: 0, interpolation: 'hold' },
+                { time: landedAt, value: BLUEPRINT_BOX_LAND_GLOW_PEAK, interpolation: 'easing', easing: 'easeOutCubic' },
+                { time: landedAt + BLUEPRINT_BOX_LAND_GLOW_DURATION, value: BLUEPRINT_BOX_GLOW_OPACITY },
+              ],
+            },
+          },
+        },
       ],
     });
 
@@ -8604,6 +8732,32 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
     // itself (a parented dot would inherit the box's own scale and
     // shrink/distort along with it, instead of staying a constant small
     // dot that just repositions to track the box's current corner).
+    // Direct spec: "control points can pop in a couple of frames after
+    // the box stroke, or scale up quickly" / "scale down or fade
+    // slightly ahead of the stroke" - own opacity+scale tracks (position
+    // stays on posKfs, untouched) shifted later on entrance and earlier
+    // on exit relative to the box's own opacityKfs times, plus a real
+    // pop-in/pop-out scale (independent of the position track, which is
+    // absolute canvas coordinates, not a multiplier) so they read as
+    // having their own presence rather than being glued to the box.
+    const dotOpacityKfs = [
+      { time: opacityKfs[0].time + BLUEPRINT_DOT_ENTRANCE_DELAY, value: 0, interpolation: 'hold' },
+      { time: opacityKfs[1].time + BLUEPRINT_DOT_ENTRANCE_DELAY, value: 1, interpolation: 'hold' },
+      {
+        time: opacityKfs[2].time - BLUEPRINT_DOT_EXIT_LEAD, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+      },
+      { time: opacityKfs[3].time - BLUEPRINT_DOT_EXIT_LEAD, value: 0 },
+    ];
+    const dotScaleKfs = [
+      {
+        time: dotOpacityKfs[0].time, value: [0.3, 0.3], interpolation: 'easing', easing: 'easeOutBack',
+      },
+      { time: dotOpacityKfs[1].time + 0.08, value: [1, 1], interpolation: 'hold' },
+      {
+        time: dotOpacityKfs[2].time, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic',
+      },
+      { time: dotOpacityKfs[3].time, value: [0.3, 0.3] },
+    ];
     const corners = [
       ['tl', -1, -1], ['tr', 1, -1], ['bl', -1, 1], ['br', 1, 1],
     ];
@@ -8620,10 +8774,19 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
         width: BLUEPRINT_DOT_RADIUS * 2,
         height: BLUEPRINT_DOT_RADIUS * 2,
         position: { keyframes: posKfs },
-        opacity: { keyframes: opacityKfs },
+        opacity: { keyframes: dotOpacityKfs },
+        scale: { keyframes: dotScaleKfs },
         contents: [
           { type: 'path', shape: { kind: 'ellipse', params: { width: BLUEPRINT_DOT_RADIUS * 2, height: BLUEPRINT_DOT_RADIUS * 2 } } },
           { type: 'fill', color: accentColor },
+        ],
+        effects: [
+          {
+            type: 'outerGlow',
+            params: {
+              color: accentColor, opacity: BLUEPRINT_DOT_GLOW_OPACITY, blur: BLUEPRINT_DOT_GLOW_BLUR, blendMode: 'screen',
+            },
+          },
         ],
       });
     });
@@ -8699,6 +8862,36 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
       textAlign: 'center',
       maxWidth: BLUEPRINT_TEXT_MAX_WIDTH,
       position: [centerX, centerY],
+      // Explicit width/height REQUIRED here now that this layer carries
+      // `effects` - withEffects (sceneBuilder.js) falls back to the
+      // FULL FRAME for the effects buffer on any layer missing these, a
+      // real documented perf bug elsewhere in this same file's history.
+      // boxW/boxH already bound this text's own real on-screen area.
+      width: boxW,
+      height: boxH,
+      // "Quick blur-to-sharp" on arrival (own gaussianBlur, radius
+      // keyframed down to 0 fast) + a soft glow for typographic
+      // contrast/premium feel (own outerGlow, flat - no land-flash
+      // needed here, the box's own glow already sells that moment).
+      effects: [
+        {
+          type: 'gaussianBlur',
+          params: {
+            radius: {
+              keyframes: [
+                { time: startTime, value: BLUEPRINT_TEXT_ENTRANCE_BLUR, interpolation: 'easing', easing: 'easeOutCubic' },
+                { time: startTime + BLUEPRINT_TEXT_ENTRANCE_BLUR_CLEAR, value: 0 },
+              ],
+            },
+          },
+        },
+        {
+          type: 'outerGlow',
+          params: {
+            color: accentColor, opacity: BLUEPRINT_TEXT_GLOW_OPACITY, blur: BLUEPRINT_TEXT_GLOW_BLUR, blendMode: 'screen',
+          },
+        },
+      ],
       animators: [
         {
           selector: {
@@ -8742,7 +8935,7 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
   }
 
   buildSentence({
-    idPrefix: 's1', text: sentence1, wrap: wrap1, centerY: s1CenterY, boxW: s1Size.width, boxH: s1Size.height, startTime: timing.s1Start, exitStart: EXIT_START_1, exitEnd: EXIT_END_1,
+    idPrefix: 's1', text: sentence1, wrap: wrap1, centerY: s1CenterY, boxW: s1Size.width, boxH: s1Size.height, startTime: timing.s1Start, exitStart: EXIT_START_1, exitEnd: EXIT_END_1, reactivePulseAt: timing.s2Start,
   });
   buildSentence({
     idPrefix: 's2', text: sentence2, wrap: wrap2, centerY: s2CenterY, boxW: s2Size.width, boxH: s2Size.height, startTime: timing.s2Start, exitStart: EXIT_START_2, exitEnd: EXIT_END_2,
