@@ -7076,10 +7076,18 @@ function buildSquareSpinLayers({
  * badges already use (`{fixed: '#18140F'}`), reused verbatim here for
  * one less magic number in the contrast system.
  */
-const TRIPLE_STACK_NODE_WIDTH = 420;
-const TRIPLE_STACK_NODE_HEIGHT = 104;
-const TRIPLE_STACK_OFFSET_X = 90; // middle node's rightward shift over top/bottom
-const TRIPLE_STACK_ICON_SIZE = 46;
+// Real pixel measurements off a coordinate-gridded reference frame
+// (A6.mp4, settled pre-shrink frame) - direct user correction after the
+// first pass shipped with values eyeballed from screenshots instead:
+// node ~580x145 in the reference's own 720x1280 frame, middle node's
+// left edge sits ~78px right of top/bottom's own left edge, icon
+// diameter ~90-100px, text starts well clear of the icon with a wide
+// remaining box (never wraps in the reference). Scaled by 540/720=0.75
+// into this project's own CANVAS_WIDTH/HEIGHT.
+const TRIPLE_STACK_NODE_WIDTH = 435;
+const TRIPLE_STACK_NODE_HEIGHT = 108;
+const TRIPLE_STACK_OFFSET_X = 58; // middle node's rightward shift over top/bottom
+const TRIPLE_STACK_ICON_SIZE = 64;
 const TRIPLE_STACK_ENTER_DURATION = 0.5;
 const TRIPLE_STACK_SETTLE_HOLD = 0.15;
 const TRIPLE_STACK_SHRINK_DURATION = 0.2;
@@ -7178,7 +7186,12 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
   const layers = [];
 
   const stackTop = CANVAS_HEIGHT / 2 - (TRIPLE_STACK_NODE_HEIGHT * 3) / 2;
-  const centerX = EDGE_MARGIN_PX + TRIPLE_STACK_NODE_WIDTH / 2;
+  // A bit more than EDGE_MARGIN_PX on purpose - direct user correction
+  // ("they are meant to move to the middle") after the first pass let
+  // the middle node's own right edge sit flush against the canvas edge,
+  // reading as stuck to the border rather than a settled, centered
+  // group with real breathing room on both sides.
+  const centerX = 20 + TRIPLE_STACK_NODE_WIDTH / 2;
   const rowY = [
     stackTop + TRIPLE_STACK_NODE_HEIGHT * 0.5,
     stackTop + TRIPLE_STACK_NODE_HEIGHT * 1.5,
@@ -7240,8 +7253,24 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
       },
     });
 
-    const iconLocalX = -TRIPLE_STACK_NODE_WIDTH / 2 + 26 + TRIPLE_STACK_ICON_SIZE / 2;
-    const textLocalX = iconLocalX + TRIPLE_STACK_ICON_SIZE / 2 + 18;
+    const iconLocalX = -TRIPLE_STACK_NODE_WIDTH / 2 + 24 + TRIPLE_STACK_ICON_SIZE / 2;
+    // Real, direct user correction: text was wrapping and sitting in the
+    // wrong spot. Root cause was a real engine quirk, not just a narrow
+    // number - textAnimator.js's layoutText always centers a
+    // textAlign:'left' box on `centerX` (0 by default here, i.e. this
+    // layer's OWN local origin, the parent-translated "position" point),
+    // NEVER on `position` itself. Passing `position:[textLocalX,0]`
+    // (what the first pass did) therefore centered the box AT textLocalX
+    // instead of starting it there - text rendered ~half its own maxWidth
+    // too far left, overlapping the icon. Fixed by placing `position` at
+    // the intended box's own CENTER (textBoxStart + width/2) instead, so
+    // textAlign:'left' correctly starts the actual glyphs at
+    // textBoxStart. Width is generous (icon's right edge to the node's
+    // own right inner edge) - the reference's own text never wraps, and
+    // neither should this at the compact spec's own 1-3 word cap.
+    const textBoxStart = iconLocalX + TRIPLE_STACK_ICON_SIZE / 2 + 18;
+    const textBoxWidth = (TRIPLE_STACK_NODE_WIDTH / 2 - 20) - textBoxStart;
+    const textLocalX = textBoxStart + textBoxWidth / 2;
 
     layers.push({
       id: `__stack_node_${i}__`,
@@ -7267,7 +7296,6 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
       position: [iconLocalX, 0],
       effects: [{ type: 'gaussianBlur', params: { radius: scaledBlur(blurTrack(), TRIPLE_STACK_BLUR_RADIUS_ICON) } }],
     });
-    const textMaxWidth = TRIPLE_STACK_NODE_WIDTH / 2 - (textLocalX - (-TRIPLE_STACK_NODE_WIDTH / 2)) - 16;
     // Real, confirmed-live engine bug found building this template: a
     // PARENTED text layer with a non-empty "effects" array (gaussianBlur
     // OR outerGlow, either alone) renders a small ghost duplicate of
@@ -7296,7 +7324,7 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
       fontSize: 19,
       fillStyle: ICON_BRIGHT_TINT,
       textAlign: 'left',
-      maxWidth: textMaxWidth,
+      maxWidth: textBoxWidth,
       position: [textLocalX, 0],
       opacity: { keyframes: textBloom.keyframes.map((kf) => ({ ...kf, value: 1 - kf.value * 0.55 })) },
       scale: { keyframes: textBloom.keyframes.map((kf) => ({ ...kf, value: [1 + kf.value * 0.1, 1 + kf.value * 0.1] })) },
