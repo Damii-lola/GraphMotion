@@ -434,6 +434,10 @@ const COMPACT_BASE_DURATION = {
   // (doesn't depend on either text's length), so this seed is just that
   // same real, always-exact value.
   lineReveal: 4.41,
+  // Immediately overwritten by typewriterLinkMinDuration(wordCount1) in
+  // sceneSchema.js's own dispatch branch - this is just a reasonable
+  // seed, ~typewriterLinkMinDuration for a typical 2-word line1.
+  typewriterLink: 4.61,
 };
 
 /**
@@ -634,8 +638,21 @@ function validateCompactBeatVars(template, vars) {
       if (w2.length < 1) return 'needs "text2": a real secondary line (at least 1 word)';
       return null;
     }
+    case 'typewriterLink': {
+      // Real lower-bound floor: line1 needs a real "space between the
+      // words" for the connector's own opening drop to spawn from (see
+      // buildTypewriterLinkLayers' own doc comment) - a 1-word line1
+      // degenerates to a dead-center spawn instead.
+      const l1 = typeof vars.line1 === 'string' ? vars.line1.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      const l2 = typeof vars.line2 === 'string' ? vars.line2.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      const l3 = typeof vars.line3 === 'string' ? vars.line3.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      if (l1.length < 2) return `needs "line1": at least 2 words (got ${l1.length}) - the connector's own opening drop spawns from the space between them`;
+      if (l2.length < 1) return 'needs "line2": a real short connector phrase (at least 1 word)';
+      if (l3.length < 1) return 'needs "line3": a real outcome phrase (at least 1 word)';
+      return null;
+    }
     default:
-      return `"${template}" is not one of the 15 real template names`;
+      return `"${template}" is not one of the 16 real template names`;
   }
 }
 

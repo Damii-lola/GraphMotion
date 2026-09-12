@@ -2171,6 +2171,15 @@ function validateBeatVisual(visual, path, errors, knownIds, opts = {}) {
     // predicted; actualWidth alone undercounts a single oversized word
     // that was being silently capped at maxWidth until now).
     const effWidth = Math.max(1, size.width, size.actualWidth || 0);
+    // NOTE: `position` is always the CENTER of the maxWidth box here,
+    // even for `textAlign:'left'`/`'right'` - engine/textAnimator.js's
+    // own layoutText computes the real draw-start x as
+    // `centerX -+ maxWidth/2` for those alignments (a real, direct-
+    // measured confirmation while chasing an unrelated typewriterLink
+    // bug: a left-aligned layer's own text rendered starting at
+    // `position - maxWidth/2`, not at `position` itself). So this box
+    // stays symmetric around `pos[0]` regardless of alignment - no
+    // per-alignment branch needed here.
     const left = pos[0] - effWidth / 2;
     const right = pos[0] + effWidth / 2;
     const offLeft = Math.max(0, -left);
@@ -2250,10 +2259,33 @@ function validateBeatVisual(visual, path, errors, knownIds, opts = {}) {
   // non-text layers. Uses the layer's own literal width/height
   // directly (no wrapping/char-width estimation needed, unlike text),
   // via the shared clampSettledPositionToCanvas helper.
+  //
+  // Real, confirmed-live bug found building typewriterLink (2026-09-12):
+  // this clamp assumes CENTER anchoring (`pos[0] +- effWidth/2`), with
+  // no idea a layer can set its own `anchor` to pivot around a DIFFERENT
+  // point (e.g. a right-anchored trackMatte rect, whose `position` is
+  // its own RIGHT edge, not its center). For a wide right-anchored
+  // matte sitting well inside the canvas, this still computed a phantom
+  // "right overflow" (checking position+width/2, which massively
+  // overstates how far right a right-anchored shape actually reaches)
+  // and yanked it leftward - silently clipping the real text it was
+  // supposed to fully reveal (the masked text's own last character
+  // vanished entirely, confirmed via direct pixel inspection, not a
+  // guess). A trackMatte SOURCE never renders independently anyway
+  // (layerStack.js hides it from the main stack on purpose), so
+  // "keeping it on-canvas" was never a meaningful goal for one in the
+  // first place - skipped outright, same exclusion applyMographGlow
+  // above already uses for the identical reason.
+  const twlMatteSourceIds = new Set(
+    visual.layers
+      .filter((l) => isPlainObject(l) && isPlainObject(l.trackMatte) && typeof l.trackMatte.source === 'string')
+      .map((l) => l.trackMatte.source),
+  );
   visual.layers.forEach((layer) => {
     if (!isPlainObject(layer) || layer.parent) return;
     if (layer.type !== 'shape' && layer.type !== 'image') return;
     if (typeof layer.width !== 'number' || typeof layer.height !== 'number') return;
+    if (typeof layer.id === 'string' && twlMatteSourceIds.has(layer.id)) return;
     clampSettledPositionToCanvas(layer, layer.width, layer.height);
   });
 
@@ -2577,6 +2609,10 @@ function autoRepairBeat(beat) {
         // matching check for the full live-confirmed reason this takes
         // the larger of the two rather than either alone.
         const effWidth = Math.max(1, size.width, size.actualWidth || 0);
+        // NOTE: `position` is always the CENTER of the maxWidth box, even
+        // for `textAlign:'left'`/`'right'` - see validateBeatVisual's own
+        // matching check for the direct confirmation of why (layoutText's
+        // real `centerX -+ maxWidth/2` math). No per-alignment branch needed.
         const clampX = (x) => {
           // Same tightened threshold/margin as validateBeatVisual's own
           // matching check (this is defense-in-depth for the same
@@ -11610,6 +11646,665 @@ function buildLineRevealLayers({ text1, text2, accentColor }) {
   ];
 }
 
+// ---------------------------------------------------------------------
+// typewriterLink (16th mograph template) - built from a direct
+// reference video (B1.mp4) per an explicit, verbatim user request:
+// "copy the scene design for design, animation for animation." Three
+// short lines connected by a single accent line that: pops as a
+// vertical tick below the gap between line1's own typewriter-revealed
+// words, shifts to the block's own left margin, stays put while line2
+// reveals (RIGHT-anchored - confirmed via direct frame-by-frame
+// inspection that the text's own FAR end appears first, its near-the-
+// line end last, not the other way around), draws rightward into an
+// underline once line2 is fully revealed, grows a new vertical drop
+// from the underline's own right end, retracts its own start (leaving
+// only that drop visible - a real trim-path "moving window," not two
+// separate handed-off elements), shifts back to the left margin for
+// line3, reveals line3 the same right-anchored way, then grows upward
+// into one tall accent bar spanning all three lines. After a short
+// hold, the bar sweeps right - erasing all three lines from their own
+// left edge as it crosses them (the exact same real crossing-time
+// position-lock lineReveal's own bar uses, generalized to the X axis
+// via the SAME findLineRevealCrossingTime/lineRevealWindowKeyframes) -
+// then rotates -90 degrees and contracts to nothing.
+// ---------------------------------------------------------------------
+
+const TWL_ROW_HEIGHT = 58;
+const TWL_FONT_SIZE = 44;
+const TWL_ROW1_Y = 420;
+const TWL_ROW2_Y = TWL_ROW1_Y + TWL_ROW_HEIGHT;
+const TWL_ROW3_Y = TWL_ROW2_Y + TWL_ROW_HEIGHT;
+// How far below each row's own vertical center the connector/underline
+// sits - comfortably below descenders without floating away from the text.
+const TWL_UNDERLINE_DROP = TWL_FONT_SIZE * 0.62;
+const TWL_THICKNESS = 5;
+const TWL_MAX_TEXT_WIDTH = 460;
+
+const TWL_WORD_STAGGER = 0.16;
+const TWL_WORD_POP_DURATION = 0.22;
+// Direct correction: "the typewriter animation... improve it" - a soft
+// per-word fade instead of an instant opacity snap (the reveal's own
+// keyframe used to hold flat then jump straight to the next word's
+// value with no transition at all).
+const TWL_WORD_FADE_DURATION = 0.09;
+const TWL_CAPTION_RISE_PX = 14;
+const TWL_LINE1_SETTLE = 0.15;
+const TWL_PRE_DROP_PAUSE = 0.06;
+const TWL_DROP_GROW_DURATION = 0.22;
+const TWL_DROP_SETTLE = 0.1;
+const TWL_SHIFT_DURATION = 0.22;
+const TWL_POST_SHIFT_PAUSE = 0.05;
+const TWL_TEXT_REVEAL_DURATION = 0.32;
+const TWL_POST_REVEAL_PAUSE = 0.06;
+const TWL_UNDERLINE_DRAW_DURATION = 0.24;
+const TWL_DROP2_DRAW_DURATION = 0.22;
+const TWL_RETRACT_DURATION = 0.22;
+const TWL_FULLBAR_GROW_DURATION = 0.3;
+const TWL_HOLD_DURATION = 0.35;
+const TWL_SWEEP_DURATION = 0.55;
+const TWL_ROTATE_DURATION = 0.22;
+const TWL_CONTRACT_DURATION = 0.2;
+const TWL_END_BUFFER = 0.12;
+
+/** Shared by typewriterLinkMinDuration and buildTypewriterLinkLayers - every absolute time this template's own layers key off of, derived once from wordCount1 (line1's own word count determines how long its typewriter build takes) and the fixed constants above. */
+function computeTypewriterLinkTiming(wordCount1) {
+  const lastWordStart = TWL_WORD_STAGGER * (wordCount1 - 1);
+  const line1PopEnd = lastWordStart + TWL_WORD_POP_DURATION;
+  const line1SettleEnd = line1PopEnd + TWL_LINE1_SETTLE;
+
+  const dropStart = line1SettleEnd + TWL_PRE_DROP_PAUSE;
+  const dropPeakTime = dropStart + TWL_DROP_GROW_DURATION;
+  const dropSettleEnd = dropPeakTime + TWL_DROP_SETTLE;
+
+  const shiftStart = dropSettleEnd;
+  const shiftEnd = shiftStart + TWL_SHIFT_DURATION;
+
+  const line2RevealStart = shiftEnd + TWL_POST_SHIFT_PAUSE;
+  const line2RevealEnd = line2RevealStart + TWL_TEXT_REVEAL_DURATION;
+
+  const underlineStart = line2RevealEnd + TWL_POST_REVEAL_PAUSE;
+  const underlineEnd = underlineStart + TWL_UNDERLINE_DRAW_DURATION;
+
+  const drop2Start = underlineEnd;
+  const drop2PeakTime = drop2Start + TWL_DROP2_DRAW_DURATION;
+  const drop2SettleEnd = drop2PeakTime + TWL_DROP_SETTLE;
+
+  const retractStart = drop2SettleEnd;
+  const retractEnd = retractStart + TWL_RETRACT_DURATION;
+
+  const shift2Start = retractEnd;
+  const shift2End = shift2Start + TWL_SHIFT_DURATION;
+
+  const line3RevealStart = shift2End + TWL_POST_SHIFT_PAUSE;
+  const line3RevealEnd = line3RevealStart + TWL_TEXT_REVEAL_DURATION;
+
+  const fullBarStart = line3RevealEnd + TWL_POST_REVEAL_PAUSE;
+  const fullBarEnd = fullBarStart + TWL_FULLBAR_GROW_DURATION;
+
+  const holdEnd = fullBarEnd + TWL_HOLD_DURATION;
+
+  const sweepStart = holdEnd;
+  const sweepEnd = sweepStart + TWL_SWEEP_DURATION;
+
+  const rotateStart = sweepEnd;
+  const rotateEnd = rotateStart + TWL_ROTATE_DURATION;
+
+  const contractStart = rotateEnd;
+  const contractEnd = contractStart + TWL_CONTRACT_DURATION;
+
+  return {
+    lastWordStart,
+    line1PopEnd,
+    line1SettleEnd,
+    dropStart,
+    dropPeakTime,
+    dropSettleEnd,
+    shiftStart,
+    shiftEnd,
+    line2RevealStart,
+    line2RevealEnd,
+    underlineStart,
+    underlineEnd,
+    drop2Start,
+    drop2PeakTime,
+    drop2SettleEnd,
+    retractStart,
+    retractEnd,
+    shift2Start,
+    shift2End,
+    line3RevealStart,
+    line3RevealEnd,
+    fullBarStart,
+    fullBarEnd,
+    holdEnd,
+    sweepStart,
+    sweepEnd,
+    rotateStart,
+    rotateEnd,
+    contractStart,
+    contractEnd,
+  };
+}
+
+function typewriterLinkMinDuration(wordCount1) {
+  const t = computeTypewriterLinkTiming(wordCount1);
+  return t.contractEnd + TWL_END_BUFFER;
+}
+
+/**
+ * A dedicated, otherwise-invisible matte for one row's own reveal/hide -
+ * RIGHT-anchored (anchor at the rect's own right edge, position at the
+ * row's own fixed right edge) so scaleX growing 0->1 reveals the row
+ * from its FAR end first, its near-the-connector end last - a direct,
+ * confirmed-via-frame-inspection match for the reference's own reveal
+ * order (a mid-reveal frame showed "eads to" already visible while only
+ * "l" stayed hidden, right next to the connector - the opposite of a
+ * plain left-to-right typewriter). The exact same rect run in reverse
+ * (scaleX 1->0, still right-anchored) is what the outro's left-to-right
+ * erase needs too - a right-anchored rect shrinking still loses its
+ * LEFT edge first (the edge farthest from the fixed anchor), matching
+ * the reference's own outro (text disappears from the left as the
+ * connector sweeps past). One consistent pin direction covers both.
+ */
+// Real, direct render-frame finding: with NO right-side margin, this
+// matte's own fully-open right edge landed EXACTLY at `rightX` (this
+// file's own externally measured ctx.measureText width) - close enough
+// for the real text-layout engine's own rendered glyph (font hinting/
+// antialiasing, real glyph ink bleeding slightly past the reported
+// advance width) to clip the LAST character's own right edge, showing
+// up as a persistently half-transparent last letter (confirmed via a
+// real render's own last-character pixel inspection, not guessed).
+// Padding the right side the same way the left already was fixes it.
+const TWL_MATTE_RIGHT_MARGIN = 16;
+// Direct correction: "move the line ie the accent bar to be 7px left leaving
+// the texts positions the same" - shifts only the connector's/fullBar's own
+// resting-at-the-margin X, NOT `LEFT_X` itself (which still governs every
+// text layer's real left edge and the underline's own width/right-edge math).
+const TWL_BAR_LEFT_NUDGE = 7;
+
+function buildTypewriterLinkTextMatte(id, rightX, y, width, height, scaleXKeyframes) {
+  const paddedWidth = width + TWL_MATTE_RIGHT_MARGIN;
+  return {
+    id,
+    type: 'shape',
+    width: paddedWidth,
+    height,
+    position: [rightX + TWL_MATTE_RIGHT_MARGIN, y],
+    anchor: [paddedWidth / 2, 0],
+    scale: { keyframes: scaleXKeyframes.map((kf) => ({ ...kf, value: [kf.value, 1] })) },
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: paddedWidth, height } } },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+  };
+}
+
+function buildTypewriterLinkLayers({
+  line1, line2, line3, accentColor,
+}) {
+  const words1 = line1.split(' ').filter((w) => w.length > 0);
+  const t = computeTypewriterLinkTiming(words1.length);
+  const CX = CANVAS_WIDTH / 2;
+  // Direct correction: "I'm tired of seeing this font, change it" - swapped
+  // from the sans-heavy face (already the go-to choice on several other
+  // templates by this point) to the serif-heavy one in the SAME
+  // deterministic pairing, giving this template its own distinct look.
+  const pairing = FONT_PAIRINGS[hashString(line1 + line2 + line3) % FONT_PAIRINGS.length];
+  const fontFamily = pairing.serif.heavy;
+
+  // Real ctx.measureText call against the EXACT font this renders with -
+  // same established convention as textPopOut's own per-word layout
+  // (measureCtx above) - needed for the gap-between-words spawn point,
+  // the block's own shared left margin, and every segment length the
+  // connector/mattes below are built from.
+  const measureCtx = createCanvas(10, 10).getContext('2d');
+  measureCtx.font = `400 ${TWL_FONT_SIZE}px ${fontFamily}`;
+  const WORD_GAP = TWL_FONT_SIZE * 0.28;
+  // Measured in the SAME case the layer actually renders (`line1.toUpperCase()`
+  // below) - uppercase glyphs run noticeably wider than the mixed-case source
+  // words, so measuring the original casing here under-measured totalWidth1
+  // by ~60px+ and clipped the row's own last character against its matte.
+  const word1Widths = words1.map((w) => measureCtx.measureText(w.toUpperCase()).width);
+  const totalWidth1 = word1Widths.reduce((a, b) => a + b, 0) + WORD_GAP * (words1.length - 1);
+  // Direct correction: "the text are meant to be at the middle, but you
+  // left aligned treating the line as the border." Line1 used to render
+  // CENTER-aligned on its own width alone, with lines 2/3 separately
+  // left-aligned to ITS edge - fine when all 3 rows measure about the
+  // same, but visibly off-center as a BLOCK whenever they don't (line3
+  // here is meaningfully wider than line1). Cursor now measured from a
+  // LEFT origin (0, not -totalWidth1/2) so `gapLocalX` below is relative
+  // to line1's own left edge, matching how all 3 rows are actually laid
+  // out once LEFT_X (below) is resolved.
+  let cursor = 0;
+  const word1LocalX = [];
+  let gapLocalX = 0;
+  word1Widths.forEach((w, i) => {
+    word1LocalX.push(cursor + w / 2);
+    cursor += w;
+    if (i === 0) gapLocalX = cursor + WORD_GAP / 2;
+    cursor += WORD_GAP;
+  });
+  // A real 1-word line1 has no "space between the words" to spawn from -
+  // validateCompactBeatVars requires >=2 words, but the isolated builder
+  // (this function) falls back to spawning dead-center rather than
+  // crashing, same defensive spirit as every other template's own
+  // isolated-input tolerance.
+  if (words1.length < 2) gapLocalX = totalWidth1 / 2;
+
+  const line2Text = truncateAtWordBoundary(line2, 24);
+  const line3Text = truncateAtWordBoundary(line3, TWL_MAX_TEXT_WIDTH / (TWL_FONT_SIZE * 0.55));
+  const underlineWidthRaw = measureCtx.measureText(line2Text.toUpperCase()).width;
+  const totalWidth3 = measureCtx.measureText(line3Text.toUpperCase()).width;
+
+  // The block's own shared left margin is centered on the WIDEST row
+  // (not just line1's) so the whole 3-line block reads as centered on
+  // the canvas, each row simply left-aligned WITHIN that centered block -
+  // the same "ragged-right, centered block" layout the reference itself
+  // uses. line1 (now left-aligned too, see its own `position` below)
+  // shares this exact edge like the other two rows already did.
+  const maxRowWidth = Math.max(totalWidth1, underlineWidthRaw, totalWidth3);
+  const LEFT_X = CX - maxRowWidth / 2;
+  const gapX = LEFT_X + gapLocalX;
+  const underlineWidth = Math.min(TWL_MAX_TEXT_WIDTH - (LEFT_X - 20), underlineWidthRaw);
+
+  const row1RightX = LEFT_X + totalWidth1;
+  const row2RightX = LEFT_X + underlineWidth;
+  const row3RightX = LEFT_X + totalWidth3;
+
+  // A left-aligned text layer's own `position` is the CENTER of its
+  // `maxWidth` box (see line1Layer's own doc comment for the direct-
+  // confirmed engine behavior), so any maxWidth choice can be made to
+  // land its real left edge exactly at LEFT_X by offsetting position by
+  // half of it - but the box's own RIGHT edge (`LEFT_X + maxWidth`)
+  // still has to stay on-canvas, or validateBeatVisual's own off-canvas
+  // clamp (correctly, from its own perspective) treats the declared box
+  // as overflowing and moves the layer. This picks a buffer generous
+  // enough to survive this file's own word-width estimate running
+  // measurably narrower than the real font's actual space-character
+  // width (the direct cause of a real, confirmed live-render wrap: "GOOD
+  // DESIGN" broke onto 2 lines because the "+60" buffer this used before
+  // wasn't enough slack once the real render's own space glyph came in
+  // wider than estimated) - while never exceeding the real on-canvas room.
+  function safeMaxWidth(realWidth) {
+    return Math.min(realWidth + 120, CANVAS_WIDTH - LEFT_X - 10);
+  }
+
+  // Direct correction: "why is it that in the outro the line goes all
+  // the way to the end... it should go to the middle not the end." An
+  // earlier version extended this past CX whenever a row measured wider
+  // than the block's own center point, to guarantee that row's own
+  // rightmost sliver got fully erased - direct spec rejects that
+  // tradeoff outright: the bar always returns to the true canvas center,
+  // full stop, even if a wide row's own text isn't 100% swept by then.
+  const sweepEndX = CX;
+
+  // ---- line1: word-by-word typewriter, now with a proper kinetic
+  // entrance (soft per-word fade instead of an instant opacity snap,
+  // plus the same "slight vertical rise" whole-line settle yearScroller/
+  // counter's own caption reveals already use) - direct correction: "the
+  // typewriter animation... improve it." ----
+  const revealKfs1 = [];
+  const popStartKfs1 = [];
+  const popEndKfs1 = [];
+  const halfWidthPct1 = 100 / (words1.length * 6);
+  words1.forEach((w, i) => {
+    const wt = i * TWL_WORD_STAGGER;
+    const centerPct = ((i + 0.5) / words1.length) * 100;
+    const prevPct = Math.round((i / words1.length) * 10000) / 100;
+    const newPct = Math.round(((i + 1) / words1.length) * 10000) / 100;
+    revealKfs1.push({
+      time: wt, value: prevPct, interpolation: 'easing', easing: 'easeOutCubic',
+    });
+    revealKfs1.push({ time: wt + TWL_WORD_FADE_DURATION, value: newPct, interpolation: 'hold' });
+    popStartKfs1.push({ time: wt, value: centerPct - halfWidthPct1 });
+    popEndKfs1.push({ time: wt, value: centerPct + halfWidthPct1 });
+  });
+  popStartKfs1.push({ time: t.lastWordStart + TWL_WORD_POP_DURATION, value: -1000 });
+  popEndKfs1.push({ time: t.lastWordStart + TWL_WORD_POP_DURATION, value: -1000 });
+
+  const line1RowHeight = TWL_FONT_SIZE * 1.8;
+  // Real, confirmed-live bug found building typewriterLink (2026-09-12):
+  // `layoutText`'s (engine/textAnimator.js) own `textAlign:'left'`
+  // support computes the real draw-start x as `centerX - maxWidth/2` -
+  // "position" is the CENTER of the maxWidth BOX, exactly like it is
+  // for 'center' alignment, NOT the text's own left edge the way a
+  // naive reading of "left-aligned" suggests. Passing LEFT_X directly
+  // as position (as if it WERE the left edge) put the real left edge at
+  // `LEFT_X - maxWidth/2` instead - comfortably negative, off-canvas,
+  // confirmed directly via a real render showing only the tail end of
+  // every row ("N", "S TO", "USINESS" - the parts that happened to
+  // still land on-canvas). The fix is arithmetic, not a different
+  // engine call: solve `centerX - maxWidth/2 = LEFT_X` for centerX.
+  const line1MaxWidth = safeMaxWidth(totalWidth1);
+  const line1Matte = buildTypewriterLinkTextMatte('__twl_matte1__', row1RightX, TWL_ROW1_Y, totalWidth1 + 20, line1RowHeight, [
+    { time: 0, value: 1, interpolation: 'hold' },
+    ...lineRevealWindowKeyframes(t.sweepStart, t.sweepEnd, LEFT_X, sweepEndX, 'easeInOutCubic', LEFT_X, row1RightX, false),
+  ]);
+  const line1Layer = {
+    id: '__twl_line1__',
+    type: 'text',
+    text: line1.toUpperCase(),
+    fontFamily,
+    fontWeight: '400',
+    fontSize: TWL_FONT_SIZE,
+    fillStyle: '#FFFFFF',
+    textAlign: 'left',
+    // Direct spec: "give it a fast kinetic entrance... slight vertical
+    // rise" - same convention buildCounterCaptionLineLayer's own reveal
+    // text already established.
+    position: {
+      keyframes: [
+        {
+          time: 0, value: [LEFT_X + line1MaxWidth / 2, TWL_ROW1_Y + TWL_CAPTION_RISE_PX], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: 0.3, value: [LEFT_X + line1MaxWidth / 2, TWL_ROW1_Y] },
+      ],
+    },
+    // A real measured width + a real (not maximal) safety buffer - wide
+    // enough that a small this-file-vs-real-renderer measurement gap
+    // never triggers an unwanted wrap (an earlier, near-canvas-width
+    // maxWidth caused a DIFFERENT real bug: validateBeatVisual's own
+    // off-canvas text clamp uses maxWidth itself as its worst-case
+    // width estimate, and a left-aligned layer with a huge maxWidth
+    // reads as "half of it hangs off the right edge" even when the
+    // real rendered text is nowhere near that wide - silently yanking
+    // this layer back toward center and breaking the shared left
+    // margin every row in this template relies on).
+    maxWidth: line1MaxWidth,
+    width: CANVAS_WIDTH,
+    height: line1RowHeight,
+    trackMatte: { source: '__twl_matte1__', type: 'alpha' },
+    effects: [
+      { type: 'outerGlow', params: { blur: 10, color: '#FFFFFF', opacity: 0.4, blendMode: 'screen' } },
+    ],
+    animators: [
+      {
+        selector: {
+          type: 'range', start: 0, end: { keyframes: revealKfs1 }, basedOn: 'words',
+        },
+        properties: { opacity: -1 },
+      },
+      {
+        selector: {
+          type: 'range', start: { keyframes: popStartKfs1 }, end: { keyframes: popEndKfs1 }, basedOn: 'words', shape: 'triangle',
+        },
+        invert: false,
+        properties: { scale: 1.3 },
+      },
+    ],
+  };
+
+  // ---- connector: one customPath (drop -> underline -> drop) whose
+  // trim start/end together act as a moving window along a fixed shape,
+  // plus a position that translates between the gap, the left margin,
+  // and the left-margin-minus-underline-width spawn point for line3's
+  // own tick - see this whole section's own header comment for the full
+  // story of why this is ONE element instead of several handed off. ----
+  const dropSpawnY = TWL_ROW1_Y + TWL_UNDERLINE_DROP;
+  const D1 = TWL_ROW_HEIGHT;
+  const U = underlineWidth;
+  const D2 = TWL_ROW_HEIGHT;
+  const pathTotal = D1 + U + D2;
+  const frac1 = (D1 / pathTotal) * 100;
+  const frac2 = ((D1 + U) / pathTotal) * 100;
+  const connectorAnchors = [
+    { point: [0, 0] },
+    { point: [0, D1] },
+    { point: [U, D1] },
+    { point: [U, D1 + D2] },
+  ];
+  const connectorPath = {
+    id: '__twl_connector__',
+    type: 'shape',
+    width: U,
+    height: D1 + D2,
+    position: {
+      keyframes: [
+        { time: 0, value: [gapX, dropSpawnY], interpolation: 'hold' },
+        {
+          time: t.shiftStart, value: [gapX, dropSpawnY], interpolation: 'easing', easing: 'easeOutBack',
+        },
+        { time: t.shiftEnd, value: [LEFT_X - TWL_BAR_LEFT_NUDGE, dropSpawnY], interpolation: 'hold' },
+        {
+          time: t.shift2Start, value: [LEFT_X - TWL_BAR_LEFT_NUDGE, dropSpawnY], interpolation: 'easing', easing: 'easeOutBack',
+        },
+        { time: t.shift2End, value: [LEFT_X - TWL_BAR_LEFT_NUDGE - U, dropSpawnY], interpolation: 'hold' },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 1, interpolation: 'hold' },
+        {
+          time: t.fullBarStart, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: t.fullBarStart + 0.1, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'customPath', params: { anchors: connectorAnchors, closed: false } } },
+      {
+        type: 'trim',
+        start: {
+          keyframes: [
+            { time: 0, value: 0, interpolation: 'hold' },
+            {
+              time: t.retractStart, value: 0, interpolation: 'easing', easing: 'easeInOutCubic',
+            },
+            { time: t.retractEnd, value: frac2, interpolation: 'hold' },
+          ],
+        },
+        end: {
+          keyframes: [
+            { time: 0, value: 0, interpolation: 'hold' },
+            {
+              time: t.dropStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+            },
+            { time: t.dropPeakTime, value: frac1, interpolation: 'hold' },
+            {
+              time: t.underlineStart, value: frac1, interpolation: 'easing', easing: 'easeOutCubic',
+            },
+            { time: t.underlineEnd, value: frac2, interpolation: 'hold' },
+            {
+              time: t.drop2Start, value: frac2, interpolation: 'easing', easing: 'easeOutCubic',
+            },
+            { time: t.drop2PeakTime, value: 100, interpolation: 'hold' },
+          ],
+        },
+      },
+      { type: 'stroke', color: '#FFFFFF', width: TWL_THICKNESS, cap: 'round' },
+      // Real, found-via-real-pipeline-testing bug: attachLineRevealSparks
+      // (an existing, unrelated general-purpose pass - it auto-attaches a
+      // traveling spark to ANY customPath+trim+stroke shape with no fill,
+      // originally written for connectorList's own always-static-position
+      // connector line) matched this shape too, but assumes the shape's
+      // OWN position never moves (it offsets every sampled point by
+      // `representativePosition`, which reads the LAST position keyframe -
+      // for this shape that's the post-shift2 spawn point, wrong for the
+      // entire trim-growth window that happens BEFORE that shift). A
+      // zero-opacity fill opts this shape out of that pass entirely (its
+      // own `hasFill` guard) without changing anything visible - this
+      // template doesn't need the bonus spark, and a WRONG one is worse
+      // than none.
+      { type: 'fill', color: '#FFFFFF', opacity: 0 },
+    ],
+    // Without an explicit glow here this shape got the generic shape-glow
+    // default (blur:22) meant for bold icon strokes - way too wide for a
+    // thin 5px connecting line, and it washed out line2's own leading
+    // letter sitting right at the same margin x. Same tightened treatment
+    // as the fullBar above.
+    effects: [
+      { type: 'outerGlow', params: { blur: 4, color: '#FFFFFF', opacity: 0.4, blendMode: 'screen' } },
+    ],
+  };
+
+  // ---- line2 ("leads to"-style short connector phrase, accent color) ----
+  const line2MaxWidth = safeMaxWidth(underlineWidthRaw);
+  const line2Matte = buildTypewriterLinkTextMatte('__twl_matte2__', row2RightX, TWL_ROW2_Y, underlineWidth + 20, TWL_FONT_SIZE * 1.8, [
+    { time: 0, value: 0, interpolation: 'hold' },
+    {
+      time: t.line2RevealStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+    },
+    { time: t.line2RevealEnd, value: 1, interpolation: 'hold' },
+    ...lineRevealWindowKeyframes(t.sweepStart, t.sweepEnd, LEFT_X, sweepEndX, 'easeInOutCubic', LEFT_X, row2RightX, false),
+  ]);
+  const line2Layer = {
+    id: '__twl_line2__',
+    type: 'text',
+    text: line2Text.toUpperCase(),
+    fontFamily,
+    fontWeight: '400',
+    fontSize: TWL_FONT_SIZE,
+    fillStyle: accentColor,
+    textAlign: 'left',
+    // A real measured width + a real (capped, on-canvas-safe) buffer -
+    // see line1Layer's own doc comment for the exact wrap bug this
+    // avoids, and safeMaxWidth's own doc comment for why the buffer is
+    // capped rather than just generous. `position` is the CENTER of
+    // this maxWidth box even though textAlign is 'left' (again, see
+    // line1Layer's doc comment) - offset by half of it so the real
+    // rendered left edge lands exactly at LEFT_X.
+    maxWidth: line2MaxWidth,
+    // Real, confirmed-via-isolated-render bug: withEffects' glow buffer
+    // treats `width` as content CENTERED on local (0,0), but a
+    // `textAlign:'left'` layer's real glyphs start at -maxWidth/2, not
+    // centered - `underlineWidth+40` (the actual text's own width, not
+    // the box's) put the buffer's left edge ~40px inside the real text's
+    // left edge, clipping the leading letter. `maxWidth` always encloses
+    // the real text (see safeMaxWidth's own doc comment), so sizing the
+    // buffer from it keeps the whole box, not just the measured glyphs.
+    width: line2MaxWidth,
+    height: TWL_FONT_SIZE * 1.8,
+    position: [LEFT_X + line2MaxWidth / 2, TWL_ROW2_Y],
+    trackMatte: { source: '__twl_matte2__', type: 'alpha' },
+    effects: [
+      { type: 'outerGlow', params: { blur: 12, color: accentColor, opacity: 0.6, blendMode: 'screen' } },
+    ],
+  };
+
+  // ---- line3 (outcome phrase, white like line1) ----
+  const line3MaxWidth = safeMaxWidth(totalWidth3);
+  const line3Matte = buildTypewriterLinkTextMatte('__twl_matte3__', row3RightX, TWL_ROW3_Y, totalWidth3 + 20, TWL_FONT_SIZE * 1.8, [
+    { time: 0, value: 0, interpolation: 'hold' },
+    {
+      time: t.line3RevealStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+    },
+    { time: t.line3RevealEnd, value: 1, interpolation: 'hold' },
+    ...lineRevealWindowKeyframes(t.sweepStart, t.sweepEnd, LEFT_X, sweepEndX, 'easeInOutCubic', LEFT_X, row3RightX, false),
+  ]);
+  const line3Layer = {
+    id: '__twl_line3__',
+    type: 'text',
+    text: line3Text.toUpperCase(),
+    fontFamily,
+    fontWeight: '400',
+    fontSize: TWL_FONT_SIZE,
+    fillStyle: '#FFFFFF',
+    textAlign: 'left',
+    maxWidth: line3MaxWidth,
+    // Same effects-buffer sizing fix as line2Layer above.
+    width: line3MaxWidth,
+    height: TWL_FONT_SIZE * 1.8,
+    // See line2Layer's own doc comment: `position` is this box's CENTER
+    // even under `textAlign:'left'`, so it's offset by half of maxWidth
+    // to actually land the rendered text's left edge at LEFT_X.
+    position: [LEFT_X + line3MaxWidth / 2, TWL_ROW3_Y],
+    trackMatte: { source: '__twl_matte3__', type: 'alpha' },
+    effects: [
+      { type: 'outerGlow', params: { blur: 10, color: '#FFFFFF', opacity: 0.4, blendMode: 'screen' } },
+    ],
+  };
+
+  // ---- full accent bar: crossfades in exactly where the connector's
+  // own final tail left off (same X, same visible length fraction), then
+  // grows to span all 3 rows - direct spec: "the line will now extend
+  // upwards to be the same size as the total text." ----
+  const row3Bottom = dropSpawnY + D1 + D2;
+  const fullBarTop = TWL_ROW1_Y - TWL_FONT_SIZE * 0.75;
+  const fullBarHeight = row3Bottom - fullBarTop;
+
+  const fullBar = {
+    id: '__twl_fullbar__',
+    type: 'shape',
+    width: TWL_THICKNESS,
+    height: fullBarHeight,
+    position: {
+      keyframes: [
+        { time: 0, value: [LEFT_X - TWL_BAR_LEFT_NUDGE, row3Bottom], interpolation: 'hold' },
+        {
+          time: t.sweepStart, value: [LEFT_X - TWL_BAR_LEFT_NUDGE, row3Bottom], interpolation: 'easing', easing: 'easeInOutCubic',
+        },
+        {
+          time: t.sweepEnd, value: [sweepEndX, row3Bottom], interpolation: 'easing', easing: 'easeInOutCubic',
+        },
+        // Direct correction: "the middle of the screen" means the bar's
+        // own MIDPOINT once horizontal, not its anchor/pivot end. `anchor`
+        // is [0, fullBarHeight/2] (the bar's own bottom edge, needed so the
+        // entrance grows upward from a fixed bottom) - after a -90 rotation
+        // that pivot ends up fullBarHeight/2 to the RIGHT of the bar's real
+        // center (rotating the pivot-to-center vector (0,-h) by -90 gives
+        // (-h,0): the center sits h to the LEFT of wherever the pivot is).
+        // So the pivot itself has to land at `CX + fullBarHeight/2`, not CX,
+        // for the bar's actual midpoint to end up at true screen-center.
+        { time: t.rotateEnd, value: [sweepEndX + fullBarHeight / 2, CANVAS_HEIGHT / 2], interpolation: 'hold' },
+      ],
+    },
+    anchor: [0, fullBarHeight / 2],
+    scale: {
+      keyframes: [
+        { time: 0, value: [1, D2 / fullBarHeight], interpolation: 'hold' },
+        {
+          time: t.fullBarStart, value: [1, D2 / fullBarHeight], interpolation: 'easing', easing: 'easeOutElastic',
+        },
+        { time: t.fullBarEnd, value: [1, 1], interpolation: 'hold' },
+        {
+          time: t.contractStart, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: t.contractEnd, value: [1, 0] },
+      ],
+    },
+    rotation: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: t.rotateStart, value: 0, interpolation: 'easing', easing: 'easeInOutBack',
+        },
+        { time: t.rotateEnd, value: -90 },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: t.fullBarStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.fullBarStart + 0.08, value: 1 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: TWL_THICKNESS, height: fullBarHeight, roundness: TWL_THICKNESS / 2 } } },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+    // Direct correction: bright white glow (originally blur:8) at the shared
+    // left margin - the SAME x every row's own text starts at - was washing
+    // out each row's own leading letter via the 'screen' blend. Tightened so
+    // the halo doesn't reach the adjacent glyphs.
+    effects: [
+      { type: 'outerGlow', params: { blur: 4, color: '#FFFFFF', opacity: 0.4, blendMode: 'screen' } },
+    ],
+  };
+
+  return [
+    line1Matte,
+    line2Matte,
+    line3Matte,
+    line1Layer,
+    line2Layer,
+    line3Layer,
+    connectorPath,
+    fullBar,
+  ];
+}
+
 /**
  * Dispatcher: compiles a beat's tiny `mograph` spec into real
  * `visual.layers`, called once per beat very early in validateSceneJSON
@@ -11854,9 +12549,32 @@ function textPopOutMinDuration(wordCount) {
   return exitEnd + TEXT_POP_OUT_END_BUFFER;
 }
 
+// Real, confirmed-live bug found building typewriterLink (2026-09-12): a
+// trackMatte SOURCE shape never renders independently (layerStack.js
+// hides it from the main stack on purpose - only its own alpha gets
+// sampled to mask whatever layer points at it), so a glow blurring its
+// edge serves no visual purpose - but it's FAR from harmless: the
+// masked target's own reveal boundary inherits that same blur, and
+// whenever the boundary happens to be mid-transition exactly where a
+// glyph sits, the glyph shows up partially transparent (confirmed
+// directly: typewriterLink's own right-anchored outro-hide matte,
+// blurred by this function's own default 22px shape glow, left the
+// last character of a headline visibly greyed out at the one frame the
+// wipe boundary crossed it - not a per-character opacity bug at all,
+// traced all the way down to THIS blur). Skips any layer that some
+// OTHER layer in this same array declares as its trackMatte.source -
+// general fix, not specific to one template; lineReveal's own mattes
+// carried the identical latent bug; this fixes it retroactively there
+// too since both templates share this one function.
 function applyMographGlow(layers) {
+  const matteSourceIds = new Set(
+    layers
+      .filter((l) => isPlainObject(l) && isPlainObject(l.trackMatte) && typeof l.trackMatte.source === 'string')
+      .map((l) => l.trackMatte.source),
+  );
   for (const layer of layers) {
     if (!isPlainObject(layer)) continue;
+    if (typeof layer.id === 'string' && matteSourceIds.has(layer.id)) continue;
     let glowColor = null;
     if (layer.type === 'image' && typeof layer.iconColor === 'string') {
       glowColor = layer.iconColor;
@@ -12126,6 +12844,19 @@ function buildMographBeatVisual(beat) {
       beat.params.duration = lineRevealMinDuration();
     }
     layers = buildLineRevealLayers({ text1, text2, accentColor });
+  } else if (spec.type === 'typewriterLink' && typeof spec.line1 === 'string' && spec.line1.trim() && typeof spec.line2 === 'string' && spec.line2.trim() && typeof spec.line3 === 'string' && spec.line3.trim()) {
+    const line1Words = spec.line1.trim().split(/\s+/).filter((w) => w.length > 0).slice(0, 4);
+    if (line1Words.length >= 2) {
+      const line1 = line1Words.join(' ');
+      const line2 = truncateAtWordBoundary(spec.line2.trim(), 20);
+      const line3 = truncateAtWordBoundary(spec.line3.trim(), 26);
+      if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+        beat.params.duration = typewriterLinkMinDuration(line1Words.length);
+      }
+      layers = buildTypewriterLinkLayers({
+        line1, line2, line3, accentColor,
+      });
+    }
   }
 
   if (layers) {
@@ -12240,7 +12971,7 @@ function validateSceneJSON(sceneJSON) {
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
     } else if (seen.size < 5) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText/yearScroller/counter/lineReveal). Add more template beats to reach at least 5.`);
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText/yearScroller/counter/lineReveal/typewriterLink). Add more template beats to reach at least 5.`);
     } else if (seen.size > 7) {
       errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 7. Trim beats down to 7 or fewer distinct templates.`);
     }
@@ -14208,5 +14939,6 @@ module.exports = {
   buildYearScrollerLayers,
   buildCounterLayers,
   buildLineRevealLayers,
+  buildTypewriterLinkLayers,
   buildMographBeatVisual,
 };

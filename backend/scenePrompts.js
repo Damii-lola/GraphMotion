@@ -1857,6 +1857,10 @@ const COMPACT_TEMPLATE_INFO = {
     fields: 'text1*(2-4w bold headline), text2*(2-5w secondary line)',
     example: { template: 'lineReveal', narration: "Here's the real difference.", vars: { text1: 'Think Different', text2: 'Build what matters' }, accentColor: '#8B5CF6' },
   },
+  typewriterLink: {
+    fields: 'line1*(2-4w), line2*(1-3w connector), line3*(2-4w)',
+    example: { template: 'typewriterLink', narration: 'Good design leads to good business.', vars: { line1: 'Good Design', line2: 'leads to', line3: 'Good Business' } },
+  },
 };
 const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);
 
