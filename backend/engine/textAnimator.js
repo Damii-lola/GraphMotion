@@ -244,7 +244,19 @@ function renderAnimatedText(ctx, text, t, opts) {
     if (finalOpacity <= 0.001) continue;
 
     ctx.save();
-    ctx.globalAlpha = finalOpacity;
+    // Real bug found building yearScroller's faint background depth
+    // layers (2026-09-12): this used to be a flat `=`, which OVERWRITES
+    // whatever ambient globalAlpha the caller already set (Node.render's
+    // own worldOpacity, applied right before this draw call) instead of
+    // combining with it - a plain text layer with no per-character
+    // opacity animator (finalOpacity always 1) silently ignored its own
+    // "opacity" field and any parent fade entirely and rendered fully
+    // opaque. Layers that also carry an effect (e.g. every yearScroller
+    // row's gaussianBlur) never showed this, since withEffects renders
+    // them into an isolated buffer whose own ambient alpha is always 1 -
+    // the real worldOpacity gets applied correctly later, when THAT
+    // buffer is drawImage'd onto the real ctx (which still has it).
+    ctx.globalAlpha *= finalOpacity;
     ctx.translate(c.x + dx, c.y + dy);
     // dRotation accumulates animator "rotation" DELTAS, degrees like
     // every other rotation field in the schema - ctx.rotate() itself

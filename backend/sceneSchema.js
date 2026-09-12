@@ -9005,6 +9005,968 @@ function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
   return layers;
 }
 
+/**
+ * 13th template. Direct spec: a vertical "year picker" scroller
+ * (1870-2040, coverflow-style: sharp/bold/bright at center with a
+ * leading arrow, increasingly blurred/dimmed with distance from center)
+ * scrolls continuously until it lands on an AI-chosen year, then the
+ * whole scroller zooms in (cropping off part of itself) while a stylish
+ * word-by-word headline types in on the newly-revealed side.
+ *
+ * Direction, per direct spec correction (an earlier build had this
+ * backwards - "the number strip moves upward" - based on a since-
+ * replaced copy of the reference file that no longer matches this
+ * template at all): the strip flows TOP TO BOTTOM - each row enters
+ * from ABOVE the arrow-marked center, passes through it, exits BELOW.
+ *
+ * Shape, per direct spec + a reference picture: not a flat vertical
+ * column with a slight bulge, but a real circle - imagine a circle
+ * whose center sits off-screen to the left, with only its right half
+ * inside the frame; the rows flow ALONG that circle's own border (the
+ * circle itself stays invisible). See yearScrollerArcOffset.
+ *
+ * Layer count is deliberately bounded: the scroll always shows a FIXED
+ * number of years (YEAR_SCROLLER_VISIBLE_SPAN), not a literal traversal
+ * of the whole 1870-2040 range - covering the true distance for an
+ * early target (e.g. 1875) at the reference's own real pace would only
+ * take a fraction of a second (fine), but for a LATE target (e.g. 2039)
+ * would need ~170 separate year layers and ~17 real seconds of scrolling
+ * to literally count up from 1870 - neither necessary nor renderable at
+ * a reasonable cost. 1870/2040 are enforced as the real ALLOWED RANGE
+ * for the chosen year (validated in sceneGenClient.js), not a literal
+ * on-screen traversal distance.
+ */
+const YEAR_SCROLLER_MIN_YEAR = 1870;
+const YEAR_SCROLLER_MAX_YEAR = 2040;
+const YEAR_SCROLLER_VISIBLE_SPAN = 16;
+const YEAR_SCROLLER_SPEED = 10; // years/sec - the reference's own real measured pace
+// Rows farther than CAP_D keep constant max blur/rotation/dim; rows
+// farther than FADE_D are fully invisible (never even built as visibly
+// "arriving" - see buildYearRowTracks' own clipping).
+const YEAR_SCROLLER_CAP_D = 4;
+const YEAR_SCROLLER_FADE_D = 5;
+const YEAR_SCROLLER_MAX_BLUR = 11;
+const YEAR_SCROLLER_MIN_OPACITY = 0.22;
+// Direct spec (with a reference picture): "imagine a circle, half of it
+// outside the border on the left, the other half inside the screen -
+// the scroller flows ALONG the border of that circle (the circle itself
+// isn't visible)" - then corrected to an OVAL, not a perfect circle:
+// independent X/Y radii instead of one shared radius, so the recession
+// (X) and the row-to-row spacing (Y) can be tuned separately rather
+// than being locked together. Rows sit on this oval, center off-screen
+// to the left - the front-most point (theta=0, closest to the viewer)
+// is the row next to the arrow; every other row is at
+// theta = d * ANGLE_PER_ROW around that same oval, so BOTH its x
+// (recedes left/back as |theta| grows) and y (traces the arc instead of
+// a flat vertical line) come from one consistent geometric curve - see
+// yearScrollerArcOffset. Sampled at every integer d from -FADE_D to
+// +FADE_D (not just the coarse 5-point thresholds used by
+// opacity/blur/rotation) since an oval isn't piecewise-linear in d, so
+// a 2-point track wouldn't reproduce it - see buildYearRowTracks.
+const YEAR_SCROLLER_ARC_RADIUS_X = 260;
+const YEAR_SCROLLER_ARC_RADIUS_Y = 460;
+const YEAR_SCROLLER_ANGLE_PER_ROW_DEG = 11;
+const YEAR_SCROLLER_MIN_ROW_SCALE = 0.45;
+const YEAR_SCROLLER_FONT_SIZE = 54;
+// Direct spec: "shift the scroller out more, to the middle" - moved
+// right, closer to the canvas's own horizontal center (this file's
+// positions are all LOGICAL_WIDTH=540 coordinates, not raw render
+// pixels - see YEAR_SCROLLER_TEXT_CENTER_X's own comment) than the
+// previous, more left-hugging position.
+const YEAR_SCROLLER_CENTER_X = 160;
+const YEAR_SCROLLER_CENTER_Y = 460;
+const YEAR_SCROLLER_ARROW_GAP = 95;
+// Direct spec: "the overshoot is too static and fixed, change that" - a
+// first pass used a small shared shift (0.6) eased with plain
+// cubic/quad curves, which read as too mild/uniform. A bigger shift
+// (matches yearScrollerArcOffset for BOTH position and rotation) plus a
+// real elastic settle (see appendYearScrollerOvershoot's use of
+// easeOutElastic below) gives a genuine spring-back wobble instead of
+// one flat, identical-looking nudge.
+const YEAR_SCROLLER_OVERSHOOT_D = 1.4;
+const YEAR_SCROLLER_OVERSHOOT_PEAK_TIME = 0.12;
+const YEAR_SCROLLER_SETTLE_POP_DURATION = 0.45;
+const YEAR_SCROLLER_HOLD_BEFORE_ZOOM = 0.65;
+// "God-tier" pass, direct spec: stronger presence for the active year,
+// an arrow that reacts on every lock, an accent ring + light sweep at
+// landing, a visible background oval tracing the rows' own path, and a
+// bigger text payoff (an earlier draft used a plain vertical line plus
+// faint drifting background numbers - direct spec replaced the line
+// with the oval itself and dropped the background numbers entirely).
+// Deliberately NOT rebuilt as literal "short decisive
+// bursts" of scroll motion - every row's position/opacity/blur/rotation
+// track in this file is computed by sampling a STRICTLY LINEAR
+// centerPos(t) at exact analytic threshold-crossing times (see
+// buildTrack); segmenting that into disjoint non-linear bursts would
+// mean reworking that whole sampling scheme for every property on every
+// row, on a template that's already been through many precise timing
+// fixes. Instead: real per-crossing "lock" kicks below (every row that
+// actually passes through center gets one, not just the final target)
+// plus the existing elastic landing overshoot deliver the same punchy,
+// alive feel without that rewrite.
+//
+// outerGlow is real Gaussian blur under the hood and its padding cost
+// scales with buffer area (one profiled case in this codebase hit
+// 1768ms for a SINGLE layer) - so it's used sparingly here: the active
+// row, the arrow, the accent ring, and the reveal text each get ONE,
+// never all 22 row layers at once. Lock kicks/particles on every other
+// row are pure transform + tiny unblurred shapes instead, which cost
+// almost nothing.
+const YEAR_SCROLLER_LOCK_PULSE_SCALE = 1.13;
+const YEAR_SCROLLER_LOCK_PULSE_PEAK_TIME = 0.035;
+const YEAR_SCROLLER_LOCK_PULSE_RETURN_TIME = 0.07;
+const YEAR_SCROLLER_ACTIVE_GLOW_BLUR = 16;
+const YEAR_SCROLLER_ACTIVE_GLOW_OPACITY = 0.75;
+const YEAR_SCROLLER_RING_SIZE = 100;
+const YEAR_SCROLLER_RING_START_SCALE = 0.5;
+const YEAR_SCROLLER_RING_END_SCALE = 2.4;
+const YEAR_SCROLLER_RING_DURATION = 0.4;
+const YEAR_SCROLLER_SWEEP_WIDTH = 26;
+const YEAR_SCROLLER_SWEEP_TRAVEL = 200;
+const YEAR_SCROLLER_SWEEP_DURATION = 0.3;
+// Direct spec: "remove that line, instead make the oval visible with
+// the color the line had" - a stroked outline of the SAME ellipse the
+// rows themselves travel along (yearScrollerArcOffset's own geometry),
+// rather than a separate decorative line - width/height match
+// ARC_RADIUS_X/Y*2 exactly so this traces the real path, not an
+// approximation of it.
+const YEAR_SCROLLER_OVAL_STROKE_WIDTH = 3;
+const YEAR_SCROLLER_OVAL_OPACITY = 0.45;
+// Direct spec: "I don't want the oval in the middle of the text, I want
+// one 3px before the text begins" - the oval's own front-most point
+// (theta=0) sits at the SAME x as the row text's own center by default,
+// cutting right through every digit. Pulled back by the text's own
+// real half-width (measured: 4-digit years at YEAR_SCROLLER_FONT_SIZE
+// "Poppins Black" run roughly 60-70px half-width, e.g. "2040"'s wide
+// zeros are the worst case at ~70) plus a small margin for the font's
+// own visible ink bleeding slightly past its measured advance width, so
+// the curve stays fully behind the text with a real 3px gap instead of
+// touching or crossing it.
+const YEAR_SCROLLER_OVAL_TEXT_CLEARANCE = 75;
+const YEAR_SCROLLER_OVAL_GAP = 3;
+const YEAR_SCROLLER_ZOOM_DURATION = 0.6;
+const YEAR_SCROLLER_ZOOM_SCALE = 1.4;
+// The zoomed-in hero shot must keep the CHOSEN year legible - its own
+// zoomed half-width must clear the left edge (a first draft at
+// ZOOM_SCALE=2.1/ZOOM_CENTER_X=30 pushed half the year off-canvas,
+// confirmed via a real render showing "69" instead of "1969"). Recomputed
+// for the lower ZOOM_SCALE above; still keeps a safe margin clear of the
+// reveal text's own left edge (TEXT_CENTER_X - TEXT_MAX_WIDTH/2 = 240).
+const YEAR_SCROLLER_ZOOM_CENTER_X = 140;
+// Direct spec: "ALWAYS HAVE a typewriting animation (per word not per
+// letter)" - reuses the exact same proven range-selector mechanism
+// already built (and re-verified twice) for blueprintText/swooshReveal.
+const YEAR_SCROLLER_TEXT_DELAY = 0.2;
+const YEAR_SCROLLER_TEXT_WORD_STAGGER = 0.16;
+const YEAR_SCROLLER_TEXT_POP_DURATION = 0.32;
+const YEAR_SCROLLER_TEXT_FONT_SIZE = 40;
+// Direct spec: "widen the text box now that there's room" - lowering
+// ZOOM_SCALE to 1.4 pulled the zoomed year's own right edge back to
+// ~209 (logical units - this whole file's positions are LOGICAL
+// LOGICAL_WIDTH=540 coordinates, upscaled ~1.4x by renderEngine's own
+// CONTENT_SCALE at render time, NOT raw 760-wide canvas pixels - a
+// mistake made once earlier this session and caught via a real render
+// that clipped hard at centerX=440/maxWidth=270, math done against the
+// wrong 760 boundary), so the text can both start further left AND be
+// wider (was centerX=410/maxWidth=200, a tight fit against the old
+// 1.6x zoom's ~232 logical edge) while still clearing it and staying
+// inside the real LOGICAL_WIDTH=540 canvas - wide enough for 2-word
+// lines instead of one word per line on most headlines, without a hard
+// guarantee (word widths vary).
+const YEAR_SCROLLER_TEXT_CENTER_X = 370;
+const YEAR_SCROLLER_TEXT_CENTER_Y = 470;
+const YEAR_SCROLLER_TEXT_MAX_WIDTH = 260;
+const YEAR_SCROLLER_HOLD_AFTER_TEXT = 1.2;
+const YEAR_SCROLLER_EXIT_DURATION = 0.45;
+const YEAR_SCROLLER_END_BUFFER = 0.15;
+
+/** Shared by yearScrollerMinDuration and buildYearScrollerLayers so neither can drift out of sync - same pattern as every other *Timing function in this file. */
+function computeYearScrollerTiming(year, text) {
+  const span = Math.min(YEAR_SCROLLER_VISIBLE_SPAN, year - YEAR_SCROLLER_MIN_YEAR);
+  const firstYear = year - span;
+  // At t=0, firstYear sits right at the edge of the capped/blurred zone
+  // (about to visibly scroll in) rather than already fully settled -
+  // matches the direct spec ("the scroller starts scrolling in from the
+  // beginning... not popup").
+  const centerPos0 = firstYear - YEAR_SCROLLER_CAP_D;
+  const scrollDuration = (year - centerPos0) / YEAR_SCROLLER_SPEED;
+  const zoomStart = scrollDuration + YEAR_SCROLLER_HOLD_BEFORE_ZOOM;
+  const zoomEnd = zoomStart + YEAR_SCROLLER_ZOOM_DURATION;
+  const textStart = zoomEnd + YEAR_SCROLLER_TEXT_DELAY;
+  const words = text.trim().split(/\s+/).filter((w) => w.length > 0);
+  const wordCount = Math.max(1, words.length);
+  const textEnd = textStart + (wordCount - 1) * YEAR_SCROLLER_TEXT_WORD_STAGGER + YEAR_SCROLLER_TEXT_POP_DURATION;
+  const exitStart = textEnd + YEAR_SCROLLER_HOLD_AFTER_TEXT;
+  const exitEnd = exitStart + YEAR_SCROLLER_EXIT_DURATION;
+  return {
+    year, firstYear, centerPos0, scrollDuration, zoomStart, zoomEnd, textStart, textEnd, exitStart, exitEnd,
+  };
+}
+
+function yearScrollerMinDuration(year, text) {
+  const { exitEnd } = computeYearScrollerTiming(year, text);
+  return exitEnd + YEAR_SCROLLER_END_BUFFER;
+}
+
+/**
+ * Builds the position/rotation/blur/opacity keyframe tracks for ONE
+ * year row. All 4 properties are exact functions of d(t) = Y -
+ * centerPos(t) - itself linear in t during the scroll (constant after,
+ * since the scroll simply stops) - so sampling at the 5 d-thresholds
+ * where each property's own piecewise-linear cap/fade kicks in gives an
+ * EXACT reproduction of the intended motion, not an approximation.
+ * Thresholds whose own natural (unclipped) time would fall AFTER the
+ * scroll has already stopped are skipped entirely (not clamped) - a
+ * real bug caught by hand-tracing the landing row's own math before
+ * ever rendering: the row that ends up exactly AT center when the
+ * scroll stops has no "continuing past center" thresholds to reach at
+ * all (the scroll never continues that far), so clamping-and-including
+ * them would have produced a keyframe ordering that faded the WINNING
+ * row back out immediately after it landed.
+ */
+// Sampled once at every integer d from +FADE_D down to -FADE_D (e.g.
+// [5,4,3,2,1,0,-1,-2,-3,-4,-5]) - dense enough that the curve/scale
+// falloffs below (neither of which is piecewise-linear in d) read as
+// smooth continuous arcs rather than a handful of visible straight-line
+// segments.
+const YEAR_SCROLLER_DENSE_D = Array.from(
+  { length: 2 * YEAR_SCROLLER_FADE_D + 1 },
+  (_, i) => YEAR_SCROLLER_FADE_D - i,
+);
+
+/**
+ * The row next to the arrow (d=0) sits at theta=0 - the front-most
+ * point of an OVAL whose center is off-screen to the left. Every other
+ * row sits at theta = d * ANGLE_PER_ROW around that SAME oval: x
+ * recedes left/back as |theta| grows (cos(theta) < 1 off-center, an
+ * EVEN function of d - both directions curve away identically, matching
+ * "half the oval" being one continuous arc) while y traces the arc
+ * itself (an ODD function of d) instead of a flat vertical line. X and Y
+ * use their OWN radius (RADIUS_X/RADIUS_Y) rather than one shared value -
+ * an ellipse, not a circle - so the recession depth and the row-to-row
+ * spacing can be tuned independently. Sign convention: positive d is a
+ * row not yet reached by the ascending scroll (still "waiting") - direct
+ * spec says the strip flows top to bottom, so a waiting row must sit
+ * ABOVE center (negative y) until the scroll reaches it, hence the
+ * negated sin.
+ */
+function yearScrollerArcOffset(d) {
+  const theta = d * (YEAR_SCROLLER_ANGLE_PER_ROW_DEG * (Math.PI / 180));
+  return {
+    x: YEAR_SCROLLER_ARC_RADIUS_X * (Math.cos(theta) - 1),
+    y: -YEAR_SCROLLER_ARC_RADIUS_Y * Math.sin(theta),
+    // Tangent-following lean, like text wrapped around the same oval -
+    // clamped to +-CAP_D same as blur/opacity so it settles at a fixed
+    // lean past the capped zone instead of continuing to rotate all the
+    // way out to the fade boundary.
+    rotationDeg: -Math.max(-YEAR_SCROLLER_CAP_D, Math.min(YEAR_SCROLLER_CAP_D, d)) * YEAR_SCROLLER_ANGLE_PER_ROW_DEG,
+  };
+}
+
+function yearScrollerRowScale(d) {
+  const frac = Math.min(Math.abs(d), YEAR_SCROLLER_FADE_D) / YEAR_SCROLLER_FADE_D;
+  return 1 - (1 - YEAR_SCROLLER_MIN_ROW_SCALE) * frac;
+}
+
+/**
+ * Linearly interpolates a piecewise-linear (ds, vals) curve (ds sorted
+ * descending, as every d-threshold list in this file is) at an
+ * arbitrary d - including a d that falls BETWEEN two sampled points,
+ * not just exactly on one. Needed for the freeze-value fix in
+ * buildTrack below: a row's final resting d when the scroll stops
+ * (Y - timing.year) is only guaranteed to land exactly on one of the
+ * COARSE opacity/blur/rotation thresholds (5, 4, 0, -4, -5) when it's
+ * one of those five values - any other integer (1, 2, 3, -1, -2, -3)
+ * needs a real interpolated value, not whichever threshold happened to
+ * be reached last before the scroll stopped.
+ */
+function interpAtD(ds, vals, d) {
+  if (d >= ds[0]) return vals[0];
+  if (d <= ds[ds.length - 1]) return vals[vals.length - 1];
+  for (let i = 0; i < ds.length - 1; i++) {
+    const dHi = ds[i];
+    const dLo = ds[i + 1];
+    if (d <= dHi && d >= dLo) {
+      const frac = dHi === dLo ? 0 : (dHi - d) / (dHi - dLo);
+      const vHi = vals[i];
+      const vLo = vals[i + 1];
+      if (Array.isArray(vHi)) return vHi.map((v, k) => v + (vLo[k] - v) * frac);
+      return vHi + (vLo - vHi) * frac;
+    }
+  }
+  return vals[vals.length - 1];
+}
+
+/**
+ * Direct spec: "add an overshoot then return back to when reaching the
+ * selected year to not let it feel static" - then, after a first pass
+ * read as "too static and fixed" (a small shared shift eased with plain
+ * cubic/quad, the same shape every time): a bigger shift, and critically
+ * a real SPRING easing (easeOutElastic) on the return leg instead of a
+ * smooth cubic - elastic overshoots PAST the resting value and wobbles
+ * before settling, rather than coasting straight back to it, so the
+ * landing reads as a genuine bounce instead of one flat nudge. kfs
+ * already ends with a keyframe exactly at t=scrollDuration holding this
+ * row's real resting value (either landed there naturally, or via the
+ * interpAtD freeze fix above) - this pushes it a little FURTHER along
+ * the same d direction (as if momentum carried it past its stop) before
+ * springing back to that exact resting value, on the same schedule as
+ * the winning row's own scale pop so the whole strip reads as one
+ * coherent bounce.
+ */
+function appendYearScrollerOvershoot(kfs, dEnd, valueFn) {
+  const last = kfs[kfs.length - 1];
+  const restValue = last.value;
+  const baseTime = last.time;
+  last.interpolation = 'easing';
+  last.easing = 'easeOutQuad';
+  kfs.push(
+    {
+      time: baseTime + YEAR_SCROLLER_OVERSHOOT_PEAK_TIME,
+      value: valueFn(dEnd - YEAR_SCROLLER_OVERSHOOT_D),
+      interpolation: 'easing',
+      easing: 'easeOutElastic',
+    },
+    { time: baseTime + YEAR_SCROLLER_SETTLE_POP_DURATION, value: restValue },
+  );
+}
+
+/**
+ * Direct spec: "slight horizontal kick or scale pulse on the active
+ * year at the moment it becomes highlighted" - applied to EVERY row
+ * that actually passes through center during the scroll (not just the
+ * final target, which gets its own bigger elastic pop in
+ * buildYearScrollerLayers), so each "lock" reads as a small decisive
+ * beat rather than the row just sliding through unremarked. `kfs`
+ * already has an exact keyframe at `atTime` (the d=0 sample, value 1 -
+ * the taper's own peak) since crossTime is computed with the identical
+ * formula buildTrack uses internally; this splices two more keyframes
+ * right after it and back down BEFORE the next natural sample 0.1s
+ * later (at YEAR_SCROLLER_SPEED=10/sec, one row-unit of d = 0.1s), so
+ * the pulse never collides with the row's own ongoing taper.
+ */
+function injectYearScrollerLockPulse(kfs, atTime) {
+  const idx = kfs.findIndex((kf) => Math.abs(kf.time - atTime) < 1e-6);
+  if (idx === -1) return;
+  const base = kfs[idx];
+  base.interpolation = 'easing';
+  base.easing = 'easeOutQuad';
+  kfs.splice(idx + 1, 0,
+    {
+      time: atTime + YEAR_SCROLLER_LOCK_PULSE_PEAK_TIME,
+      value: [YEAR_SCROLLER_LOCK_PULSE_SCALE, YEAR_SCROLLER_LOCK_PULSE_SCALE],
+      interpolation: 'easing',
+      easing: 'easeInOutQuad',
+    },
+    { time: atTime + YEAR_SCROLLER_LOCK_PULSE_RETURN_TIME, value: base.value });
+}
+
+function buildYearRowTracks(Y, timing) {
+  const { centerPos0, scrollDuration } = timing;
+  const dEnd = Y - timing.year;
+  const thresholds = [
+    YEAR_SCROLLER_FADE_D, YEAR_SCROLLER_CAP_D, 0, -YEAR_SCROLLER_CAP_D, -YEAR_SCROLLER_FADE_D,
+  ];
+  const opacityVals = [0, YEAR_SCROLLER_MIN_OPACITY, 1, YEAR_SCROLLER_MIN_OPACITY, 0];
+  const blurVals = [
+    YEAR_SCROLLER_MAX_BLUR, YEAR_SCROLLER_MAX_BLUR, 0, YEAR_SCROLLER_MAX_BLUR, YEAR_SCROLLER_MAX_BLUR,
+  ];
+  const rotationVals = thresholds.map((d) => yearScrollerArcOffset(d).rotationDeg);
+  const positionVals = YEAR_SCROLLER_DENSE_D.map((d) => {
+    const p = yearScrollerArcOffset(d);
+    return [p.x, p.y];
+  });
+  const scaleVals = YEAR_SCROLLER_DENSE_D.map((d) => {
+    const s = yearScrollerRowScale(d);
+    return [s, s];
+  });
+
+  function buildTrack(ds, vals) {
+    const kfs = [];
+    for (let i = 0; i < ds.length; i++) {
+      const raw = (Y - centerPos0 - ds[i]) / YEAR_SCROLLER_SPEED;
+      if (raw > scrollDuration + 1e-6) break;
+      const t = Math.max(0, raw);
+      if (kfs.length > 0 && kfs[kfs.length - 1].time === t) kfs[kfs.length - 1] = { time: t, value: vals[i] };
+      else kfs.push({ time: t, value: vals[i] });
+    }
+    if (kfs.length === 0) kfs.push({ time: scrollDuration, value: vals[vals.length - 1] });
+    // Once the scroll stops, this row's real resting d (dEnd) is
+    // usually reached BETWEEN two sampled thresholds, not exactly on
+    // one - without this, Property.valueAt would hold whichever
+    // threshold's value was last reached before the stop (e.g. a row
+    // resting at d=1 would incorrectly stay pinned at d=4's dim/blurred
+    // value forever instead of its own real, mostly-clear one).
+    else if (kfs[kfs.length - 1].time < scrollDuration - 1e-6) {
+      kfs.push({ time: scrollDuration, value: interpAtD(ds, vals, dEnd) });
+    }
+    return kfs;
+  }
+
+  const positionTrack = buildTrack(YEAR_SCROLLER_DENSE_D, positionVals);
+  const rotationTrack = buildTrack(thresholds, rotationVals);
+  appendYearScrollerOvershoot(positionTrack, dEnd, (d) => {
+    const p = yearScrollerArcOffset(d);
+    return [p.x, p.y];
+  });
+  appendYearScrollerOvershoot(rotationTrack, dEnd, (d) => yearScrollerArcOffset(d).rotationDeg);
+
+  const scaleTrack = buildTrack(YEAR_SCROLLER_DENSE_D, scaleVals);
+  // Only rows strictly BEFORE the target actually cross center while the
+  // scroll is still moving - the target itself gets its own bigger pop
+  // (buildYearScrollerLayers), and rows AFTER it never reach center at
+  // all (the scroll stops before their turn - see the trailing-rows
+  // comment below).
+  const crossTime = (Y - centerPos0) / YEAR_SCROLLER_SPEED;
+  const crossesDuringScroll = Y < timing.year && crossTime > 1e-6 && crossTime < scrollDuration - 1e-6;
+  if (crossesDuringScroll) injectYearScrollerLockPulse(scaleTrack, crossTime);
+
+  return {
+    position: positionTrack,
+    opacity: buildTrack(thresholds, opacityVals),
+    blur: buildTrack(thresholds, blurVals),
+    rotation: rotationTrack,
+    scale: scaleTrack,
+    crossTime: crossesDuringScroll ? crossTime : null,
+  };
+}
+
+/**
+ * A tiny, deliberately CHEAP particle pair (no blur/glow effects, unlike
+ * buildIconBurstParticles' fuller 4-particle version) - direct spec:
+ * "tiny particle emission from the arrow tip every time it locks onto a
+ * new year." Used once per row-crossing during the scroll (up to ~15 of
+ * them for a long scroll), so kept minimal on purpose to avoid the same
+ * cost buildIconBurstParticles would add at that multiplicity.
+ */
+function buildYearScrollerLockParticles(id, x, y, color, time) {
+  const particles = [];
+  for (let p = 0; p < 2; p++) {
+    const angle = p === 0 ? Math.PI * 0.85 : Math.PI * 1.15;
+    const endX = x + Math.cos(angle) * 14;
+    const endY = y + Math.sin(angle) * 14;
+    particles.push({
+      id: `__yearscroller_lock_${id}_${p}__`,
+      type: 'shape',
+      width: 5,
+      height: 5,
+      position: {
+        keyframes: [
+          {
+            time, value: [x, y], interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: time + 0.18, value: [endX, endY] },
+        ],
+      },
+      opacity: {
+        keyframes: [
+          { time: 0, value: 0, interpolation: 'hold' },
+          { time, value: 0.85, interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: time + 0.18, value: 0 },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: 5, height: 5 } } },
+        { type: 'fill', color },
+      ],
+    });
+  }
+  return particles;
+}
+
+/**
+ * Direct spec: "residual particles that drift upward" - a handful of
+ * tiny specks that linger and float up slowly after the landing burst
+ * (buildIconBurstParticles) has already finished its own quick radial
+ * pop, for a longer-lived "settling dust" trail. Effect-free, same cost
+ * reasoning as buildYearScrollerLockParticles.
+ */
+function buildYearScrollerDriftParticles(x, y, color, time) {
+  const particles = [];
+  const duration = 1.1;
+  for (let p = 0; p < 3; p++) {
+    const startX = x + (p - 1) * 16;
+    const driftX = startX + (p - 1) * 10;
+    const driftY = y - 60 - p * 18;
+    particles.push({
+      id: `__yearscroller_drift_${p}__`,
+      type: 'shape',
+      width: 4,
+      height: 4,
+      position: {
+        keyframes: [
+          {
+            time: time + p * 0.06, value: [startX, y - 10], interpolation: 'easing', easing: 'easeOutSine',
+          },
+          { time: time + p * 0.06 + duration, value: [driftX, driftY] },
+        ],
+      },
+      opacity: {
+        keyframes: [
+          { time: 0, value: 0, interpolation: 'hold' },
+          {
+            time: time + p * 0.06, value: 0.7, interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: time + p * 0.06 + duration, value: 0 },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: 4, height: 4 } } },
+        { type: 'fill', color },
+      ],
+    });
+  }
+  return particles;
+}
+
+/**
+ * Direct spec: "active year accent ring: a thin glowing ring that
+ * quickly expands around the highlighted year when it locks, then
+ * settles" - also reused for the text payoff's own ring per "a short
+ * expanding ring or particle burst so the moment feels bigger." A plain
+ * stroked ellipse (no outerGlow) scaling up while fading out - the
+ * bright accent color plus the expansion read as "energy release"
+ * without paying for a real blur pass on top of it. Both call sites use
+ * ABSOLUTE coordinates (no parenting): the scroll's own landing ring is
+ * long gone before the zoom ever starts, and the text ring sits at the
+ * reveal text's own already-absolute position, so neither needs to
+ * track the group's zoom transform.
+ */
+function buildYearScrollerRing(id, x, y, color, time) {
+  return {
+    id: `__yearscroller_ring_${id}__`,
+    type: 'shape',
+    width: YEAR_SCROLLER_RING_SIZE,
+    height: YEAR_SCROLLER_RING_SIZE,
+    position: [x, y],
+    scale: {
+      keyframes: [
+        {
+          time, value: [YEAR_SCROLLER_RING_START_SCALE, YEAR_SCROLLER_RING_START_SCALE], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: time + YEAR_SCROLLER_RING_DURATION, value: [YEAR_SCROLLER_RING_END_SCALE, YEAR_SCROLLER_RING_END_SCALE] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time, value: 0.85, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: time + YEAR_SCROLLER_RING_DURATION, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: YEAR_SCROLLER_RING_SIZE, height: YEAR_SCROLLER_RING_SIZE } } },
+      {
+        type: 'stroke', color, width: 4,
+      },
+    ],
+  };
+}
+
+/**
+ * A single word-by-word typewriter text layer - the exact same real
+ * mechanism proven (and fixed twice - the t:0 backward-leak anchor, and
+ * the stuck-last-word-scale bug from a missing "move the pop window
+ * away" keyframe) earlier this same project. Direct spec: "a very
+ * stylish" font - reuses FONT_PAIRINGS (engine/fonts.js), picked
+ * deterministically per-beat via hashString (same convention textTiers
+ * already established), rather than one hardcoded typeface.
+ */
+function buildYearScrollerRevealText({
+  text, startTime, accentColor, centerX, centerY, maxWidth, fontSize, exitStart, exitDuration,
+}) {
+  const pairing = FONT_PAIRINGS[hashString(text) % FONT_PAIRINGS.length];
+  const fontFamily = pairing.serif.heavy;
+  const words = text.trim().split(/\s+/).filter((w) => w.length > 0);
+  const wordCount = Math.max(1, words.length);
+  const revealKfs = startTime > 0 ? [{ time: 0, value: 0, interpolation: 'hold' }] : [];
+  const popStartKfs = startTime > 0 ? [{ time: 0, value: -1000, interpolation: 'hold' }] : [];
+  const popEndKfs = startTime > 0 ? [{ time: 0, value: -1000, interpolation: 'hold' }] : [];
+  const halfWidthPct = 100 / (wordCount * 6);
+  for (let i = 0; i < wordCount; i++) {
+    const t = startTime + i * YEAR_SCROLLER_TEXT_WORD_STAGGER;
+    const centerPct = ((i + 0.5) / wordCount) * 100;
+    revealKfs.push({ time: t, value: Math.round(((i + 1) / wordCount) * 10000) / 100, interpolation: 'hold' });
+    popStartKfs.push({ time: t, value: centerPct - halfWidthPct });
+    popEndKfs.push({ time: t, value: centerPct + halfWidthPct });
+  }
+  const lastWordTime = startTime + (wordCount - 1) * YEAR_SCROLLER_TEXT_WORD_STAGGER;
+  popStartKfs.push({ time: lastWordTime + YEAR_SCROLLER_TEXT_POP_DURATION, value: -1000 });
+  popEndKfs.push({ time: lastWordTime + YEAR_SCROLLER_TEXT_POP_DURATION, value: -1000 });
+  return {
+    id: '__yearscroller_text__',
+    type: 'text',
+    text: text.toUpperCase(),
+    fontFamily,
+    fontWeight: '400',
+    fontSize,
+    fillStyle: accentColor,
+    textAlign: 'center',
+    maxWidth,
+    width: maxWidth + 40,
+    height: fontSize * 4,
+    position: [centerX, centerY],
+    // Direct spec: "the text should feel like the clear climax - higher
+    // contrast, soft glow" - one outerGlow on the single headline layer
+    // (not stacked onto every row like the scroll list), matching the
+    // same treatment already used for this file's other big headline
+    // moments (buildIntroTextLayers elsewhere in this file).
+    effects: [
+      {
+        type: 'outerGlow', params: { blur: 14, color: accentColor, opacity: 0.8, blendMode: 'screen' },
+      },
+    ],
+    animators: [
+      {
+        selector: {
+          type: 'range', start: 0, end: { keyframes: revealKfs }, basedOn: 'words',
+        },
+        properties: { opacity: -1 },
+      },
+      {
+        selector: {
+          type: 'range', start: { keyframes: popStartKfs }, end: { keyframes: popEndKfs }, basedOn: 'words', shape: 'triangle',
+        },
+        invert: false,
+        // Direct spec: "a strong kinetic entrance (scale overshoot)" -
+        // bumped from the project's usual 1.3 pop for a punchier payoff
+        // specifically here, since this is the scene's climax beat.
+        properties: { scale: 1.55 },
+      },
+      {
+        selector: {
+          type: 'range',
+          start: 0,
+          end: 100,
+          amount: {
+            keyframes: [
+              {
+                time: exitStart, value: 0, interpolation: 'easing', easing: 'easeInCubic',
+              },
+              { time: exitStart + exitDuration, value: 1 },
+            ],
+          },
+        },
+        invert: false,
+        properties: { opacity: -1, scale: 0.7 },
+      },
+    ],
+  };
+}
+
+function buildYearScrollerLayers({ year, text, accentColor }) {
+  const layers = [];
+  const timing = computeYearScrollerTiming(year, text);
+
+  layers.push({
+    id: '__yearscroller_group__',
+    type: 'null',
+    position: {
+      keyframes: [
+        { time: 0, value: [YEAR_SCROLLER_CENTER_X, YEAR_SCROLLER_CENTER_Y] },
+        {
+          time: timing.zoomStart, value: [YEAR_SCROLLER_CENTER_X, YEAR_SCROLLER_CENTER_Y], interpolation: 'easing', easing: 'easeInOutCubic',
+        },
+        { time: timing.zoomEnd, value: [YEAR_SCROLLER_ZOOM_CENTER_X, YEAR_SCROLLER_CENTER_Y] },
+      ],
+    },
+    scale: {
+      keyframes: [
+        {
+          time: timing.zoomStart, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic',
+        },
+        { time: timing.zoomEnd, value: [YEAR_SCROLLER_ZOOM_SCALE, YEAR_SCROLLER_ZOOM_SCALE] },
+      ],
+    },
+    // Direct spec: "once the text is on screen, keep the year list alive
+    // with very subtle residual motion so the scene doesn't go static" -
+    // a small, slow rotational wobble confined to the hold-after-text
+    // window (textEnd..exitStart); 0 everywhere else so it never
+    // interferes with the scroll/landing/zoom motion above.
+    rotation: {
+      keyframes: [
+        { time: timing.textEnd, value: 0, interpolation: 'easing', easing: 'easeInOutSine' },
+        {
+          time: timing.textEnd + YEAR_SCROLLER_HOLD_AFTER_TEXT * 0.4, value: 1.1, interpolation: 'easing', easing: 'easeInOutSine',
+        },
+        {
+          time: timing.textEnd + YEAR_SCROLLER_HOLD_AFTER_TEXT * 0.75, value: -0.9, interpolation: 'easing', easing: 'easeInOutSine',
+        },
+        { time: timing.exitStart, value: 0 },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        {
+          time: timing.exitStart, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: timing.exitEnd, value: 0 },
+      ],
+    },
+  });
+
+  // Direct spec: "remove that line, instead make the oval visible with
+  // the color the line had" - a stroked (not filled) outline of the
+  // exact ellipse the rows travel along: width/height = 2*ARC_RADIUS.
+  // Its front-most point would otherwise land exactly on the arrow/text
+  // (same as every row's own theta=0 point), cutting right through the
+  // middle of every digit - direct follow-up spec pulled it back so it
+  // sits a real 3px BEHIND where the text begins instead (see
+  // YEAR_SCROLLER_OVAL_TEXT_CLEARANCE/OVAL_GAP above). Present only for
+  // the active scroll (fades out at zoomStart, well before the zoomed
+  // hero shot needs the frame clear).
+  const ovalShift = YEAR_SCROLLER_OVAL_TEXT_CLEARANCE + YEAR_SCROLLER_OVAL_GAP;
+  layers.push({
+    id: '__yearscroller_oval__',
+    type: 'shape',
+    width: YEAR_SCROLLER_ARC_RADIUS_X * 2,
+    height: YEAR_SCROLLER_ARC_RADIUS_Y * 2,
+    parent: '__yearscroller_group__',
+    position: [-YEAR_SCROLLER_ARC_RADIUS_X - ovalShift, 0],
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        {
+          time: 0.3, value: YEAR_SCROLLER_OVAL_OPACITY, interpolation: 'hold',
+        },
+        { time: timing.zoomStart, value: YEAR_SCROLLER_OVAL_OPACITY, interpolation: 'easing', easing: 'easeInCubic' },
+        { time: timing.zoomStart + 0.25, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: YEAR_SCROLLER_ARC_RADIUS_X * 2, height: YEAR_SCROLLER_ARC_RADIUS_Y * 2 } } },
+      { type: 'stroke', color: accentColor, width: YEAR_SCROLLER_OVAL_STROKE_WIDTH },
+    ],
+  });
+
+  // Direct spec: "why were there no other years after [the chosen
+  // year], the other new numbers/years should still be there, it will
+  // just stop at the chosen year" - the scroll MOTION stops when it
+  // lands, but the list itself must still show rows trailing past it
+  // (same as the rows already visible above it), not end abruptly right
+  // at the target. Extends the same visible cluster (out to FADE_D) on
+  // the far side of the landing row, clamped so a target already at the
+  // real max year doesn't generate phantom years past it.
+  const lastRowYear = Math.min(year + YEAR_SCROLLER_FADE_D, YEAR_SCROLLER_MAX_YEAR);
+  const rowLayers = [];
+  const lockEvents = [];
+  for (let Y = timing.firstYear; Y <= lastRowYear; Y++) {
+    const tracks = buildYearRowTracks(Y, timing);
+    if (tracks.crossTime !== null) lockEvents.push(tracks.crossTime);
+    const layer = {
+      id: `__yearscroller_row_${Y}__`,
+      type: 'text',
+      text: String(Y),
+      fontFamily: 'Poppins Black',
+      fontWeight: '400',
+      fontSize: YEAR_SCROLLER_FONT_SIZE,
+      fillStyle: ICON_BRIGHT_TINT,
+      textAlign: 'center',
+      width: 230,
+      height: 90,
+      parent: '__yearscroller_group__',
+      position: { keyframes: tracks.position },
+      opacity: { keyframes: tracks.opacity },
+      rotation: { keyframes: tracks.rotation },
+      effects: [
+        { type: 'gaussianBlur', params: { radius: { keyframes: tracks.blur } } },
+      ],
+    };
+    // Direct spec: "make only the number right next to the arrow be at
+    // this font size, then the one above/below have a font size a bit
+    // lower... let all the other years have lower font size, this
+    // pattern should continue and flow smoothly throughout the scroll" -
+    // every row tapers continuously by its own distance from center
+    // (yearScrollerRowScale, baked into tracks.scale above), not just a
+    // flat uniform size.
+    const scaleKfs = tracks.scale;
+    // Direct spec: "add the other miniature details like the
+    // overshoot" - the row that actually lands (the AI-chosen year
+    // itself) gets a real scale-overshoot pop right as the scroll
+    // stops, layered on top of the same taper track: its own last
+    // keyframe already lands exactly at (scrollDuration, [1,1]) - the
+    // center of the taper - so the pop simply continues from there
+    // instead of replacing it.
+    if (Y === year) {
+      const landing = scaleKfs[scaleKfs.length - 1];
+      landing.interpolation = 'easing';
+      landing.easing = 'easeOutBack';
+      scaleKfs.push(
+        {
+          time: timing.scrollDuration + YEAR_SCROLLER_OVERSHOOT_PEAK_TIME, value: [1.28, 1.28], interpolation: 'easing', easing: 'easeOutElastic',
+        },
+        { time: timing.scrollDuration + YEAR_SCROLLER_SETTLE_POP_DURATION, value: [1, 1] },
+      );
+      // Direct spec: "give the highlighted year stronger presence...
+      // soft outer glow or tight rim light... so it pops forward." The
+      // ONE outerGlow used on the scroll list itself (every other row
+      // stays gaussianBlur-only - see the cost note on
+      // YEAR_SCROLLER_LOCK_PULSE_SCALE above) - a static blur radius
+      // (not keyframed) so the renderer's own effects-padding sizing
+      // (computeEffectsPadding) can size its buffer correctly; only the
+      // opacity ramps in as it settles.
+      layer.effects.push({
+        type: 'outerGlow',
+        params: {
+          blur: YEAR_SCROLLER_ACTIVE_GLOW_BLUR,
+          color: accentColor,
+          blendMode: 'screen',
+          opacity: {
+            keyframes: [
+              { time: timing.scrollDuration - 0.4, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+              { time: timing.scrollDuration, value: YEAR_SCROLLER_ACTIVE_GLOW_OPACITY },
+            ],
+          },
+        },
+      });
+    }
+    layer.scale = { keyframes: scaleKfs };
+    rowLayers.push(layer);
+  }
+
+  // Direct spec: "rebuild the arrow with a multi-layer treatment: bright
+  // core + soft glow" plus "tiny particle emission from the arrow tip
+  // every time it locks onto a new year" - the arrow itself also gets a
+  // small scale kick at every row-crossing (lockEvents, gathered from
+  // the row loop above), same beats the rows themselves pulse on, so
+  // the arrow visibly "catches" each passing year instead of just
+  // sitting there while numbers slide past it. A real Unicode arrow
+  // glyph isn't used here (see the shape's own history below) so this
+  // reuses that same customPath.
+  const arrowScaleKfs = [{ time: 0, value: [1, 1] }];
+  for (const t of lockEvents) {
+    arrowScaleKfs.push(
+      { time: t, value: [1, 1], interpolation: 'easing', easing: 'easeOutQuad' },
+      {
+        time: t + YEAR_SCROLLER_LOCK_PULSE_PEAK_TIME, value: [1.22, 1.22], interpolation: 'easing', easing: 'easeInOutQuad',
+      },
+      { time: t + YEAR_SCROLLER_LOCK_PULSE_RETURN_TIME, value: [1, 1] },
+    );
+  }
+  layers.push({
+    id: '__yearscroller_arrow__',
+    type: 'shape',
+    width: 60,
+    height: 30,
+    parent: '__yearscroller_group__',
+    position: [-YEAR_SCROLLER_ARROW_GAP, 0],
+    scale: { keyframes: arrowScaleKfs },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        { time: 0.15, value: 1 },
+      ],
+    },
+    effects: [
+      { type: 'outerGlow', params: { blur: 10, color: ICON_BRIGHT_TINT, opacity: 0.7, blendMode: 'screen' } },
+    ],
+    contents: [
+      {
+        type: 'path',
+        shape: {
+          kind: 'customPath',
+          params: {
+            anchors: [
+              { point: [-25, -4] },
+              { point: [8, -4] },
+              { point: [8, -13] },
+              { point: [26, 0] },
+              { point: [8, 13] },
+              { point: [8, 4] },
+              { point: [-25, 4] },
+            ],
+            closed: true,
+          },
+        },
+      },
+      { type: 'fill', color: ICON_BRIGHT_TINT },
+    ],
+  });
+
+  layers.push(...rowLayers);
+
+  // Direct spec: "particle reactions: small particle bursts that emit
+  // from the active year on each lock-in" - one tiny (cost-conscious,
+  // see YEAR_SCROLLER_LOCK_PULSE_SCALE's comment) burst per crossing,
+  // from the arrow tip's own fixed screen position (the arrow itself
+  // never moves - only the list scrolls past it).
+  const arrowTipX = YEAR_SCROLLER_CENTER_X - YEAR_SCROLLER_ARROW_GAP + 26;
+  lockEvents.forEach((t, i) => {
+    layers.push(...buildYearScrollerLockParticles(i, arrowTipX, YEAR_SCROLLER_CENTER_Y, ICON_BRIGHT_TINT, t));
+  });
+
+  // Direct spec: "active year accent ring... quickly expands... then
+  // settles" + "secondary highlight sweep: a quick horizontal light
+  // streak that flashes across the active year" + "residual particles
+  // that drift upward" - all three land at the exact same instant the
+  // scroll actually stops, right alongside the existing landing burst
+  // below, so the "you've arrived" moment reads as one combined hit.
+  layers.push(buildYearScrollerRing(
+    'lock',
+    YEAR_SCROLLER_CENTER_X,
+    YEAR_SCROLLER_CENTER_Y,
+    accentColor,
+    timing.scrollDuration,
+  ));
+  layers.push({
+    id: '__yearscroller_sweep__',
+    type: 'shape',
+    width: YEAR_SCROLLER_SWEEP_WIDTH,
+    height: 110,
+    position: {
+      keyframes: [
+        {
+          time: timing.scrollDuration, value: [YEAR_SCROLLER_CENTER_X - YEAR_SCROLLER_SWEEP_TRAVEL / 2, YEAR_SCROLLER_CENTER_Y], interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: timing.scrollDuration + YEAR_SCROLLER_SWEEP_DURATION, value: [YEAR_SCROLLER_CENTER_X + YEAR_SCROLLER_SWEEP_TRAVEL / 2, YEAR_SCROLLER_CENTER_Y] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: timing.scrollDuration, value: 0.8, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: timing.scrollDuration + YEAR_SCROLLER_SWEEP_DURATION, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: YEAR_SCROLLER_SWEEP_WIDTH, height: 110 } } },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+  });
+
+  layers.push(buildYearScrollerRevealText({
+    text,
+    startTime: timing.textStart,
+    accentColor,
+    centerX: YEAR_SCROLLER_TEXT_CENTER_X,
+    centerY: YEAR_SCROLLER_TEXT_CENTER_Y,
+    maxWidth: YEAR_SCROLLER_TEXT_MAX_WIDTH,
+    fontSize: YEAR_SCROLLER_TEXT_FONT_SIZE,
+    exitStart: timing.exitStart,
+    exitDuration: YEAR_SCROLLER_EXIT_DURATION,
+  }));
+
+  // Direct spec: "final payoff enhancement: a short expanding ring or
+  // particle burst so the moment feels bigger than the reference" - the
+  // same ring mechanic reused for the text's own arrival.
+  layers.push(buildYearScrollerRing(
+    'text',
+    YEAR_SCROLLER_TEXT_CENTER_X,
+    YEAR_SCROLLER_TEXT_CENTER_Y,
+    accentColor,
+    timing.textStart,
+  ));
+
+  layers.push(...buildIconBurstParticles(0, YEAR_SCROLLER_CENTER_X, YEAR_SCROLLER_CENTER_Y, accentColor, timing.scrollDuration));
+  layers.push(...buildYearScrollerDriftParticles(YEAR_SCROLLER_CENTER_X, YEAR_SCROLLER_CENTER_Y, accentColor, timing.scrollDuration));
+
+  return layers;
+}
+
 const MOGRAPH_ICON_RE = /^[a-z0-9-]+:[a-z0-9-]+$/i;
 
 /**
@@ -9520,6 +10482,13 @@ function buildMographBeatVisual(beat) {
       }
       layers = buildBlueprintTextLayers({ sentence1, sentence2, accentColor });
     }
+  } else if (spec.type === 'yearScroller' && Number.isFinite(spec.year) && typeof spec.text === 'string' && spec.text.trim()) {
+    const year = Math.round(Math.max(YEAR_SCROLLER_MIN_YEAR, Math.min(YEAR_SCROLLER_MAX_YEAR, spec.year)));
+    const text = truncateAtWordBoundary(spec.text.trim(), 30);
+    if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+      beat.params.duration = yearScrollerMinDuration(year, text);
+    }
+    layers = buildYearScrollerLayers({ year, text, accentColor });
   }
 
   if (layers) {
@@ -9634,7 +10603,7 @@ function validateSceneJSON(sceneJSON) {
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
     } else if (seen.size < 5) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText). Add more template beats to reach at least 5.`);
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText/yearScroller). Add more template beats to reach at least 5.`);
     } else if (seen.size > 7) {
       errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 7. Trim beats down to 7 or fewer distinct templates.`);
     }
@@ -11599,5 +12568,6 @@ module.exports = {
   buildNodeAbsorbLayers,
   buildTextTiersLayers,
   buildBlueprintTextLayers,
+  buildYearScrollerLayers,
   buildMographBeatVisual,
 };

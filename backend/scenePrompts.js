@@ -1845,6 +1845,10 @@ const COMPACT_TEMPLATE_INFO = {
     fields: 'sentence1*, sentence2*(2 short phrases, 3-6w each)',
     example: { template: 'blueprintText', narration: 'Every detail matters here.', vars: { sentence1: 'Precision in every curve', sentence2: 'Power in every detail' }, accentColor: '#8B5CF6' },
   },
+  yearScroller: {
+    fields: 'year*(a real year 1870-2040), text*(1-4w headline revealed after)',
+    example: { template: 'yearScroller', narration: 'It all started here.', vars: { year: 1969, text: 'Where it began' }, accentColor: '#8B5CF6' },
+  },
 };
 const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);
 

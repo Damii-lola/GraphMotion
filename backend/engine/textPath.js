@@ -137,7 +137,12 @@ function renderAnimatedTextOnPath(ctx, text, anchors, t, opts) {
     if (finalOpacity <= 0.001) continue;
 
     ctx.save();
-    ctx.globalAlpha = finalOpacity;
+    // Same real overwrite-vs-combine bug fixed in textAnimator.js's
+    // identical line (see its comment for the full writeup) - `=` here
+    // silently discarded the caller's own ambient opacity (this layer's
+    // own "opacity" field, or a fading parent's) whenever no per-
+    // character animator reduced finalOpacity below 1.
+    ctx.globalAlpha *= finalOpacity;
     ctx.translate(c.x, c.y);
     ctx.rotate(c.angle);
     ctx.translate(dx, dy);

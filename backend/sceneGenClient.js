@@ -419,6 +419,11 @@ const COMPACT_BASE_DURATION = {
   // reasonable seed, ~blueprintTextMinDuration for two typical 4-word
   // sentences (matching the reference's own real word counts).
   blueprintText: 3.3,
+  // Immediately overwritten by yearScrollerMinDuration(year, text) in
+  // sceneSchema.js's own dispatch branch - this is just a reasonable
+  // seed, ~yearScrollerMinDuration for a typical 16-year scroll + a
+  // short reveal headline.
+  yearScroller: 5.74,
 };
 
 /**
@@ -590,8 +595,17 @@ function validateCompactBeatVars(template, vars) {
       if (w2.length < 2) return `needs "sentence2": at least 2 words (got ${w2.length})`;
       return null;
     }
+    case 'yearScroller': {
+      // No upper-bound reject on "year" either - sceneSchema.js's own
+      // dispatch branch already clamps to [1870,2040] and rounds, same
+      // "the builder already tolerates it gracefully" lesson as above.
+      if (!Number.isFinite(vars.year)) return 'needs "year": a real number (a specific year, e.g. 1969 or 2027)';
+      const tw = typeof vars.text === 'string' ? vars.text.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      if (tw.length < 1) return 'needs "text": a real headline (at least 1 word) revealed after the scroller lands';
+      return null;
+    }
     default:
-      return `"${template}" is not one of the 12 real template names`;
+      return `"${template}" is not one of the 13 real template names`;
   }
 }
 
