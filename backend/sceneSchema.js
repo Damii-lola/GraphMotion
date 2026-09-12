@@ -11706,6 +11706,40 @@ const TWL_ROTATE_DURATION = 0.22;
 const TWL_CONTRACT_DURATION = 0.2;
 const TWL_END_BUFFER = 0.12;
 
+// ---- "god-tier 2D upgrade" pass (2026-09-12, direct detailed user spec) -
+// a SELECTIVE subset, not the full wishlist verbatim: this template's own
+// hold is only TWL_HOLD_DURATION=0.35s (mechanically clamped project-wide,
+// see clampMographDuration) - nowhere near enough real time for genuine
+// continuous ambient motion (breathing loops, drifting particles, a
+// traveling sweep across the full block) to actually read as anything
+// but a single instant flash, so those asks are folded into ONE-SHOT
+// accents timed to the moments that already exist (reveal-complete, full
+// lock) rather than implemented as loops. A second, similarly-detailed
+// wishlist for a sibling template (tripleStack) was fully reverted after
+// being implemented verbatim and shown - see [[project_mograph_templates_and_pacing]]
+// for that precedent - so this pass also skips anything that would visibly
+// clutter the reference's own explicitly-described "clean and minimal"
+// look: no secondary supporting line, no true emboss/bevel (this engine's
+// layerStyles.js has innerGlow/layerStroke/outerGlow/dropShadow, no real
+// bevel primitive), no continuously-emitting particle system.
+const TWL_BLOOM_GLOW_BLUR = 14;
+const TWL_BLOOM_GLOW_OPACITY = 0.15;
+const TWL_ACCENT_BLOOM_GLOW_BLUR = 18;
+const TWL_ACCENT_BLOOM_GLOW_OPACITY = 0.22;
+const TWL_TEXT_DROP_SHADOW = {
+  type: 'dropShadow', params: { color: '#000000', opacity: 0.35, blur: 6, offsetX: 0, offsetY: 4 },
+};
+const TWL_BAR_BLOOM_GLOW = {
+  type: 'outerGlow', params: { blur: 11, color: '#FFFFFF', opacity: 0.14, blendMode: 'screen' },
+};
+const TWL_REVEAL_BLUR_START = 7;
+const TWL_LINE_POP_SCALE = 1.06;
+const TWL_LINE_POP_DURATION = 0.16;
+const TWL_LINE_RISE_PX = 9;
+const TWL_END_CAP_SIZE = 12;
+const TWL_END_CAP_GLOW_BLUR = 10;
+const TWL_LOCK_PULSE_DURATION = 0.3;
+
 /** Shared by typewriterLinkMinDuration and buildTypewriterLinkLayers - every absolute time this template's own layers key off of, derived once from wordCount1 (line1's own word count determines how long its typewriter build takes) and the fixed constants above. */
 function computeTypewriterLinkTiming(wordCount1) {
   const lastWordStart = TWL_WORD_STAGGER * (wordCount1 - 1);
@@ -12014,8 +12048,33 @@ function buildTypewriterLinkLayers({
     width: CANVAS_WIDTH,
     height: line1RowHeight,
     trackMatte: { source: '__twl_matte1__', type: 'alpha' },
+    // God-tier pass: tight core glow (unchanged) + a soft wider bloom for
+    // dimension, plus a drop shadow so the line "lifts" off the board -
+    // direct spec. Both new layers only ADD padding to withEffects' own
+    // buffer sizing (never shrink it), so neither can reintroduce the
+    // glow-buffer clipping bug this template already fixed once (see the
+    // line2Layer doc comment below).
     effects: [
       { type: 'outerGlow', params: { blur: 10, color: '#FFFFFF', opacity: 0.4, blendMode: 'screen' } },
+      { type: 'outerGlow', params: { blur: TWL_BLOOM_GLOW_BLUR, color: '#FFFFFF', opacity: TWL_BLOOM_GLOW_OPACITY, blendMode: 'screen' } },
+      TWL_TEXT_DROP_SHADOW,
+      // Direct spec: "soft blur-to-sharp" entrance - one decaying blur
+      // across line1's own full typewriter build (per-WORD blur isn't
+      // structurally possible here, this is ONE shared text layer, not
+      // textTiers' own per-word layers - see the standing lesson in
+      // [[project_mograph_templates_and_pacing]] about checking a
+      // template's real structure before assuming a technique transfers).
+      {
+        type: 'gaussianBlur',
+        params: {
+          radius: {
+            keyframes: [
+              { time: 0, value: TWL_REVEAL_BLUR_START, interpolation: 'easing', easing: 'easeOutCubic' },
+              { time: t.lastWordStart + TWL_WORD_POP_DURATION, value: 0 },
+            ],
+          },
+        },
+      },
     ],
     animators: [
       {
@@ -12131,9 +12190,12 @@ function buildTypewriterLinkLayers({
     // default (blur:22) meant for bold icon strokes - way too wide for a
     // thin 5px connecting line, and it washed out line2's own leading
     // letter sitting right at the same margin x. Same tightened treatment
-    // as the fullBar above.
+    // as the fullBar above. God-tier pass adds a second, LOW-opacity bloom
+    // layer (0.14, well under the 0.85 default that caused the original
+    // wash-out) for "bright core + soft bloom" without reintroducing it.
     effects: [
       { type: 'outerGlow', params: { blur: 4, color: '#FFFFFF', opacity: 0.4, blendMode: 'screen' } },
+      TWL_BAR_BLOOM_GLOW,
     ],
   };
 
@@ -12174,10 +12236,50 @@ function buildTypewriterLinkLayers({
     // buffer from it keeps the whole box, not just the measured glyphs.
     width: line2MaxWidth,
     height: TWL_FONT_SIZE * 1.8,
-    position: [LEFT_X + line2MaxWidth / 2, TWL_ROW2_Y],
+    // God-tier pass: same "slight vertical rise" entrance as line1, timed
+    // to this row's OWN reveal window instead of a shared time-zero clock
+    // (line2 doesn't exist visually until its matte starts opening).
+    position: {
+      keyframes: [
+        {
+          time: t.line2RevealStart, value: [LEFT_X + line2MaxWidth / 2, TWL_ROW2_Y + TWL_LINE_RISE_PX], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.line2RevealStart + 0.22, value: [LEFT_X + line2MaxWidth / 2, TWL_ROW2_Y] },
+      ],
+    },
+    // Deliberately NO scale-pop here (considered, then dropped): this
+    // layer is trackMatte-revealed against a matte sized with only ~16-36px
+    // of slack around the real text (safeMaxWidth's own margin) - a scale
+    // bump around the wrong pivot (this layer's `anchor` defaults to the
+    // maxWidth BOX's own local origin, not the real text's visual center,
+    // since the box is left-aligned and much wider than the glyphs it
+    // holds) could shift/grow the text enough to graze that matte's fixed
+    // boundary again - not worth the risk on a template that already cost
+    // two rounds of real clipping-bug fixes. line1's own per-word pop
+    // (an ANIMATOR, not a layer-level scale) doesn't have this problem
+    // since it's already tested against its own matte at real scale.
     trackMatte: { source: '__twl_matte2__', type: 'alpha' },
+    // "LEADS TO" is the deliberate energetic accent between the two white
+    // lines - direct spec: "make it the clear accent... feels more
+    // premium." Boosted core opacity + an extra wide, low-opacity bloom
+    // (same safe-padding reasoning as line1's own bloom layer above) plus
+    // a drop shadow and the same blur-to-sharp settle, all stronger than
+    // line1/line3's own treatment to keep the hierarchy legible.
     effects: [
-      { type: 'outerGlow', params: { blur: 12, color: accentColor, opacity: 0.6, blendMode: 'screen' } },
+      { type: 'outerGlow', params: { blur: 12, color: accentColor, opacity: 0.68, blendMode: 'screen' } },
+      { type: 'outerGlow', params: { blur: TWL_ACCENT_BLOOM_GLOW_BLUR, color: accentColor, opacity: TWL_ACCENT_BLOOM_GLOW_OPACITY, blendMode: 'screen' } },
+      TWL_TEXT_DROP_SHADOW,
+      {
+        type: 'gaussianBlur',
+        params: {
+          radius: {
+            keyframes: [
+              { time: t.line2RevealStart, value: TWL_REVEAL_BLUR_START, interpolation: 'easing', easing: 'easeOutCubic' },
+              { time: t.line2RevealEnd, value: 0 },
+            ],
+          },
+        },
+      },
     ],
   };
 
@@ -12206,11 +12308,36 @@ function buildTypewriterLinkLayers({
     height: TWL_FONT_SIZE * 1.8,
     // See line2Layer's own doc comment: `position` is this box's CENTER
     // even under `textAlign:'left'`, so it's offset by half of maxWidth
-    // to actually land the rendered text's left edge at LEFT_X.
-    position: [LEFT_X + line3MaxWidth / 2, TWL_ROW3_Y],
+    // to actually land the rendered text's left edge at LEFT_X. God-tier
+    // pass: same rise entrance as line2, timed to line3's own reveal.
+    position: {
+      keyframes: [
+        {
+          time: t.line3RevealStart, value: [LEFT_X + line3MaxWidth / 2, TWL_ROW3_Y + TWL_LINE_RISE_PX], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.line3RevealStart + 0.22, value: [LEFT_X + line3MaxWidth / 2, TWL_ROW3_Y] },
+      ],
+    },
     trackMatte: { source: '__twl_matte3__', type: 'alpha' },
+    // Same bloom+shadow+blur-to-sharp treatment as line1 (both are the
+    // "strong" white lines per the hierarchy spec; line2 alone gets the
+    // brighter accent boost). No scale-pop here either, same matte-slack
+    // reasoning as line2Layer's own doc comment above.
     effects: [
       { type: 'outerGlow', params: { blur: 10, color: '#FFFFFF', opacity: 0.4, blendMode: 'screen' } },
+      { type: 'outerGlow', params: { blur: TWL_BLOOM_GLOW_BLUR, color: '#FFFFFF', opacity: TWL_BLOOM_GLOW_OPACITY, blendMode: 'screen' } },
+      TWL_TEXT_DROP_SHADOW,
+      {
+        type: 'gaussianBlur',
+        params: {
+          radius: {
+            keyframes: [
+              { time: t.line3RevealStart, value: TWL_REVEAL_BLUR_START, interpolation: 'easing', easing: 'easeOutCubic' },
+              { time: t.line3RevealEnd, value: 0 },
+            ],
+          },
+        },
+      },
     ],
   };
 
@@ -12287,11 +12414,55 @@ function buildTypewriterLinkLayers({
     // Direct correction: bright white glow (originally blur:8) at the shared
     // left margin - the SAME x every row's own text starts at - was washing
     // out each row's own leading letter via the 'screen' blend. Tightened so
-    // the halo doesn't reach the adjacent glyphs.
+    // the halo doesn't reach the adjacent glyphs. God-tier pass adds the
+    // same low-opacity bloom layer the connector got, plus a keyframed
+    // "final collective pulse" on the CORE glow's own opacity - a quick,
+    // one-shot intensity boost right as the bar finishes locking in (direct
+    // spec: "glow intensity boost... when the last line locks in"). A
+    // whole-composition scale-breath was considered too (the other half of
+    // that ask) but would need parenting every layer under one shared null
+    // group purely for this - too big a structural change to risk on a
+    // template that's already needed two real rounds of clipping fixes;
+    // the glow pulse alone delivers the same "final polish beat" feel.
     effects: [
-      { type: 'outerGlow', params: { blur: 4, color: '#FFFFFF', opacity: 0.4, blendMode: 'screen' } },
+      {
+        type: 'outerGlow',
+        params: {
+          blur: 4,
+          color: '#FFFFFF',
+          opacity: {
+            keyframes: [
+              { time: 0, value: 0.4, interpolation: 'hold' },
+              {
+                time: t.fullBarEnd, value: 0.4, interpolation: 'easing', easing: 'easeOutCubic',
+              },
+              {
+                time: t.fullBarEnd + TWL_LOCK_PULSE_DURATION / 2, value: 0.85, interpolation: 'easing', easing: 'easeInCubic',
+              },
+              { time: t.fullBarEnd + TWL_LOCK_PULSE_DURATION, value: 0.4 },
+            ],
+          },
+          blendMode: 'screen',
+        },
+      },
+      TWL_BAR_BLOOM_GLOW,
     ],
   };
+
+  // ---- god-tier pass: one modest "impact" beat per landing moment,
+  // reusing counter's own established ring/burst helpers rather than
+  // inventing new ones. Deliberately NOT a continuous particle emitter or
+  // a sweep across the whole block - this template's own hold is only
+  // TWL_HOLD_DURATION=0.35s, nowhere near enough time for either to read
+  // as anything but a single flash, so everything here is timed to
+  // moments that already exist (a row's own reveal completing, the bar's
+  // own final lock) instead of adding new dwell time the pacing budget
+  // doesn't have. ----
+  const blockMidY = (TWL_ROW1_Y + row3Bottom) / 2;
+  const impactBurst2 = buildCounterBurstParticles('twl_line2', LEFT_X - 16, TWL_ROW2_Y, accentColor, t.line2RevealEnd);
+  const impactBurst3 = buildCounterBurstParticles('twl_line3', LEFT_X - 16, TWL_ROW3_Y, '#FFFFFF', t.line3RevealEnd);
+  const lockRing = buildCounterRing('__twl_lock_ring__', CX, blockMidY, accentColor, t.fullBarEnd, maxRowWidth * 0.7, 0.4, 0.5);
+  const lockBurst = buildCounterBurstParticles('twl_lock', CX, blockMidY, '#FFFFFF', t.fullBarEnd);
 
   return [
     line1Matte,
@@ -12302,6 +12473,10 @@ function buildTypewriterLinkLayers({
     line3Layer,
     connectorPath,
     fullBar,
+    ...impactBurst2,
+    ...impactBurst3,
+    lockRing,
+    ...lockBurst,
   ];
 }
 
