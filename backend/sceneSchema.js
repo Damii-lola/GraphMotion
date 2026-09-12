@@ -10577,20 +10577,17 @@ function buildCounterLayers({
   // to the same integer, making the "overshoot" invisible - floors it
   // to at least +1 so every count-up has a real, visible overshoot.
   const overshootValue = Math.max(value + 1, Math.round(value * (1 + COUNTER_OVERSHOOT_FRAC)));
-  // With an icon present, centering the NUMBER alone on the canvas (as
-  // if there were no icon) pushes the icon+gap+number PAIR off-center -
-  // and for a wide enough number, off the left/right edge entirely (a
-  // real bug caught on a render: the icon was cropped at the frame
-  // edge). Instead, nudge the number's own center away from the icon's
-  // side by half the icon's own footprint, so the icon+number PAIR as a
-  // whole stays centered on the canvas - the number still recenters
-  // itself around that (possibly off-canvas-center) point every frame
-  // exactly as before, it just has a different anchor when an icon
-  // needs room.
-  const iconFootprint = icon ? COUNTER_ICON_SIZE + COUNTER_ICON_GAP : 0;
-  const numberCenterX = icon
-    ? COUNTER_CENTER_X + (iconPosition === 'after' ? -1 : 1) * (iconFootprint / 2)
-    : COUNTER_CENTER_X;
+  // Direct spec: "the value isn't in the middle of the screen, it's
+  // pushed to the side by the icon - the icons should be at the sides
+  // while the value is directly in the middle." An earlier draft
+  // nudged the number OFF true center so the icon+number PAIR stayed
+  // balanced as a whole (see the icon's own position below for why that
+  // was added - a wide number could otherwise push the icon off-
+  // canvas) - direct correction: the number's own center never moves,
+  // full stop. The icon is clamped to the canvas edges instead (see
+  // below) so it can no longer push anything off-screen without
+  // needing to touch the number's position at all.
+  const numberCenterX = COUNTER_CENTER_X;
   const breathe = { pop: COUNTER_POP_DURATION, hotEnd, settleEnd: timing.settleEnd };
 
   layers.push({
@@ -10800,11 +10797,18 @@ function buildCounterLayers({
   // Positioned off the TARGET value's own estimated half-width, not the
   // live per-frame-changing counted value - the fast-changing digits
   // during the count blur past too quickly for exact tracking to
-  // matter, and the eye rests on the final settled width anyway.
+  // matter, and the eye rests on the final settled width anyway. Since
+  // the number itself no longer moves to make room (see numberCenterX
+  // above), a wide enough target could otherwise push the icon past the
+  // canvas edge - clamped to stay fully on-screen with a real margin,
+  // even if that means sitting a bit closer to the number than the
+  // "ideal" gap for a genuinely wide (6-digit) target.
   if (icon) {
-    const iconX = iconPosition === 'after'
+    const rawIconX = iconPosition === 'after'
       ? numberCenterX + halfWidthEstimate + COUNTER_ICON_GAP + COUNTER_ICON_SIZE / 2
       : numberCenterX - halfWidthEstimate - COUNTER_ICON_GAP - COUNTER_ICON_SIZE / 2;
+    const iconMargin = COUNTER_ICON_SIZE / 2 + 10;
+    const iconX = Math.max(iconMargin, Math.min(CANVAS_WIDTH - iconMargin, rawIconX));
     const iconScaleKfs = [
       {
         time: 0, value: [0.4, 0.4], interpolation: 'easing', easing: 'easeOutBack',
