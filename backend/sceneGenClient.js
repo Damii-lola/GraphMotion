@@ -429,6 +429,11 @@ const COMPACT_BASE_DURATION = {
   // seed, ~counterMinDuration for a typical count-up + an 8-word
   // caption (real measured value, not guessed).
   counter: 6.07,
+  // Immediately overwritten by lineRevealMinDuration() in sceneSchema.js's
+  // own dispatch branch - this template's own pacing is entirely fixed
+  // (doesn't depend on either text's length), so this seed is just that
+  // same real, always-exact value.
+  lineReveal: 4.41,
 };
 
 /**
@@ -622,8 +627,15 @@ function validateCompactBeatVars(template, vars) {
       if (vars.icon !== undefined && !isRealIcon(vars.icon)) return `"icon" is optional, but if given must be a real "prefix:name" icon (got ${JSON.stringify(vars.icon)}) - omit it entirely if no icon is needed`;
       return null;
     }
+    case 'lineReveal': {
+      const w1 = typeof vars.text1 === 'string' ? vars.text1.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      const w2 = typeof vars.text2 === 'string' ? vars.text2.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      if (w1.length < 1) return 'needs "text1": a real bold headline (at least 1 word)';
+      if (w2.length < 1) return 'needs "text2": a real secondary line (at least 1 word)';
+      return null;
+    }
     default:
-      return `"${template}" is not one of the 14 real template names`;
+      return `"${template}" is not one of the 15 real template names`;
   }
 }
 

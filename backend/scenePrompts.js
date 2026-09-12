@@ -1853,6 +1853,10 @@ const COMPACT_TEMPLATE_INFO = {
     fields: 'value*(count to), text*(4-8w caption), icon(opt), iconPosition(opt before|after)',
     example: { template: 'counter', narration: 'The number speaks.', vars: { value: 45355, text: 'People who changed their mind' } },
   },
+  lineReveal: {
+    fields: 'text1*(2-4w bold headline), text2*(2-5w secondary line)',
+    example: { template: 'lineReveal', narration: "Here's the real difference.", vars: { text1: 'Think Different', text2: 'Build what matters' }, accentColor: '#8B5CF6' },
+  },
 };
 const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);
 

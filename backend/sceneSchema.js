@@ -10941,6 +10941,676 @@ function truncateAtWordBoundary(text, maxChars) {
 }
 
 /**
+ * New mograph template (15th), built from a direct reference video (A9.mp4)
+ * per an explicit, verbatim user request: "copy the scene design for
+ * design, animation for animation... it's just a dot that popups then
+ * increase in length to become a line that moves up to reveal
+ * text(changeable variable), then moves down further than it's starting
+ * to reveal more text, then after 1s, the line will move all the way up
+ * hiding the text then shrinking from a line to a dot then popout." The
+ * clip itself is a short LOOPING PREVIEW of only the intro (dot -> line
+ * -> reveal text1 -> reveal text2) - same "reference never shows the
+ * outro" pattern already hit with yearScroller/counter/blueprintText -
+ * the described ending (1s hold, line retreats hiding both texts, shrinks
+ * back to a dot, pops out) is built from the user's own words, not the
+ * clip.
+ *
+ * The reveal itself is a genuine WIPE/mask, not a plain fade or an
+ * unclipped slide - a real frame captured mid-reveal showed the word's
+ * own descender still hidden while the rest of its letterforms were
+ * already visible. Built with this engine's real trackMatte system
+ * (engine/node.js's Node.trackMatte + engine/layerStack.js's masked-
+ * compositing pass) - same real precedent as phoneSwap's own
+ * __phone_screen_matte__/__phone_sweep__ pair and splitConverge's
+ * __split_matte_left__/__split_matte_right__. Each text gets its OWN
+ * dedicated, otherwise-invisible matte rectangle (never the visible bar
+ * itself, and never the text layer's own geometry) - a node used as
+ * someone else's trackMatte source never renders on its own (matching
+ * After Effects), so reusing a visible layer as a matte would silently
+ * delete it from the render.
+ *
+ * Direct spec: "the text should have a stylishhhhh font... that first
+ * text should be more bolder and a different color than the second
+ * text." Reuses FONT_PAIRINGS (engine/fonts.js), picked deterministically
+ * per-beat via hashString (same convention as every other stylish-text
+ * template) - text1 gets the pairing's heavy SERIF face in accentColor,
+ * text2 the pairing's regular SANS face in white, so the two read as
+ * genuinely bolder/different-colored rather than just a size difference.
+ */
+const LINE_REVEAL_TEXT1_Y = 420;
+// Direct correction: "move the 2nd text more up (closer to the first
+// text)" - was 560 (a 140px gap); tightened to a 80px gap.
+const LINE_REVEAL_TEXT2_Y = 500;
+// Where the dot pops in and grows into a line - the exact midpoint
+// between the two texts, so the bar's own travel corridor on the way to
+// each resting spot naturally overlaps that text's own vertical span
+// (see buildLineRevealLayers' own matte geometry - this is what makes
+// the reveal read as "caused by" the bar passing through, not a
+// coincidence).
+const LINE_REVEAL_HOME_Y = (LINE_REVEAL_TEXT1_Y + LINE_REVEAL_TEXT2_Y) / 2;
+// Direct corrections: "make the line 5px higher" (60->65), then "move
+// the line's resting spot above text1... 25px higher" (65->90).
+const LINE_REVEAL_TOP_Y = LINE_REVEAL_TEXT1_Y - 90;
+const LINE_REVEAL_TOP_OVERSHOOT_Y = LINE_REVEAL_TOP_Y - 10;
+const LINE_REVEAL_BOTTOM_Y = LINE_REVEAL_TEXT2_Y + 60;
+const LINE_REVEAL_BOTTOM_OVERSHOOT_Y = LINE_REVEAL_BOTTOM_Y + 10;
+
+const LINE_REVEAL_WIDTH = 320;
+const LINE_REVEAL_THICKNESS = 8;
+// A near-zero-width capsule reads as a plain dot at this thickness (the
+// rounded ends dominate once the rectangle is this much narrower than
+// it is tall) - this is what makes "grow the SAME shape's own scaleX"
+// double as both the dot and the line, with no separate dot layer needed.
+const LINE_REVEAL_DOT_SCALE_X = LINE_REVEAL_THICKNESS / LINE_REVEAL_WIDTH;
+const LINE_REVEAL_TEXT1_FONT_SIZE = 54;
+const LINE_REVEAL_TEXT2_FONT_SIZE = 40;
+const LINE_REVEAL_MAX_WIDTH = 460;
+
+// All-fixed self-timed pacing (this sequence's own beats don't depend on
+// either text's length, same "resolve every timing from constants alone"
+// convention blueprintText's own fixed accents already established).
+// Direct correction: "make the line move faster, what is with these
+// pauses... the video are meant to be fastpaced" - every duration below
+// tightened (the 1s hold is left alone since it's its own separate,
+// explicit direct spec: "after 1s, the line will move all the way up").
+const LINE_REVEAL_POP_DURATION = 0.15;
+const LINE_REVEAL_POP_OVERSHOOT = 0.08;
+const LINE_REVEAL_DOT_HOLD = 0.08;
+const LINE_REVEAL_GROW_DURATION = 0.22;
+const LINE_REVEAL_GROW_SETTLE = 0.1;
+const LINE_REVEAL_RISE_DURATION = 0.28;
+const LINE_REVEAL_RISE_SETTLE = 0.1;
+const LINE_REVEAL_MID_HOLD = 0.1;
+const LINE_REVEAL_DESCEND_DURATION = 0.32;
+const LINE_REVEAL_DESCEND_SETTLE = 0.1;
+// Direct spec: "after 1s, the line will move all the way up."
+const LINE_REVEAL_HOLD_DURATION = 1;
+// Direct correction: "in the outro the line should just reach above the
+// first text, it shouldn't go too high" - the outro retreat settles back
+// at LINE_REVEAL_TOP_Y, the exact same resting spot the bar already used
+// right after first revealing text1, not a separate, higher position.
+// A SECOND direct correction ("make it go up once, not go up then stop
+// then go up") replaced an earlier two-leg version (bottom -> home ->
+// top, as two separate easeInOutCubic segments meeting at home) with
+// this single one - the visible kink at the shared middle keyframe read
+// as a stop-and-restart even though it was never a true hold. Text1 and
+// text2 still hide at the right moments (see lineRevealWindowKeyframes'
+// own calls below) because their crossing times are found WITHIN this
+// one continuous curve, not tied to where a leg used to end.
+const LINE_REVEAL_EXIT_RISE_DURATION = 0.4;
+const LINE_REVEAL_EXIT_SETTLE = 0.08;
+const LINE_REVEAL_SHRINK_DURATION = 0.18;
+const LINE_REVEAL_POPOUT_PEAK = 0.08;
+const LINE_REVEAL_POPOUT_VANISH = 0.09;
+const LINE_REVEAL_END_BUFFER = 0.1;
+
+// God-tier 2D upgrade pass - direct spec: multi-layer glow on the line,
+// glowing end caps, thinner "framing" lines above/below it, a radial
+// pulse + particle bursts once the text lands, a traveling highlight
+// sweep, a soft background glow, and subtle continuous breathing during
+// the hold. All of this layers ON TOP of the already-corrected position-
+// locked reveal mechanism above (the mattes, findLineRevealCrossingTime,
+// lineRevealWindowKeyframes) - none of it touches that mechanism itself,
+// same "measure the real cost, don't let embellishment leak into the
+// core mechanic" discipline counter's own god-tier pass followed.
+const LINE_REVEAL_GLOW_CORE_BLUR = 5;
+const LINE_REVEAL_GLOW_CORE_OPACITY = 0.9;
+const LINE_REVEAL_GLOW_MID_BLUR = 16;
+const LINE_REVEAL_GLOW_MID_OPACITY = 0.5;
+const LINE_REVEAL_END_CAP_SIZE = 14;
+const LINE_REVEAL_END_CAP_GLOW_BLUR = 8;
+const LINE_REVEAL_PULSE_SIZE = 60;
+const LINE_REVEAL_PULSE_DURATION = 0.4;
+const LINE_REVEAL_BG_GLOW_WIDTH = 380;
+const LINE_REVEAL_BG_GLOW_HEIGHT = 280;
+// Real, direct render-frame finding: an early 0.1 opacity read as a
+// hard-edged solid oval, not a soft vignette - same "a filled base shape
+// with too-high opacity reads as a flat disc even under a big blur"
+// lesson counter's own background glow already taught (its own final
+// values: 0.04-0.07 opacity). Dropped alongside the outerGlow's own blur
+// radius (see its call site) for the same reason: opacity alone wasn't
+// the whole story.
+const LINE_REVEAL_BG_GLOW_OPACITY = 0.045;
+const LINE_REVEAL_SWEEP_WIDTH = 70;
+const LINE_REVEAL_SWEEP_DURATION = 0.35;
+const LINE_REVEAL_SWEEP_OPACITY = 0.3;
+// Direct spec: "extremely subtle continuous scale breathing... during
+// the short hold" - one gentle up-down cycle inside the explicit 1s hold
+// (LINE_REVEAL_HOLD_DURATION), applied to the two text layers only (the
+// line's own scale track already carries the dot/line/overshoot
+// animation - breathing the text is enough to read as "alive").
+const LINE_REVEAL_BREATHE_SCALE = 1.018;
+const LINE_REVEAL_BREATHE_HALF_DURATION = 0.4;
+
+/** Shared by both lineRevealMinDuration and buildLineRevealLayers so the two can never drift out of sync - every absolute time this template's own layers key off of, derived once from the fixed constants above. */
+function computeLineRevealTiming() {
+  const popPeakTime = LINE_REVEAL_POP_DURATION;
+  const dotSettleTime = popPeakTime + LINE_REVEAL_POP_OVERSHOOT;
+  const growStart = dotSettleTime + LINE_REVEAL_DOT_HOLD;
+  const growPeakTime = growStart + LINE_REVEAL_GROW_DURATION;
+  const growSettleTime = growPeakTime + LINE_REVEAL_GROW_SETTLE;
+
+  const riseStart = growSettleTime;
+  const risePeakTime = riseStart + LINE_REVEAL_RISE_DURATION;
+  const riseSettleTime = risePeakTime + LINE_REVEAL_RISE_SETTLE;
+
+  const midHoldEnd = riseSettleTime + LINE_REVEAL_MID_HOLD;
+  const descendStart = midHoldEnd;
+  const descendPeakTime = descendStart + LINE_REVEAL_DESCEND_DURATION;
+  const descendSettleTime = descendPeakTime + LINE_REVEAL_DESCEND_SETTLE;
+
+  const holdEnd = descendSettleTime + LINE_REVEAL_HOLD_DURATION;
+  const exitRiseStart = holdEnd;
+  // ONE continuous rise (bottom all the way to top, a single
+  // easeInOutCubic) - text2 and text1 each hide at their own real
+  // crossing time WITHIN this single curve (see lineRevealWindowKeyframes'
+  // calls below), not at a shared mid-leg keyframe.
+  const exitTopTime = exitRiseStart + LINE_REVEAL_EXIT_RISE_DURATION;
+  const exitSettleEnd = exitTopTime + LINE_REVEAL_EXIT_SETTLE;
+
+  const shrinkStart = exitSettleEnd;
+  const shrinkEnd = shrinkStart + LINE_REVEAL_SHRINK_DURATION;
+
+  const popOutPeakTime = shrinkEnd + LINE_REVEAL_POPOUT_PEAK;
+  const popOutVanishTime = popOutPeakTime + LINE_REVEAL_POPOUT_VANISH;
+
+  return {
+    popPeakTime,
+    dotSettleTime,
+    growStart,
+    growPeakTime,
+    growSettleTime,
+    riseStart,
+    risePeakTime,
+    riseSettleTime,
+    midHoldEnd,
+    descendStart,
+    descendPeakTime,
+    descendSettleTime,
+    holdEnd,
+    exitRiseStart,
+    exitTopTime,
+    exitSettleEnd,
+    shrinkStart,
+    shrinkEnd,
+    popOutPeakTime,
+    popOutVanishTime,
+  };
+}
+
+function lineRevealMinDuration() {
+  const timing = computeLineRevealTiming();
+  return timing.popOutVanishTime + LINE_REVEAL_END_BUFFER;
+}
+
+/**
+ * A dedicated, otherwise-invisible matte rectangle for one text's own
+ * reveal. `pin` selects which edge stays FIXED while the other one
+ * moves as scaleY animates - via `anchor` (matrix2d.js's fromTRS
+ * subtracts anchor BEFORE scale, so it's a real pivot point, not just an
+ * offset). `pin:'bottom'` (anchor at the rect's own bottom edge, position
+ * at the fixed bottom Y) grows UPWARD from that fixed bottom as scaleY
+ * goes 0->1 - text1's own reveal, matching the direct correction "it's
+ * meant to be revealing from down to up" (the bottom of the glyphs
+ * appears first, the top appears last, as the line rises up through the
+ * text). `pin:'top'` grows DOWNWARD from a fixed top edge instead -
+ * text2's own reveal (unflagged, so left as top-down).
+ */
+function buildLineRevealTextMatte(id, centerX, edgeY, height, scaleYKeyframes, pin) {
+  const width = LINE_REVEAL_MAX_WIDTH + 60;
+  const anchorY = pin === 'bottom' ? height / 2 : -height / 2;
+  return {
+    id,
+    type: 'shape',
+    width,
+    height,
+    position: [centerX, edgeY],
+    anchor: [0, anchorY],
+    scale: { keyframes: scaleYKeyframes.map((kf) => ({ ...kf, value: [1, kf.value] })) },
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width, height } } },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+  };
+}
+
+/**
+ * Direct correction: "the position where the line IS should be the
+ * position where the revealing animation is - they should be at the
+ * exact same pace, no one faster or slower than the other." A shared
+ * (time, time, easing) pair between the bar's own position keyframes and
+ * a reveal's keyframes only guarantees matching PACE if the reveal
+ * window's own start/end also happen to be exactly when the bar reaches
+ * that text's own real edges - which isn't true in general (e.g. the
+ * descend leg carries the bar from LINE_REVEAL_TOP_Y all the way to
+ * LINE_REVEAL_BOTTOM_OVERSHOOT_Y, but text2 only occupies a narrow band
+ * in the MIDDLE of that travel - starting text2's reveal at the leg's
+ * own start made it appear while the bar was still up near text1, a
+ * real, confirmed-live bug). This finds the ACTUAL time within
+ * [legStartTime,legEndTime] at which the bar's own eased Y position
+ * (interpolating legStartY -> legEndY with `easingName`) equals
+ * `targetY` - via numeric sampling, not a closed-form easing inverse, so
+ * it works for any named easing without a per-curve formula. Clamps to
+ * the nearer endpoint if targetY is never actually reached during this
+ * leg (e.g. text1's own matte bottom sits slightly past
+ * LINE_REVEAL_HOME_Y, which the bar never travels past on its own rise -
+ * clamping to the leg's start there is exactly correct: that edge is
+ * already "behind" the bar before this leg even begins).
+ */
+function findLineRevealCrossingTime(legStartTime, legEndTime, legStartY, legEndY, easingName, targetY) {
+  const span = legEndY - legStartY;
+  if (span === 0) return legStartTime;
+  const targetFrac = (targetY - legStartY) / span;
+  if (targetFrac <= 0) return legStartTime;
+  if (targetFrac >= 1) return legEndTime;
+  const ease = EASING_REGISTRY[easingName];
+  const SAMPLES = 200;
+  let prevF = 0;
+  let prevV = ease(0);
+  for (let i = 1; i <= SAMPLES; i++) {
+    const f = i / SAMPLES;
+    const v = ease(f);
+    if ((prevV - targetFrac) * (v - targetFrac) <= 0 && v !== prevV) {
+      const segFrac = (targetFrac - prevV) / (v - prevV);
+      const realF = prevF + (f - prevF) * segFrac;
+      return legStartTime + realF * (legEndTime - legStartTime);
+    }
+    prevF = f;
+    prevV = v;
+  }
+  return legEndTime;
+}
+
+/**
+ * Builds the 2-keyframe reveal (or hide) window for one text's own
+ * matte, with both keyframe TIMES computed via findLineRevealCrossingTime
+ * against that text's own real matte edges - true position-lock, not
+ * just shared timing. `edgeA`/`edgeB` are the matte's two Y edges in
+ * either order; whichever the bar reaches FIRST during this leg becomes
+ * the window's start.
+ */
+function lineRevealWindowKeyframes(legStartTime, legEndTime, legStartY, legEndY, easingName, edgeA, edgeB, reveal) {
+  const tA = findLineRevealCrossingTime(legStartTime, legEndTime, legStartY, legEndY, easingName, edgeA);
+  const tB = findLineRevealCrossingTime(legStartTime, legEndTime, legStartY, legEndY, easingName, edgeB);
+  const tStart = Math.min(tA, tB);
+  const tEnd = Math.max(tA, tB);
+  const v0 = reveal ? 0 : 1;
+  const v1 = reveal ? 1 : 0;
+  return [
+    {
+      time: tStart, value: v0, interpolation: 'easing', easing: easingName,
+    },
+    { time: tEnd, value: v1, interpolation: 'hold' },
+  ];
+}
+
+/** Direct spec: "multi-layer glow: bright core stroke + soft outer bloom + subtle thicker under-glow" - trimmed to 2 stacked outerGlow layers (core + mid), the same "measure the real cost" call counter's own multi-glow made (buildCounterMultiGlow) - a 3rd wide/atmospheric layer alive for the bar's ENTIRE lifetime was the single biggest memory driver there, not worth repeating on a template this much lighter otherwise. Passed as an explicit `effects` array so applyMographGlow's own auto-add (which only fires when a layer has NO outerGlow yet) leaves it alone. */
+function buildLineRevealBarGlow(accentColor) {
+  return [
+    { type: 'outerGlow', params: { blur: LINE_REVEAL_GLOW_CORE_BLUR, color: accentColor, opacity: LINE_REVEAL_GLOW_CORE_OPACITY, blendMode: 'screen' } },
+    { type: 'outerGlow', params: { blur: LINE_REVEAL_GLOW_MID_BLUR, color: accentColor, opacity: LINE_REVEAL_GLOW_MID_OPACITY, blendMode: 'screen' } },
+  ];
+}
+
+/**
+ * Direct spec: "small glowing end caps or soft rounded tips that appear
+ * with the line." Parented to `__line_reveal_bar__` with a FIXED local
+ * x of +-half the bar's own full width - since a child's local position
+ * is transformed through the PARENT's own scale too, this automatically
+ * tracks the bar's real current end (near the center while it's still a
+ * dot, all the way out at the true ends once it's grown to a full line)
+ * with no keyframes of its own beyond a simple fade in/out.
+ */
+function buildLineRevealEndCap(id, xSign, accentColor, fadeInTime, fadeOutTime) {
+  return {
+    id,
+    type: 'shape',
+    parent: '__line_reveal_bar__',
+    width: LINE_REVEAL_END_CAP_SIZE,
+    height: LINE_REVEAL_END_CAP_SIZE,
+    position: [xSign * (LINE_REVEAL_WIDTH / 2), 0],
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: fadeInTime, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: fadeInTime + 0.1, value: 1, interpolation: 'hold' },
+        {
+          time: fadeOutTime, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: fadeOutTime + 0.12, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: LINE_REVEAL_END_CAP_SIZE, height: LINE_REVEAL_END_CAP_SIZE } } },
+      { type: 'fill', color: accentColor },
+    ],
+    effects: [
+      { type: 'outerGlow', params: { blur: LINE_REVEAL_END_CAP_GLOW_BLUR, color: accentColor, opacity: 0.85, blendMode: 'screen' } },
+    ],
+  };
+}
+
+/**
+ * Direct spec: "traveling highlight - a quick light sweep that moves
+ * across the text or along the line right after everything is on
+ * screen." Unlike phoneSwap's own sweep, this template has no natural
+ * "screen" shape to matte it against, so it's a plain soft streak
+ * (screen blend, heavily blurred) crossing the whole two-line block
+ * once - cheap (one shape, one blur pass, alive only for
+ * LINE_REVEAL_SWEEP_DURATION) rather than a second trackMatte.
+ */
+function buildLineRevealSweep(centerX, centerY, height, accentColor, atTime) {
+  const travel = LINE_REVEAL_MAX_WIDTH * 0.9;
+  return {
+    id: '__line_reveal_sweep__',
+    type: 'shape',
+    width: LINE_REVEAL_SWEEP_WIDTH,
+    height,
+    position: {
+      keyframes: [
+        {
+          time: atTime, value: [centerX - travel, centerY], interpolation: 'easing', easing: 'easeInOutCubic',
+        },
+        { time: atTime + LINE_REVEAL_SWEEP_DURATION, value: [centerX + travel, centerY] },
+      ],
+    },
+    rotation: -18,
+    opacity: {
+      keyframes: [
+        { time: atTime - 0.01, value: 0, interpolation: 'hold' },
+        {
+          time: atTime, value: LINE_REVEAL_SWEEP_OPACITY, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: atTime + LINE_REVEAL_SWEEP_DURATION, value: 0 },
+      ],
+    },
+    blendMode: 'screen',
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: LINE_REVEAL_SWEEP_WIDTH, height } } },
+      { type: 'fill', color: accentColor },
+    ],
+    effects: [
+      { type: 'gaussianBlur', params: { radius: 18 } },
+    ],
+  };
+}
+
+/** Direct spec: "soft vignette or stronger central glow so the composition stays focused" - one low-opacity filled ellipse behind everything, heavily blurred, spanning roughly both texts. */
+function buildLineRevealBgGlow(centerX, centerY, accentColor) {
+  return {
+    id: '__line_reveal_bg_glow__',
+    type: 'shape',
+    width: LINE_REVEAL_BG_GLOW_WIDTH,
+    height: LINE_REVEAL_BG_GLOW_HEIGHT,
+    position: [centerX, centerY],
+    opacity: LINE_REVEAL_BG_GLOW_OPACITY,
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: LINE_REVEAL_BG_GLOW_WIDTH, height: LINE_REVEAL_BG_GLOW_HEIGHT } } },
+      { type: 'fill', color: accentColor },
+    ],
+    effects: [
+      { type: 'gaussianBlur', params: { radius: 50 } },
+      { type: 'outerGlow', params: { blur: 45, color: accentColor, opacity: 0.4, blendMode: 'screen' } },
+    ],
+  };
+}
+
+/** Direct spec: "extremely subtle continuous scale breathing on the full text + line group during the short hold." One gentle up-down cycle, confined to the explicit 1s hold window - added to a layer's own `scale` (both text layers currently have none, so this is the layer's only scale animation, not layered on top of another one). */
+function lineRevealBreatheKeyframes(holdStart) {
+  return {
+    keyframes: [
+      { time: 0, value: [1, 1], interpolation: 'hold' },
+      {
+        time: holdStart, value: [1, 1], interpolation: 'easing', easing: 'easeInOutSine',
+      },
+      {
+        time: holdStart + LINE_REVEAL_BREATHE_HALF_DURATION, value: [LINE_REVEAL_BREATHE_SCALE, LINE_REVEAL_BREATHE_SCALE], interpolation: 'easing', easing: 'easeInOutSine',
+      },
+      { time: holdStart + LINE_REVEAL_BREATHE_HALF_DURATION * 2, value: [1, 1], interpolation: 'hold' },
+    ],
+  };
+}
+
+function buildLineRevealLayers({ text1, text2, accentColor }) {
+  const t = computeLineRevealTiming();
+  const CX = CANVAS_WIDTH / 2;
+  const pairing = FONT_PAIRINGS[hashString(text1 + text2) % FONT_PAIRINGS.length];
+
+  // Generous enough to comfortably cover each font's own ascenders and
+  // descenders regardless of the exact glyphs used - these are the REAL
+  // edges the crossing-time search below locks the reveal to, not just a
+  // notional shape.
+  const text1MatteHeight = LINE_REVEAL_TEXT1_FONT_SIZE * 2.2;
+  const text1MatteTop = LINE_REVEAL_TEXT1_Y - LINE_REVEAL_TEXT1_FONT_SIZE * 0.9;
+  const text1MatteBottom = text1MatteTop + text1MatteHeight;
+  const text2MatteHeight = LINE_REVEAL_TEXT2_FONT_SIZE * 2.2;
+  const text2MatteTop = LINE_REVEAL_TEXT2_Y - LINE_REVEAL_TEXT2_FONT_SIZE * 0.9;
+  const text2MatteBottom = text2MatteTop + text2MatteHeight;
+
+  // Direct correction: "the position where the line is should be the
+  // position where the revealing animation is... same pace, no one
+  // faster or slower." Every keyframe TIME below comes from
+  // findLineRevealCrossingTime against the bar's own REAL position
+  // keyframes for that leg (see the `bar` track further down) - the
+  // reveal literally cannot get ahead of or lag behind where the bar
+  // actually is.
+  const text1RevealWindow = lineRevealWindowKeyframes(t.riseStart, t.risePeakTime, LINE_REVEAL_HOME_Y, LINE_REVEAL_TOP_OVERSHOOT_Y, 'easeInOutCubic', text1MatteTop, text1MatteBottom, true);
+  const text2RevealWindow = lineRevealWindowKeyframes(t.descendStart, t.descendPeakTime, LINE_REVEAL_TOP_Y, LINE_REVEAL_BOTTOM_OVERSHOOT_Y, 'easeInOutCubic', text2MatteTop, text2MatteBottom, true);
+  // The real moment each text finishes revealing - reused below to time
+  // the god-tier pass's own particle bursts/pulse/sweep so they trigger
+  // exactly "when the text lands," not at some independently-guessed time.
+  const text1RevealEnd = text1RevealWindow[1].time;
+  const text2RevealEnd = text2RevealWindow[1].time;
+
+  const text1Matte = buildLineRevealTextMatte('__line_reveal_matte1__', CX, text1MatteBottom, text1MatteHeight, [
+    { time: 0, value: 0, interpolation: 'hold' },
+    ...text1RevealWindow,
+    // Outro: text1's own crossing time WITHIN the single bottom->top
+    // exit rise (see the `bar` track below - one continuous curve now,
+    // not a separate leg) - text1 hides later than text2 simply because
+    // its own matte edges sit further along that same curve.
+    ...lineRevealWindowKeyframes(t.exitRiseStart, t.exitTopTime, LINE_REVEAL_BOTTOM_Y, LINE_REVEAL_TOP_OVERSHOOT_Y, 'easeInOutCubic', text1MatteTop, text1MatteBottom, false),
+  ], 'bottom');
+  const text2Matte = buildLineRevealTextMatte('__line_reveal_matte2__', CX, text2MatteTop, text2MatteHeight, [
+    { time: 0, value: 0, interpolation: 'hold' },
+    ...text2RevealWindow,
+    // Outro: text2's own crossing time within that SAME single curve -
+    // reached earlier than text1's since text2 sits closer to
+    // LINE_REVEAL_BOTTOM_Y, where this curve starts.
+    ...lineRevealWindowKeyframes(t.exitRiseStart, t.exitTopTime, LINE_REVEAL_BOTTOM_Y, LINE_REVEAL_TOP_OVERSHOOT_Y, 'easeInOutCubic', text2MatteTop, text2MatteBottom, false),
+  ], 'top');
+
+  const text1Layer = {
+    id: '__line_reveal_text1__',
+    type: 'text',
+    text: text1.toUpperCase(),
+    fontFamily: pairing.serif.heavy,
+    fontWeight: '400',
+    fontSize: LINE_REVEAL_TEXT1_FONT_SIZE,
+    fillStyle: accentColor,
+    textAlign: 'center',
+    maxWidth: LINE_REVEAL_MAX_WIDTH,
+    width: CANVAS_WIDTH,
+    height: LINE_REVEAL_TEXT1_FONT_SIZE * 1.6,
+    position: [CX, LINE_REVEAL_TEXT1_Y],
+    trackMatte: { source: '__line_reveal_matte1__', type: 'alpha' },
+    // Direct spec: "micro-breathing... during the short hold."
+    scale: lineRevealBreatheKeyframes(t.descendSettleTime),
+    // Direct spec: "give the text a subtle outer glow... so it lifts
+    // cleanly off the background" - explicit here (rather than left to
+    // applyMographGlow's own generic pass) so text1's own glow can be
+    // tuned slightly stronger than text2's, matching "make the 1st text
+    // clearly dominant."
+    effects: [
+      { type: 'outerGlow', params: { blur: 12, color: accentColor, opacity: 0.75, blendMode: 'screen' } },
+    ],
+  };
+  const text2Layer = {
+    id: '__line_reveal_text2__',
+    type: 'text',
+    text: text2.toUpperCase(),
+    fontFamily: pairing.sans.regular,
+    fontWeight: '400',
+    fontSize: LINE_REVEAL_TEXT2_FONT_SIZE,
+    fillStyle: '#FFFFFF',
+    textAlign: 'center',
+    maxWidth: LINE_REVEAL_MAX_WIDTH,
+    width: CANVAS_WIDTH,
+    height: LINE_REVEAL_TEXT2_FONT_SIZE * 1.6,
+    position: [CX, LINE_REVEAL_TEXT2_Y],
+    trackMatte: { source: '__line_reveal_matte2__', type: 'alpha' },
+    scale: lineRevealBreatheKeyframes(t.descendSettleTime),
+    effects: [
+      { type: 'outerGlow', params: { blur: 9, color: '#FFFFFF', opacity: 0.5, blendMode: 'screen' } },
+    ],
+  };
+
+  // The one physical element that plays every role in this template's
+  // own name: a dot (scaleX near zero), a line (scaleX 1), and the
+  // divider left sitting under text2 once it's done - all the SAME
+  // rounded-capsule shape, just animated. Direct spec: "add the other
+  // miniature details like the popup animation, overshoot and others" -
+  // a scale-overshoot pop for the dot's own entrance, an elastic
+  // overshoot-then-settle on both the rise and the descend, and a
+  // final quick "pop" flourish right before it vanishes.
+  const bar = {
+    id: '__line_reveal_bar__',
+    type: 'shape',
+    width: LINE_REVEAL_WIDTH,
+    height: LINE_REVEAL_THICKNESS,
+    position: {
+      keyframes: [
+        { time: 0, value: [CX, LINE_REVEAL_HOME_Y], interpolation: 'hold' },
+        {
+          time: t.riseStart, value: [CX, LINE_REVEAL_HOME_Y], interpolation: 'easing', easing: 'easeInOutCubic',
+        },
+        {
+          time: t.risePeakTime, value: [CX, LINE_REVEAL_TOP_OVERSHOOT_Y], interpolation: 'easing', easing: 'easeOutElastic',
+        },
+        { time: t.riseSettleTime, value: [CX, LINE_REVEAL_TOP_Y], interpolation: 'hold' },
+        {
+          time: t.descendStart, value: [CX, LINE_REVEAL_TOP_Y], interpolation: 'easing', easing: 'easeInOutCubic',
+        },
+        {
+          time: t.descendPeakTime, value: [CX, LINE_REVEAL_BOTTOM_OVERSHOOT_Y], interpolation: 'easing', easing: 'easeOutElastic',
+        },
+        { time: t.descendSettleTime, value: [CX, LINE_REVEAL_BOTTOM_Y], interpolation: 'hold' },
+        // Direct correction: "make it go up once, not go up then stop
+        // then go up" - ONE continuous easeInOutCubic all the way from
+        // bottom to top (an earlier version split this into two legs
+        // meeting at LINE_REVEAL_HOME_Y, which read as a stop-and-
+        // restart even without an actual hold). Text2 and text1 still
+        // hide at their own correct moments - see their own matte
+        // keyframes above, whose crossing times are found within this
+        // exact same curve.
+        {
+          time: t.exitRiseStart, value: [CX, LINE_REVEAL_BOTTOM_Y], interpolation: 'easing', easing: 'easeInOutCubic',
+        },
+        // Direct correction: "in the outro the line should just reach
+        // above the first text, it shouldn't go too high" - settles back
+        // at the SAME LINE_REVEAL_TOP_Y the bar already rested at right
+        // after first revealing text1, not a separate higher position.
+        {
+          time: t.exitTopTime, value: [CX, LINE_REVEAL_TOP_OVERSHOOT_Y], interpolation: 'easing', easing: 'easeOutElastic',
+        },
+        { time: t.exitSettleEnd, value: [CX, LINE_REVEAL_TOP_Y], interpolation: 'hold' },
+      ],
+    },
+    scale: {
+      keyframes: [
+        {
+          time: 0, value: [0, 1], interpolation: 'easing', easing: 'easeOutBack',
+        },
+        {
+          time: t.popPeakTime, value: [LINE_REVEAL_DOT_SCALE_X * 1.4, 1], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.dotSettleTime, value: [LINE_REVEAL_DOT_SCALE_X, 1], interpolation: 'hold' },
+        {
+          time: t.growStart, value: [LINE_REVEAL_DOT_SCALE_X, 1], interpolation: 'easing', easing: 'easeInOutCubic',
+        },
+        {
+          time: t.growPeakTime, value: [1.08, 1], interpolation: 'easing', easing: 'easeOutElastic',
+        },
+        { time: t.growSettleTime, value: [1, 1], interpolation: 'hold' },
+        {
+          time: t.exitSettleEnd, value: [1, 1], interpolation: 'easing', easing: 'easeInOutCubic',
+        },
+        { time: t.shrinkEnd, value: [LINE_REVEAL_DOT_SCALE_X, 1], interpolation: 'hold' },
+        {
+          time: t.popOutPeakTime, value: [LINE_REVEAL_DOT_SCALE_X * 1.8, 1], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.popOutVanishTime, value: [0, 1] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        {
+          time: 0, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        {
+          time: t.popOutPeakTime, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: t.popOutVanishTime, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: LINE_REVEAL_WIDTH, height: LINE_REVEAL_THICKNESS, roundness: LINE_REVEAL_THICKNESS / 2 } } },
+      { type: 'fill', color: accentColor },
+    ],
+    effects: buildLineRevealBarGlow(accentColor),
+  };
+
+  // Direct spec: "small glowing end caps" - parented to the bar itself
+  // (see its own doc comment for why that's enough to track its full
+  // dot/line/rise/descend/exit journey with no extra keyframes), fading
+  // in once the line has grown to full width and out as it shrinks back
+  // to a dot.
+  const endCapLeft = buildLineRevealEndCap('__line_reveal_endcap_l__', -1, accentColor, t.growSettleTime, t.shrinkStart);
+  const endCapRight = buildLineRevealEndCap('__line_reveal_endcap_r__', 1, accentColor, t.growSettleTime, t.shrinkStart);
+
+  // Direct spec: "soft radial pulse... the moment the text lands" +
+  // "particle bursts... from the line ends and from the text" - reuses
+  // counter's own already-proven, already-cheap ring/burst/drift helpers
+  // (buildCounterRing/buildCounterBurstParticles/buildCounterResidualParticles)
+  // rather than re-deriving near-identical shapes.
+  const growBurstL = buildCounterBurstParticles('linereveal_grow_l', CX - LINE_REVEAL_WIDTH / 2, LINE_REVEAL_HOME_Y, accentColor, t.growSettleTime);
+  const growBurstR = buildCounterBurstParticles('linereveal_grow_r', CX + LINE_REVEAL_WIDTH / 2, LINE_REVEAL_HOME_Y, accentColor, t.growSettleTime);
+  const text1Burst = buildCounterBurstParticles('linereveal_text1', CX, LINE_REVEAL_TEXT1_Y, accentColor, text1RevealEnd);
+  const text2Burst = buildCounterBurstParticles('linereveal_text2', CX, LINE_REVEAL_TEXT2_Y, accentColor, text2RevealEnd);
+  const landPulse = buildCounterRing('__line_reveal_pulse__', CX, LINE_REVEAL_HOME_Y, accentColor, text2RevealEnd, LINE_REVEAL_PULSE_SIZE, LINE_REVEAL_PULSE_DURATION, 0.6);
+  const residualParticles = buildCounterResidualParticles(CX, LINE_REVEAL_HOME_Y, accentColor, text2RevealEnd);
+
+  // Direct spec: "traveling highlight... right after everything is on
+  // screen" - starts a beat after the landing pulse so it doesn't
+  // compete with it for attention.
+  const sweep = buildLineRevealSweep(CX, LINE_REVEAL_HOME_Y, (LINE_REVEAL_TEXT2_Y - LINE_REVEAL_TEXT1_Y) + 90, accentColor, text2RevealEnd + 0.12);
+
+  // Direct spec: "soft vignette or stronger central glow" - pushed FIRST
+  // so it sits behind literally everything else.
+  const bgGlow = buildLineRevealBgGlow(CX, LINE_REVEAL_HOME_Y, accentColor);
+
+  return [
+    bgGlow,
+    text1Matte,
+    text2Matte,
+    text1Layer,
+    text2Layer,
+    bar,
+    endCapLeft,
+    endCapRight,
+    ...growBurstL,
+    ...growBurstR,
+    ...text1Burst,
+    ...text2Burst,
+    landPulse,
+    ...residualParticles,
+    sweep,
+  ];
+}
+
+/**
  * Dispatcher: compiles a beat's tiny `mograph` spec into real
  * `visual.layers`, called once per beat very early in validateSceneJSON
  * - BEFORE the "drop beats with no real visual" filter just below (a
@@ -11449,6 +12119,13 @@ function buildMographBeatVisual(beat) {
     layers = buildCounterLayers({
       value, text, icon, iconPosition, accentColor,
     });
+  } else if (spec.type === 'lineReveal' && typeof spec.text1 === 'string' && spec.text1.trim() && typeof spec.text2 === 'string' && spec.text2.trim()) {
+    const text1 = truncateAtWordBoundary(spec.text1.trim(), 26);
+    const text2 = truncateAtWordBoundary(spec.text2.trim(), 32);
+    if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+      beat.params.duration = lineRevealMinDuration();
+    }
+    layers = buildLineRevealLayers({ text1, text2, accentColor });
   }
 
   if (layers) {
@@ -11563,7 +12240,7 @@ function validateSceneJSON(sceneJSON) {
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
     } else if (seen.size < 5) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText/yearScroller/counter). Add more template beats to reach at least 5.`);
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText/yearScroller/counter/lineReveal). Add more template beats to reach at least 5.`);
     } else if (seen.size > 7) {
       errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 7. Trim beats down to 7 or fewer distinct templates.`);
     }
@@ -13530,5 +14207,6 @@ module.exports = {
   buildBlueprintTextLayers,
   buildYearScrollerLayers,
   buildCounterLayers,
+  buildLineRevealLayers,
   buildMographBeatVisual,
 };
