@@ -70,7 +70,19 @@ function drawFill(ctx, currentPaths, item, t) {
     ctx.beginPath();
     for (const p of group.paths) renderPathToContext(ctx, p.anchors, p.closed);
     ctx.fillStyle = color;
-    ctx.globalAlpha = opacity * group.opacity;
+    // Real bug found building the counter template's full-screen "lock"
+    // flash (2026-09-12): this used to be a flat `=`, which OVERWRITES
+    // the ambient globalAlpha Node.render already set from the LAYER's
+    // own opacity (worldOpacity) instead of combining with it - a
+    // content item with no opacity field of its own (the overwhelming
+    // majority of shapes in this codebase; `item.opacity` defaults to 1
+    // here) always painted at full 100% regardless of the layer's own
+    // opacity keyframes, UNLESS the layer also carried an `effects`
+    // entry (which routes through withEffects' isolated buffer, whose
+    // own compositing step applies worldOpacity correctly afterward).
+    // Same real class of bug already fixed for text layers in
+    // textAnimator.js/textPath.js - see those files' own comments.
+    ctx.globalAlpha *= opacity * group.opacity;
     ctx.fill(fillRule);
     ctx.restore();
   }
@@ -92,7 +104,9 @@ function drawStroke(ctx, currentPaths, item, t) {
     ctx.lineCap = item.cap || 'butt';
     ctx.lineJoin = item.join || 'miter';
     if (item.dash) ctx.setLineDash(item.dash);
-    ctx.globalAlpha = opacity * group.opacity;
+    // Same real overwrite-vs-combine bug fixed in drawFill just above -
+    // see its own comment for the full writeup.
+    ctx.globalAlpha *= opacity * group.opacity;
     ctx.stroke();
     ctx.restore();
   }
@@ -114,7 +128,8 @@ function drawFillRaster(ctx, rasterState, item, t) {
   const opacity = resolve(item.opacity != null ? item.opacity : 1, t);
   const colored = silhouette(rasterState.canvas, color);
   ctx.save();
-  ctx.globalAlpha = opacity;
+  // Same real overwrite-vs-combine bug fixed in drawFill above.
+  ctx.globalAlpha *= opacity;
   ctx.drawImage(colored, 0, 0);
   ctx.restore();
 }
@@ -137,7 +152,8 @@ function drawStrokeRaster(ctx, rasterState, item, t) {
   }
   const strokeSil = silhouette(ring, color);
   ctx.save();
-  ctx.globalAlpha = opacity;
+  // Same real overwrite-vs-combine bug fixed in drawFill above.
+  ctx.globalAlpha *= opacity;
   ctx.drawImage(strokeSil, 0, 0);
   ctx.restore();
 }

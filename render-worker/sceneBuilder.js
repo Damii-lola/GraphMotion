@@ -352,8 +352,26 @@ function buildTextDraw(layerDef, beatContext) {
     animators,
     highlights,
   };
+  // Direct spec (counter template): "starts at 0... goes up and up till
+  // it reaches the number the AI choses." Every other layer's "text" is
+  // a fixed string baked in once at build time - a counting number
+  // needs its own actual CHARACTERS to change on every rendered frame
+  // instead. countValue is a real numeric Animatable (the exact same
+  // keyframes/easing/expression machinery as any other property, e.g.
+  // position or opacity) resolved fresh each frame and formatted with
+  // thousands separators, rather than a static layerDef.text - lets a
+  // count-up (with its own overshoot-and-settle keyframes, just like
+  // any other property) drive the rendered digits directly. The
+  // layoutCache below naturally misses every frame for this layer
+  // (its key includes the text, which now differs frame to frame) -
+  // correct, just gets none of that cache's benefit, same as before it
+  // existed.
+  const countProp = layerDef.countValue ? buildAnimatable(layerDef.countValue) : null;
+  const getText = countProp
+    ? (t) => Math.round(resolve(countProp, t)).toLocaleString('en-US')
+    : () => layerDef.text;
   if (layerDef.onPath) {
-    return (ctx, t) => renderAnimatedTextOnPath(ctx, layerDef.text, layerDef.onPath.anchors, t, {
+    return (ctx, t) => renderAnimatedTextOnPath(ctx, getText(t), layerDef.onPath.anchors, t, {
       ...textOpts,
       firstMargin: layerDef.onPath.firstMargin,
       lastMargin: layerDef.onPath.lastMargin,
@@ -366,7 +384,7 @@ function buildTextDraw(layerDef, beatContext) {
   // naturally starts fresh for every new beat - see renderAnimatedText's
   // own doc comment for why this is safe and what it skips.
   const layoutCache = { key: null, result: null };
-  return (ctx, t) => renderAnimatedText(ctx, layerDef.text, t, {
+  return (ctx, t) => renderAnimatedText(ctx, getText(t), t, {
     ...textOpts,
     maxWidth: layerDef.maxWidth || Math.max(100, beatContext.width - 60),
     centerX: layerDef.centerX || 0,

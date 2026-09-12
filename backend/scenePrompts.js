@@ -1849,6 +1849,10 @@ const COMPACT_TEMPLATE_INFO = {
     fields: 'year*(a real year 1870-2040), text*(1-4w headline revealed after)',
     example: { template: 'yearScroller', narration: 'It all started here.', vars: { year: 1969, text: 'Where it began' }, accentColor: '#8B5CF6' },
   },
+  counter: {
+    fields: 'value*(count to), text*(4-8w caption), icon(opt), iconPosition(opt before|after)',
+    example: { template: 'counter', narration: 'The number speaks.', vars: { value: 45355, text: 'People who changed their mind' } },
+  },
 };
 const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);
 

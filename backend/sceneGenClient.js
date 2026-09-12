@@ -424,6 +424,11 @@ const COMPACT_BASE_DURATION = {
   // seed, ~yearScrollerMinDuration for a typical 16-year scroll + a
   // short reveal headline.
   yearScroller: 5.74,
+  // Immediately overwritten by counterMinDuration(value, text) in
+  // sceneSchema.js's own dispatch branch - this is just a reasonable
+  // seed, ~counterMinDuration for a typical count-up + an 8-word
+  // caption (real measured value, not guessed).
+  counter: 6.07,
 };
 
 /**
@@ -604,8 +609,21 @@ function validateCompactBeatVars(template, vars) {
       if (tw.length < 1) return 'needs "text": a real headline (at least 1 word) revealed after the scroller lands';
       return null;
     }
+    case 'counter': {
+      // No upper-bound reject on "value" - sceneSchema.js's own dispatch
+      // branch already clamps to [1, 999999999] and rounds.
+      if (!Number.isFinite(vars.value)) return 'needs "value": a real number to count up to (e.g. 45355)';
+      // Real lower-bound floor: splitCounterCaptionLines (sceneSchema.js)
+      // needs enough words for a real 2-line split where line 2 has
+      // more words than line 1 - a 1-2 word caption degenerates to a
+      // single line instead.
+      const tw = typeof vars.text === 'string' ? vars.text.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      if (tw.length < 4) return `needs "text": a real caption of at least 4 words (got ${tw.length}) - it gets auto-split into 2 lines`;
+      if (vars.icon !== undefined && !isRealIcon(vars.icon)) return `"icon" is optional, but if given must be a real "prefix:name" icon (got ${JSON.stringify(vars.icon)}) - omit it entirely if no icon is needed`;
+      return null;
+    }
     default:
-      return `"${template}" is not one of the 13 real template names`;
+      return `"${template}" is not one of the 14 real template names`;
   }
 }
 

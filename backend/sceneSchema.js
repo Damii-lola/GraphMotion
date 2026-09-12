@@ -9967,6 +9967,928 @@ function buildYearScrollerLayers({ year, text, accentColor }) {
   return layers;
 }
 
+/**
+ * 14th template, built from reference video A8.mp4 (a simple glowing
+ * count-up: "0" up through several jumps to "100,000", confirmed via
+ * consecutive-frame diffing to be a genuinely continuous count - every
+ * single 1/30s frame shows a different value, not a sparse checkpoint
+ * scheme) plus the user's own written spec for everything the clip
+ * doesn't show (it ends cleanly on "100,000" with no overshoot - the
+ * overshoot-then-settle, optional icon, and caption below are all
+ * direct spec, not traced from footage).
+ *
+ * Direct spec: "the text constantly centralizes at the middle" - the
+ * reference itself actually keeps a FIXED left edge and grows rightward
+ * as digits are added (confirmed by pixel-scanning several frames: the
+ * left edge sits at ~55-62px throughout while the right edge and
+ * computed center both drift right, only landing near the canvas's true
+ * center by coincidence at the final 6-digit value) - direct spec
+ * overrides that with real dynamic centering instead. This needed no
+ * special handling: a text layer with textAlign:'center' and a FIXED
+ * position already recenters itself every frame as its own content
+ * width changes (layoutText computes `cx = centerX - lineWidth/2` fresh
+ * each call) - the counter's number layer just needed a fixed position,
+ * nothing extra.
+ *
+ * The count-up itself needed a real engine addition: every other layer
+ * type's "text" is a fixed string baked in once at build time, but a
+ * counter's actual CHARACTERS must change on every rendered frame. See
+ * countValue support in sceneBuilder.js's buildTextDraw (both this
+ * backend copy and render-worker's) - a real numeric Animatable
+ * (identical keyframes/easing/expression machinery as any other
+ * property) resolved fresh each frame and formatted with thousands
+ * separators, instead of a static string.
+ */
+const COUNTER_MIN_VALUE = 1;
+// Capped at 6 digits (999,999) rather than letting the AI pick anything
+// - a wider number needs a wider half-width estimate for icon/ring
+// placement below, and beyond ~7 characters that estimate pushes the
+// number (or, with an icon, the icon itself) off the 540-wide canvas.
+// The reference's own real target (100,000) already sits at this scale.
+const COUNTER_MAX_VALUE = 999999;
+const COUNTER_FONT_SIZE = 92;
+const COUNTER_CENTER_X = CANVAS_WIDTH / 2;
+const COUNTER_CENTER_Y = 420;
+// Measured directly (Poppins Black @ COUNTER_FONT_SIZE=92px): a mix of
+// digits/commas averages ~52px/char ("100,000"=372.7px/7=53.2,
+// "45,355"=335.0px/6=55.8, "1,234,567"=439.1px/9=48.8). Used only for
+// the OPTIONAL icon's placement (see below) - not exact for every
+// possible digit combination, but the icon just needs to sit roughly
+// beside the number, not pixel-perfectly flush against it.
+const COUNTER_CHAR_WIDTH_ESTIMATE = 56;
+const COUNTER_POP_DURATION = 0.32;
+// "God-tier" pass, direct spec: "avoid smooth linear counting, use
+// short aggressive bursts with strong ease-out on each major jump."
+// Unlike yearScroller's own equivalent ask (skipped there - every row's
+// timing depends on a strictly-linear analytic sampling scheme), the
+// counter is just ONE layer with ONE animated value, so this is
+// directly buildable: 4 discrete jumps toward the target (each its own
+// easeOutCubic landing, with a natural pause between - see
+// computeCounterBurstTimes, no extra "hold" keyframes needed since
+// Property.valueAt already holds a landed value flat until the next
+// keyframe), THEN the existing overshoot-past-target-then-elastic-
+// settle mechanic (unchanged) takes over as the final beat.
+const COUNTER_BURST_COUNT = 4;
+const COUNTER_BURST_FRACTIONS = [0.22, 0.48, 0.74, 1];
+const COUNTER_BURST_ACTIVE_DURATION = 0.28;
+const COUNTER_BURST_GAP = 0.09;
+const COUNTER_OVERSHOOT_RAMP_DURATION = 0.16;
+// Direct spec: "the number will overshoot it like the last scene
+// template we worked on, then it will drop down back to the correct
+// number" - same shape as yearScroller's own landing (ease into a value
+// PAST the target, then a real spring back via easeOutElastic), applied
+// to the counted VALUE itself instead of a position.
+const COUNTER_OVERSHOOT_FRAC = 0.08;
+const COUNTER_SETTLE_DURATION = 0.5;
+// Direct spec: "multi-layer glow system: tight bright core, medium soft
+// bloom, wide atmospheric outer glow" - 3 stacked outerGlow effects,
+// same real pattern already proven for phoneSwap's own phone body
+// (project_mograph_templates_and_pacing memory) rather than the single
+// flat glow this template shipped with originally. Opacity on all 3 is
+// a KEYFRAMED TRACK, not a flat number (direct spec: "glow intensity
+// breathing... pulses higher during fast counting, settles when the
+// number locks") - `resolveParamsAtTime` (sceneBuilder.js) already
+// resolves any effect param shaped like `{keyframes:[...]}` generically,
+// same mechanism nodeAbsorb's own pulsing header glow already proved.
+const COUNTER_GLOW_CORE_BLUR = 6;
+const COUNTER_GLOW_CORE_OPACITY_HOT = 1;
+const COUNTER_GLOW_CORE_OPACITY_CALM = 0.85;
+const COUNTER_GLOW_MID_BLUR = 18;
+const COUNTER_GLOW_MID_OPACITY_HOT = 0.7;
+const COUNTER_GLOW_MID_OPACITY_CALM = 0.45;
+// Direct spec: "on every rapid change, trigger a short scale overshoot
+// + settle" + "a tiny horizontal kick or vibration on the whole number
+// group with every big increase" - both timed off the SAME burst
+// landings the count-up itself uses, so the punch always lines up
+// exactly with a visible value jump.
+const COUNTER_BURST_POP_SCALE = 1.09;
+const COUNTER_BURST_POP_PEAK_TIME = 0.04;
+const COUNTER_BURST_KICK_PX = 5;
+// Direct spec: "secondary number ghosts: very faint, larger, blurred
+// versions of the previous number that quickly scale up and fade out as
+// the new value appears" + "soft motion blur or residual after-image
+// during the fastest counting phases." A second text layer sharing the
+// SAME countValue keyframes as the main number, just with every
+// keyframe's own time shifted LATER by COUNTER_GHOST_LAG - at any
+// instant it shows what the real number showed COUNTER_GHOST_LAG
+// seconds ago, i.e. it's always one step "behind," which is exactly
+// what an after-image needs. Blurred + dim + only present during the
+// active counting window.
+const COUNTER_GHOST_LAG = 0.09;
+const COUNTER_GHOST_BLUR = 10;
+const COUNTER_GHOST_OPACITY = 0.35;
+const COUNTER_GHOST_SCALE = 1.12;
+const COUNTER_RING_SIZE = 130;
+const COUNTER_RING_DURATION = 0.4;
+// Direct spec: "impact rings on every major jump" (smaller/faster than
+// the final lock's own ring below) + "final lock accent: a STRONGER
+// expanding ring + denser particle burst + short screen-wide flash." A
+// first draft used 90 - too small next to a 5-6 digit number (real
+// render: the ring's own starting size sat INSIDE the digits, reading
+// as a circle stuck in the middle of the text instead of an impact
+// expanding away from it). Sized well past a typical number's own half-
+// width so it visibly clears the text before it's even fully grown.
+const COUNTER_BURST_RING_SIZE = 220;
+const COUNTER_BURST_RING_DURATION = 0.22;
+const COUNTER_LOCK_RING_SIZE = 260;
+const COUNTER_LOCK_RING_DURATION = 0.5;
+const COUNTER_FLASH_OPACITY = 0.16;
+const COUNTER_FLASH_DURATION = 0.22;
+const COUNTER_ICON_SIZE = 70;
+// A first draft (22) left the icon visually touching the number - its
+// outerGlow's own ~20px blur halo bridges most of a small real gap, so
+// this needs to be generous enough to clear that halo too, not just the
+// bare glyph edge (confirmed via a real render showing the icon and the
+// "4" of "45,355" merging together).
+const COUNTER_ICON_GAP = 42;
+// Direct spec: "soft radial glow behind the numbers that intensifies
+// during fast counting and settles on the final number." A first draft
+// (opacity 0.16/0.09, size 320) read as a flat, hard-edged solid disc
+// rather than a soft glow in a real render - cut both size and opacity
+// well down so the outerGlow's own blur can actually dominate the
+// visible falloff instead of a mostly-opaque base shape peeking through
+// it. Also trimmed alongside COUNTER_GLOW_WIDE_BLUR's own removal for
+// the same real 227MB-over-budget measurement - a big soft background
+// disc was the other large-area outerGlow user in this beat.
+const COUNTER_BG_GLOW_SIZE = 260;
+const COUNTER_BG_GLOW_OPACITY_HOT = 0.07;
+const COUNTER_BG_GLOW_OPACITY_CALM = 0.04;
+const COUNTER_CAPTION_FONT_SIZE = 32;
+const COUNTER_CAPTION_CENTER_Y = 590;
+const COUNTER_CAPTION_LINE_GAP = 44;
+const COUNTER_CAPTION_MAX_WIDTH = 460;
+const COUNTER_CAPTION_DELAY = 0.35;
+const COUNTER_CAPTION_WORD_STAGGER = 0.15;
+const COUNTER_CAPTION_POP_DURATION = 0.3;
+// Direct spec: "give the payoff text a fast kinetic entrance: scale
+// overshoot + soft glow + slight vertical rise... a thin underline or
+// light streak that draws quickly under the text."
+const COUNTER_CAPTION_RISE_PX = 14;
+const COUNTER_UNDERLINE_WIDTH = 340;
+const COUNTER_UNDERLINE_HEIGHT = 3;
+const COUNTER_UNDERLINE_DURATION = 0.3;
+const COUNTER_HOLD_AFTER_CAPTION = 1.3;
+const COUNTER_EXIT_DURATION = 0.4;
+const COUNTER_END_BUFFER = 0.15;
+
+/**
+ * Direct spec: "short, aggressive bursts... on each major jump" - the
+ * exact times COUNTER_BURST_FRACTIONS' jumps land at. Shared by
+ * computeCounterTiming (needs the LAST burst's landing time to know
+ * when the final overshoot starts) and buildCounterLayers (needs every
+ * burst's own time to place the count-value keyframes, the per-burst
+ * pop/kick, and the per-burst ring/particles) so neither can drift out
+ * of sync with the other - same pattern as every other *Timing helper
+ * in this file.
+ */
+function computeCounterBurstTimes() {
+  const times = [];
+  let t = COUNTER_POP_DURATION;
+  for (let i = 0; i < COUNTER_BURST_COUNT; i++) {
+    t += COUNTER_BURST_ACTIVE_DURATION;
+    times.push(t);
+    if (i < COUNTER_BURST_COUNT - 1) t += COUNTER_BURST_GAP;
+  }
+  return times;
+}
+
+/** Shared by counterMinDuration and buildCounterLayers so neither can drift out of sync - same pattern as every other *Timing function in this file. */
+function computeCounterTiming(value, text) {
+  const burstTimes = computeCounterBurstTimes();
+  const targetLandTime = burstTimes[burstTimes.length - 1];
+  const overshootEnd = targetLandTime + COUNTER_OVERSHOOT_RAMP_DURATION;
+  const settleEnd = overshootEnd + COUNTER_SETTLE_DURATION;
+  const captionStart = settleEnd + COUNTER_CAPTION_DELAY;
+  const words = text.trim().split(/\s+/).filter((w) => w.length > 0);
+  const wordCount = Math.max(1, words.length);
+  const captionEnd = captionStart + (wordCount - 1) * COUNTER_CAPTION_WORD_STAGGER + COUNTER_CAPTION_POP_DURATION;
+  const exitStart = captionEnd + COUNTER_HOLD_AFTER_CAPTION;
+  const exitEnd = exitStart + COUNTER_EXIT_DURATION;
+  return {
+    value, burstTimes, overshootEnd, settleEnd, captionStart, captionEnd, exitStart, exitEnd,
+  };
+}
+
+function counterMinDuration(value, text) {
+  return computeCounterTiming(value, text).exitEnd + COUNTER_END_BUFFER;
+}
+
+/**
+ * Direct spec: "the text will textwrap into 2 lines, having the 2nd
+ * line have more text than the first one." Automatic word-wrap
+ * (layoutText's own greedy fill) naturally does the OPPOSITE - it packs
+ * as many words as fit on line 1 first, only overflowing to line 2 -
+ * so this splits the words manually instead, biasing the break toward
+ * the front ~40% of the word count (rounded down, minimum 1 word on
+ * line 1) so line 2 consistently ends up with more words.
+ */
+function splitCounterCaptionLines(text) {
+  const words = text.trim().split(/\s+/).filter((w) => w.length > 0);
+  if (words.length <= 1) return [words, []];
+  const splitIdx = Math.max(1, Math.floor(words.length * 0.4));
+  return [words.slice(0, splitIdx), words.slice(splitIdx)];
+}
+
+/**
+ * One line of the two-line caption - the exact same proven per-word
+ * reveal+pop+exit-fade mechanism as yearScroller's own reveal text (the
+ * t:0 backward-leak anchor fix and the stuck-last-word-scale fix both
+ * reused verbatim), generalized to take an explicit words array
+ * (already split for THIS line) and a wordIndexOffset so the stagger
+ * timing continues seamlessly from the previous line instead of each
+ * line restarting its own count from word 0.
+ */
+function buildCounterCaptionLineLayer({
+  id, words, wordIndexOffset, startTime, accentColor, centerX, centerY, maxWidth, fontSize, fontFamily, exitStart, exitDuration,
+}) {
+  const wordCount = words.length;
+  if (wordCount === 0) return null;
+  const revealKfs = startTime > 0 ? [{ time: 0, value: 0, interpolation: 'hold' }] : [];
+  const popStartKfs = startTime > 0 ? [{ time: 0, value: -1000, interpolation: 'hold' }] : [];
+  const popEndKfs = startTime > 0 ? [{ time: 0, value: -1000, interpolation: 'hold' }] : [];
+  const halfWidthPct = 100 / (wordCount * 6);
+  for (let i = 0; i < wordCount; i++) {
+    const globalIdx = wordIndexOffset + i;
+    const t = startTime + globalIdx * COUNTER_CAPTION_WORD_STAGGER;
+    const centerPct = ((i + 0.5) / wordCount) * 100;
+    revealKfs.push({ time: t, value: Math.round(((i + 1) / wordCount) * 10000) / 100, interpolation: 'hold' });
+    popStartKfs.push({ time: t, value: centerPct - halfWidthPct });
+    popEndKfs.push({ time: t, value: centerPct + halfWidthPct });
+  }
+  const lastGlobalIdx = wordIndexOffset + wordCount - 1;
+  const lastWordTime = startTime + lastGlobalIdx * COUNTER_CAPTION_WORD_STAGGER;
+  popStartKfs.push({ time: lastWordTime + COUNTER_CAPTION_POP_DURATION, value: -1000 });
+  popEndKfs.push({ time: lastWordTime + COUNTER_CAPTION_POP_DURATION, value: -1000 });
+  return {
+    id,
+    type: 'text',
+    text: words.join(' ').toUpperCase(),
+    fontFamily,
+    fontWeight: '400',
+    fontSize,
+    fillStyle: accentColor,
+    textAlign: 'center',
+    maxWidth,
+    width: maxWidth + 40,
+    height: fontSize * 2,
+    // Direct spec: "give it a fast kinetic entrance: scale overshoot +
+    // soft glow + slight vertical rise" - starts a touch lower, eases up
+    // into its own real resting spot as the line's own words reveal.
+    position: {
+      keyframes: [
+        {
+          time: startTime, value: [centerX, centerY + COUNTER_CAPTION_RISE_PX], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: startTime + 0.3, value: [centerX, centerY] },
+      ],
+    },
+    effects: [
+      {
+        type: 'outerGlow', params: { blur: 9, color: accentColor, opacity: 0.6, blendMode: 'screen' },
+      },
+    ],
+    animators: [
+      {
+        selector: {
+          type: 'range', start: 0, end: { keyframes: revealKfs }, basedOn: 'words',
+        },
+        properties: { opacity: -1 },
+      },
+      {
+        selector: {
+          type: 'range', start: { keyframes: popStartKfs }, end: { keyframes: popEndKfs }, basedOn: 'words', shape: 'triangle',
+        },
+        invert: false,
+        properties: { scale: 1.3 },
+      },
+      {
+        selector: {
+          type: 'range',
+          start: 0,
+          end: 100,
+          amount: {
+            keyframes: [
+              {
+                time: exitStart, value: 0, interpolation: 'easing', easing: 'easeInCubic',
+              },
+              { time: exitStart + exitDuration, value: 1 },
+            ],
+          },
+        },
+        invert: false,
+        properties: { opacity: -1, scale: 0.7 },
+      },
+    ],
+  };
+}
+
+/**
+ * Direct spec: "add text below the number with a typewriter animation
+ * (word by word)... extremely stylish font." Reuses FONT_PAIRINGS
+ * (engine/fonts.js), picked deterministically per-beat via hashString -
+ * same established convention as yearScroller/textTiers.
+ */
+function buildCounterCaptionLayers({
+  text, startTime, accentColor, exitStart, exitDuration,
+}) {
+  const [line1Words, line2Words] = splitCounterCaptionLines(text);
+  const pairing = FONT_PAIRINGS[hashString(text) % FONT_PAIRINGS.length];
+  const fontFamily = pairing.serif.heavy;
+  const layers = [];
+  const line1 = buildCounterCaptionLineLayer({
+    id: '__counter_caption_line1__',
+    words: line1Words,
+    wordIndexOffset: 0,
+    startTime,
+    accentColor,
+    centerX: COUNTER_CENTER_X,
+    centerY: COUNTER_CAPTION_CENTER_Y - COUNTER_CAPTION_LINE_GAP / 2,
+    maxWidth: COUNTER_CAPTION_MAX_WIDTH,
+    fontSize: COUNTER_CAPTION_FONT_SIZE,
+    fontFamily,
+    exitStart,
+    exitDuration,
+  });
+  if (line1) layers.push(line1);
+  const line2 = buildCounterCaptionLineLayer({
+    id: '__counter_caption_line2__',
+    words: line2Words,
+    wordIndexOffset: line1Words.length,
+    startTime,
+    accentColor,
+    centerX: COUNTER_CENTER_X,
+    centerY: COUNTER_CAPTION_CENTER_Y + COUNTER_CAPTION_LINE_GAP / 2,
+    maxWidth: COUNTER_CAPTION_MAX_WIDTH,
+    fontSize: COUNTER_CAPTION_FONT_SIZE,
+    fontFamily,
+    exitStart,
+    exitDuration,
+  });
+  if (line2) layers.push(line2);
+
+  // Direct spec: "move the horizontal line to in between the value and
+  // the text, increase the length - it will act like a border between
+  // them." A first draft sat right under the LAST caption line and only
+  // drew in after every word had already revealed - direct correction:
+  // it's a DIVIDER separating the number from the whole caption block,
+  // so it belongs in the gap above line 1 (not under line 2) and should
+  // appear as the caption phase BEGINS (not after it finishes).
+  const totalWords = line1Words.length + line2Words.length;
+  if (totalWords > 0) {
+    const underlineY = COUNTER_CENTER_Y + (COUNTER_CAPTION_CENTER_Y - COUNTER_CAPTION_LINE_GAP / 2 - COUNTER_CAPTION_FONT_SIZE / 2 - COUNTER_CENTER_Y) / 2;
+    layers.push({
+      id: '__counter_caption_underline__',
+      type: 'shape',
+      width: COUNTER_UNDERLINE_WIDTH,
+      height: COUNTER_UNDERLINE_HEIGHT,
+      position: [COUNTER_CENTER_X, underlineY],
+      scale: {
+        keyframes: [
+          {
+            time: startTime, value: [0, 1], interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: startTime + COUNTER_UNDERLINE_DURATION, value: [1, 1] },
+        ],
+      },
+      opacity: {
+        keyframes: [
+          { time: 0, value: 0, interpolation: 'hold' },
+          { time: startTime, value: 0.9 },
+          {
+            time: exitStart, value: 0.9, interpolation: 'easing', easing: 'easeInCubic',
+          },
+          { time: exitStart + exitDuration, value: 0 },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'rectangle', params: { width: COUNTER_UNDERLINE_WIDTH, height: COUNTER_UNDERLINE_HEIGHT } } },
+        { type: 'fill', color: accentColor },
+      ],
+    });
+  }
+
+  return layers;
+}
+
+/**
+ * Direct spec: "glow intensity breathing - pulses higher during fast
+ * counting, settles when the number locks." Builds one opacity
+ * Animatable shared by all 3 glow layers on a given element (number or
+ * icon): ramps up as it pops in, holds "hot" through the whole bursty
+ * counting phase, eases down to a calmer resting value once the count
+ * has fully settled.
+ */
+function buildCounterGlowBreathe(hot, calm, popDuration, hotEndTime, settleEndTime) {
+  return {
+    keyframes: [
+      {
+        time: 0, value: hot * 0.3, interpolation: 'easing', easing: 'easeOutCubic',
+      },
+      { time: popDuration, value: hot, interpolation: 'hold' },
+      {
+        time: hotEndTime, value: hot, interpolation: 'easing', easing: 'easeOutCubic',
+      },
+      { time: settleEndTime, value: calm },
+    ],
+  };
+}
+
+/**
+ * Direct spec: "multi-layer glow system: tight bright core, medium soft
+ * bloom, wide atmospheric outer glow." A first draft built all 3 layers
+ * (plus a matching 3-layer stack on the icon) - real measurement (a
+ * single isolated-beat render, expose-gc'd) showed this beat's own peak
+ * RSS at 227MB, over [[feedback_memory_budget]]'s 170-210MB/video
+ * guardrail. Cutting individual blur RADII barely moved the number
+ * (227->223MB) - the real driver is having several outerGlow passes
+ * alive SIMULTANEOUSLY for most of the beat's own duration (this stack
+ * plus the icon's own glow plus the background glow plus, later, both
+ * caption lines' glow, all resolving every frame at once), not any one
+ * layer's own radius. Cut to 2 layers (core + mid) here - the icon's
+ * own stack was separately cut to 1 (see its own comment) - same
+ * "measure the real cost, scale back the least-essential layer of it"
+ * call nodeAbsorb's own pill-glow pass made once before, applied to
+ * WHICH layers stay stacked rather than how big each one's blur is.
+ */
+function buildCounterMultiGlow(accentColor, breathe, scale = 1) {
+  return [
+    {
+      type: 'outerGlow', params: { blur: COUNTER_GLOW_CORE_BLUR * scale, color: accentColor, blendMode: 'screen', opacity: buildCounterGlowBreathe(COUNTER_GLOW_CORE_OPACITY_HOT, COUNTER_GLOW_CORE_OPACITY_CALM, breathe.pop, breathe.hotEnd, breathe.settleEnd) },
+    },
+    {
+      type: 'outerGlow', params: { blur: COUNTER_GLOW_MID_BLUR * scale, color: accentColor, blendMode: 'screen', opacity: buildCounterGlowBreathe(COUNTER_GLOW_MID_OPACITY_HOT, COUNTER_GLOW_MID_OPACITY_CALM, breathe.pop, breathe.hotEnd, breathe.settleEnd) },
+    },
+  ];
+}
+
+/** A stroked ring, expanding + fading - shared shape for every "impact" moment (per-burst AND the final lock, just at different sizes/durations/peak opacities). Absolute coordinates, matching this template's other one-off accents. */
+function buildCounterRing(id, x, y, color, time, size, duration, peakOpacity) {
+  return {
+    id,
+    type: 'shape',
+    width: size,
+    height: size,
+    position: [x, y],
+    scale: {
+      keyframes: [
+        {
+          time, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: time + duration, value: [2, 2] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time, value: peakOpacity, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: time + duration, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: size, height: size } } },
+      { type: 'stroke', color, width: 4 },
+    ],
+  };
+}
+
+/**
+ * Direct spec: "particle bursts on big increases" - a tiny, deliberately
+ * CHEAP pair (no blur/glow, same cost reasoning as yearScroller's own
+ * lock particles) used once per burst landing, up to 4 times per beat.
+ */
+function buildCounterBurstParticles(id, x, y, color, time) {
+  const particles = [];
+  for (let p = 0; p < 2; p++) {
+    const angle = p === 0 ? -Math.PI * 0.7 : -Math.PI * 0.3;
+    const endX = x + Math.cos(angle) * 20;
+    const endY = y + Math.sin(angle) * 20;
+    particles.push({
+      id: `__counter_burst_${id}_${p}__`,
+      type: 'shape',
+      width: 5,
+      height: 5,
+      position: {
+        keyframes: [
+          {
+            time, value: [x, y], interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: time + 0.2, value: [endX, endY] },
+        ],
+      },
+      opacity: {
+        keyframes: [
+          { time: 0, value: 0, interpolation: 'hold' },
+          {
+            time, value: 0.85, interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: time + 0.2, value: 0 },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: 5, height: 5 } } },
+        { type: 'fill', color },
+      ],
+    });
+  }
+  return particles;
+}
+
+/**
+ * Direct spec: "soft residual particles continuing to float around the
+ * locked number and text." A handful of slow, staggered, long-lived
+ * upward drifters spawned once at lock - reads as ambient/ongoing
+ * without needing a real continuous emitter (this engine has none).
+ */
+function buildCounterResidualParticles(x, y, color, time) {
+  const particles = [];
+  const count = 6;
+  for (let p = 0; p < count; p++) {
+    const spawnT = time + p * 0.22;
+    const duration = 1.4 + (p % 3) * 0.25;
+    const startX = x + (p - count / 2) * 22;
+    const driftX = startX + (p % 2 === 0 ? -1 : 1) * 18;
+    const driftY = y - 140 - (p % 3) * 30;
+    particles.push({
+      id: `__counter_residual_${p}__`,
+      type: 'shape',
+      width: 4,
+      height: 4,
+      position: {
+        keyframes: [
+          {
+            time: spawnT, value: [startX, y - 20], interpolation: 'easing', easing: 'easeOutSine',
+          },
+          { time: spawnT + duration, value: [driftX, driftY] },
+        ],
+      },
+      opacity: {
+        keyframes: [
+          { time: 0, value: 0, interpolation: 'hold' },
+          {
+            time: spawnT, value: 0.6, interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: spawnT + duration, value: 0 },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: 4, height: 4 } } },
+        { type: 'fill', color },
+      ],
+    });
+  }
+  return particles;
+}
+
+function buildCounterLayers({
+  value, text, icon, iconPosition, accentColor,
+}) {
+  const layers = [];
+  const timing = computeCounterTiming(value, text);
+  const { burstTimes } = timing;
+  const hotEnd = burstTimes[burstTimes.length - 1];
+  const targetStr = Math.round(value).toLocaleString('en-US');
+  const halfWidthEstimate = (targetStr.length * COUNTER_CHAR_WIDTH_ESTIMATE) / 2;
+  // A tiny target (e.g. value=2) rounds its own 8% overshoot back down
+  // to the same integer, making the "overshoot" invisible - floors it
+  // to at least +1 so every count-up has a real, visible overshoot.
+  const overshootValue = Math.max(value + 1, Math.round(value * (1 + COUNTER_OVERSHOOT_FRAC)));
+  // With an icon present, centering the NUMBER alone on the canvas (as
+  // if there were no icon) pushes the icon+gap+number PAIR off-center -
+  // and for a wide enough number, off the left/right edge entirely (a
+  // real bug caught on a render: the icon was cropped at the frame
+  // edge). Instead, nudge the number's own center away from the icon's
+  // side by half the icon's own footprint, so the icon+number PAIR as a
+  // whole stays centered on the canvas - the number still recenters
+  // itself around that (possibly off-canvas-center) point every frame
+  // exactly as before, it just has a different anchor when an icon
+  // needs room.
+  const iconFootprint = icon ? COUNTER_ICON_SIZE + COUNTER_ICON_GAP : 0;
+  const numberCenterX = icon
+    ? COUNTER_CENTER_X + (iconPosition === 'after' ? -1 : 1) * (iconFootprint / 2)
+    : COUNTER_CENTER_X;
+  const breathe = { pop: COUNTER_POP_DURATION, hotEnd, settleEnd: timing.settleEnd };
+
+  layers.push({
+    id: '__counter_group__',
+    type: 'null',
+    // Direct spec: "a tiny horizontal kick or vibration on the whole
+    // number group with every big increase" - one small right-then-back
+    // nudge per burst landing, shared by every child (number, icon,
+    // ghost, glow, energy lines) so the whole cluster reads as one
+    // struck object, not just the digits alone.
+    position: (() => {
+      const kfs = [{ time: 0, value: [0, 0] }];
+      burstTimes.forEach((t) => {
+        kfs.push(
+          {
+            time: t, value: [0, 0], interpolation: 'easing', easing: 'easeOutQuad',
+          },
+          {
+            time: t + 0.03, value: [COUNTER_BURST_KICK_PX, 0], interpolation: 'easing', easing: 'easeInOutQuad',
+          },
+          { time: t + COUNTER_BURST_GAP - 0.01, value: [0, 0] },
+        );
+      });
+      return { keyframes: kfs };
+    })(),
+    opacity: {
+      keyframes: [
+        {
+          time: timing.exitStart, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: timing.exitEnd, value: 0 },
+      ],
+    },
+  });
+
+  // Direct spec: "soft radial glow behind the numbers that intensifies
+  // during fast counting and settles on the final number." A low-
+  // opacity filled disc + a heavy outerGlow blur does the soft radial
+  // falloff (no true gradient-fill primitive for shapes in this
+  // engine) - pushed FIRST so it sits behind everything else.
+  layers.push({
+    id: '__counter_bg_glow__',
+    type: 'shape',
+    parent: '__counter_group__',
+    width: COUNTER_BG_GLOW_SIZE,
+    height: COUNTER_BG_GLOW_SIZE,
+    position: [numberCenterX, COUNTER_CENTER_Y],
+    opacity: {
+      keyframes: [
+        {
+          time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: COUNTER_POP_DURATION, value: COUNTER_BG_GLOW_OPACITY_HOT, interpolation: 'hold' },
+        {
+          time: hotEnd, value: COUNTER_BG_GLOW_OPACITY_HOT, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: timing.settleEnd, value: COUNTER_BG_GLOW_OPACITY_CALM },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: COUNTER_BG_GLOW_SIZE, height: COUNTER_BG_GLOW_SIZE } } },
+      { type: 'fill', color: accentColor },
+    ],
+    effects: [
+      { type: 'outerGlow', params: { blur: 32, color: accentColor, opacity: 0.5, blendMode: 'screen' } },
+    ],
+  });
+
+
+  // Direct spec: "avoid smooth linear counting - short, aggressive
+  // bursts with strong ease-out on each major jump." 4 discrete jumps
+  // toward the target (each landing eased via the PRECEDING keyframe,
+  // this file's own established convention), then the existing overshoot-
+  // past-target-then-elastic-settle takes over as the final, biggest beat.
+  const countKfs = [{
+    time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+  }];
+  COUNTER_BURST_FRACTIONS.forEach((frac, i) => {
+    countKfs.push({
+      time: burstTimes[i], value: Math.round(value * frac), interpolation: 'easing', easing: 'easeOutCubic',
+    });
+  });
+  countKfs.push({
+    time: timing.overshootEnd, value: overshootValue, interpolation: 'easing', easing: 'easeOutElastic',
+  });
+  countKfs.push({ time: timing.settleEnd, value });
+
+  // Direct spec: "on every rapid change, trigger a short scale overshoot
+  // + settle so the numbers feel punchy" - one small pop per burst
+  // landing, then a bigger pop at the final overshoot (the biggest jump
+  // of all), settling exactly when the count itself settles.
+  const scaleKfs = [
+    {
+      time: 0, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutBack',
+    },
+    { time: COUNTER_POP_DURATION, value: [1, 1], interpolation: 'easing', easing: 'easeOutQuad' },
+  ];
+  burstTimes.forEach((t) => {
+    scaleKfs.push(
+      {
+        time: t, value: [1, 1], interpolation: 'easing', easing: 'easeOutQuad',
+      },
+      {
+        time: t + COUNTER_BURST_POP_PEAK_TIME, value: [COUNTER_BURST_POP_SCALE, COUNTER_BURST_POP_SCALE], interpolation: 'easing', easing: 'easeInOutQuad',
+      },
+      { time: t + COUNTER_BURST_GAP - 0.01, value: [1, 1] },
+    );
+  });
+  scaleKfs.push(
+    {
+      time: timing.overshootEnd, value: [1, 1], interpolation: 'easing', easing: 'easeOutQuad',
+    },
+    {
+      time: timing.overshootEnd + 0.06, value: [1.15, 1.15], interpolation: 'easing', easing: 'easeOutElastic',
+    },
+    { time: timing.settleEnd, value: [1, 1] },
+  );
+
+  // Direct spec: "secondary number ghosts: very faint, larger, blurred
+  // versions of the previous number... soft motion blur or residual
+  // after-image during the fastest counting phases." Same countValue
+  // curve as the real number, every keyframe's own time shifted later
+  // by COUNTER_GHOST_LAG - at any instant it's showing what the real
+  // number showed COUNTER_GHOST_LAG seconds ago, i.e. always one step
+  // "behind." Pushed BEFORE the real number so it renders underneath.
+  layers.push({
+    id: '__counter_ghost__',
+    type: 'text',
+    parent: '__counter_group__',
+    fontFamily: 'Poppins Black',
+    fontWeight: '400',
+    fontSize: COUNTER_FONT_SIZE,
+    fillStyle: accentColor,
+    textAlign: 'center',
+    maxWidth: CANVAS_WIDTH - 40,
+    width: CANVAS_WIDTH,
+    height: COUNTER_FONT_SIZE * 1.6,
+    position: [numberCenterX, COUNTER_CENTER_Y],
+    countValue: { keyframes: countKfs.map((kf) => ({ ...kf, time: kf.time + COUNTER_GHOST_LAG })) },
+    scale: { keyframes: [{ time: 0, value: [COUNTER_GHOST_SCALE, COUNTER_GHOST_SCALE] }] },
+    opacity: {
+      keyframes: [
+        {
+          time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: COUNTER_POP_DURATION + COUNTER_GHOST_LAG, value: COUNTER_GHOST_OPACITY, interpolation: 'hold' },
+        {
+          time: hotEnd, value: COUNTER_GHOST_OPACITY, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: timing.overshootEnd, value: 0 },
+      ],
+    },
+    effects: [
+      { type: 'gaussianBlur', params: { radius: COUNTER_GHOST_BLUR } },
+    ],
+  });
+
+  layers.push({
+    id: '__counter_number__',
+    type: 'text',
+    parent: '__counter_group__',
+    fontFamily: 'Poppins Black',
+    fontWeight: '400',
+    fontSize: COUNTER_FONT_SIZE,
+    fillStyle: accentColor,
+    textAlign: 'center',
+    maxWidth: CANVAS_WIDTH - 40,
+    width: CANVAS_WIDTH,
+    height: COUNTER_FONT_SIZE * 1.6,
+    position: [numberCenterX, COUNTER_CENTER_Y],
+    countValue: { keyframes: countKfs },
+    // Direct spec: "add the other miniature details like the popup
+    // animation" - pops in with a scale overshoot right as counting
+    // begins, instead of fading in flatly.
+    scale: { keyframes: scaleKfs },
+    opacity: {
+      keyframes: [
+        {
+          time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: COUNTER_POP_DURATION * 0.6, value: 1 },
+      ],
+    },
+    // Direct spec: "multi-layer glow system: tight core + medium bloom +
+    // wide atmosphere" (breathing higher during counting, calmer once
+    // locked) plus "a subtle gradient or inner highlight so the digits
+    // feel dimensional" - a bright innerGlow substitutes for a true
+    // gradient fill (no such primitive for text in this engine).
+    effects: [
+      ...buildCounterMultiGlow(accentColor, breathe, 1),
+      {
+        type: 'innerGlow', params: { blur: 10, color: '#FFFFFF', opacity: 0.32, blendMode: 'screen' },
+      },
+    ],
+  });
+
+  // Per-burst impact ring + tiny particle pair - direct spec: "impact
+  // rings that expand from the center on every major jump" +
+  // "particle bursts... on big increases."
+  burstTimes.forEach((t, i) => {
+    layers.push(buildCounterRing(`__counter_burst_ring_${i}__`, numberCenterX, COUNTER_CENTER_Y, accentColor, t, COUNTER_BURST_RING_SIZE, COUNTER_BURST_RING_DURATION, 0.55));
+    layers.push(...buildCounterBurstParticles(i, numberCenterX, COUNTER_CENTER_Y, accentColor, t));
+  });
+
+  // Direct spec: "ONLY IF IT WANTS OR NEEDS, they can add an icon in
+  // front of the number (like a currency) or after the number."
+  // Positioned off the TARGET value's own estimated half-width, not the
+  // live per-frame-changing counted value - the fast-changing digits
+  // during the count blur past too quickly for exact tracking to
+  // matter, and the eye rests on the final settled width anyway.
+  if (icon) {
+    const iconX = iconPosition === 'after'
+      ? numberCenterX + halfWidthEstimate + COUNTER_ICON_GAP + COUNTER_ICON_SIZE / 2
+      : numberCenterX - halfWidthEstimate - COUNTER_ICON_GAP - COUNTER_ICON_SIZE / 2;
+    const iconScaleKfs = [
+      {
+        time: 0, value: [0.4, 0.4], interpolation: 'easing', easing: 'easeOutBack',
+      },
+      { time: COUNTER_POP_DURATION + 0.08, value: [1, 1], interpolation: 'easing', easing: 'easeOutQuad' },
+    ];
+    burstTimes.forEach((t) => {
+      iconScaleKfs.push(
+        {
+          time: t, value: [1, 1], interpolation: 'easing', easing: 'easeOutQuad',
+        },
+        {
+          time: t + COUNTER_BURST_POP_PEAK_TIME, value: [1.14, 1.14], interpolation: 'easing', easing: 'easeInOutQuad',
+        },
+        { time: t + COUNTER_BURST_GAP - 0.01, value: [1, 1] },
+      );
+    });
+    layers.push({
+      id: '__counter_icon__',
+      type: 'image',
+      icon,
+      iconColor: accentColor,
+      parent: '__counter_group__',
+      width: COUNTER_ICON_SIZE,
+      height: COUNTER_ICON_SIZE,
+      position: [iconX, COUNTER_CENTER_Y],
+      // Direct spec: "make it react to the counting - subtle scale pulse
+      // or glow intensity increase every time the number jumps
+      // significantly."
+      scale: { keyframes: iconScaleKfs },
+      opacity: {
+        keyframes: [
+          {
+            time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: COUNTER_POP_DURATION * 0.6, value: 1 },
+        ],
+      },
+      // Direct spec: "rebuild the icon with stronger presence: thicker
+      // strokes + matching multi-layer glow." A first draft gave the
+      // icon the SAME 3-layer stack as the number (just scaled down) -
+      // real measurement (a single isolated-beat render) showed this
+      // beat's own peak RSS at 227MB, over [[feedback_memory_budget]]'s
+      // 170-210MB/video guardrail; outerGlow blur padding is the
+      // biggest known cost driver here, and this was the 2nd full
+      // 3-layer stack running for the whole beat, not just a burst
+      // moment. Scaled back to ONE breathing glow (same intensifies-
+      // during-counting/calms-at-lock behavior, just not 3 stacked
+      // passes) - same "measure the real cost, scale back the least-
+      // essential layer of it" call nodeAbsorb's own pill-glow pass
+      // made once before. "Thicker strokes" isn't buildable at all -
+      // this icon comes from the mograph Iconify pipeline as a pre-made
+      // filled SVG, with no stroke-width parameter to thicken.
+      effects: [
+        {
+          type: 'outerGlow', params: { blur: 14, color: accentColor, blendMode: 'screen', opacity: buildCounterGlowBreathe(0.75, 0.5, breathe.pop, breathe.hotEnd, breathe.settleEnd) },
+        },
+      ],
+    });
+    // Direct spec: "optional short particle emission from the icon on
+    // big jumps."
+    burstTimes.forEach((t, i) => {
+      layers.push(...buildCounterBurstParticles(`icon_${i}`, iconX, COUNTER_CENTER_Y, accentColor, t));
+    });
+  }
+
+  // Direct spec: "final lock accent: when the number settles, trigger a
+  // STRONGER expanding ring + denser particle burst + a short screen-
+  // wide light flash so the hold feels earned" - same "you've arrived"
+  // combined hit yearScroller already proved, scaled up here since this
+  // is the beat's own single biggest payoff moment.
+  layers.push(buildCounterRing('__counter_lock_ring__', numberCenterX, COUNTER_CENTER_Y, accentColor, timing.settleEnd, COUNTER_LOCK_RING_SIZE, COUNTER_LOCK_RING_DURATION, 0.9));
+  layers.push(...buildIconBurstParticles(0, numberCenterX, COUNTER_CENTER_Y, accentColor, timing.settleEnd));
+  layers.push(...buildIconBurstParticles(1, numberCenterX, COUNTER_CENTER_Y, accentColor, timing.settleEnd));
+  layers.push(...buildCounterResidualParticles(numberCenterX, COUNTER_CENTER_Y, accentColor, timing.settleEnd));
+  layers.push({
+    id: '__counter_flash__',
+    type: 'shape',
+    width: CANVAS_WIDTH,
+    height: CANVAS_HEIGHT,
+    position: [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2],
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: timing.settleEnd, value: COUNTER_FLASH_OPACITY, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: timing.settleEnd + COUNTER_FLASH_DURATION, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT } } },
+      { type: 'fill', color: accentColor },
+    ],
+  });
+
+  layers.push(...buildCounterCaptionLayers({
+    text,
+    startTime: timing.captionStart,
+    accentColor,
+    exitStart: timing.exitStart,
+    exitDuration: COUNTER_EXIT_DURATION,
+  }).map((l) => ({ ...l, parent: '__counter_group__' })));
+
+  return layers;
+}
+
 const MOGRAPH_ICON_RE = /^[a-z0-9-]+:[a-z0-9-]+$/i;
 
 /**
@@ -10489,6 +11411,17 @@ function buildMographBeatVisual(beat) {
       beat.params.duration = yearScrollerMinDuration(year, text);
     }
     layers = buildYearScrollerLayers({ year, text, accentColor });
+  } else if (spec.type === 'counter' && Number.isFinite(spec.value) && typeof spec.text === 'string' && spec.text.trim()) {
+    const value = Math.round(Math.max(COUNTER_MIN_VALUE, Math.min(COUNTER_MAX_VALUE, spec.value)));
+    const text = truncateAtWordBoundary(spec.text.trim(), 24);
+    const icon = typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon) ? spec.icon : null;
+    const iconPosition = spec.iconPosition === 'after' ? 'after' : 'before';
+    if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+      beat.params.duration = counterMinDuration(value, text);
+    }
+    layers = buildCounterLayers({
+      value, text, icon, iconPosition, accentColor,
+    });
   }
 
   if (layers) {
@@ -10603,7 +11536,7 @@ function validateSceneJSON(sceneJSON) {
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
     } else if (seen.size < 5) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText/yearScroller). Add more template beats to reach at least 5.`);
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText/yearScroller/counter). Add more template beats to reach at least 5.`);
     } else if (seen.size > 7) {
       errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 7. Trim beats down to 7 or fewer distinct templates.`);
     }
@@ -12569,5 +13502,6 @@ module.exports = {
   buildTextTiersLayers,
   buildBlueprintTextLayers,
   buildYearScrollerLayers,
+  buildCounterLayers,
   buildMographBeatVisual,
 };
