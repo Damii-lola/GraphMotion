@@ -1756,7 +1756,21 @@ function validateLayer(layer, path, errors, knownIds) {
       errors.push(`${path}: a "shape" layer requires its own top-level "width" and "height" (a sibling of "position"/"contents", not nested inside a content item's shape.params) - this is the layer's own bounding size, separate from any individual path's geometry, and other logic (anchor centering, effect-buffer sizing) depends on it being present and accurate.`);
     }
   } else if (layer.type === 'text') {
-    if (typeof layer.text !== 'string' || layer.text.length === 0) errors.push(`${path}.text: is required and must be a non-empty string`);
+    // countValue (the counter template's dynamic count-up text - see
+    // buildTextDraw in sceneBuilder.js) is a real alternative to a
+    // static "text" string, not an extra/optional field on top of it -
+    // a layer driving its own characters from a live numeric Animatable
+    // legitimately has no "text" at all. Real bug found live: this
+    // check (and the matching auto-repair filter a few thousand lines
+    // down, search "missing/empty \"text\"") predate countValue and
+    // didn't know about it, so every counter beat generated through the
+    // real pipeline had its own number (and ghost) text layer silently
+    // DELETED during validation's auto-repair pass - confirmed via a
+    // real AI-generated render where the number never appeared at all,
+    // traced to validateSceneJSON via a direct before/after diff.
+    if (!isPlainObject(layer.countValue) && (typeof layer.text !== 'string' || layer.text.length === 0)) {
+      errors.push(`${path}.text: is required and must be a non-empty string (unless this layer sets "countValue" instead)`);
+    }
     if (layer.fontFamily !== undefined && !AVAILABLE_FONT_FAMILIES.includes(layer.fontFamily)) {
       errors.push(`${path}.fontFamily: "${layer.fontFamily}" is not a real, bundled font - only these are actually registered and guaranteed to render correctly on every host: ${AVAILABLE_FONT_FAMILIES.join(', ')}. Any other name silently falls back to a generic, unstyled default (confirmed directly - this is not a style preference, it's the difference between real bold geometric type and an unstyled fallback).${suggestFix(layer.fontFamily, AVAILABLE_FONT_FAMILIES, 'a font family')}`);
     }
@@ -3427,9 +3441,18 @@ function autoRepairBeat(beat) {
   //    way to fabricate real words the model never wrote, so - same
   //    tradeoff as #1 - the layer itself is dropped rather than
   //    failing the whole beat over one missing piece of text.
+  //    EXCEPT a layer with "countValue" set (the counter template's
+  //    dynamic count-up text, sceneBuilder.js's buildTextDraw) - that's
+  //    a real, intentional alternative to a static "text" string, not a
+  //    broken/empty layer. Real bug found live: this filter predates
+  //    countValue and didn't know about it, so every counter beat
+  //    generated through the real pipeline had its own number (and
+  //    ghost) layer silently deleted right here, even though nothing
+  //    was actually wrong with it - confirmed via a real AI-generated
+  //    render where the number never appeared at all.
   if (Array.isArray(beat.visual.layers)) {
     beat.visual.layers = beat.visual.layers.filter((l) => isPlainObject(l) && LAYER_TYPES.includes(l.type)
-      && !(l.type === 'text' && (typeof l.text !== 'string' || l.text.trim().length === 0))
+      && !(l.type === 'text' && !isPlainObject(l.countValue) && (typeof l.text !== 'string' || l.text.trim().length === 0))
       // A shape layer whose contents sanitizeShapeContents just
       // reduced to nothing (every item was unsalvageable), OR that
       // never had a real "contents" array at all (a genuinely
