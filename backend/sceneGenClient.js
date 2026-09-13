@@ -443,6 +443,11 @@ const COMPACT_BASE_DURATION = {
   // entirely fixed (doesn't depend on the caption's length), so this seed
   // is just that same real, always-exact value.
   dotConstellation: 4.635,
+  // Immediately overwritten by buttonDrawMinDuration() in sceneSchema.js's
+  // own dispatch branch - this template's own pacing is entirely fixed
+  // (doesn't depend on the label's own length), so this seed is just that
+  // same real, always-exact value.
+  buttonDraw: 3.17,
 };
 
 /**
@@ -661,8 +666,13 @@ function validateCompactBeatVars(template, vars) {
       if (tw.length < 2) return `needs "text": a real short caption of at least 2 words (got ${tw.length})`;
       return null;
     }
+    case 'buttonDraw': {
+      const tw = typeof vars.text === 'string' ? vars.text.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      if (tw.length < 1) return 'needs "text": a real short button label (e.g. "Get Started")';
+      return null;
+    }
     default:
-      return `"${template}" is not one of the 17 real template names`;
+      return `"${template}" is not one of the 18 real template names`;
   }
 }
 

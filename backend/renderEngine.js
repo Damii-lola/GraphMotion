@@ -1001,6 +1001,14 @@ function resolveIconBackdropRule(layerId) {
   if (absorbRowIconMatch) return { fill: `__absorb_row_badge_${absorbRowIconMatch[1]}__` };
   const absorbRowTextMatch = layerId.match(/^__absorb_row_text_(\d+)__$/);
   if (absorbRowTextMatch) return { fill: `__absorb_row_bg_${absorbRowTextMatch[1]}__` };
+  // buttonDraw's own label sits on its button's own dark fill
+  // ('__bd_fill__', a near-black #0D0D0D regardless of board background),
+  // not the board itself - same sibling-fill reasoning as nodeAbsorb/
+  // tripleStack above. Without this, a light-classified board flattened
+  // the label's white fillStyle to dark charcoal (ensureTextContrast-
+  // AgainstBackground), making it nearly invisible against the also-dark
+  // button - confirmed via a real render's own extracted frames.
+  if (layerId === '__bd_text__') return { fill: '__bd_fill__' };
   // Everything else authored (nodeCluster/nodeClusterExtended's OWN
   // "__node_icon_N__" pre-explosion state, mergeCluster's small
   // orbiting "__merge_icon_N__", the decorative "__topic_icon__" card)

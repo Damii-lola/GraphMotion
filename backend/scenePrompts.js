@@ -1865,6 +1865,10 @@ const COMPACT_TEMPLATE_INFO = {
     fields: 'text*(2-4 short words, one line)',
     example: { template: 'dotConstellation', narration: 'Focus organizes motion.', vars: { text: 'Focus organizes motion' } },
   },
+  buttonDraw: {
+    fields: 'text*(1-3w button label)',
+    example: { template: 'buttonDraw', narration: "You're all set.", vars: { text: 'Get Started' } },
+  },
 };
 const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);
 

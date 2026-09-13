@@ -2481,6 +2481,20 @@ function attachLineRevealSparks(beat) {
       ],
     };
     if (typeof layer.id === 'string') sparkLayer.id = `${layer.id}__spark`;
+    // General fix (found building buttonDraw's own outro, which parents
+    // its drawing outline to a shared null group so the whole button can
+    // slide/fade as one unit - see BD_OUTRO_* doc comment): this function
+    // never considered `layer.parent` at all before now, so a spark
+    // generated for any ALREADY-parented source shape silently rendered
+    // in raw world space while its source lived in the parent's local
+    // space - correct only by coincidence for an identity-transform
+    // parent, visibly wrong for any real translate/fade like this one.
+    // `pos` above is already read via `representativePosition`, which is
+    // parent-agnostic (just reads the shape's own literal/keyframed
+    // position field) - propagating the same parent here keeps the spark
+    // in that identical local space, so it inherits the parent's
+    // transform (and fades with it) exactly like its source shape does.
+    if (layer.parent) sparkLayer.parent = layer.parent;
     additions.push({ afterIndex: i, layer: sparkLayer });
   });
 
@@ -13150,6 +13164,861 @@ function buildDotConstellationLayers({ text, accentColor }) {
   ];
 }
 
+// ======================= buttonDraw (18th template) =======================
+// Built from a direct, frame-by-frame read of a reference video (B3.mp4,
+// 2026-09-13, no verbatim spec given - user: "just look at the video, the
+// scene is basically just a dot drawing out a button as text gets
+// revealed"). Confirmed via 30fps frames across the video's real 2.95s:
+//   1. A single glowing dot pops in already at the RIGHTMOST point of a
+//      pill/stadium-shaped button outline (full-height rounded caps on
+//      both ends, like a real "pill button").
+//   2. It traces the WHOLE outline in one continuous stroke: up and
+//      around the right cap, left across the top edge, around the left
+//      cap, right across the bottom edge, back up through the right cap
+//      to close exactly where it started. The stroke right behind the
+//      dot reads bright white, fading to the accent color further back -
+//      this is just the dot's own white/glow bleeding onto the nearby
+//      accent-colored stroke, not a separate color-shift effect (see the
+//      outline layer's own doc comment for why this happens for free).
+//   3. The button's own dark fill fades in during the LATTER half of that
+//      same draw, and the label fades/pops in shortly before the outline
+//      fully closes, both settled by the time the loop closes.
+//   4. CORRECTION (2026-09-13, direct follow-up "make an outro for the
+//      scene"): the reference's own last ~1.5s was first misread as a
+//      generic next-scene camera-pan artifact and skipped - re-examined
+//      frame-by-frame (with real pixel bounding-box/brightness sampling,
+//      not eyeballed) once asked for an outro, and it's actually a
+//      deliberate in-clip animation: the whole button slides off-canvas
+//      to the LEFT while fading, its own glow lingering a beat after the
+//      shape itself has left frame. See BD_OUTRO_* below for the real fix.
+const BD_CX = CANVAS_WIDTH / 2;
+const BD_BUTTON_Y = 460;
+const BD_BUTTON_WIDTH = 380;
+const BD_BUTTON_HEIGHT = 108;
+const BD_STROKE_WIDTH = 4;
+// Real, measured-not-guessed choice: at 34px, a 16-char worst-case label
+// in the widest of all 7 font pairings (Archivo Black) measures 320.9px
+// against a 320px maxWidth - the exact same razor-thin margin that wrapped
+// dotConstellation's own caption once already. 30px keeps the SAME
+// worst-case comfortably under (283.2px).
+const BD_FONT_SIZE = 30;
+
+const BD_DRAW_START = 0.05;
+const BD_DRAW_DURATION = 0.75;
+
+const BD_FILL_FADE_START = 0.45;
+const BD_FILL_FADE_DURATION = 0.35;
+// Direct spec: "add the other miniature details like the popup animation,
+// overshoot" - the fill doesn't just fade in flat, it settles from a
+// slightly-under-1 scale with a tiny overshoot past 1, same established
+// "pop then settle" shape used everywhere else in this file.
+const BD_FILL_POP_SCALE = 1.035;
+const BD_FILL_POP_DURATION = 0.12;
+
+const BD_TEXT_START = 0.58;
+const BD_TEXT_POP_DURATION = 0.16;
+const BD_TEXT_SETTLE_DURATION = 0.1;
+const BD_TEXT_START_SCALE = 1.3;
+const BD_TEXT_SETTLE_UNDERSHOOT = 0.96;
+
+const BD_LANDING_RING_SIZE = 90;
+const BD_LANDING_RING_DURATION = 0.35;
+
+const BD_HOLD_DURATION = 1.0;
+const BD_END_BUFFER = 0.12;
+
+// Outro, added per direct follow-up ("make an outro for the scene") after
+// the reference video (B3.mp4) turned out to run past its own intro/hold -
+// re-examined frame-by-frame (frames 40-88 of 88 total): the whole button
+// slides off-canvas to the LEFT while fading, with its own glow visibly
+// LINGERING a beat after the shape itself has left frame (measured via
+// real pixel bounding-box/brightness sampling, not eyeballed - a bright
+// orange glow blob is still present at the reference's very last frame,
+// well after the pill's own silhouette is gone). Modeled as ONE shared
+// null-group transform (`__bd_group__`) wrapping the fill/outline/text -
+// distance/duration on the GROUP's own position, opacity fading out
+// slightly SLOWER than the slide to reproduce that same lingering-glow
+// read, rather than copying separate keyframe tracks onto each of the 3
+// children (avoids the cloneTrack-style mutable-shared-keyframe class of
+// bug entirely, since only one node ever owns these keyframes).
+const BD_OUTRO_SLIDE_DISTANCE = 560;
+const BD_OUTRO_SLIDE_DURATION = 0.65;
+const BD_OUTRO_FADE_DURATION = 0.9;
+
+// ------------------- god-tier 2D upgrade pass (2026-09-13) -------------------
+// Direct wishlist, implemented SELECTIVELY per this file's own established
+// convention (typewriterLink/dotConstellation before it) - explicit skips
+// noted where this engine has no matching primitive:
+//   - No per-pixel color-gradient-ALONG-a-stroke's-length primitive exists
+//     (drawStroke is one flat color) - the spec's "bright core near the
+//     dot, cooling to accent color further back" is approximated instead
+//     with a genuine hot white leading dot + a smaller, accent-colored
+//     TRAILING ECHO dot sampled from the SAME path at a small time lag -
+//     two real, distinctly-colored points rather than one gradient.
+//   - No gradient/wipe-mask primitive for a shape fill exists, so the
+//     spec's "energy wave traveling across the fill as it wipes in" isn't
+//     literally reproducible - approximated with a grow-from-a-small-seed
+//     scale reveal (a real radial-ish "wipes outward" read) instead.
+//   - Particles are bounded, timed bursts (this engine has no continuous
+//     emitter primitive), same practical limit every other template's own
+//     particle effects already use - not a literal never-ending stream.
+// Everything else below (multi-layer glow, dual leading tips + particles,
+// rim-light travel, secondary depth ring, inner highlight, closing-impact
+// + final-lock glow intensity via real keyframed effect params, group-
+// level micro-breathing, residual drift particles) is a real, achievable
+// primitive-backed effect, not an approximation.
+const BD_CORE_STROKE_WIDTH = 2;
+const BD_CORE_STROKE_COLOR = '#FFFFFF';
+const BD_BLOOM_STROKE_OPACITY = 0.55;
+
+const BD_TIP_SIZE = 11;
+const BD_TIP_SAMPLES = 24;
+const BD_TIP_PULSE_PERIOD = 0.15;
+const BD_TIP_PULSE_AMOUNT = 0.18;
+const BD_ECHO_SIZE = 7;
+const BD_ECHO_LAG = 0.12;
+const BD_ECHO_OPACITY = 0.7;
+const BD_TIP_PARTICLE_COUNT = 4;
+const BD_TIP_PARTICLE_LIFE = 0.22;
+
+const BD_FILL_SEED_SCALE = 0.12;
+const BD_INNER_HIGHLIGHT_OPACITY = 0.12;
+
+const BD_OUTER_RING_SCALE = 1.35;
+const BD_OUTER_RING_PEAK_OPACITY = 0.28;
+const BD_OUTER_RING_REST_OPACITY = 0.12;
+
+const BD_RIM_TRAVEL_DURATION = 0.45;
+const BD_RIM_TRAVEL_GAP_PCT = 22;
+
+const BD_BREATH_PERIOD = 0.9;
+const BD_BREATH_AMOUNT = 0.012;
+
+const BD_RESIDUAL_COUNT = 4;
+const BD_RESIDUAL_STAGGER = 0.14;
+const BD_RESIDUAL_DURATION = 0.6;
+
+/** Shared by buttonDrawMinDuration and buildButtonDrawLayers - every absolute time this template's own layers key off of. Fixed (not a function of the label's own length - the button's own geometry/timing is a constant visual device). */
+function computeButtonDrawTiming() {
+  const drawStart = BD_DRAW_START;
+  const drawEnd = drawStart + BD_DRAW_DURATION;
+  const fillFadeStart = BD_FILL_FADE_START;
+  const fillFadeEnd = fillFadeStart + BD_FILL_FADE_DURATION;
+  const textPopStart = BD_TEXT_START;
+  const textSettleEnd = textPopStart + BD_TEXT_POP_DURATION + BD_TEXT_SETTLE_DURATION;
+  const landingRingTime = drawEnd;
+  const landingRingEnd = landingRingTime + BD_LANDING_RING_DURATION;
+  const completeTime = Math.max(fillFadeEnd + BD_FILL_POP_DURATION, textSettleEnd, landingRingEnd);
+  const holdEnd = completeTime + BD_HOLD_DURATION;
+  const outroStart = holdEnd;
+  const outroSlideEnd = outroStart + BD_OUTRO_SLIDE_DURATION;
+  const outroFadeEnd = outroStart + BD_OUTRO_FADE_DURATION;
+  const outroEnd = Math.max(outroSlideEnd, outroFadeEnd);
+  return {
+    drawStart,
+    drawEnd,
+    fillFadeStart,
+    fillFadeEnd,
+    textPopStart,
+    textSettleEnd,
+    landingRingTime,
+    landingRingEnd,
+    completeTime,
+    holdEnd,
+    outroStart,
+    outroSlideEnd,
+    outroFadeEnd,
+    outroEnd,
+  };
+}
+
+function buttonDrawMinDuration() {
+  const t = computeButtonDrawTiming();
+  return t.outroEnd + BD_END_BUFFER;
+}
+
+const BD_KAPPA = 0.5522847498;
+
+/** The pill's own perimeter as a CLOSED path (6 anchors, the first carrying both in/out tangents since it's a true middle point of the loop) - used for the plain filled background shape, which has no trim/reveal of its own so a real `closed` loop is the natural fit. */
+function bdPillAnchorsClosed(w, h) {
+  const r = h / 2;
+  const s = (w - h) / 2;
+  const k = r * BD_KAPPA;
+  return [
+    { point: [s + r, 0], outTangent: [0, -k], inTangent: [0, k] },
+    { point: [s, -r], inTangent: [k, 0] },
+    { point: [-s, -r], outTangent: [-k, 0] },
+    { point: [-s - r, 0], inTangent: [0, -k], outTangent: [0, k] },
+    { point: [-s, r], inTangent: [-k, 0] },
+    { point: [s, r], outTangent: [k, 0] },
+  ];
+}
+
+/**
+ * The SAME pill perimeter as an OPEN path instead - 7 anchors, starting
+ * and ending at the same physical point (the rightmost point, where the
+ * reference's own pen starts and finishes). Deliberately NOT `closed:true`
+ * even though it traces a full loop: `attachLineRevealSparks` (this
+ * file's own general auto-spark pass - see its doc comment above) builds
+ * its arc-length table by walking `anchors.length-1` OPEN segments and
+ * never consults a shape's own `closed` flag, so a genuinely closed
+ * 6-anchor path would silently lose its own final "return to start"
+ * segment from that table - the spark would freeze one segment short of
+ * actually closing the loop. Duplicating the start point as a 7th, purely
+ * open anchor sidesteps that entirely without touching the shared pass -
+ * the rendered STROKE looks identical either way (the two points coincide
+ * exactly), only the auto-spark's own bookkeeping cares.
+ */
+function bdPillAnchorsOpen(w, h) {
+  const r = h / 2;
+  const s = (w - h) / 2;
+  const k = r * BD_KAPPA;
+  return [
+    { point: [s + r, 0], outTangent: [0, -k] },
+    { point: [s, -r], inTangent: [k, 0] },
+    { point: [-s, -r], outTangent: [-k, 0] },
+    { point: [-s - r, 0], inTangent: [0, -k], outTangent: [0, k] },
+    { point: [-s, r], inTangent: [-k, 0] },
+    { point: [s, r], outTangent: [k, 0] },
+    { point: [s + r, 0], inTangent: [0, k] },
+  ];
+}
+
+/** Alternating 1 <-> 1+amount scale keyframes from `start` to `end` at `period`-spaced half-beats - a real, continuous "breathing" oscillation (section 5's "extremely subtle continuous scale + glow breathing"), not a one-shot pulse. Starts and ends exactly at [1,1] so there's no visible seam against whatever the group's scale was doing just before/after this window. */
+function bdBreathingKeyframes(start, end, period, amount) {
+  const keyframes = [];
+  let time = start;
+  let i = 0;
+  while (time < end - 0.001) {
+    const value = i % 2 === 0 ? [1, 1] : [1 + amount, 1 + amount];
+    keyframes.push({
+      time: +time.toFixed(4), value, interpolation: 'easing', easing: 'easeInOutSine',
+    });
+    time += period / 2;
+    i += 1;
+  }
+  keyframes.push({ time: +end.toFixed(4), value: [1, 1] });
+  return keyframes;
+}
+
+function buildButtonDrawLayers({ text, accentColor }) {
+  const t = computeButtonDrawTiming();
+  const pairing = FONT_PAIRINGS[hashString(text) % FONT_PAIRINGS.length];
+  const fontFamily = pairing.sans.regular;
+
+  // Wraps the fill/outline/text (and every god-tier addition below) - NOT
+  // the landing ring, which has already fully faded out long before the
+  // outro starts - so the whole composed button can slide/fade as ONE
+  // unit for the outro (see BD_OUTRO_* doc comment above) without
+  // duplicating keyframe tracks across every sibling. Starts at the
+  // button's own real world position and HOLDS there (interpolation
+  // describes the keyframe's own OUTGOING segment, so a 'hold' at time:0
+  // freezes this until outroStart) until the outro begins - everything
+  // below becomes a LOCAL [0,0]-centered child of this. `scale` carries
+  // the god-tier "micro-breathing" ask: a real continuous oscillation
+  // confined to the hold window (completeTime->outroStart) via
+  // bdBreathingKeyframes, [1,1] outside it so it never fights the outro's
+  // own position/opacity animation.
+  const group = {
+    id: '__bd_group__',
+    type: 'null',
+    position: {
+      keyframes: [
+        { time: 0, value: [BD_CX, BD_BUTTON_Y], interpolation: 'hold' },
+        {
+          time: t.outroStart, value: [BD_CX, BD_BUTTON_Y], interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: t.outroSlideEnd, value: [BD_CX - BD_OUTRO_SLIDE_DISTANCE, BD_BUTTON_Y] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 1, interpolation: 'hold' },
+        {
+          time: t.outroStart, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: t.outroFadeEnd, value: 0 },
+      ],
+    },
+    scale: { keyframes: bdBreathingKeyframes(t.completeTime, t.outroStart, BD_BREATH_PERIOD, BD_BREATH_AMOUNT) },
+  };
+
+  // God-tier spec: "a very soft, larger rounded rectangle that briefly
+  // appears and fades behind the main button for extra depth." Reuses the
+  // SAME closed pill geometry as the fill (just scaled up + blurred), so
+  // it always matches the button's own proportions regardless of label
+  // length. Sits FIRST in the returned array (drawn behind everything).
+  const outerDepthRing = {
+    id: '__bd_outer_ring__',
+    type: 'shape',
+    parent: '__bd_group__',
+    width: BD_BUTTON_WIDTH,
+    height: BD_BUTTON_HEIGHT,
+    position: [0, 0],
+    scale: {
+      keyframes: [
+        { time: 0, value: [1, 1], interpolation: 'hold' },
+        {
+          time: t.fillFadeStart, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.fillFadeEnd + 0.15, value: [BD_OUTER_RING_SCALE, BD_OUTER_RING_SCALE] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: t.fillFadeStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        {
+          time: t.fillFadeEnd, value: BD_OUTER_RING_PEAK_OPACITY, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: t.fillFadeEnd + 0.35, value: BD_OUTER_RING_REST_OPACITY },
+      ],
+    },
+    contents: [
+      {
+        type: 'path',
+        shape: { kind: 'customPath', params: { anchors: bdPillAnchorsClosed(BD_BUTTON_WIDTH, BD_BUTTON_HEIGHT), closed: true } },
+      },
+      { type: 'fill', color: accentColor },
+    ],
+    effects: [
+      { type: 'gaussianBlur', params: { radius: 20 } },
+    ],
+  };
+
+  const fillLayer = {
+    id: '__bd_fill__',
+    type: 'shape',
+    parent: '__bd_group__',
+    width: BD_BUTTON_WIDTH,
+    height: BD_BUTTON_HEIGHT,
+    position: [0, 0],
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: t.fillFadeStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.fillFadeEnd, value: 1 },
+      ],
+    },
+    // God-tier spec: "soft radial wipe, not a flat opacity fade." No
+    // gradient/wipe-mask primitive exists for a shape fill in this engine
+    // (see this template's own top doc comment) - approximated with a
+    // genuine grow-from-a-small-seed reveal instead of the previous
+    // 0.97->1 near-static scale, a real "wipes outward from center" read
+    // rather than a flat fade, still landing on the same pop+overshoot.
+    scale: {
+      keyframes: [
+        {
+          time: t.fillFadeStart, value: [BD_FILL_SEED_SCALE, BD_FILL_SEED_SCALE], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        {
+          time: t.fillFadeEnd, value: [BD_FILL_POP_SCALE, BD_FILL_POP_SCALE], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.fillFadeEnd + BD_FILL_POP_DURATION, value: [1, 1] },
+      ],
+    },
+    contents: [
+      {
+        type: 'path',
+        shape: { kind: 'customPath', params: { anchors: bdPillAnchorsClosed(BD_BUTTON_WIDTH, BD_BUTTON_HEIGHT), closed: true } },
+      },
+      { type: 'fill', color: '#0D0D0D', opacity: 0.88 },
+      // God-tier spec: "thin bright rim light" on the finished pill - a
+      // second, low-opacity near-white stroke consuming the SAME closed
+      // path the fill above already used (fill/stroke both read
+      // `currentPaths` without altering it, so stacking a stroke after a
+      // fill on one shared path is the normal way this engine layers the
+      // two - see renderContents' own doc comment).
+      {
+        type: 'stroke', color: '#FFFFFF', width: 1.5, opacity: 0.35,
+      },
+    ],
+  };
+
+  // God-tier spec: "subtle inner top highlight so it feels dimensional."
+  // No gradient-fill primitive exists (see top doc comment), so this is a
+  // soft blurred ellipse tucked into the pill's own upper-inner area
+  // instead of a true gradient - reads as a dimensional highlight at this
+  // scale/blur without one. Explicit width/height match its own ellipse
+  // exactly - required since it carries `effects` (withEffects falls back
+  // to the FULL FRAME for the buffer otherwise, a previously-documented
+  // perf bug elsewhere in this file).
+  const innerHighlightW = BD_BUTTON_WIDTH * 0.6;
+  const innerHighlightH = BD_BUTTON_HEIGHT * 0.32;
+  const innerHighlight = {
+    id: '__bd_inner_highlight__',
+    type: 'shape',
+    parent: '__bd_group__',
+    width: innerHighlightW,
+    height: innerHighlightH,
+    position: [0, -BD_BUTTON_HEIGHT * 0.22],
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: t.fillFadeEnd, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.fillFadeEnd + 0.2, value: BD_INNER_HIGHLIGHT_OPACITY },
+      ],
+    },
+    contents: [
+      {
+        type: 'path',
+        shape: { kind: 'ellipse', params: { width: innerHighlightW, height: innerHighlightH } },
+      },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+    effects: [
+      { type: 'gaussianBlur', params: { radius: 16 } },
+    ],
+  };
+
+  // The drawing outline itself - customPath + an ANIMATED trim.end (0->100,
+  // the NATURAL forward direction, unlike dotConstellation's own arcs
+  // which needed a reversed start/end to draw right-to-left). Extracted
+  // to its own const (`bdOutlineAnchors`/`bdTrimEndKfs`) rather than
+  // inlined, because the god-tier leading-tip system below needs to
+  // sample the EXACT same path + EXACT same eased trim progress the
+  // visible stroke itself uses, not a second, potentially-drifting copy.
+  //
+  // God-tier upgrade: NO LONGER relies on the generic
+  // `attachLineRevealSparks` auto-spark (still the right default for a
+  // plain traveling highlight - see that function's own doc comment -
+  // but this template now needs bespoke control the generic pass can't
+  // give: a brightness-pulsing tip, a trailing echo dot, and timed
+  // particle bursts). A hand-built primary-tip layer below is inserted
+  // immediately after this one using the EXACT id
+  // (`${outlineLayer.id}__spark`) that pass looks for on its own
+  // "already has a spark" early-return check, so it deliberately no-ops
+  // here instead of adding a second, redundant traveling dot.
+  const bdOutlineAnchors = bdPillAnchorsOpen(BD_BUTTON_WIDTH, BD_BUTTON_HEIGHT);
+  const bdTrimEndKfs = [
+    { time: 0, value: 0, interpolation: 'hold' },
+    {
+      time: t.drawStart, value: 0, interpolation: 'easing', easing: 'easeInOutCubic',
+    },
+    { time: t.drawEnd, value: 100 },
+  ];
+  const outlineLayer = {
+    id: '__bd_outline__',
+    type: 'shape',
+    parent: '__bd_group__',
+    width: BD_BUTTON_WIDTH,
+    height: BD_BUTTON_HEIGHT,
+    position: [0, 0],
+    contents: [
+      {
+        type: 'path',
+        shape: { kind: 'customPath', params: { anchors: bdOutlineAnchors, closed: false } },
+      },
+      {
+        type: 'trim',
+        start: { keyframes: [{ time: 0, value: 0 }] },
+        end: { keyframes: bdTrimEndKfs },
+      },
+      // God-tier spec: "multi-layer glow - bright core, soft outer bloom."
+      // Two real stroke contents consuming the SAME trimmed path (fill/
+      // stroke both read `currentPaths` without altering it, so stacking
+      // several here is normal - see renderContents' own doc comment):
+      // a wide, low-opacity accent "bloom" first, then a thin near-white
+      // "core" on top of it - both sit inside this layer's own single
+      // outerGlow buffer below, so they share one soft halo for free.
+      {
+        type: 'stroke', color: accentColor, width: BD_STROKE_WIDTH * 2.2, cap: 'round', opacity: BD_BLOOM_STROKE_OPACITY,
+      },
+      {
+        type: 'stroke', color: BD_CORE_STROKE_COLOR, width: BD_CORE_STROKE_WIDTH, cap: 'round',
+      },
+    ],
+    // God-tier spec: "when the path closes, trigger a short collective
+    // glow intensity boost" + "final lock: soft central glow can
+    // intensify slightly." A real keyframed effect PARAM (confirmed
+    // supported project-wide - sceneBuilder.js's resolveParamsAtTime
+    // resolves any effect param through the same Animatable/keyframe
+    // machinery a layer's own transform uses), not a second layer: one
+    // bright flash right as the outline closes, decaying back to its
+    // resting brightness, then a smaller second bump exactly when the
+    // text finishes settling (the "final lock").
+    effects: [
+      {
+        type: 'outerGlow',
+        params: {
+          blur: 12,
+          color: accentColor,
+          opacity: {
+            keyframes: [
+              { time: 0, value: 0.55, interpolation: 'hold' },
+              {
+                time: t.drawEnd, value: 0.55, interpolation: 'easing', easing: 'easeOutCubic',
+              },
+              {
+                time: t.drawEnd + 0.1, value: 1, interpolation: 'easing', easing: 'easeOutCubic',
+              },
+              { time: t.drawEnd + 0.32, value: 0.55, interpolation: 'hold' },
+              {
+                time: t.textSettleEnd, value: 0.55, interpolation: 'easing', easing: 'easeOutCubic',
+              },
+              {
+                time: t.textSettleEnd + 0.18, value: 0.85, interpolation: 'easing', easing: 'easeOutCubic',
+              },
+              { time: t.textSettleEnd + 0.45, value: 0.6 },
+            ],
+          },
+          blendMode: 'screen',
+        },
+      },
+    ],
+  };
+
+  // Shared bezier/arc-length sampling for the hand-built leading-tip
+  // system below - the SAME real utilities `attachLineRevealSparks`
+  // itself uses (buildBezierArcLengthTable/pointAtArcFraction), and the
+  // SAME eased trim progress (`bdTrimEndKfs` via a real `Property`, not a
+  // linear-time approximation) so every tip/echo/particle below lands
+  // exactly on the visible stroke's own leading edge, never ahead of or
+  // behind what's actually drawn on screen that frame.
+  const { table: bdArcTable, totalLength: bdArcLength } = buildBezierArcLengthTable(bdOutlineAnchors);
+  let bdTrimProp;
+  try { bdTrimProp = new Property(bdTrimEndKfs); } catch (e) { bdTrimProp = null; }
+  const bdPointAtTime = (time) => {
+    const clamped = Math.max(t.drawStart, Math.min(t.drawEnd, time));
+    const pct = bdTrimProp ? bdTrimProp.valueAt(clamped) : 0;
+    const frac = typeof pct === 'number' ? pct / 100 : 0;
+    return pointAtArcFraction(bdArcTable, bdArcLength, frac);
+  };
+  const bdDrawSpan = t.drawEnd - t.drawStart;
+  const bdFadeStart = t.drawEnd - bdDrawSpan * 0.08;
+
+  // Primary leading tip - a hand-built replacement for the generic auto-
+  // spark (see outlineLayer's own doc comment for why): same bright white
+  // dot + glow, PLUS a genuine brightness/scale pulse ("slight scale
+  // pulse or brightness flash as they travel") the generic pass has no
+  // way to add.
+  const bdPulseKfs = [];
+  {
+    let time = t.drawStart;
+    let i = 0;
+    while (time < t.drawEnd - 0.001) {
+      const value = i % 2 === 0 ? 1 : 1 + BD_TIP_PULSE_AMOUNT;
+      bdPulseKfs.push({
+        time: +time.toFixed(4), value: [value, value], interpolation: 'easing', easing: 'easeInOutSine',
+      });
+      time += BD_TIP_PULSE_PERIOD / 2;
+      i += 1;
+    }
+    bdPulseKfs.push({ time: +t.drawEnd.toFixed(4), value: [1, 1] });
+  }
+  const bdPrimaryPositionKfs = [];
+  for (let k = 0; k <= BD_TIP_SAMPLES; k += 1) {
+    const time = t.drawStart + (k / BD_TIP_SAMPLES) * bdDrawSpan;
+    const [lx, ly] = bdPointAtTime(time);
+    bdPrimaryPositionKfs.push({
+      time: +time.toFixed(4), value: [+lx.toFixed(2), +ly.toFixed(2)], interpolation: 'linear',
+    });
+  }
+  const primaryTip = {
+    // Exact id `attachLineRevealSparks` checks for on its own source
+    // layer (`${layer.id}__spark`) - see outlineLayer's own doc comment.
+    id: '__bd_outline____spark',
+    type: 'shape',
+    parent: '__bd_group__',
+    width: BD_TIP_SIZE,
+    height: BD_TIP_SIZE,
+    position: { keyframes: bdPrimaryPositionKfs },
+    scale: { keyframes: bdPulseKfs },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: t.drawStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.drawStart + 0.05, value: 1, interpolation: 'hold' },
+        {
+          time: bdFadeStart, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: t.drawEnd, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: BD_TIP_SIZE, height: BD_TIP_SIZE } } },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+    effects: [
+      { type: 'outerGlow', params: { color: '#FFFFFF', opacity: 0.9, blur: BD_TIP_SIZE * 1.4, blendMode: 'screen' } },
+    ],
+  };
+
+  // God-tier spec: "dual leading energy tips" - a smaller, warm/accent-
+  // colored dot trailing the primary tip by a fixed small time lag,
+  // sampled from the identical real path/progress (`bdPointAtTime`), not
+  // a separately-eyeballed track. Reads as the reference's own "bright
+  // near the dot, cooling further back" without needing a literal
+  // gradient-along-the-stroke primitive (this engine has none - see this
+  // template's own top doc comment).
+  const bdEchoPositionKfs = [];
+  for (let k = 0; k <= BD_TIP_SAMPLES; k += 1) {
+    const time = t.drawStart + (k / BD_TIP_SAMPLES) * bdDrawSpan;
+    const [lx, ly] = bdPointAtTime(time - BD_ECHO_LAG);
+    bdEchoPositionKfs.push({
+      time: +time.toFixed(4), value: [+lx.toFixed(2), +ly.toFixed(2)], interpolation: 'linear',
+    });
+  }
+  const echoTip = {
+    id: '__bd_outline____spark_echo__',
+    type: 'shape',
+    parent: '__bd_group__',
+    width: BD_ECHO_SIZE,
+    height: BD_ECHO_SIZE,
+    position: { keyframes: bdEchoPositionKfs },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: t.drawStart + BD_ECHO_LAG, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.drawStart + BD_ECHO_LAG + 0.05, value: BD_ECHO_OPACITY, interpolation: 'hold' },
+        {
+          time: bdFadeStart, value: BD_ECHO_OPACITY, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: t.drawEnd, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: BD_ECHO_SIZE, height: BD_ECHO_SIZE } } },
+      { type: 'fill', color: accentColor },
+    ],
+    effects: [
+      { type: 'outerGlow', params: { color: accentColor, opacity: 0.8, blur: BD_ECHO_SIZE * 2, blendMode: 'screen' } },
+    ],
+  };
+
+  // God-tier spec: "emit short particle trails or small spark bursts as
+  // they draw the path" - a handful of FIXED, timed bursts along the
+  // draw (this engine has no continuous emitter primitive - see this
+  // template's own top doc comment), same idiom buildCounterBurstParticles
+  // already uses elsewhere in this file, adapted to fire along a moving
+  // path instead of one static point.
+  const bdTipParticles = [];
+  for (let p = 0; p < BD_TIP_PARTICLE_COUNT; p += 1) {
+    const frac = (p + 1) / (BD_TIP_PARTICLE_COUNT + 1);
+    const time = t.drawStart + frac * bdDrawSpan;
+    const [lx, ly] = bdPointAtTime(time);
+    const angle = -Math.PI / 2 + (p % 2 === 0 ? -0.55 : 0.55);
+    const endX = lx + Math.cos(angle) * 14;
+    const endY = ly + Math.sin(angle) * 14;
+    bdTipParticles.push({
+      id: `__bd_tip_particle_${p}__`,
+      type: 'shape',
+      parent: '__bd_group__',
+      width: 4,
+      height: 4,
+      position: {
+        keyframes: [
+          {
+            time, value: [+lx.toFixed(2), +ly.toFixed(2)], interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: time + BD_TIP_PARTICLE_LIFE, value: [+endX.toFixed(2), +endY.toFixed(2)] },
+        ],
+      },
+      opacity: {
+        keyframes: [
+          { time: 0, value: 0, interpolation: 'hold' },
+          {
+            time, value: 0.85, interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: time + BD_TIP_PARTICLE_LIFE, value: 0 },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: 4, height: 4 } } },
+        { type: 'fill', color: accentColor },
+      ],
+    });
+  }
+
+  // God-tier spec: "rim light travel - a bright highlight that quickly
+  // runs around the perimeter of the finished button once." Reuses the
+  // exact same open-loop geometry as the drawing outline itself, but with
+  // BOTH trim.start and trim.end sweeping together (a fixed percent GAP
+  // apart) instead of one pinned at 0 - the standard "traveling
+  // highlight" trim trick, one full 0->100 lap = exactly once around the
+  // closed loop.
+  const bdRimTravelStart = t.fillFadeEnd + 0.05;
+  const bdRimTravelEnd = bdRimTravelStart + BD_RIM_TRAVEL_DURATION;
+  const rimTravel = {
+    id: '__bd_rim_travel__',
+    type: 'shape',
+    parent: '__bd_group__',
+    width: BD_BUTTON_WIDTH,
+    height: BD_BUTTON_HEIGHT,
+    position: [0, 0],
+    contents: [
+      {
+        type: 'path',
+        shape: { kind: 'customPath', params: { anchors: bdOutlineAnchors, closed: false } },
+      },
+      {
+        type: 'trim',
+        start: {
+          keyframes: [
+            { time: 0, value: 0, interpolation: 'hold' },
+            {
+              time: bdRimTravelStart, value: 0, interpolation: 'easing', easing: 'easeInOutCubic',
+            },
+            { time: bdRimTravelEnd, value: 100 - BD_RIM_TRAVEL_GAP_PCT },
+          ],
+        },
+        end: {
+          keyframes: [
+            { time: 0, value: BD_RIM_TRAVEL_GAP_PCT, interpolation: 'hold' },
+            {
+              time: bdRimTravelStart, value: BD_RIM_TRAVEL_GAP_PCT, interpolation: 'easing', easing: 'easeInOutCubic',
+            },
+            { time: bdRimTravelEnd, value: 100 },
+          ],
+        },
+      },
+      { type: 'stroke', color: '#FFFFFF', width: 3, cap: 'round' },
+      // Fully transparent - draws nothing - but its mere PRESENCE opts
+      // this shape out of `attachLineRevealSparks`' own auto-spark
+      // signature match (customPath+trim+stroke+NO fill), which would
+      // otherwise auto-attach a second, redundant traveling dot riding
+      // this trim's own `end` value - confirmed via a real render
+      // (bd_test4.mp4) showing a stray extra dot drifting near the
+      // "Connected" label. This layer already gets its own bespoke
+      // bright-arc travel effect above; no dot is wanted here at all.
+      { type: 'fill', color: '#000000', opacity: 0 },
+    ],
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: bdRimTravelStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: bdRimTravelStart + 0.05, value: 0.9, interpolation: 'hold' },
+        {
+          time: bdRimTravelEnd - 0.05, value: 0.9, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: bdRimTravelEnd, value: 0 },
+      ],
+    },
+    effects: [
+      { type: 'outerGlow', params: { color: '#FFFFFF', opacity: 0.8, blur: 10, blendMode: 'screen' } },
+    ],
+  };
+
+  const landingRing = buildCounterRing('__bd_landing_ring__', BD_CX, BD_BUTTON_Y, accentColor, t.landingRingTime, BD_LANDING_RING_SIZE, BD_LANDING_RING_DURATION, 0.5);
+
+  // God-tier spec: "residual particles that continue to float and slowly
+  // drift after the button is complete." Bounded to a handful of staggered
+  // drifters starting once the button/text lock (this engine has no
+  // continuous emitter primitive, same practical limit as the tip
+  // particles above) rather than a literal forever-drift - parented to
+  // the SAME group as everything else so they slide/fade away WITH the
+  // button during the outro instead of being visibly left behind.
+  const bdResidualParticles = [];
+  for (let p = 0; p < BD_RESIDUAL_COUNT; p += 1) {
+    const spawnT = t.completeTime + p * BD_RESIDUAL_STAGGER;
+    const angle = -Math.PI / 2 + (p - (BD_RESIDUAL_COUNT - 1) / 2) * 0.35;
+    const startX = Math.cos(angle) * 40;
+    const startY = Math.sin(angle) * 18;
+    const endX = startX + Math.cos(angle) * 30;
+    const endY = startY - 40;
+    bdResidualParticles.push({
+      id: `__bd_residual_${p}__`,
+      type: 'shape',
+      parent: '__bd_group__',
+      width: 3,
+      height: 3,
+      position: {
+        keyframes: [
+          {
+            time: spawnT, value: [+startX.toFixed(2), +startY.toFixed(2)], interpolation: 'easing', easing: 'easeOutSine',
+          },
+          { time: spawnT + BD_RESIDUAL_DURATION, value: [+endX.toFixed(2), +endY.toFixed(2)] },
+        ],
+      },
+      opacity: {
+        keyframes: [
+          { time: 0, value: 0, interpolation: 'hold' },
+          {
+            time: spawnT, value: 0.5, interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: spawnT + BD_RESIDUAL_DURATION, value: 0 },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: 3, height: 3 } } },
+        { type: 'fill', color: accentColor },
+      ],
+    });
+  }
+
+  // Direct spec: "add the popup animation, overshoot." Deliberately ONE
+  // unified scale-burst for the whole label, not a per-word stagger - the
+  // reference's own label reveals in one shot as the outline finishes,
+  // not word-by-word (it's a short button label, same "reference's real
+  // mechanic wins over the literal per-word default" call already made
+  // for lineReveal's mask-wipe and dotConstellation's own caption).
+  const textLayer = {
+    id: '__bd_text__',
+    type: 'text',
+    parent: '__bd_group__',
+    text,
+    fontFamily,
+    fontWeight: '400',
+    fontSize: BD_FONT_SIZE,
+    fillStyle: '#FFFFFF',
+    textAlign: 'center',
+    maxWidth: BD_BUTTON_WIDTH - 60,
+    width: BD_BUTTON_WIDTH,
+    height: BD_FONT_SIZE * 1.6,
+    position: [0, 0],
+    opacity: {
+      keyframes: [
+        { time: t.textPopStart, value: 0, interpolation: 'hold' },
+        {
+          time: t.textPopStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.textPopStart + 0.1, value: 1 },
+      ],
+    },
+    scale: {
+      keyframes: [
+        {
+          time: t.textPopStart, value: [BD_TEXT_START_SCALE, BD_TEXT_START_SCALE], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        {
+          time: t.textPopStart + BD_TEXT_POP_DURATION, value: [BD_TEXT_SETTLE_UNDERSHOOT, BD_TEXT_SETTLE_UNDERSHOOT], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.textSettleEnd, value: [1, 1] },
+      ],
+    },
+    effects: [
+      { type: 'outerGlow', params: { blur: 8, color: '#FFFFFF', opacity: 0.3, blendMode: 'screen' } },
+    ],
+  };
+
+  return [
+    group,
+    outerDepthRing,
+    fillLayer,
+    innerHighlight,
+    outlineLayer,
+    primaryTip,
+    echoTip,
+    ...bdTipParticles,
+    rimTravel,
+    landingRing,
+    ...bdResidualParticles,
+    textLayer,
+  ];
+}
+
 /**
  * Dispatcher: compiles a beat's tiny `mograph` spec into real
  * `visual.layers`, called once per beat very early in validateSceneJSON
@@ -13708,6 +14577,12 @@ function buildMographBeatVisual(beat) {
       beat.params.duration = dotConstellationMinDuration();
     }
     layers = buildDotConstellationLayers({ text, accentColor });
+  } else if (spec.type === 'buttonDraw' && typeof spec.text === 'string' && spec.text.trim()) {
+    const text = truncateAtWordBoundary(spec.text.trim(), 16);
+    if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+      beat.params.duration = buttonDrawMinDuration();
+    }
+    layers = buildButtonDrawLayers({ text, accentColor });
   }
 
   if (layers) {
@@ -13822,7 +14697,7 @@ function validateSceneJSON(sceneJSON) {
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
     } else if (seen.size < 5) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText/yearScroller/counter/lineReveal/typewriterLink/dotConstellation). Add more template beats to reach at least 5.`);
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText/yearScroller/counter/lineReveal/typewriterLink/dotConstellation/buttonDraw). Add more template beats to reach at least 5.`);
     } else if (seen.size > 7) {
       errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 7. Trim beats down to 7 or fewer distinct templates.`);
     }
@@ -15792,5 +16667,6 @@ module.exports = {
   buildLineRevealLayers,
   buildTypewriterLinkLayers,
   buildDotConstellationLayers,
+  buildButtonDrawLayers,
   buildMographBeatVisual,
 };
