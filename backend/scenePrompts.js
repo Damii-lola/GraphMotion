@@ -1861,6 +1861,10 @@ const COMPACT_TEMPLATE_INFO = {
     fields: 'line1*(2-4w), line2*(1-3w connector), line3*(2-4w)',
     example: { template: 'typewriterLink', narration: 'Good design leads to good business.', vars: { line1: 'Good Design', line2: 'leads to', line3: 'Good Business' } },
   },
+  dotConstellation: {
+    fields: 'text*(2-4 short words, one line)',
+    example: { template: 'dotConstellation', narration: 'Focus organizes motion.', vars: { text: 'Focus organizes motion' } },
+  },
 };
 const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);
 

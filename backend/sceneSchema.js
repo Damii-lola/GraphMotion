@@ -12480,6 +12480,676 @@ function buildTypewriterLinkLayers({
   ];
 }
 
+// ======================= dotConstellation (17th template) =======================
+// Built from a direct, frame-by-frame read of a reference video (B2.mp4,
+// 2026-09-13) - no verbatim spec given ("I'm too tired to describe it, just
+// look at the video"), so every beat below is confirmed against real
+// extracted frames (native ~30fps + a 15fps overview pass), not guessed:
+//   1. A single glowing dot falls/drifts diagonally across the upper screen.
+//   2. It lands to become the RIGHTMOST of a 5-dot row - the other 4 pop in
+//      (staggered outward from the landing point: nearest neighbor first)
+//      at the same instant the caption bursts in from an oversized scale
+//      with a settle-overshoot (confirmed via a 30fps frame showing only
+//      an oversized "...tion" on screen one frame before the full phrase,
+//      already at final size, appears the very next frame).
+//   3. Four glowing arcs draw between adjacent dot pairs, RIGHT TO LEFT,
+//      alternating bulge above/below the row, each fading once fully drawn.
+//   4. A long hold (~1.7s, genuinely longer than every prior template's own
+//      sub-1s hold) - the dots gently bob, phase-offset per dot, while the
+//      caption stays put - the reference's own dots visibly drift out of a
+//      flat line into a gentle wave and back over this window.
+//   5. Outro: all 5 dots launch straight up, staggered right-to-left (same
+//      direction as the arc draw), each trailing a thin growing line behind
+//      it (confirmed via frames showing a staircase of dots at different
+//      heights, each with its own vertical line already trailing below it),
+//      fading as they exit; the caption fades with them.
+const DC_CX = CANVAS_WIDTH / 2;
+const DC_DOT_Y = 460;
+const DC_TEXT_Y = 560;
+const DC_DOT_SPACING = 95;
+const DC_DOT_SIZE = 16;
+const DC_DOT_COUNT = 5;
+// God-tier pass: "make the dots slightly different sizes... so they feel
+// alive instead of identical" - a fixed, deterministic variation (not
+// Math.random(), same "reproducible render" reasoning as everywhere else
+// in this file) rather than a uniform size.
+const DC_DOT_SIZE_VARIANTS = [14, 18, 15, 19, 16];
+const DC_DOT_GLOW_VARIANTS = [0.55, 0.75, 0.6, 0.8, 0.65];
+// Bright core (unchanged) + a wider, low-opacity bloom - the same "tight
+// core + soft falloff" 2-layer glow already established for typewriterLink
+// (see [[project_mograph_templates_and_pacing]]) rather than one flat glow.
+const DC_BLOOM_GLOW_BLUR = 22;
+const DC_BLOOM_GLOW_OPACITY = 0.22;
+// Real, measured-not-guessed choice: at 40px, "Focus organizes motion" in
+// the pairing this exact seed picks (Montserrat Regular) measures 479.4px
+// against a 480px maxWidth - a razor-thin, font-dependent margin that
+// wrapped to 2 lines on render (confirmed) despite the reference showing
+// one clean line. 30px keeps even the WORST-CASE font (Archivo Black, the
+// widest of all 7 pairings) under a 24-char caption comfortably inside
+// maxWidth below - checked directly via measureText across all 7
+// pairings, not assumed.
+const DC_FONT_SIZE = 30;
+
+const DC_TRAVEL_START = [DC_CX + 150, DC_DOT_Y - 230];
+const DC_TRAVEL_DURATION = 0.4;
+const DC_LAND_OVERSHOOT_DURATION = 0.08;
+const DC_LAND_OVERSHOOT_SCALE = 1.3;
+
+const DC_ORGANIZE_POP_DURATION = 0.14;
+const DC_ORGANIZE_POP_SCALE = 1.25;
+const DC_ORGANIZE_STAGGER = 0.045;
+
+// Direct spec: "add the other miniature details like the popup animation,
+// overshoot" - the caption's own entrance carries both: a scale-in that
+// overshoots PAST 1.0 the wrong way (settles slightly under 1 first)
+// before landing exactly on 1, a sharper snap than a plain ease-down.
+// Real, confirmed-via-render finding: the engine's own real per-frame
+// motion blur (engine/motionBlur.js, applied to every beat project-wide,
+// not opt-in) samples 2 sub-frames per output frame - a scale swing as
+// big/fast as 1.9->0.94 in 0.16s changes enough WITHIN one frame's own
+// shutter window to blend into a visibly distinct double-image "ghost"
+// rather than a smooth blur (confirmed on a NATIVE, non-interpolated
+// render frame, ruling out an ffmpeg extraction artifact). Tuned down to
+// a range/duration that keeps the same overshoot SHAPE without a big
+// enough per-frame delta to visibly ghost.
+const DC_TEXT_START_SCALE = 1.35;
+const DC_TEXT_SETTLE_UNDERSHOOT = 0.96;
+const DC_TEXT_POP_DURATION = 0.2;
+const DC_TEXT_SETTLE_DURATION = 0.1;
+
+// Direct correction: "the curved line motion feels chunky and not
+// smooth." At the old 0.16s (only ~5 frames at 30fps) combined with a
+// front-loaded easeOutCubic (most of the curve appearing almost
+// instantly, then crawling for the last bit), the draw-on read as a
+// snap-then-trickle rather than one fluid stroke. Slowed down and moved
+// to a symmetric ease so the reveal builds and settles evenly instead of
+// snapping at the start.
+const DC_ARC_DRAW_DURATION = 0.3;
+const DC_ARC_HOLD = 0.05;
+const DC_ARC_FADE = 0.16;
+const DC_ARC_STAGGER = 0.26;
+const DC_ARC_BULGE = 55;
+const DC_ARC_THICKNESS = 3;
+
+// God-tier pass, selective subset only (this template's own history has
+// already had two invented additions - a fake camera, a hero dot with no
+// real reference basis - rejected and reverted; kept deliberately grounded
+// in established, low-risk techniques this time, not new invented shapes):
+// a small glowing "energy tip" travels along each arc's own real bezier
+// curve during its draw (sampled directly from the SAME control points
+// buildDotConstellationArc itself uses, at real easeInOutCubic-eased
+// times - not a separate guessed motion), and a brief impact ring flashes
+// on the dot each arc finishes reaching.
+const DC_TIP_SIZE = 9;
+const DC_TIP_SAMPLES = 8;
+const DC_IMPACT_RING_SIZE = 42;
+const DC_IMPACT_RING_DURATION = 0.22;
+const DC_SETTLE_RING_SIZE = 130;
+const DC_SETTLE_RING_DURATION = 0.4;
+
+// Direct, confirmed-via-frame-inspection finding: unlike every prior
+// template's sub-1s hold, this reference genuinely holds for ~1.7s with
+// continuous (if gentle) motion the whole time - the "1.5s max DEAD hold
+// AFTER the animation settles" standing rule (clampMographDuration) governs
+// idle time after the last thing happens, not active choreographed content
+// like this - `completeTime` below is the OUTRO's own end, well past this
+// hold, so the rule is respected in spirit (near-zero dead air after the
+// last dot actually finishes) while this hold gets to be as long as the
+// reference's own real footage needs.
+const DC_HOLD_DURATION = 1.7;
+// Direct correction: "the point where the dots flow up and down a bit are
+// lacking in movement, make them go out more" - bumped from a barely
+// visible 7px to a real, readable float.
+const DC_BOB_AMPLITUDE = 35;
+const DC_BOB_HALF_DURATION = 0.42;
+const DC_BOB_PHASE_STEP = 0.11;
+
+const DC_OUTRO_STAGGER = 0.07;
+const DC_OUTRO_RISE_DURATION = 0.5;
+const DC_OUTRO_RISE_DISTANCE = 650;
+const DC_OUTRO_FADE_DURATION = 0.22;
+// Direct correction: "improve the going up animation" - a real anticipation
+// squat (classic animation principle: dip back before launching forward)
+// right before each dot takes off, then the launch itself accelerates
+// away (easeInCubic) instead of decelerating to a soft stop (the old
+// easeOutCubic read as "arriving somewhere," not "being flung off").
+const DC_OUTRO_ANTICIPATION_DURATION = 0.12;
+const DC_OUTRO_ANTICIPATION_DIP = 12;
+const DC_TRAIL_THICKNESS = 3;
+const DC_TEXT_FADE_DURATION = 0.3;
+const DC_END_BUFFER = 0.12;
+
+/**
+ * Shared by dotConstellationMinDuration and buildDotConstellationLayers -
+ * every absolute time this template's own layers key off of. Fixed (not a
+ * function of the caption's own length).
+ *
+ * Direct correction: "the motion isn't smooth, it's like if this finishes,
+ * this happens... i want a smooth one shot motion flow, everything happens
+ * in one smooth motion." The first cut gated each phase behind the SLOWEST
+ * thing in the PREVIOUS phase fully finishing (`arcsStart =
+ * Math.max(organizeEnd, textSettleEnd) + 0.08`, `holdStart = arcsEnd +
+ * 0.05`) - real idle gaps where literally nothing moved while waiting for
+ * every dot AND the caption to fully settle before the next phase could
+ * even begin. Rebuilt so nothing waits for anything irrelevant to itself:
+ * dots start organizing the INSTANT dot4 touches down (overlapping its own
+ * landing bounce, not waiting for `landSettle`), each arc starts as soon
+ * as ITS OWN two endpoint dots have landed (not the whole row or the
+ * caption), and the hold's bob begins the instant the last arc finishes -
+ * one continuous cascade driven by the same stagger rhythm throughout,
+ * never a dead stop-then-go.
+ */
+function computeDotConstellationTiming() {
+  const travelEnd = DC_TRAVEL_DURATION;
+  const landSettle = travelEnd + DC_LAND_OVERSHOOT_DURATION;
+
+  // Dots pop in OUTWARD from the landing point (dot index 3, then 2, 1, 0)
+  // - a small, deliberate detail: order matches "focus organizes motion"
+  // itself, radiating order outward from where the motion just landed.
+  // Anchored to `travelEnd` (not `landSettle`) so dot3's own pop-in
+  // overlaps dot4's landing bounce instead of waiting for it to finish.
+  const popStart = [0, 0, 0, 0];
+  for (let i = 3; i >= 0; i--) {
+    popStart[i] = travelEnd + (3 - i) * DC_ORGANIZE_STAGGER;
+  }
+
+  const textPopStart = travelEnd;
+  const textSettleEnd = textPopStart + DC_TEXT_POP_DURATION + DC_TEXT_SETTLE_DURATION;
+
+  // The FIRST arc starts as soon as ITS OWN two dots (index 3 and 4) are
+  // far enough through their own pop/landing to visually "catch" them -
+  // not once the whole row or the caption has settled. Later arcs keep
+  // their own visible stagger from there so each one still reads as a
+  // distinct connecting sweep, just with no dead gap before the first one.
+  const arcsFirstStart = popStart[3] + DC_ORGANIZE_POP_DURATION * 0.6;
+  const arcStart = [0, 1, 2, 3].map((k) => arcsFirstStart + k * DC_ARC_STAGGER);
+  const arcFadeEnd = arcStart.map((s) => s + DC_ARC_DRAW_DURATION + DC_ARC_HOLD + DC_ARC_FADE);
+  const arcsEnd = arcFadeEnd[3];
+
+  const holdStart = arcsEnd;
+  const holdEnd = holdStart + DC_HOLD_DURATION;
+
+  const outroStart = holdEnd;
+  // Right-to-left launch order (index 4 first, mirrors the arc draw
+  // direction): launchTime[i] for dot i.
+  const launchTime = [0, 0, 0, 0, 0];
+  for (let i = 4; i >= 0; i--) {
+    launchTime[i] = outroStart + (4 - i) * DC_OUTRO_STAGGER;
+  }
+  const outroEnd = launchTime[0] + DC_OUTRO_RISE_DURATION;
+
+  return {
+    travelEnd,
+    landSettle,
+    popStart,
+    textPopStart,
+    textSettleEnd,
+    arcsFirstStart,
+    arcStart,
+    arcFadeEnd,
+    arcsEnd,
+    holdStart,
+    holdEnd,
+    outroStart,
+    launchTime,
+    outroEnd,
+  };
+}
+
+function dotConstellationMinDuration() {
+  const t = computeDotConstellationTiming();
+  return t.outroEnd + DC_END_BUFFER;
+}
+
+function dcDotX(i) {
+  return DC_CX + (i - 2) * DC_DOT_SPACING;
+}
+
+/**
+ * The outro launch sub-curve for one dot at world X `x`, launching at
+ * time `launch` - a real anticipation squat (dips DOWN slightly, easing
+ * in and back out) that returns to EXACTLY DC_DOT_Y right at `launch`,
+ * then one continuous ACCELERATING rise (easeInCubic, not a decelerating
+ * one - this should read as being flung off, not arriving somewhere and
+ * slowing down).
+ */
+function dcOutroKeyframes(x, launch) {
+  const anticipStart = launch - DC_OUTRO_ANTICIPATION_DURATION;
+  const anticipPeak = launch - DC_OUTRO_ANTICIPATION_DURATION * 0.4;
+  return [
+    {
+      time: anticipStart, value: [x, DC_DOT_Y], interpolation: 'easing', easing: 'easeOutCubic',
+    },
+    {
+      time: anticipPeak, value: [x, DC_DOT_Y + DC_OUTRO_ANTICIPATION_DIP], interpolation: 'easing', easing: 'easeInCubic',
+    },
+    {
+      time: launch, value: [x, DC_DOT_Y], interpolation: 'easing', easing: 'easeInCubic',
+    },
+    { time: launch + DC_OUTRO_RISE_DURATION, value: [x, DC_DOT_Y - DC_OUTRO_RISE_DISTANCE] },
+  ];
+}
+
+/** One glowing dot, index i (0-4, left to right). Dot 4 doubles as the intro's own traveling seed - its position track covers the fall, landing overshoot, hold-bob AND outro launch all in one; dots 0-3 only start existing at their own pop-in time. */
+function buildDotConstellationDot(i, t, accentColor) {
+  const x = dcDotX(i);
+  const isSeed = i === 4;
+  const positionKfs = [];
+  if (isSeed) {
+    positionKfs.push(
+      { time: 0, value: DC_TRAVEL_START, interpolation: 'easing', easing: 'easeInCubic' },
+      { time: t.travelEnd, value: [x, DC_DOT_Y], interpolation: 'hold' },
+    );
+  } else {
+    positionKfs.push({ time: t.popStart[i], value: [x, DC_DOT_Y], interpolation: 'hold' });
+  }
+  // Hold-bob: a single gentle dip (matches lineReveal's own established
+  // "one clean breath" precedent, see LINE_REVEAL_BREATHE_SCALE above),
+  // phase-offset per dot so the row reads as a soft wave, not a
+  // synchronized bounce - direct spec: dots visibly drift into a wave and
+  // back over the hold in the reference.
+  const bobStart = t.holdStart + i * DC_BOB_PHASE_STEP;
+  positionKfs.push(
+    { time: bobStart, value: [x, DC_DOT_Y], interpolation: 'easing', easing: 'easeInOutSine' },
+    { time: bobStart + DC_BOB_HALF_DURATION, value: [x, DC_DOT_Y - DC_BOB_AMPLITUDE], interpolation: 'easing', easing: 'easeInOutSine' },
+    { time: bobStart + DC_BOB_HALF_DURATION * 2, value: [x, DC_DOT_Y], interpolation: 'hold' },
+  );
+  // Outro launch - see dcOutroKeyframes' own doc comment. Rise uses the
+  // SAME easing/duration window as this dot's own trail shape's scale
+  // track (buildDotConstellationTrail) so the trail's growing top edge
+  // stays locked to this dot's real position at every frame.
+  const launch = t.launchTime[i];
+  positionKfs.push(...dcOutroKeyframes(x, launch));
+
+  const scaleKfs = [];
+  if (isSeed) {
+    scaleKfs.push(
+      { time: 0, value: [1, 1], interpolation: 'hold' },
+      {
+        time: t.travelEnd, value: [1, 1], interpolation: 'easing', easing: 'easeOutBack',
+      },
+      {
+        time: t.landSettle, value: [DC_LAND_OVERSHOOT_SCALE, DC_LAND_OVERSHOOT_SCALE], interpolation: 'easing', easing: 'easeInCubic',
+      },
+      { time: t.landSettle + DC_LAND_OVERSHOOT_DURATION, value: [1, 1] },
+    );
+  } else {
+    scaleKfs.push(
+      { time: t.popStart[i], value: [0, 0], interpolation: 'easing', easing: 'easeOutBack' },
+      {
+        time: t.popStart[i] + DC_ORGANIZE_POP_DURATION, value: [DC_ORGANIZE_POP_SCALE, DC_ORGANIZE_POP_SCALE], interpolation: 'easing', easing: 'easeOutCubic',
+      },
+      { time: t.popStart[i] + DC_ORGANIZE_POP_DURATION + 0.08, value: [1, 1] },
+    );
+  }
+
+  const opacityKfs = isSeed
+    ? [{ time: 0, value: 1, interpolation: 'hold' }]
+    : [
+      { time: t.popStart[i], value: 0, interpolation: 'hold' },
+      { time: t.popStart[i], value: 1 },
+    ];
+  const fadeStart = launch + DC_OUTRO_RISE_DURATION - DC_OUTRO_FADE_DURATION;
+  opacityKfs.push(
+    {
+      time: fadeStart, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+    },
+    { time: fadeStart + DC_OUTRO_FADE_DURATION, value: 0 },
+  );
+
+  // God-tier pass: "make the dots slightly different sizes/brightness so
+  // they feel alive instead of identical" - a fixed per-index variant, not
+  // a uniform DC_DOT_SIZE, plus a 2-layer glow (tight core + a wider
+  // low-opacity bloom, varied in the SAME per-dot proportion as the core).
+  const dotSize = DC_DOT_SIZE_VARIANTS[i];
+  const glowOpacity = DC_DOT_GLOW_VARIANTS[i];
+  return {
+    id: `__dc_dot_${i}__`,
+    type: 'shape',
+    width: dotSize,
+    height: dotSize,
+    position: { keyframes: positionKfs },
+    scale: { keyframes: scaleKfs },
+    opacity: { keyframes: opacityKfs },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: dotSize, height: dotSize } } },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+    effects: [
+      { type: 'outerGlow', params: { blur: 10, color: accentColor, opacity: glowOpacity, blendMode: 'screen' } },
+      { type: 'outerGlow', params: { blur: DC_BLOOM_GLOW_BLUR, color: accentColor, opacity: DC_BLOOM_GLOW_OPACITY * (glowOpacity / 0.65), blendMode: 'screen' } },
+    ],
+  };
+}
+
+/** The thin line each dot trails behind it during the outro launch - bottom-pinned at the dot's own launch spot, growing upward via the SAME easeInCubic/duration window as that dot's own RISE (see buildDotConstellationDot's own doc comment for why that keeps them locked together - the anticipation squat happens entirely BEFORE `launch` and returns to DC_DOT_Y exactly at `launch`, so it never affects this trail). */
+function buildDotConstellationTrail(i, t) {
+  const x = dcDotX(i);
+  const launch = t.launchTime[i];
+  const fadeStart = launch + DC_OUTRO_RISE_DURATION - DC_OUTRO_FADE_DURATION;
+  return {
+    id: `__dc_trail_${i}__`,
+    type: 'shape',
+    width: DC_TRAIL_THICKNESS,
+    height: DC_OUTRO_RISE_DISTANCE,
+    position: [x, DC_DOT_Y],
+    anchor: [0, DC_OUTRO_RISE_DISTANCE / 2],
+    scale: {
+      keyframes: [
+        { time: 0, value: [1, 0], interpolation: 'hold' },
+        {
+          time: launch, value: [1, 0], interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: launch + DC_OUTRO_RISE_DURATION, value: [1, 1] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        { time: launch, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: launch + 0.05, value: 1, interpolation: 'hold' },
+        {
+          time: fadeStart, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: fadeStart + DC_OUTRO_FADE_DURATION, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'rectangle', params: { width: DC_TRAIL_THICKNESS, height: DC_OUTRO_RISE_DISTANCE, roundness: DC_TRAIL_THICKNESS / 2 } } },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+    effects: [
+      { type: 'outerGlow', params: { blur: 4, color: '#FFFFFF', opacity: 0.35, blendMode: 'screen' } },
+    ],
+  };
+}
+
+/**
+ * One glowing arc connecting two ADJACENT dots, drawn left-to-right within
+ * itself via `trim` regardless of which OVERALL direction the sequence of
+ * arcs sweeps (right-to-left, see this section's own header) - a real,
+ * confirmed-via-frame detail: the first arc in the reference visibly drew
+ * from its own left end toward its right end even though it was the
+ * RIGHTMOST pair in the overall right-to-left sequence.
+ * `leftIndex` is the smaller dot index of the pair (leftIndex, leftIndex+1).
+ * `bulgeSign` is -1 (arcs upward) or +1 (arcs downward) - the reference
+ * alternates this per arc.
+ */
+function buildDotConstellationArc(id, leftIndex, bulgeSign, startTime, accentColor) {
+  const x0 = dcDotX(leftIndex);
+  const x1 = dcDotX(leftIndex + 1);
+  const halfWidth = (x1 - x0) / 2;
+  // Real, confirmed-via-render bug: anchors given in ABSOLUTE canvas
+  // coordinates (x0/x1, often 300+px from local origin) with `position:
+  // [0,0]` meant withEffects' own glow buffer - sized/centered around
+  // local (0,0) using this shape's declared width/height, `centered:true`
+  // for every shape layer - drew the real path entirely OUTSIDE its own
+  // small buffer and composited back nothing. The exact same "buffer
+  // assumes centered content" bug class already fixed once for
+  // typewriterLink's own left-aligned text layers (see that section's own
+  // doc comments) - this time on a SHAPE whose content simply wasn't
+  // centered on its own position at all. Fixed by keeping the path LOCAL
+  // (centered on this arc's own midpoint, which IS `position` now) rather
+  // than in absolute canvas space.
+  const dx = (x1 - x0) / 3;
+  const bulge = bulgeSign * DC_ARC_BULGE;
+  const drawEnd = startTime + DC_ARC_DRAW_DURATION;
+  const fadeStart = drawEnd + DC_ARC_HOLD;
+  const fadeEnd = fadeStart + DC_ARC_FADE;
+  return {
+    id,
+    type: 'shape',
+    width: x1 - x0,
+    height: DC_ARC_BULGE * 2,
+    position: [(x0 + x1) / 2, DC_DOT_Y],
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        { time: startTime, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: startTime + 0.03, value: 1, interpolation: 'hold' },
+        {
+          time: fadeStart, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: fadeEnd, value: 0 },
+      ],
+    },
+    contents: [
+      {
+        type: 'path',
+        shape: {
+          kind: 'customPath',
+          params: {
+            anchors: [
+              { point: [-halfWidth, 0], outTangent: [dx, bulge] },
+              { point: [halfWidth, 0], inTangent: [-dx, bulge] },
+            ],
+            closed: false,
+          },
+        },
+      },
+      {
+        // Direct correction: "why does the curve start from left to
+        // right, it's supposed to go right to left." Anchor 0 (the LEFT
+        // dot) sits at path-parameter t=0, anchor 1 (the RIGHT dot) at
+        // t=100 - animating `end` 0->100 with `start` pinned at 0 draws
+        // the visible segment's leading edge from t=0 outward, i.e.
+        // left-to-right. Swapped: `end` now stays pinned at 100 (the
+        // right dot) and `start` animates 100->0, so the segment's
+        // leading edge sits at t=start and sweeps from the right point
+        // toward the left one as `start` falls.
+        type: 'trim',
+        start: {
+          keyframes: [
+            { time: 0, value: 100, interpolation: 'hold' },
+            {
+              time: startTime, value: 100, interpolation: 'easing', easing: 'easeInOutCubic',
+            },
+            { time: drawEnd, value: 0 },
+          ],
+        },
+        end: { keyframes: [{ time: 0, value: 100 }] },
+      },
+      { type: 'stroke', color: accentColor, width: DC_ARC_THICKNESS, cap: 'round' },
+      { type: 'fill', color: accentColor, opacity: 0 },
+    ],
+    // God-tier pass: bright core (unchanged) + a wider, low-opacity bloom.
+    effects: [
+      { type: 'outerGlow', params: { blur: 12, color: accentColor, opacity: 0.75, blendMode: 'screen' } },
+      { type: 'outerGlow', params: { blur: DC_BLOOM_GLOW_BLUR, color: accentColor, opacity: DC_BLOOM_GLOW_OPACITY, blendMode: 'screen' } },
+    ],
+  };
+}
+
+function cubicBezierPoint(p0, c1, c2, p1, u) {
+  const mt = 1 - u;
+  const a = mt * mt * mt;
+  const b = 3 * mt * mt * u;
+  const c = 3 * mt * u * u;
+  const d = u * u * u;
+  return [
+    a * p0[0] + b * c1[0] + c * c2[0] + d * p1[0],
+    a * p0[1] + b * c1[1] + c * c2[1] + d * p1[1],
+  ];
+}
+
+/**
+ * God-tier pass: "a brighter glowing point that travels at the front of
+ * the drawing curve." Samples the SAME cubic bezier buildDotConstellationArc
+ * itself draws (identical control points, derived from the same anchors/
+ * tangents) at real easeInOutCubic-eased times matching that arc's own
+ * `trim.start` curve exactly - not a separately-guessed motion, the tip
+ * genuinely rides the real path. `trim.start` goes 100->0 over
+ * [startTime,drawEnd] (see buildDotConstellationArc's own doc comment for
+ * why 100=right dot, 0=left dot); the tip's own bezier parameter `u` is
+ * `1 - easedFraction`, matching that same value at every sampled instant.
+ * Connecting the samples with `interpolation:'linear'` (not re-easing
+ * between them) avoids double-applying the easing on top of already-eased
+ * sample spacing.
+ */
+function buildDotConstellationArcTip(id, leftIndex, bulgeSign, startTime, accentColor) {
+  const x0 = dcDotX(leftIndex);
+  const x1 = dcDotX(leftIndex + 1);
+  const halfWidth = (x1 - x0) / 2;
+  const dx = (x1 - x0) / 3;
+  const bulge = bulgeSign * DC_ARC_BULGE;
+  const p0 = [-halfWidth, 0];
+  const c1 = [-halfWidth + dx, bulge];
+  const c2 = [halfWidth - dx, bulge];
+  const p1 = [halfWidth, 0];
+  const midX = (x0 + x1) / 2;
+  const ease = EASING_REGISTRY.easeInOutCubic;
+  const drawEnd = startTime + DC_ARC_DRAW_DURATION;
+
+  const positionKfs = [];
+  for (let s = 0; s <= DC_TIP_SAMPLES; s++) {
+    const frac = s / DC_TIP_SAMPLES;
+    const time = startTime + frac * DC_ARC_DRAW_DURATION;
+    const u = 1 - ease(frac);
+    const [lx, ly] = cubicBezierPoint(p0, c1, c2, p1, u);
+    const kf = { time, value: [midX + lx, DC_DOT_Y + ly] };
+    if (s < DC_TIP_SAMPLES) kf.interpolation = 'linear';
+    positionKfs.push(kf);
+  }
+
+  return {
+    id,
+    type: 'shape',
+    width: DC_TIP_SIZE,
+    height: DC_TIP_SIZE,
+    position: { keyframes: positionKfs },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        { time: startTime, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: startTime + 0.04, value: 1, interpolation: 'hold' },
+        {
+          time: drawEnd - 0.05, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: drawEnd + 0.03, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: DC_TIP_SIZE, height: DC_TIP_SIZE } } },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+    effects: [
+      { type: 'outerGlow', params: { blur: 10, color: accentColor, opacity: 0.9, blendMode: 'screen' } },
+    ],
+  };
+}
+
+function buildDotConstellationLayers({ text, accentColor }) {
+  const t = computeDotConstellationTiming();
+  const pairing = FONT_PAIRINGS[hashString(text) % FONT_PAIRINGS.length];
+  const fontFamily = pairing.sans.regular;
+
+  const dots = [0, 1, 2, 3, 4].map((i) => buildDotConstellationDot(i, t, accentColor));
+  const trails = [0, 1, 2, 3, 4].map((i) => buildDotConstellationTrail(i, t));
+  // Right-to-left arc sequence, alternating bulge direction (up first,
+  // matching the reference's own first/biggest arc arching upward):
+  // (dot3,dot4) up, (dot2,dot3) down, (dot1,dot2) up, (dot0,dot1) down.
+  const arcPairs = [3, 2, 1, 0].map((leftIndex, k) => ({
+    leftIndex, bulgeSign: k % 2 === 0 ? -1 : 1, startTime: t.arcStart[k],
+  }));
+  const arcs = arcPairs.map(({ leftIndex, bulgeSign, startTime }) => buildDotConstellationArc(
+    `__dc_arc_${leftIndex}__`,
+    leftIndex,
+    bulgeSign,
+    startTime,
+    accentColor,
+  ));
+  // God-tier pass: a leading energy tip riding each arc's own real curve
+  // (see buildDotConstellationArcTip's own doc comment), plus a brief
+  // impact ring right on the dot each arc finishes reaching.
+  const arcTips = arcPairs.map(({ leftIndex, bulgeSign, startTime }) => buildDotConstellationArcTip(
+    `__dc_tip_${leftIndex}__`,
+    leftIndex,
+    bulgeSign,
+    startTime,
+    accentColor,
+  ));
+  const impactRings = arcPairs.map(({ leftIndex, startTime }) => buildCounterRing(
+    `__dc_impact_${leftIndex}__`,
+    dcDotX(leftIndex),
+    DC_DOT_Y,
+    accentColor,
+    startTime + DC_ARC_DRAW_DURATION,
+    DC_IMPACT_RING_SIZE,
+    DC_IMPACT_RING_DURATION,
+    0.55,
+  ));
+  // God-tier pass: "final alignment accent... gentle radial pulse from the
+  // center" the moment the whole row finishes connecting - one collective
+  // ring + burst, reusing counter's own established one-shot helpers
+  // rather than inventing a new particle system.
+  const settleRing = buildCounterRing('__dc_settle_ring__', DC_CX, DC_DOT_Y, accentColor, t.arcsEnd, DC_SETTLE_RING_SIZE, DC_SETTLE_RING_DURATION, 0.45);
+  const settleBurst = buildCounterBurstParticles('dc_settle', DC_CX, DC_DOT_Y, '#FFFFFF', t.arcsEnd);
+
+  const textFadeStart = t.launchTime[4];
+  const textLayer = {
+    id: '__dc_text__',
+    type: 'text',
+    text,
+    fontFamily,
+    fontWeight: '400',
+    fontSize: DC_FONT_SIZE,
+    fillStyle: '#FFFFFF',
+    textAlign: 'center',
+    maxWidth: CANVAS_WIDTH - 40,
+    width: CANVAS_WIDTH,
+    height: DC_FONT_SIZE * 1.8,
+    position: [DC_CX, DC_TEXT_Y],
+    opacity: {
+      keyframes: [
+        { time: t.textPopStart, value: 0, interpolation: 'hold' },
+        { time: t.textPopStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: t.textPopStart + 0.08, value: 1, interpolation: 'hold' },
+        {
+          time: textFadeStart, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: textFadeStart + DC_TEXT_FADE_DURATION, value: 0 },
+      ],
+    },
+    // Direct spec: "add the popup animation, overshoot" - see this
+    // section's own DC_TEXT_* doc comment above for the settle-undershoot
+    // shape. Deliberately ONE unified scale-burst for the whole phrase,
+    // not a per-word stagger: the reference itself reveals the full
+    // caption in one instantaneous zoom (confirmed frame-by-frame - a
+    // 30fps frame shows an oversized partial string, the very next frame
+    // already shows the complete phrase at final size), so this is this
+    // template's own core mechanic, the same "reference's real mechanic
+    // wins over the literal per-word default" call already made for
+    // lineReveal's own mask-wipe.
+    scale: {
+      keyframes: [
+        {
+          time: t.textPopStart, value: [DC_TEXT_START_SCALE, DC_TEXT_START_SCALE], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        {
+          time: t.textPopStart + DC_TEXT_POP_DURATION, value: [DC_TEXT_SETTLE_UNDERSHOOT, DC_TEXT_SETTLE_UNDERSHOOT], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.textSettleEnd, value: [1, 1] },
+      ],
+    },
+    // God-tier pass: same 2-layer core+bloom treatment as the dots/arcs.
+    effects: [
+      { type: 'outerGlow', params: { blur: 10, color: '#FFFFFF', opacity: 0.35, blendMode: 'screen' } },
+      { type: 'outerGlow', params: { blur: 24, color: '#FFFFFF', opacity: 0.12, blendMode: 'screen' } },
+    ],
+  };
+
+  return [
+    ...trails,
+    ...dots,
+    ...arcs,
+    ...arcTips,
+    ...impactRings,
+    settleRing,
+    ...settleBurst,
+    textLayer,
+  ];
+}
+
 /**
  * Dispatcher: compiles a beat's tiny `mograph` spec into real
  * `visual.layers`, called once per beat very early in validateSceneJSON
@@ -13032,6 +13702,12 @@ function buildMographBeatVisual(beat) {
         line1, line2, line3, accentColor,
       });
     }
+  } else if (spec.type === 'dotConstellation' && typeof spec.text === 'string' && spec.text.trim()) {
+    const text = truncateAtWordBoundary(spec.text.trim(), 24);
+    if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+      beat.params.duration = dotConstellationMinDuration();
+    }
+    layers = buildDotConstellationLayers({ text, accentColor });
   }
 
   if (layers) {
@@ -13146,7 +13822,7 @@ function validateSceneJSON(sceneJSON) {
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
     } else if (seen.size < 5) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText/yearScroller/counter/lineReveal/typewriterLink). Add more template beats to reach at least 5.`);
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText/yearScroller/counter/lineReveal/typewriterLink/dotConstellation). Add more template beats to reach at least 5.`);
     } else if (seen.size > 7) {
       errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 7. Trim beats down to 7 or fewer distinct templates.`);
     }
@@ -15115,5 +15791,6 @@ module.exports = {
   buildCounterLayers,
   buildLineRevealLayers,
   buildTypewriterLinkLayers,
+  buildDotConstellationLayers,
   buildMographBeatVisual,
 };

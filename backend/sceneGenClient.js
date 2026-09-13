@@ -438,6 +438,11 @@ const COMPACT_BASE_DURATION = {
   // sceneSchema.js's own dispatch branch - this is just a reasonable
   // seed, ~typewriterLinkMinDuration for a typical 2-word line1.
   typewriterLink: 4.61,
+  // Immediately overwritten by dotConstellationMinDuration() in
+  // sceneSchema.js's own dispatch branch - this template's own pacing is
+  // entirely fixed (doesn't depend on the caption's length), so this seed
+  // is just that same real, always-exact value.
+  dotConstellation: 4.635,
 };
 
 /**
@@ -651,8 +656,13 @@ function validateCompactBeatVars(template, vars) {
       if (l3.length < 1) return 'needs "line3": a real outcome phrase (at least 1 word)';
       return null;
     }
+    case 'dotConstellation': {
+      const tw = typeof vars.text === 'string' ? vars.text.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      if (tw.length < 2) return `needs "text": a real short caption of at least 2 words (got ${tw.length})`;
+      return null;
+    }
     default:
-      return `"${template}" is not one of the 16 real template names`;
+      return `"${template}" is not one of the 17 real template names`;
   }
 }
 
