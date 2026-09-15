@@ -6801,27 +6801,32 @@ function buildMergeClusterLayers({
   // popped up.
   const CONVERGE_MOVE_DURATION = 0.3;
   // Real, direct user spec (2026-09-08): "the scene shouldn't start
-  // until the camera is in place." Every beat after the first pans/zooms
-  // in from the previous one (renderEngine.js's own DEFAULT_PAN_DURATION_
-  // SECONDS, 0.75s) - but a beat's own content already starts animating
-  // from ITS OWN local time 0 regardless of whether that pan is still
-  // playing, so without this, the first icon or two could already be
-  // popping in while the camera was still mid-transition, arriving into
-  // a scene that had already started rather than a settled one. Matches
-  // renderEngine.js's own default exactly (kept as a separate constant,
-  // not imported, since this file is deliberately dependency-free from
-  // the render engine's own internals - see this file's other "mirrors
-  // renderEngine.js" comments for the same pattern) - update both
-  // together if the render engine's own default ever changes.
-  const CAMERA_SETTLE_DELAY = 0.75;
-  const CONVERGE_TIME = CAMERA_SETTLE_DELAY + REVEAL_INTERVAL * (icons.length - 1) + ICON_SETTLE_TIME + HOLD_BEFORE_CONVERGE;
+  // until the camera is in place." Originally solved HERE with a manual
+  // CAMERA_SETTLE_DELAY (matching renderEngine.js's own pan duration)
+  // added to every icon's own start delay. Removed entirely (2026-09-15,
+  // Phase 7 audit) - a real, confirmed-live DOUBLE WAIT, not just a stale
+  // mirrored constant: two days after this fix shipped, a general,
+  // engine-level fix landed for the exact same problem (renderEngine.js's
+  // own frame loop now computes `beatLocalT = Math.max(0, localT -
+  // panDuration)`, so EVERY beat's own content clock already holds at its
+  // first frame until the camera has genuinely arrived, automatically,
+  // beat-index-aware, no per-template opt-in needed - see engine/
+  // timeline.js's own doc comment). This template's own manual delay was
+  // never removed once that landed, so it was adding a SECOND wait on
+  // top of the engine's already-shifted local time - real frame
+  // extraction confirmed the first icon wasn't appearing until nearly
+  // double the real pan duration into the beat. Every other template in
+  // this file already relies purely on the engine-level hold (their own
+  // per-element delays start near 0, e.g. nodeCluster's `0.05*i`) - this
+  // just brings mergeCluster in line with that same convention.
+  const CONVERGE_TIME = REVEAL_INTERVAL * (icons.length - 1) + ICON_SETTLE_TIME + HOLD_BEFORE_CONVERGE;
   const layers = [buildOpeningPunchFlash(accentColor, { position: CENTER })];
 
   icons.forEach((icon, i) => {
     const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
     const startX = CENTER[0] + Math.cos(angle) * START_RADIUS;
     const startY = CENTER[1] + Math.sin(angle) * START_RADIUS;
-    const delay = CAMERA_SETTLE_DELAY + REVEAL_INTERVAL * i;
+    const delay = REVEAL_INTERVAL * i;
     const posKf = { keyframes: [
       { time: delay, value: [startX, startY], interpolation: 'easing', easing: 'easeOutCubic' },
       { time: delay + 0.25, value: [startX, startY] },
@@ -15658,14 +15663,18 @@ function buildMographBeatVisual(beat) {
     const label = typeof spec.label === 'string' && spec.label.trim() ? truncateAtWordBoundary(spec.label.trim().toUpperCase(), 24) : null;
     if (icons.length >= 2) {
       layers = buildMergeClusterLayers({ icons, resultIcon: spec.resultIcon, accentColor, label });
-      // Mirrors buildMergeClusterLayers' own CAMERA_SETTLE_DELAY(0.75)/
-      // REVEAL_INTERVAL(0.4)/ICON_SETTLE_TIME(0.25)/HOLD_BEFORE_CONVERGE
-      // (0.35) CONVERGE_TIME formula, plus the result circle's own
-      // +0.45s arrival bounce after that. Real, confirmed-live finding:
-      // at this template's own max icon count (5), the OLD flat base
-      // duration finished BEFORE this real completion time, cutting the
-      // result circle's own pop-in off mid-motion.
-      const convergeTime = 0.75 + 0.4 * (icons.length - 1) + 0.25 + 0.35;
+      // Mirrors buildMergeClusterLayers' own REVEAL_INTERVAL(0.4)/
+      // ICON_SETTLE_TIME(0.25)/HOLD_BEFORE_CONVERGE(0.35) CONVERGE_TIME
+      // formula, plus the result circle's own +0.45s arrival bounce
+      // after that. Real, confirmed-live finding: at this template's own
+      // max icon count (5), the OLD flat base duration finished BEFORE
+      // this real completion time, cutting the result circle's own
+      // pop-in off mid-motion. CAMERA_SETTLE_DELAY(0.75) term removed
+      // (2026-09-15, Phase 7 audit) - see buildMergeClusterLayers' own
+      // doc comment for why it was a real double-wait with the engine's
+      // own generic camera-sync hold, not a genuine part of this
+      // template's own completion time.
+      const convergeTime = 0.4 * (icons.length - 1) + 0.25 + 0.35;
       clampMographDuration(beat, convergeTime + 0.45);
     }
   } else if (spec.type === 'squareSpin' && typeof spec.text === 'string' && spec.text.trim() && typeof spec.icon1 === 'string' && MOGRAPH_ICON_RE.test(spec.icon1) && typeof spec.icon2 === 'string' && MOGRAPH_ICON_RE.test(spec.icon2)) {
