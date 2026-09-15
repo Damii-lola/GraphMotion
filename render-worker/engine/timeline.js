@@ -32,7 +32,15 @@
 // renderEngine.js imports this rather than keeping its own copy, so
 // the timeline math here and the frame loop's own pan math can never
 // silently drift out of sync with each other.
-const DEFAULT_PAN_DURATION_SECONDS = 0.75;
+// 0.75 -> 0.45 (2026-09-15, direct user requirement: "i still want it to
+// be pannn ooo, dont do the morphingg, i just want it to be fast
+// paceddddd") - the pan mechanic itself is untouched (still a literal
+// camera move across the shared board, see renderEngine.js's own frame
+// loop), just noticeably quicker between every beat. MAX_PAN_DURATION_
+// SECONDS is a ceiling on a per-beat `transitionIn.duration` OVERRIDE,
+// not the baseline most beats actually use - left as-is since this
+// change is about the default pace, not the outer bound.
+const DEFAULT_PAN_DURATION_SECONDS = 0.45;
 const MAX_PAN_DURATION_SECONDS = 2.0;
 
 function buildTimeline(sceneJSON) {

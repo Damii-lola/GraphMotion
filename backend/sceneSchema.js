@@ -4755,11 +4755,68 @@ function shiftLayerTimeline(layer, offset) {
   return shifted;
 }
 
+// Real, direct user requirement (2026-09-15): every template's own
+// opening ~0.3-0.6s must read as an immediate, eye-catching,
+// scroll-stopping hook - a real Phase 7 audit (rendered every one of
+// the 19 templates in isolation, frame-extracted the full clip, not
+// just the first few frames) found several opening on a near-blank
+// frame while their own icons/text ease in over that same window.
+// Rather than rework each already-tuned per-template entrance timing
+// individually, this fires ONE shared big soft flash at the very
+// start of the beat's own content clock (localT=0, i.e. right when
+// the incoming camera pan has already handed off - see engine/
+// timeline.js's own pan-then-unfreeze comment) so there's always real,
+// high-contrast motion on screen from frame one, on top of whatever
+// that template's own content build does. Same white-ellipse +
+// gaussianBlur "impact" shape mouseWordDrag's own __mw_impact_flash__
+// already uses for its landing hit, just bigger/softer and timed to
+// the beat's start instead of a mid-beat collision.
+function buildOpeningPunchFlash(accentColor, opts = {}) {
+  const size = opts.size || 900;
+  const position = opts.position || [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
+  // Real, confirmed-live finding (2026-09-15): the first version of this
+  // tinted the flash to the beat's own accentColor, which on templates
+  // whose default board background is already a warm/light harmonized
+  // hue (connectorList's own cream/peach glow, confirmed via a real
+  // render + frame extraction) blended almost invisibly into the
+  // existing ambient background glow instead of reading as a real flash.
+  // Always white now (the accentColor param is accepted for call-site
+  // compatibility but intentionally unused) - a plain white flash read
+  // clearly against every background tested (both the light connectorList
+  // case and the dark mergeCluster case), tighter blur + higher peak
+  // opacity than the original pass so it reads as a real pop rather than
+  // a soft bloom that can still get lost against a bright board.
+  const peakOpacity = opts.peakOpacity != null ? opts.peakOpacity : 0.68;
+  return {
+    id: opts.id || '__opening_punch_flash__',
+    type: 'shape',
+    width: size,
+    height: size,
+    position,
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0 },
+        {
+          time: 0.05, value: peakOpacity, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        {
+          time: 0.32, value: 0, interpolation: 'easing', easing: 'easeInCubic',
+        },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: size, height: size } } },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+    effects: [{ type: 'gaussianBlur', params: { radius: 42 } }],
+  };
+}
+
 function buildNodeClusterLayers({ icons, chosenIndex, accentColor, introText }) {
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
   const RING_RADIUS = 150;
   const NODE_SIZE = 70;
-  const layers = [];
+  const layers = [buildOpeningPunchFlash(accentColor, { position: CENTER })];
   icons.forEach((icon, i) => {
     const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
     const x = CENTER[0] + Math.cos(angle) * RING_RADIUS;
@@ -5278,7 +5335,7 @@ function buildNodeClusterExtendedLayers({
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
   const RING_RADIUS = 150;
   const NODE_SIZE = 70;
-  const layers = [];
+  const layers = [buildOpeningPunchFlash(accentColor, { position: CENTER })];
   icons.forEach((icon, i) => {
     const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
     const x = CENTER[0] + Math.cos(angle) * RING_RADIUS;
@@ -5937,7 +5994,7 @@ function buildOutroTextLayer(outroText, accentColor, appearAt) {
 function buildConnectorListLayers({ items, accentColor, outroText }) {
   const NODE_SIZE = 90;
   const positions = computeZigzagPositions(items.length);
-  const layers = [];
+  const layers = [buildOpeningPunchFlash(accentColor)];
 
   const rawAnchors = buildConnectorLineAnchors(positions);
   const xs = positions.map((p) => p[0]);
@@ -6130,6 +6187,7 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
   const bodyScale = { keyframes: [{ time: 0, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.4, value: [1, 1] }] };
 
   const layers = [
+    buildOpeningPunchFlash(accentColor, { position: CENTER }),
     // Real, direct spec: "a faint larger soft shape... behind the phone
     // at low opacity to create hierarchy and depth." Pushed first (the
     // back of the stack) and sized bigger than the phone itself - safe
@@ -6508,6 +6566,7 @@ function buildSplitConvergeLayers({ icon, accentColor, label }) {
     { time: ARRIVE_TIME, value: 1, interpolation: 'easing', easing: 'easeOutCubic' },
   ] };
   const layers = [
+    buildOpeningPunchFlash(accentColor, { position: CENTER }),
     // Real, confirmed-live bug (2026-09-10, direct user report with the
     // actual video attached: a whole beat rendering completely blank
     // except its own label text). Root cause: every OTHER visible layer
@@ -6756,7 +6815,7 @@ function buildMergeClusterLayers({
   // together if the render engine's own default ever changes.
   const CAMERA_SETTLE_DELAY = 0.75;
   const CONVERGE_TIME = CAMERA_SETTLE_DELAY + REVEAL_INTERVAL * (icons.length - 1) + ICON_SETTLE_TIME + HOLD_BEFORE_CONVERGE;
-  const layers = [];
+  const layers = [buildOpeningPunchFlash(accentColor, { position: CENTER })];
 
   icons.forEach((icon, i) => {
     const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
@@ -7560,8 +7619,8 @@ function nodeAbsorbPillEffects(color, glow = 1) {
 function buildNodeAbsorbLayers({
   headerIcon, headerText, items, accentColor,
 }) {
-  const layers = [];
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
+  const layers = [buildOpeningPunchFlash(accentColor, { position: CENTER })];
   const HEADER_UP_Y = CANVAS_HEIGHT / 2 - 150;
 
   const rowY = items.map((_, i) => HEADER_UP_Y + NODE_ABSORB_HEADER_HEIGHT / 2 + NODE_ABSORB_ROW_GAP
@@ -8035,13 +8094,16 @@ const TEXT_TIERS_EXIT_END_SCALE = 0.72;
 // total time the staggered exit needs end-to-end.
 const TEXT_TIERS_EXIT_DURATION = TEXT_TIERS_EXIT_LINE_STAGGER * 2 + TEXT_TIERS_EXIT_WORD_DURATION;
 // 0.5 -> 2.0 (2026-09-11): direct user ask, "make the text last 1.5s
-// longer before the outro kicks in" - a real, deliberate +1.5s on top
-// of the original hold, not a re-derivation from anything else. Same
-// "explicit user pacing override, not governed by the generic
-// MOGRAPH_MAX_HOLD_AFTER_SETTLE clamp" reasoning as nodeAbsorb's own
-// NODE_ABSORB_PRE_EAT_DELAY - this template sets its own duration
-// directly via textTiersMinDuration, never through clampMographDuration.
-const TEXT_TIERS_MIN_HOLD_AFTER_BUILD = 2.0;
+// longer before the outro kicks in". 2.0 -> 1.0 (2026-09-15): direct
+// FOLLOW-UP user ask, Phase 7's real full-scene pacing audit ("judge
+// the WHOLE scene... make it fastpace if it aint") - a real render +
+// full-duration frame extraction found this 2.0s hold sitting
+// completely static for roughly 60% of the beat's own total runtime,
+// the single largest dead zone found across all 19 templates this
+// pass. Split the difference rather than reverting all the way to the
+// original 0.5 - still real breathing room to read the line, just no
+// longer long enough to read as frozen.
+const TEXT_TIERS_MIN_HOLD_AFTER_BUILD = 1.0;
 const TEXT_TIERS_END_BUFFER = 0.15;
 
 // Distributes words across the 3 lines as evenly as this template's own
@@ -8166,11 +8228,14 @@ function buildTextTiersLayers({ text, accentColor, duration }) {
   // No group-level exit animation anymore (see TEXT_TIERS_EXIT_* consts'
   // own doc comment) - each word carries its own exit now, so the group
   // itself only ever needs to hold the shared position.
-  const layers = [{
-    id: '__tiers_group__',
-    type: 'null',
-    position: CENTER,
-  }];
+  const layers = [
+    buildOpeningPunchFlash(accentColor, { position: CENTER }),
+    {
+      id: '__tiers_group__',
+      type: 'null',
+      position: CENTER,
+    },
+  ];
 
   // Line 3 exits first, line 1 last - reverse of build order.
   const lineExitOrder = [2, 1, 0];
@@ -8631,7 +8696,7 @@ function computeBlueprintTiming(sentence1, sentence2) {
 }
 
 function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
-  const layers = [];
+  const layers = [buildOpeningPunchFlash(accentColor)];
   const fontFamily = 'Playfair Display Italic';
   const lineHeight = BLUEPRINT_TEXT_FONT_SIZE * BLUEPRINT_TEXT_LINE_HEIGHT_RATIO;
 
@@ -11642,6 +11707,7 @@ function buildLineRevealLayers({ text1, text2, accentColor }) {
   const bgGlow = buildLineRevealBgGlow(CX, LINE_REVEAL_HOME_Y, accentColor);
 
   return [
+    buildOpeningPunchFlash(accentColor, { position: [CX, LINE_REVEAL_HOME_Y] }),
     bgGlow,
     text1Matte,
     text2Matte,
@@ -15645,10 +15711,20 @@ function buildMographBeatVisual(beat) {
         // constant's own doc comment) - same introText auto-extend as
         // plain nodeCluster, PLUS a floor under the total so Phase 2
         // never gets cut off by a short authored duration.
-        if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-          if (introText) beat.params.duration += INTRO_TEXT_DURATION;
-          beat.params.duration = Math.max(beat.params.duration, NODE_CLUSTER_EXTENDED_MIN_DURATION + (introText ? INTRO_TEXT_DURATION : 0));
+        // Real, confirmed-live bug (2026-09-15, Phase 7's full-scene
+        // pacing audit): this used to be a raw floor-only Math.max, with
+        // NO ceiling at all - unlike every other mograph template, which
+        // goes through clampMographDuration's own [complete+minHold,
+        // complete+MOGRAPH_MAX_HOLD_AFTER_SETTLE] clamp. A real isolated
+        // render measured this template landing at 6.4s minimum already
+        // (by far the longest of all 19), and with no ceiling, a longer
+        // AI-authored narration could stretch its own trailing dead hold
+        // arbitrarily further. Now routed through the same shared clamp
+        // as everything else, just with its own real completeTime floor.
+        if (introText && isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+          beat.params.duration += INTRO_TEXT_DURATION;
         }
+        clampMographDuration(beat, NODE_CLUSTER_EXTENDED_MIN_DURATION + (introText ? INTRO_TEXT_DURATION : 0), 0);
       }
     }
   } else if (spec.type === 'textPopOut' && typeof spec.text === 'string' && spec.text.trim()) {
@@ -15881,7 +15957,12 @@ function validateSceneJSON(sceneJSON) {
   // prompt) isn't newly rejected by this specific check.
   const mographTypesUsed = sceneJSON.scenes
     .map((beat) => (isPlainObject(beat) && isPlainObject(beat.mograph) && typeof beat.mograph.type === 'string' ? beat.mograph.type : null))
-    .filter(Boolean);
+    // 'ctaOutro' excluded deliberately - the guaranteed final CTA beat's
+    // own sentinel mograph.type (see buildCtaOutroBeat's own doc comment),
+    // never one of the 19 real templates and never AI-authored, so it
+    // must never count toward or compete with the "5-7 distinct" budget
+    // the AI's own beats are held to.
+    .filter((type) => Boolean(type) && type !== 'ctaOutro');
   if (mographTypesUsed.length > 0) {
     const seen = new Set();
     const repeated = new Set();
@@ -17826,6 +17907,428 @@ function requireAtLeastOneRealPhoto(sceneJSON, errors) {
   }
 }
 
+// ======================= ctaOutro (guaranteed final beat) =======================
+// Direct user requirement (2026-09-15): "Add a beautiful and excellent
+// call to action at the end of EVERY vid, that has the project name ie
+// SmartClips, the url, use smartclips.org." Deliberately NOT a mograph
+// template the AI can pick/skip/vary - fully fixed, hand-authored content
+// (no vars, no AI involvement at all), appended in code once generation
+// finishes (see generateSceneJSON in sceneGenClient.js) so every video
+// gets exactly the same brand close. Carries no `mograph` field at all -
+// unlike every real template, so it's invisible to the "5-7 distinct
+// mograph templates" validation entirely (that check only ever looks at
+// `beat.mograph?.type`) and can never compete with or get crowded out by
+// whatever the AI itself picked for the rest of the video.
+//
+// Sequence, revised three times on direct follow-up from an initial
+// "GraphMotion -> url -> strike it out -> Coming soon" draft: (1) "the
+// very top, big and bold: THE FUTURE OF TIKTOK AUTOMATION IS HERE" - a
+// real scroll-stopping HOOK line leads the whole beat, landing
+// fastest/hardest of everything here; (2) the brand name pops in next
+// (the identity); (3) the url pops in beneath it, no longer struck
+// through - direct correction, "dont cross out the link"; (4) a caption
+// beneath the link instead: "Click the link for more info and to be
+// notified when [brand] is fully released." Brand renamed GraphMotion ->
+// SmartClips (smartclips.org) on a later direct follow-up - VISUAL copy
+// only, per direct instruction ("leave the technical aspectss") - the
+// product/repo/package names elsewhere in this codebase are deliberately
+// untouched. No exit - this is the LAST thing on screen for the whole
+// video, so the final HELD frame needs to stay fully legible/on-screen,
+// not fade toward nothing.
+const CTA_ACCENT = '#8B5CF6';
+const CTA_GROUP_Y = CANVAS_HEIGHT * 0.44;
+const CTA_HEADLINE_FONT_SIZE = 34;
+const CTA_BRAND_FONT_SIZE = 46;
+const CTA_URL_FONT_SIZE = 25;
+const CTA_CAPTION_FONT_SIZE = 17;
+// Local Y offsets from CTA_GROUP_Y - see the group's own doc comment
+// below for why these are LOCAL (breathing during the hold scales
+// correctly around the composition's own center only if every child is a
+// local offset from the group, never an absolute canvas position).
+const CTA_HEADLINE_LOCAL_Y = -175;
+const CTA_BRAND_LOCAL_Y = -20;
+const CTA_URL_LOCAL_Y = 42;
+const CTA_CAPTION_LOCAL_Y = 88;
+
+// The hook leads, fast and hard - direct spec is this exact line is what
+// has to stop the scroll, so it lands first, fastest, and with the
+// biggest pop of anything in this beat (see its own doc comment below).
+const CTA_HEADLINE_START = 0.05;
+const CTA_HEADLINE_POP_DURATION = 0.3;
+const CTA_BRAND_START = 0.42;
+const CTA_BRAND_POP_DURATION = 0.28;
+const CTA_URL_START = 0.78;
+const CTA_URL_POP_DURATION = 0.22;
+const CTA_CAPTION_START = 1.1;
+const CTA_CAPTION_POP_DURATION = 0.24;
+const CTA_HOLD_DURATION = 1.7;
+const CTA_END_BUFFER = 0.2;
+const CTA_BREATH_PERIOD = 0.9;
+const CTA_BREATH_AMOUNT = 0.012;
+
+function computeCtaOutroTiming() {
+  const headlineEnd = CTA_HEADLINE_START + CTA_HEADLINE_POP_DURATION;
+  const brandEnd = CTA_BRAND_START + CTA_BRAND_POP_DURATION;
+  const urlEnd = CTA_URL_START + CTA_URL_POP_DURATION;
+  const captionEnd = CTA_CAPTION_START + CTA_CAPTION_POP_DURATION;
+  const completeTime = captionEnd;
+  const holdEnd = completeTime + CTA_HOLD_DURATION;
+  const totalEnd = holdEnd + CTA_END_BUFFER;
+  return {
+    headlineEnd, brandEnd, urlEnd, captionEnd, completeTime, holdEnd, totalEnd,
+  };
+}
+
+/** Fixed, always-the-same duration - this beat's own content never varies, so unlike every real mograph template there's no word-count/icon-count to derive from. */
+function ctaOutroMinDuration() {
+  return computeCtaOutroTiming().totalEnd;
+}
+
+function buildCtaOutroLayers() {
+  const t = computeCtaOutroTiming();
+  const measureCtx = createCanvas(10, 10).getContext('2d');
+  const urlText = 'smartclips.org';
+  measureCtx.font = `400 ${CTA_URL_FONT_SIZE}px Poppins Medium`;
+  const urlWidth = measureCtx.measureText(urlText).width;
+
+  const layers = [];
+
+  layers.push({
+    id: '__cta_group__',
+    type: 'null',
+    position: [CANVAS_WIDTH / 2, CTA_GROUP_Y],
+    // God-tier-pass-equivalent polish from day one, not a later add-on
+    // (this beat only ever ships once, hand-tuned - there's no "ask for
+    // more later" round for fixed content): the SAME continuous
+    // "extremely subtle scale breathing during the hold" idiom every
+    // recent template's own god-tier pass established, confined to the
+    // hold window so it never fights the pop-in builds before it.
+    scale: { keyframes: [{ time: 0, value: [1, 1], interpolation: 'hold' }, ...mwBreathingKeyframes(t.completeTime, t.holdEnd, CTA_BREATH_PERIOD, CTA_BREATH_AMOUNT, 'easeInOutSine')] },
+  });
+
+  // Soft ambient brand-colored bloom behind the whole lockup for depth.
+  layers.push({
+    id: '__cta_glow_bg__',
+    type: 'shape',
+    parent: '__cta_group__',
+    width: 340,
+    height: 320,
+    position: [0, CTA_BRAND_LOCAL_Y],
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: CTA_HEADLINE_START, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: CTA_HEADLINE_START + 0.4, value: 0.22 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: 340, height: 320 } } },
+      { type: 'fill', color: CTA_ACCENT },
+    ],
+    effects: [
+      // 60 -> 30: a real measured speed fix, not just a size preference -
+      // this project's own established "blur cost scales with buffer
+      // area, not just visual size" lesson (project_render_speed_levers)
+      // confirmed directly here too: the first real render of this beat
+      // alone took ~100s for 98 frames, unusually slow even for a heavy
+      // template this session, traced to this blur + the two headline
+      // glows below stacking every frame. Still a genuinely soft ambient
+      // bloom at 30, just far cheaper per frame.
+      { type: 'gaussianBlur', params: { radius: 30 } },
+    ],
+  });
+
+  // The HOOK - direct spec: "at the very top, big and bold: THE FUTURE OF
+  // TIKTOK AUTOMATION IS HERE." This is the beat's own scroll-stopping
+  // moment, so it gets the hardest pop of anything here: a real DOUBLE
+  // overshoot (past 1x, back down past 1x the other way, then settle -
+  // not the usual single-bounce pop every other text in this file uses)
+  // plus a bright flash-style glow spike coincident with landing (the
+  // SAME keyframed-effect-param technique buttonDraw's own closing-impact
+  // glow boost uses - confirmed project-wide supported, not a new
+  // mechanism). Two lines, hand-broken (not auto-wrap) for exact control
+  // over where "TIKTOK" lands, verified via a real render.
+  layers.push({
+    id: '__cta_headline_1__',
+    type: 'text',
+    parent: '__cta_group__',
+    text: 'THE FUTURE OF TIKTOK',
+    fontFamily: 'Poppins Black',
+    fontWeight: '900',
+    fontSize: CTA_HEADLINE_FONT_SIZE,
+    fillStyle: ICON_BRIGHT_TINT,
+    textAlign: 'center',
+    maxWidth: CANVAS_WIDTH - 20,
+    width: CANVAS_WIDTH - 10,
+    height: CTA_HEADLINE_FONT_SIZE * 1.4,
+    position: [0, CTA_HEADLINE_LOCAL_Y],
+    scale: {
+      keyframes: [
+        {
+          time: CTA_HEADLINE_START, value: [1.7, 1.7], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        {
+          time: CTA_HEADLINE_START + 0.16, value: [0.88, 0.88], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        {
+          time: CTA_HEADLINE_START + 0.24, value: [1.06, 1.06], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.headlineEnd, value: [1, 1] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: CTA_HEADLINE_START, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: CTA_HEADLINE_START + 0.06, value: 1 },
+      ],
+    },
+    effects: [
+      {
+        type: 'outerGlow',
+        params: {
+          color: CTA_ACCENT,
+          blur: 14,
+          blendMode: 'screen',
+          opacity: {
+            keyframes: [
+              { time: 0, value: 0.5, interpolation: 'hold' },
+              {
+                time: t.headlineEnd, value: 0.5, interpolation: 'easing', easing: 'easeOutCubic',
+              },
+              {
+                time: t.headlineEnd + 0.1, value: 1, interpolation: 'easing', easing: 'easeOutCubic',
+              },
+              { time: t.headlineEnd + 0.32, value: 0.5 },
+            ],
+          },
+        },
+      },
+      { type: 'dropShadow', params: { color: '#000000', opacity: 0.45, blur: 12, offsetX: 0, offsetY: 6 } },
+    ],
+  });
+  layers.push({
+    id: '__cta_headline_2__',
+    type: 'text',
+    parent: '__cta_group__',
+    text: 'AUTOMATION IS HERE',
+    fontFamily: 'Poppins Black',
+    fontWeight: '900',
+    fontSize: CTA_HEADLINE_FONT_SIZE,
+    fillStyle: ICON_BRIGHT_TINT,
+    textAlign: 'center',
+    maxWidth: CANVAS_WIDTH - 20,
+    width: CANVAS_WIDTH - 10,
+    height: CTA_HEADLINE_FONT_SIZE * 1.4,
+    position: [0, CTA_HEADLINE_LOCAL_Y + CTA_HEADLINE_FONT_SIZE * 1.15],
+    scale: {
+      keyframes: [
+        {
+          time: CTA_HEADLINE_START, value: [1.7, 1.7], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        {
+          time: CTA_HEADLINE_START + 0.16, value: [0.88, 0.88], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        {
+          time: CTA_HEADLINE_START + 0.24, value: [1.06, 1.06], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.headlineEnd, value: [1, 1] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: CTA_HEADLINE_START, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: CTA_HEADLINE_START + 0.06, value: 1 },
+      ],
+    },
+    effects: [
+      {
+        type: 'outerGlow',
+        params: {
+          color: CTA_ACCENT,
+          blur: 14,
+          blendMode: 'screen',
+          opacity: {
+            keyframes: [
+              { time: 0, value: 0.5, interpolation: 'hold' },
+              {
+                time: t.headlineEnd, value: 0.5, interpolation: 'easing', easing: 'easeOutCubic',
+              },
+              {
+                time: t.headlineEnd + 0.1, value: 1, interpolation: 'easing', easing: 'easeOutCubic',
+              },
+              { time: t.headlineEnd + 0.32, value: 0.5 },
+            ],
+          },
+        },
+      },
+      { type: 'dropShadow', params: { color: '#000000', opacity: 0.45, blur: 12, offsetX: 0, offsetY: 6 } },
+    ],
+  });
+
+  layers.push({
+    id: '__cta_brand__',
+    type: 'text',
+    parent: '__cta_group__',
+    text: 'SmartClips',
+    fontFamily: 'Poppins Black',
+    fontWeight: '900',
+    fontSize: CTA_BRAND_FONT_SIZE,
+    fillStyle: ICON_BRIGHT_TINT,
+    textAlign: 'center',
+    maxWidth: CANVAS_WIDTH - 60,
+    width: CANVAS_WIDTH - 40,
+    height: CTA_BRAND_FONT_SIZE * 1.6,
+    position: [0, CTA_BRAND_LOCAL_Y],
+    scale: {
+      keyframes: [
+        {
+          time: CTA_BRAND_START, value: [1.4, 1.4], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        {
+          time: CTA_BRAND_START + 0.2, value: [0.95, 0.95], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.brandEnd, value: [1, 1] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: CTA_BRAND_START, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: CTA_BRAND_START + 0.1, value: 1 },
+      ],
+    },
+    effects: [
+      { type: 'outerGlow', params: { color: CTA_ACCENT, opacity: 0.7, blur: 14, blendMode: 'screen' } },
+      { type: 'dropShadow', params: { color: '#000000', opacity: 0.4, blur: 10, offsetX: 0, offsetY: 6 } },
+    ],
+  });
+
+  const urlLayerW = urlWidth + 24;
+  layers.push({
+    id: '__cta_url__',
+    type: 'text',
+    parent: '__cta_group__',
+    text: urlText,
+    fontFamily: 'Poppins Medium',
+    fontWeight: '400',
+    fontSize: CTA_URL_FONT_SIZE,
+    fillStyle: ICON_BRIGHT_TINT,
+    textAlign: 'center',
+    maxWidth: CANVAS_WIDTH - 40,
+    width: urlLayerW,
+    height: CTA_URL_FONT_SIZE * 1.6,
+    position: [0, CTA_URL_LOCAL_Y],
+    scale: {
+      keyframes: [
+        {
+          time: CTA_URL_START, value: [1.25, 1.25], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.urlEnd, value: [1, 1] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: CTA_URL_START, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: CTA_URL_START + 0.08, value: 1 },
+      ],
+    },
+    effects: [
+      { type: 'dropShadow', params: { color: '#000000', opacity: 0.35, blur: 6, offsetX: 0, offsetY: 4 } },
+    ],
+  });
+
+  // Caption beneath the link - direct spec: "click link for more info and
+  // to be notified when SmartClips is fully released." A light tint of
+  // the brand accent (mwBrightFlashColor, shared utility from
+  // mouseWordDrag's own build) rather than the raw accent hex directly:
+  // autoRepairBeat (this file, ~line 3310) forces ANY text layer's
+  // fillStyle to pure white whenever its own real WCAG luminance is below
+  // 0.45, and CTA_ACCENT's violet lands well under that - the raw hex
+  // would silently lose its own color the exact same way mouseWordDrag's
+  // own flash word did before that fix.
+  const captionColor = mwBrightFlashColor(CTA_ACCENT);
+  layers.push({
+    id: '__cta_caption__',
+    type: 'text',
+    parent: '__cta_group__',
+    text: 'Click the link for more info and to be notified when SmartClips is fully released',
+    fontFamily: 'Poppins Medium',
+    fontWeight: '500',
+    fontSize: CTA_CAPTION_FONT_SIZE,
+    lineHeight: CTA_CAPTION_FONT_SIZE * 1.4,
+    fillStyle: captionColor,
+    textAlign: 'center',
+    maxWidth: CANVAS_WIDTH - 120,
+    width: CANVAS_WIDTH - 100,
+    height: CTA_CAPTION_FONT_SIZE * 1.4 * 3,
+    position: [0, CTA_CAPTION_LOCAL_Y],
+    scale: {
+      keyframes: [
+        {
+          time: CTA_CAPTION_START, value: [1.15, 1.15], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.captionEnd, value: [1, 1] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: CTA_CAPTION_START, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: CTA_CAPTION_START + 0.1, value: 1 },
+      ],
+    },
+  });
+
+  return layers;
+}
+
+/** The always-appended, never-AI-authored final beat (see buildCtaOutroLayers' own doc comment) - no `mograph` field, so it's fully invisible to every mograph-specific validation/selection pass. Called once by generateSceneJSON (sceneGenClient.js) after the AI's own beats are already confirmed valid. */
+function buildCtaOutroBeat() {
+  return {
+    params: {
+      duration: ctaOutroMinDuration(),
+      // Kept under MAX_NARRATION_WORDS like every other beat's own
+      // narration (validateBeat enforces this per-beat regardless of
+      // position) - "coming soon" as a closing VO line, not a recap of
+      // the on-screen hook text (the headline is already read visually).
+      narration: 'Made with SmartClips. Coming soon.',
+    },
+    // Sentinel `mograph.type` outside the 19 real template names -
+    // NEVER dispatched (buildMographBeatVisual's own dispatcher has no
+    // "ctaOutro" branch, and bails out early anyway since `visual.layers`
+    // below is already populated), but its mere PRESENCE as a real
+    // `mograph` object is what matters: every general auto-decorate pass
+    // in this file (ensureActiveBackgroundElement, ensureBackgroundSwoosh,
+    // autoSpreadDuplicatePositions, etc.) gates on `!beat.mograph` to
+    // decide "this is an old-style plain headline beat, dress it up" -
+    // a real bug found via the FIRST render of this beat (an unwanted
+    // `__bg_curve__` swoosh got auto-injected into this fully hand-
+    // designed composition, since a raw beat with no `mograph` field at
+    // all looked exactly like a sparse legacy beat to every one of those
+    // passes). `mographTypesUsed` (this file's own "5-7 distinct
+    // templates" check) explicitly excludes this exact sentinel string,
+    // so it still never counts toward or competes with the AI's own
+    // template budget - see that check's own filter.
+    mograph: { type: 'ctaOutro' },
+    visual: { layers: buildCtaOutroLayers() },
+  };
+}
+
 module.exports = {
   validateSceneJSON,
   validateBeat,
@@ -17863,5 +18366,6 @@ module.exports = {
   buildDotConstellationLayers,
   buildButtonDrawLayers,
   buildMouseWordDragLayers,
+  buildCtaOutroBeat,
   buildMographBeatVisual,
 };

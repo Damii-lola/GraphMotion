@@ -1,9 +1,9 @@
 const { jsonrepair } = require('jsonrepair');
 const fetch = require('node-fetch');
-const { validateSceneJSON, buildMographBeatVisual } = require('./sceneSchema');
+const { validateSceneJSON, buildMographBeatVisual, buildCtaOutroBeat } = require('./sceneSchema');
 const {
-  buildTreatmentSystemPrompt, buildMinimalGenerationSystemPrompt, buildCompactGenerationSystemPrompt, buildEditSystemPrompt,
-  pickRandomTemplates,
+  buildTreatmentSystemPrompt, buildMinimalGenerationSystemPrompt, buildCompactGenerationSystemPrompt, buildTemplatePickerSystemPrompt, buildEditSystemPrompt,
+  pickRandomTemplates, COMPACT_TEMPLATE_NAMES,
 } = require('./scenePrompts');
 const { callOpenRouterRaw } = require('./openRouterClient');
 const { callCloudflareRaw } = require('./cloudflareClient');
@@ -802,17 +802,29 @@ const COMPACT_RETRY_BUDGET = 18;
  * path paid for every retry.
  */
 async function generateCompactBeatSpec(userPrompt, {
-  retriesLeft = COMPACT_RETRY_BUDGET, priorErrors = null, chosenTemplates = null,
+  retriesLeft = COMPACT_RETRY_BUDGET, priorErrors = null, chosenTemplates = null, topic = null, styleNotes = '',
 } = {}) {
   // Picked ONCE per generation, not re-rolled per retry - a real,
   // direct user requirement: "make them randomize but make it that if
   // a scene is chosen at random it cant be chosen again." A retry
   // passes the SAME chosenTemplates back through (see every recursive
   // call below) so it only ever fixes narration/vars issues, never
-  // re-picks the template set mid-generation.
+  // re-picks the template set mid-generation. `chosenTemplates` itself
+  // is now normally the AI's own topic-fit pick, already shuffled into
+  // its final order, from generateSceneJSON below - pickRandomTemplates
+  // here is only the FAILSAFE for a caller that never went through that
+  // (or a genuinely fully-failed pick step, see pickTemplatesForTopic's
+  // own doc comment).
   const templates = chosenTemplates || pickRandomTemplates();
   const systemPrompt = buildCompactGenerationSystemPrompt(templates);
-  let userMessage = `Topic: ${userPrompt}\n\nCreative angle for this generation: ${pickRandomCreativeAngle()}`;
+  // `topic` defaults to the raw prompt for any caller that skips the
+  // new split step (direct unit tests, etc.) - see splitPromptIntoTopic
+  // AndStyle's own doc comment for why this is a SEPARATE small call
+  // rather than folded into this one.
+  const effectiveTopic = topic || userPrompt;
+  let userMessage = `Topic: ${effectiveTopic}`;
+  if (styleNotes) userMessage += `\nStyle & instructions: ${styleNotes}`;
+  userMessage += `\n\nCreative angle for this generation: ${pickRandomCreativeAngle()}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt was invalid:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON.`;
 
   // 1500 -> 3000 -> 4096 (2026-09-09): a real local test hit finish_reason:
@@ -843,7 +855,7 @@ async function generateCompactBeatSpec(userPrompt, {
     // JSON shape from the SAME call already gets retried below.
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] Cloudflare call failed (${err.message}), retrying (${retriesLeft - 1} left)...`);
-      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors, chosenTemplates: templates });
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors, chosenTemplates: templates, topic, styleNotes });
     }
     throw err;
   }
@@ -853,7 +865,7 @@ async function generateCompactBeatSpec(userPrompt, {
   } catch (err) {
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] compact spec JSON parse failed (${err.message}), retrying (${retriesLeft - 1} left)...`);
-      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [`Your last response was not valid JSON: ${err.message}`], chosenTemplates: templates });
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [`Your last response was not valid JSON: ${err.message}`], chosenTemplates: templates, topic, styleNotes });
     }
     throw err;
   }
@@ -864,7 +876,7 @@ async function generateCompactBeatSpec(userPrompt, {
   } catch (err) {
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] compact spec shape invalid (${err.message}), retrying (${retriesLeft - 1} left)...`);
-      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [err.message], chosenTemplates: templates });
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [err.message], chosenTemplates: templates, topic, styleNotes });
     }
     throw err;
   }
@@ -874,7 +886,7 @@ async function generateCompactBeatSpec(userPrompt, {
   if (!valid) {
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] compiled scene JSON failed validation (${errors.length} error(s)), retrying (${retriesLeft - 1} left): ${errors.slice(0, 3).join('; ')}`);
-      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: errors, chosenTemplates: templates });
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: errors, chosenTemplates: templates, topic, styleNotes });
     }
     throw new Error(`Generated scene JSON failed schema validation after retries: ${errors.join('; ')}`);
   }
@@ -887,6 +899,8 @@ async function generateCompactBeatSpec(userPrompt, {
         retriesLeft: retriesLeft - 1,
         priorErrors: [`These icon names don't exist on Iconify and must be replaced with real ones: ${notFoundIcons.join(', ')}`],
         chosenTemplates: templates,
+        topic,
+        styleNotes,
       });
     }
     console.warn(`[sceneGenClient] ${notFoundIcons.length} icon(s) don't exist after exhausting retries (${notFoundIcons.join(', ')}) - shipping anyway, render-time fallback will drop them`);
@@ -895,16 +909,134 @@ async function generateCompactBeatSpec(userPrompt, {
   return sceneJSON;
 }
 
+// Direct user requirement (2026-09-15): "Add smart prompting, so the ai
+// will better understand the user's instructions." The live app only
+// ever has ONE free-text field (the topic prompt) - this splits it into
+// a real subject/topic vs. any style/tone/format instructions the user
+// mixed into the same string (e.g. "videos about X but keep it funny and
+// casual"), BEFORE the real compact-generation call, so that call can
+// address both explicitly instead of guessing from one blended string.
+// A separate, small, cheap call on the SAME free Cloudflare Workers AI
+// provider already used everywhere else in this file - this is a live
+// product-architecture choice, not the kind of repeated dev-testing
+// volume this project's own "keep API call batches small" rule is about.
+// Fails SOFT: any error here just falls back to today's exact behavior
+// (the whole raw prompt as the topic, no style notes) rather than ever
+// blocking generation over this one extra step.
+const PROMPT_SPLIT_SYSTEM_PROMPT = `You split a short-form video request into two parts. Respond with ONLY one valid JSON object - no markdown fences, no commentary.
+
+The user's own text may mix a SUBJECT (what the video is about) with STYLE/TONE/FORMAT instructions (e.g. "funny", "casual", "for teenagers", "focus on X", "keep it serious", "target beginners") all in one string.
+
+Output ONLY: {"topic": "the core subject, as a short phrase", "styleNotes": "any style/tone/audience/format instructions given, or an empty string if none were given"}`;
+
+async function splitPromptIntoTopicAndStyle(userPrompt) {
+  try {
+    const raw = await callCloudflareRaw(PROMPT_SPLIT_SYSTEM_PROMPT, userPrompt, { jsonMode: true, maxTokens: 200, temperature: 0.3 });
+    const parsed = extractJson(raw);
+    const topic = typeof parsed.topic === 'string' && parsed.topic.trim() ? parsed.topic.trim() : userPrompt;
+    const styleNotes = typeof parsed.styleNotes === 'string' ? parsed.styleNotes.trim() : '';
+    return { topic, styleNotes };
+  } catch (err) {
+    console.warn(`[sceneGenClient] prompt split failed (${err.message}), using the raw prompt as the topic with no style notes`);
+    return { topic: userPrompt, styleNotes: '' };
+  }
+}
+
+/** Plain Fisher-Yates, same real algorithm scenePrompts.js's own pickRandomTemplates uses (not the "sort by random comparator" non-uniform trick) - reused here to randomize the ORDER of whichever 6 templates pickTemplatesForTopic below picked, a deliberately separate concern from the picking itself. */
+function shuffleArray(arr) {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+const TEMPLATE_PICK_COUNT = 6;
+const TEMPLATE_PICK_RETRY_BUDGET = 2;
+
+/**
+ * Direct user requirement (2026-09-15): "i dont want there to be ANY
+ * FUCKING GAURENTEED TEMPLATE... remove the template randomizer
+ * completely, or put it as a failsafe... give the ai ALLL the templates
+ * names and a short description for each... based on this prompt, pick
+ * 6... then the 6 will go through a randomizer to randomize the order."
+ * Replaces the OLD design (pickRandomTemplates chosen blind, before the
+ * AI ever saw the topic, then the AI stuck with whatever it got) - now
+ * the AI picks by genuine topical fit FIRST, using
+ * buildTemplatePickerSystemPrompt's own short name+description list (a
+ * separate, much smaller prompt than the real compact-generation one -
+ * no field specs/examples needed just to pick 6 labels). A small retry
+ * budget handles a malformed/invalid response; pickRandomTemplates is
+ * kept as the pure-code FAILSAFE if this whole step still fails after
+ * retries, so generation can never block on it entirely.
+ */
+async function pickTemplatesForTopic(topic, retriesLeft = TEMPLATE_PICK_RETRY_BUDGET) {
+  try {
+    const raw = await callCloudflareRaw(buildTemplatePickerSystemPrompt(), `Topic: ${topic}`, { jsonMode: true, maxTokens: 150, temperature: 0.4 });
+    const parsed = extractJson(raw);
+    if (!Array.isArray(parsed.templates)) throw new Error('"templates" was not an array');
+    const valid = parsed.templates.filter((name) => COMPACT_TEMPLATE_NAMES.includes(name));
+    const distinct = [...new Set(valid)];
+    if (distinct.length !== TEMPLATE_PICK_COUNT) {
+      throw new Error(`expected ${TEMPLATE_PICK_COUNT} distinct real template names, got ${distinct.length} (${JSON.stringify(parsed.templates)})`);
+    }
+    return distinct;
+  } catch (err) {
+    if (retriesLeft > 0) {
+      console.warn(`[sceneGenClient] template pick failed (${err.message}), retrying (${retriesLeft - 1} left)...`);
+      return pickTemplatesForTopic(topic, retriesLeft - 1);
+    }
+    console.warn(`[sceneGenClient] template pick failed after retries (${err.message}) - falling back to the random-pick failsafe`);
+    return null;
+  }
+}
+
 // targetDurationSeconds kept as a parameter (callers still pass it) but
 // not used yet - the compact flow assigns each beat a flat base
 // duration (COMPACT_BASE_DURATION above) rather than deriving pacing
-// from a target total, since there's no real narration-audio length to
-// size against right now anyway (TTS disabled). Worth revisiting - e.g.
-// scaling COMPACT_BASE_DURATION per beat toward this target - if a real
-// need for duration targeting comes up.
+// from a target total. TTS re-enabled (2026-09-15, narrationPrefetch.js)
+// DOES now override each beat's own duration to match real spoken audio
+// length, but that happens downstream of scene generation (renderWorker.js
+// calls prefetchNarration after this function returns), not here - worth
+// revisiting whether this SHOULD feed back into per-beat base duration
+// if a real need for duration targeting comes up.
 async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
   console.log('[sceneGenClient] generating compact beat spec (Cloudflare Workers AI)...');
-  return generateCompactBeatSpec(userPrompt);
+
+  const { topic, styleNotes } = await splitPromptIntoTopicAndStyle(userPrompt);
+
+  // AI picks its own 6 templates by real topical fit; pickRandomTemplates
+  // (scenePrompts.js) only ever runs as the failsafe if that whole step
+  // fails - see pickTemplatesForTopic's own doc comment. Either way, the
+  // ORDER is randomized separately and always (a real, deliberate
+  // "selection and ordering are two different concerns" split, not just
+  // when the AI pick succeeds).
+  const pickedTemplates = await pickTemplatesForTopic(topic);
+  const chosenTemplates = shuffleArray(pickedTemplates || pickRandomTemplates());
+
+  const sceneJSON = await generateCompactBeatSpec(userPrompt, { chosenTemplates, topic, styleNotes });
+
+  // Guaranteed brand close on every fresh generation (direct user
+  // requirement) - appended AFTER the AI's own beats are already fully
+  // valid, deliberately OUTSIDE generateCompactBeatSpec's own retry loop
+  // (see buildCtaOutroBeat's own doc comment in sceneSchema.js for why:
+  // this content is fixed/hand-tuned, never AI-authored, so there's
+  // nothing a retry could ever fix in it - keeping it out of that loop
+  // means a validation hiccup in MY beat can never burn the AI's own
+  // retry budget or get fed back to the model as a "fix this" prompt for
+  // content it never wrote). One more validateSceneJSON pass over the
+  // combined array is still real and cheap (pure JS, no AI call) - a
+  // free safety net (off-canvas clamps, contrast fixes) for the new beat,
+  // logged rather than thrown on failure since there's no AI retry that
+  // could act on it anyway.
+  sceneJSON.scenes.push(buildCtaOutroBeat());
+  const ctaCheck = validateSceneJSON(sceneJSON);
+  if (!ctaCheck.valid) {
+    console.warn(`[sceneGenClient] scene JSON failed validation after appending the CTA outro beat (${ctaCheck.errors.length} error(s)) - shipping anyway: ${ctaCheck.errors.slice(0, 3).join('; ')}`);
+  }
+
+  return sceneJSON;
 }
 
 async function generateEditedSceneJSON(previousSceneJSON, editInstruction, targetDurationSeconds = 12, { retriesLeft = 4, priorErrors = null } = {}) {

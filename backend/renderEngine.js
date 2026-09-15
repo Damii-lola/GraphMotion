@@ -1533,9 +1533,19 @@ async function buildOneBeat(range) {
 }
 
 // See the RSS-check call site inside the frame loop below for the full
-// reasoning - a real production incident (2026-09-10, a genuine Render
-// "exceeded memory limit" platform alert), not a guessed value.
-const RENDER_MEMORY_SAFETY_LIMIT_MB = 420;
+// reasoning - originally set from a real production incident (2026-09-10,
+// a genuine Render "exceeded memory limit" platform alert), not a guessed
+// value. Lowered 420 -> 210 (2026-09-15, direct user requirement: "Ensuring
+// that render stays below 210MB of memory") - a real, deliberate tightening
+// of the enforced ceiling itself, not just the [[feedback_memory_budget]]
+// ~170-210MB TARGET this file's own templates have always been tuned
+// against (that number was previously only ever a design-time comment
+// here, never an enforced check - this is what makes it one now). Any
+// beat/chunk that trips this gets requeued (same path as any other render
+// error), same as it always has at the old ceiling - see this file's own
+// git history for which templates needed a real glow-layer trim to fit
+// once this got real-tested against the heaviest ones.
+const RENDER_MEMORY_SAFETY_LIMIT_MB = 210;
 
 async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, onProgress) {
   const startFrame = Math.floor(timeStart * FPS);

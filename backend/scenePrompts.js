@@ -1796,80 +1796,106 @@ function listTreatmentBeatHeaders(treatment) {
 // templates now, not 8, so per-call token cost actually goes DOWN
 // versus showing all 8 every time, real headroom for other
 // improvements instead of a growing ceiling fight.
+// Every entry's `description` is a ONE-LINE plain-English summary of the
+// template's own real mechanic, added 2026-09-15 for the NEW template-
+// PICKING step (buildTemplatePickerSystemPrompt/pickTemplatesForTopic,
+// sceneGenClient.js) - separate purpose from `fields`/`example` below
+// (which teach the model how to FILL IN a template it's already been
+// assigned). Kept in this SAME object, not a parallel map, specifically
+// so a new template can never add one list without the other.
 const COMPACT_TEMPLATE_INFO = {
   nodeCluster: {
+    description: 'Icons drift in and orbit, then one gets chosen/highlighted.',
     fields: 'icons(3-8), chosenIndex(0-based), introText(opt<=5w)',
     example: { template: 'nodeCluster', narration: 'Which one actually works?', vars: { icons: ['mdi:water', 'mdi:run', 'mdi:book'], chosenIndex: 1 }, accentColor: '#8B5CF6' },
   },
   connectorList: {
+    description: 'A short list of icon+label items drops in one by one.',
     fields: 'items(2-6 {icon,label*1-2w}), outroText(opt<=6w)',
     example: { template: 'connectorList', narration: 'Sleep, protein, routine.', vars: { items: [{ icon: 'mdi:sleep', label: 'Sleep' }, { icon: 'mdi:food-drumstick', label: 'Protein' }] }, accentColor: '#8B5CF6' },
   },
   phoneSwap: {
+    description: 'A phone mockup on screen with a headline/icon swapped in.',
     fields: 'text*(2-4w phone headline), icon',
     example: { template: 'phoneSwap', narration: 'Watch what happens next.', vars: { text: '7 Day Streak', icon: 'mdi:fire' }, accentColor: '#8B5CF6' },
   },
   splitConverge: {
+    description: 'Content splits apart then converges back into one focal icon.',
     fields: 'icon, label(opt,1-3w)',
     example: { template: 'splitConverge', narration: 'This is what matters.', vars: { icon: 'mdi:lightbulb-on', label: 'The Big Idea' }, accentColor: '#8B5CF6' },
   },
   mergeCluster: {
+    description: 'Several icons fly in and merge into one resulting icon.',
     fields: 'icons(2-5), resultIcon, label(opt,1-3w)',
     example: { template: 'mergeCluster', narration: 'They come together as one.', vars: { icons: ['mdi:microphone', 'mdi:video'], resultIcon: 'mdi:movie-open', label: 'Content Creation' }, accentColor: '#8B5CF6' },
   },
   nodeClusterExtended: {
+    description: 'Icons cluster, one is chosen, then merges into a new labeled result.',
     fields: 'icons(3-8), chosenIndex, mergeText*, newIcon*, newLabel(opt,1-3w)',
     example: { template: 'nodeClusterExtended', narration: 'They become one.', vars: { icons: ['mdi:microphone', 'mdi:video', 'mdi:cloud'], chosenIndex: 0, mergeText: 'Content Strategy', newIcon: 'mdi:forum', newLabel: 'Plan' }, accentColor: '#8B5CF6' },
   },
   textPopOut: {
+    description: 'A short punchy statement builds word by word then pops away.',
     fields: 'text*(3-6w punchy statement)',
     example: { template: 'textPopOut', narration: 'Small wins add up fast.', vars: { text: 'Progress beats perfection' } },
   },
   squareSpin: {
+    description: 'A couple of icon squares spin and land, revealing short text.',
     fields: 'text*(2-5w, in shapes), icon1, icon2',
     example: { template: 'squareSpin', narration: 'Two go-to tools.', vars: { text: 'Pro Tips', icon1: 'mdi:video', icon2: 'mdi:microphone' }, accentColor: '#8B5CF6' },
   },
   tripleStack: {
+    description: 'Exactly 3 icon+text items stack and settle in sequence.',
     fields: 'items(EXACTLY 3 {icon,text*1-3w}); narration=on-screen caption, keep short',
     example: { template: 'tripleStack', narration: "Here's what you get.", vars: { items: [{ icon: 'mdi:image', text: 'PNG Docs' }, { icon: 'mdi:account-group', text: 'Icon Icons' }, { icon: 'mdi:comment-quote', text: 'Quotes' }] }, accentColor: '#8B5CF6' },
   },
   nodeAbsorb: {
+    description: 'A header absorbs a list of exactly 4 icon+text benefit items.',
     fields: 'headerIcon, headerText*, items(EXACTLY 4 {icon,text*2-4w}) - things you get, not names/scores',
     example: { template: 'nodeAbsorb', narration: 'What you get.', vars: { headerIcon: 'mdi:gift', headerText: 'What You Get', items: [{ icon: 'mdi:truck-fast', text: 'Free Shipping' }, { icon: 'mdi:shield-check', text: 'Warranty' }, { icon: 'mdi:refresh', text: 'Free Returns' }, { icon: 'mdi:headset', text: '24/7 Support' }] }, accentColor: '#8B5CF6' },
   },
   textTiers: {
+    description: 'A plain statement builds word by word across 3 auto-split lines.',
     fields: 'text*(5-10w plain statement, auto-split into 3 lines)',
     example: { template: 'textTiers', narration: "Here's an honest take.", vars: { text: 'The last one might be the best' }, accentColor: '#8B5CF6' },
   },
   blueprintText: {
+    description: 'Two short sentences appear inside animated blueprint-style dashed boxes.',
     fields: 'sentence1*, sentence2*(2 short phrases, 3-6w each)',
     example: { template: 'blueprintText', narration: 'Every detail matters here.', vars: { sentence1: 'Precision in every curve', sentence2: 'Power in every detail' }, accentColor: '#8B5CF6' },
   },
   yearScroller: {
+    description: 'A vertical year-picker scrolls and lands on a year, then reveals a headline.',
     fields: 'year*(a real year 1870-2040), text*(1-4w headline revealed after)',
     example: { template: 'yearScroller', narration: 'It all started here.', vars: { year: 1969, text: 'Where it began' }, accentColor: '#8B5CF6' },
   },
   counter: {
+    description: 'A number counts up to a target value with an optional icon and caption.',
     fields: 'value*(count to), text*(4-8w caption), icon(opt), iconPosition(opt before|after)',
     example: { template: 'counter', narration: 'The number speaks.', vars: { value: 45355, text: 'People who changed their mind' } },
   },
   lineReveal: {
+    description: 'A line grows and moves to reveal a bold headline plus a secondary line.',
     fields: 'text1*(2-4w bold headline), text2*(2-5w secondary line)',
     example: { template: 'lineReveal', narration: "Here's the real difference.", vars: { text1: 'Think Different', text2: 'Build what matters' }, accentColor: '#8B5CF6' },
   },
   typewriterLink: {
+    description: 'Three short lines build in typewriter style, linked by a connector word.',
     fields: 'line1*(2-4w), line2*(1-3w connector), line3*(2-4w)',
     example: { template: 'typewriterLink', narration: 'Good design leads to good business.', vars: { line1: 'Good Design', line2: 'leads to', line3: 'Good Business' } },
   },
   dotConstellation: {
+    description: 'Dots fall in and connect with drawn arcs into a line, revealing a caption.',
     fields: 'text*(2-4 short words, one line)',
     example: { template: 'dotConstellation', narration: 'Focus organizes motion.', vars: { text: 'Focus organizes motion' } },
   },
   buttonDraw: {
+    description: 'A dot draws a pill-shaped button outline as its label reveals inside.',
     fields: 'text*(1-3w button label)',
     example: { template: 'buttonDraw', narration: "You're all set.", vars: { text: 'Get Started' } },
   },
   mouseWordDrag: {
+    description: 'A sentence builds, then a mouse drags in and inserts a missing key phrase.',
     fields: 'before*(1-3w),chip*(1-2w, the missing main point),after*(1-3w)',
     example: {
       template: 'mouseWordDrag', narration: 'This is how you get ahead.', vars: { before: 'Work Smarter', chip: 'With AI', after: 'Every Day' },
@@ -1924,6 +1950,33 @@ ${exampleLines}
 Now output ONE line, {"beats":[...]}, EXACTLY ${n} entries (one per template above) shaped like the examples, your OWN narration/text for your topic - never copy the example wording.`;
 }
 
+// Direct user requirement (2026-09-15): "i dont want there to be ANY
+// FUCKING GAURENTEED TEMPLATE... remove the template randomizer
+// completely, or put it as a failsafe... give the ai ALLL the templates
+// names and a short description for each... based on this prompt, pick
+// 6... NO EXTRA INFO... then the 6 will go through a randomizer to
+// randomize the order." This is the FIRST of those two calls - a small,
+// separate prompt (labels + one-line descriptions only, no field specs/
+// examples, unlike buildCompactGenerationSystemPrompt above) so the model
+// picks templates by genuine topical fit BEFORE it ever sees - or is
+// forced into - any specific assigned set. pickTemplatesForTopic
+// (sceneGenClient.js) calls this, then the ORIGINAL pickRandomTemplates
+// above is kept as a pure code failsafe if this whole step fails, and a
+// separate plain Fisher-Yates shuffle (also sceneGenClient.js) randomizes
+// the ORDER of whichever 6 templates end up chosen - selection and
+// ordering are deliberately two separate concerns now, not one call.
+function buildTemplatePickerSystemPrompt() {
+  const lines = COMPACT_TEMPLATE_NAMES.map((name) => `${name}: ${COMPACT_TEMPLATE_INFO[name].description}`).join('\n');
+  return `You pick which motion-graphics templates fit a short-form video topic. Respond with ONLY one valid JSON object - no markdown fences, no commentary, no extra fields.
+
+ALL AVAILABLE TEMPLATES (name: what it does):
+${lines}
+
+Given the topic below, pick EXACTLY 6 DISTINCT template names from the list above that best fit telling that story - the ones whose own real mechanic actually suits the content (e.g. a list of benefits fits connectorList/nodeAbsorb, a single big number fits counter, a definition/quote fits textPopOut/textTiers).
+
+Output ONLY: {"templates": ["name1", "name2", "name3", "name4", "name5", "name6"]} - the 6 names, nothing else, no narration, no vars, no reasoning.`;
+}
+
 module.exports = {
   COMP_WIDTH,
   COMP_HEIGHT,
@@ -1931,6 +1984,7 @@ module.exports = {
   buildGenerationSystemPrompt,
   buildMinimalGenerationSystemPrompt,
   buildCompactGenerationSystemPrompt,
+  buildTemplatePickerSystemPrompt,
   buildEditSystemPrompt,
   listTreatmentBeatHeaders,
   pickRandomTemplates,

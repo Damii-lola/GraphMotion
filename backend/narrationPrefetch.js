@@ -497,19 +497,14 @@ async function synthesizeBeatClip(taggedText, dir, index, attempt) {
 async function prefetchNarration(sceneJSON, jobId) {
   const renderScenes = sceneJSON.scenes.map((scene) => ({ ...scene, params: { ...scene.params } }));
 
-  // TTS/audio generation TEMPORARILY DISABLED - direct user request
-  // (2026-09-07): "comment out the tts, dont remove it... comment out
-  // the audio script... Rn we are trying to get the motion graphics in
-  // place, that's the priority." Every beat keeps its own AUTHORED
-  // `duration` from scene generation instead of being overridden by
-  // measured real-audio length, and audioFiles ships empty -
-  // muxNarrationOntoVideo (audioMux.js) already no-ops cleanly on an
-  // empty map, so the render ships silent rather than crashing. Commented
-  // out below, not deleted - re-enable by deleting this early return and
-  // uncommenting the block.
-  return capToMaxDuration({ ...sceneJSON, scenes: renderScenes }, new Map());
-
-  /*
+  // TTS/audio generation RE-ENABLED (2026-09-15, direct user request:
+  // "Uncomment the tts, integrate it into the vids") - was disabled
+  // 2026-09-07 ("comment out the tts, dont remove it... Rn we are trying
+  // to get the motion graphics in place, that's the priority") purely so
+  // template work could proceed without audio as a variable. That work is
+  // done; this restores the real 3-tier synth (Deepgram -> Fish Audio ->
+  // free keyless msedge-tts) + duration/word-timing sync below exactly as
+  // it was written, unchanged.
   const beatsWithNarration = renderScenes
     .map((scene, index) => ({ scene, index }))
     .filter(({ scene }) => typeof scene.params?.narration === 'string' && scene.params.narration.trim().length > 0);
@@ -592,7 +587,6 @@ async function prefetchNarration(sceneJSON, jobId) {
   }));
 
   return capToMaxDuration({ ...sceneJSON, scenes: renderScenes }, audioFiles);
-  */
 }
 
 function cleanupNarration(jobId) {

@@ -1525,9 +1525,13 @@ async function buildOneBeat(range) {
 }
 
 // See the RSS-check call site inside the frame loop below for the full
-// reasoning - a real production incident (2026-09-10, a genuine Render
-// "exceeded memory limit" platform alert), not a guessed value.
-const RENDER_MEMORY_SAFETY_LIMIT_MB = 420;
+// reasoning - originally set from a real production incident (2026-09-10,
+// a genuine Render "exceeded memory limit" platform alert), not a guessed
+// value. Lowered 420 -> 210 (2026-09-15, direct user requirement: "Ensuring
+// that render stays below 210MB of memory") - kept in sync with
+// backend/renderEngine.js's own copy of this same constant, per this
+// project's standing "keep both copies in sync" convention.
+const RENDER_MEMORY_SAFETY_LIMIT_MB = 210;
 
 async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, onProgress) {
   const startFrame = Math.floor(timeStart * FPS);
