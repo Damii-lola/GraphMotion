@@ -1869,6 +1869,12 @@ const COMPACT_TEMPLATE_INFO = {
     fields: 'text*(1-3w button label)',
     example: { template: 'buttonDraw', narration: "You're all set.", vars: { text: 'Get Started' } },
   },
+  mouseWordDrag: {
+    fields: 'before*(1-3w),chip*(1-2w, the missing main point),after*(1-3w)',
+    example: {
+      template: 'mouseWordDrag', narration: 'This is how you get ahead.', vars: { before: 'Work Smarter', chip: 'With AI', after: 'Every Day' },
+    },
+  },
 };
 const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);
 

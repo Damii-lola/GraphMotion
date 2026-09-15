@@ -448,6 +448,12 @@ const COMPACT_BASE_DURATION = {
   // (doesn't depend on the label's own length), so this seed is just that
   // same real, always-exact value.
   buttonDraw: 3.17,
+  // Immediately overwritten by mouseWordDragMinDuration(beforeCount,
+  // afterCount) in sceneSchema.js's own dispatch branch - this is just a
+  // reasonable seed, ~mouseWordDragMinDuration(2, 2) for a typical
+  // 2-word before-phrase + 2-word after-phrase (the "Work Smarter | With
+  // AI | Every Day" reference shape).
+  mouseWordDrag: 3.42,
 };
 
 /**
@@ -671,8 +677,17 @@ function validateCompactBeatVars(template, vars) {
       if (tw.length < 1) return 'needs "text": a real short button label (e.g. "Get Started")';
       return null;
     }
+    case 'mouseWordDrag': {
+      const bw = typeof vars.before === 'string' ? vars.before.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      const cw = typeof vars.chip === 'string' ? vars.chip.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      const aw = typeof vars.after === 'string' ? vars.after.trim().split(/\s+/).filter((w) => w.length > 0) : [];
+      if (bw.length < 1) return 'needs "before": at least 1 word of the sentence BEFORE the missing phrase (e.g. "Work Smarter")';
+      if (cw.length < 1) return 'needs "chip": at least 1 word - the missing MAIN POINT a mouse drags in (e.g. "With AI")';
+      if (aw.length < 1) return 'needs "after": at least 1 word of the sentence AFTER the missing phrase (e.g. "Every Day")';
+      return null;
+    }
     default:
-      return `"${template}" is not one of the 18 real template names`;
+      return `"${template}" is not one of the 19 real template names`;
   }
 }
 

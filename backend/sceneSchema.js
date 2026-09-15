@@ -14019,6 +14019,1187 @@ function buildButtonDrawLayers({ text, accentColor }) {
   ];
 }
 
+// ======================= mouseWordDrag (19th template) =======================
+// Built from a direct, frame-by-frame read of a reference video (B4.mp4,
+// 2026-09-13, no verbatim spec given - user: "text spawning in, then from
+// outside the screen a mouse brings in the main point of the text").
+// Confirmed via 30fps frames across the full 2.62s clip:
+//   1. A short sentence builds word-by-word on ONE line - each word pops
+//      in bright ACCENT color, then settles to white the instant the NEXT
+//      word appears (confirmed directly: "Work" is accent while alone,
+//      flips to white the same frame "Smarter" pops in accent).
+//   2. The sentence has a GAP left for its own missing "main point" -
+//      the words AFTER the gap ("Every Day") are already spaced as if
+//      that gap were filled, from the moment they first appear (no later
+//      reflow when the missing phrase actually lands).
+//   3. A mouse cursor drags a dashed-border "chip" (the missing phrase,
+//      in accent color) in from OFF-SCREEN (enters at the very top edge),
+//      arrives HOVERING just above the gap, pauses, then drops straight
+//      down into the gap with a real squash-on-impact + rebound. On
+//      landing, the dashed box and accent color both fade away and the
+//      phrase crystallizes to the SAME white as the rest of the line -
+//      the cursor lingers a beat longer before fading out on its own.
+//   4. The finished line holds, then the WHOLE sentence collapses inward
+//      and fades - the same "shrink toward center and vanish" exit this
+//      file's own textPopOut template already uses (confirmed as a real,
+//      deliberate in-clip animation here too, not a next-scene artifact -
+//      see buttonDraw's own top doc comment for the OPPOSITE mistake on a
+//      different reference, corrected on a direct follow-up).
+// CORRECTION (2026-09-13, direct follow-up): "make the text be together
+// no space, then the added [word] comes and literally forces itself in."
+// The reference's own "gap already reserved before the chip arrives"
+// reading (point 2 above) was WRONG per direct instruction - before/after
+// now build as one CONTINUOUS tight sentence with no reserved gap at all,
+// and the chip's own drop FORCES the two halves apart (a real, synced
+// push) to make room for it, rather than dropping into space that was
+// already waiting. See the TIGHT vs FINAL layout split in
+// buildMouseWordDragLayers' own doc comment below.
+const MW_CX = CANVAS_WIDTH / 2;
+const MW_TEXT_Y = CANVAS_HEIGHT * 0.46;
+const MW_FONT_FAMILY = 'Poppins Bold';
+const MW_FONT_WEIGHT = '700';
+// Same adaptive "measure real widths, shrink to fit if needed" pattern as
+// textPopOut's own layout - no separate worst-case pre-verification pass
+// needed since the shrink floor (22px) is the actual safety net, not a
+// fixed size assumed safe.
+const MW_FONT_SIZE_MAX = 34;
+const MW_WORD_GAP_RATIO = 0.34;
+
+const MW_WORD_START_SCALE = 1.35;
+const MW_WORD_SETTLE_UNDERSHOOT = 0.94;
+const MW_WORD_POP_DURATION = 0.26;
+const MW_WORD_INTERVAL = 0.16;
+const MW_WORD_FLASH_FADE_DURATION = 0.22;
+const MW_BEFORE_START = 0.1;
+
+const MW_CHIP_ENTER_OFFSET_X = 40;
+const MW_CHIP_ENTER_START_Y = -(MW_TEXT_Y + 80);
+const MW_CHIP_HOVER_Y_RATIO = 1.6;
+const MW_CHIP_ENTER_DURATION = 0.5;
+const MW_CHIP_HOVER_DURATION = 0.3;
+// Direct follow-up ("too clean... i need the forced entry"): the drop
+// itself is now a hard, fast SLAM (duration cut almost in half) rather
+// than a polite descent, and the squash is much more extreme (a real
+// "hit something solid" flatten, not a gentle bounce) - see
+// MW_CHIP_SQUASH_SCALE and the carrier's own rotation overshoot below.
+const MW_CHIP_DROP_DURATION = 0.1;
+const MW_CHIP_SETTLE_DURATION = 0.16;
+const MW_CHIP_CRYSTALLIZE_DURATION = 0.22;
+const MW_CHIP_PAD_X = 14;
+const MW_CHIP_BOX_HEIGHT_RATIO = 1.55;
+const MW_CHIP_SQUASH_SCALE = [1.4, 0.56];
+const MW_CHIP_SETTLE_OVERSHOOT = 1.12;
+// A tiny rotational overshoot PAST level (a real "rocked by the impact"
+// wobble) before settling flat, layered onto the carrier's existing
+// drag tilt.
+const MW_CHIP_ROTATION_OVERSHOOT = -3;
+
+// Direct follow-up: the two halves don't just glide apart, they get
+// SHOVED - flung past their own final rest spot, then spring back. Both
+// ratios describe the push's own two phases (see mwWordPushKeyframes).
+const MW_PUSH_OVERSHOOT_RATIO = 0.32;
+const MW_PUSH_SLAM_FRACTION = 0.5;
+
+// A brief, decaying positional shake on the WHOLE shared group, centered
+// on the exact impact instant (chipDropEnd) - the single biggest lever
+// for a real "forceful hit" read (this project's own established
+// "closing impact" idiom elsewhere is a glow/ring pulse; a genuine
+// screen-shake is new here, added specifically because this template's
+// whole premise is a physical collision, not just a reveal).
+const MW_SHAKE_AMPLITUDE = 9;
+const MW_SHAKE_DURATION = 0.22;
+const MW_SHAKE_CYCLES = 5;
+
+// A near-instant bright flash right at the impact point, and a bigger/
+// faster ring + more particles than the original polite versions -
+// "add more impact" applies to the WHOLE landing moment, not just the
+// motion.
+const MW_IMPACT_FLASH_SIZE = 70;
+const MW_IMPACT_RING_SIZE = 100;
+const MW_IMPACT_RING_DURATION = 0.24;
+const MW_IMPACT_PARTICLE_COUNT = 8;
+const MW_IMPACT_PARTICLE_DISTANCE = 26;
+const MW_IMPACT_PARTICLE_LIFE = 0.26;
+
+const MW_CURSOR_SIZE = 24;
+const MW_CURSOR_LINGER = 0.3;
+const MW_CURSOR_FADE_DURATION = 0.2;
+// A simple, straight-edged arrow-cursor silhouette (sharp corners, no
+// bezier tangents needed - a cursor icon reads as crisp polygon facets,
+// not smooth curves), tip at local (0,0) so positioning this shape IS
+// positioning the cursor's own real "hot point."
+const MW_CURSOR_ANCHORS = [
+  { point: [0, -11] },
+  { point: [0, 3] },
+  { point: [3, 0.2] },
+  { point: [5.2, 5.6] },
+  { point: [7.3, 4.7] },
+  { point: [4.7, -0.6] },
+  { point: [8.5, -0.6] },
+];
+
+// ------------------- god-tier 2D upgrade pass (2026-09-15) -------------------
+// Direct wishlist, implemented SELECTIVELY per this file's own established
+// convention (typewriterLink/dotConstellation/buttonDraw before it) -
+// explicit skips noted where this engine has no matching primitive, or
+// where the cost (doubling an already-large layer count) outweighs the
+// gain given this template's own "keep it snappy" pacing:
+//   - No true per-glyph emboss/bevel primitive exists (layerStyles.js has
+//     outerGlow/innerGlow/dropShadow/layerStroke, nothing bevel-shaped) -
+//     approximated with a real `innerGlow` pass instead (a genuine
+//     primitive, not a fake).
+//   - A genuine DUAL-layer text bloom (2 separate glow-tuned duplicate
+//     text layers per word) would double the already-8-word-layer count
+//     this template carries - skipped in favor of one deliberately
+//     tightened `outerGlow` (overriding the generic auto-added one)
+//     alongside the existing auto dropShadow, which covers "lifts off
+//     the grid" without that cost.
+//   - Literal corner-handle tick marks on the dashed box (4 extra
+//     shapes) - approximated with a pulse on the box itself instead.
+//   - No gradient-mask-on-text primitive exists, so "a light sweep that
+//     runs across the phrase" and "a horizontal energy streak as it
+//     settles" (two near-identical asks) are both covered by ONE soft
+//     additive light streak sliding across the line - a real sweep, just
+//     not one that literally reveals/hides glyph edges as it crosses.
+//   - "Continuous glow intensity breathing" as a SEPARATE keyframed
+//     effect-param track per word (8 tracks) - folded into the shared
+//     group's own scale breathing instead (same reasoning as buttonDraw's
+//     own god-tier pass: a breathing transform already makes baked-in
+//     glow radii breathe with it, for far less cost).
+const MW_WORD_GLOW_BLUR = 7;
+const MW_WORD_GLOW_OPACITY = 0.55;
+const MW_WORD_INNER_GLOW_BLUR = 3;
+const MW_WORD_INNER_GLOW_OPACITY = 0.35;
+
+const MW_CHIP_GLOW_BLUR = 14;
+const MW_CHIP_GLOW_OPACITY = 0.85;
+// The settled chip keeps a whisper of its own accent hue in its glow
+// even after crystallizing to white text - direct spec: "make 'With AI'
+// the clear accent... feels special" - a flat white glow would erase
+// that distinction the instant it lands.
+const MW_CHIP_LOCK_GLOW_OPACITY = 0.5;
+
+const MW_BOX_GLOW_BLUR = 9;
+const MW_BOX_GLOW_OPACITY = 0.6;
+const MW_BOX_PULSE_PERIOD = 0.5;
+const MW_BOX_PULSE_AMOUNT = 0.04;
+const MW_GHOST_BOX_SCALE = 1.35;
+const MW_GHOST_BOX_OPACITY = 0.18;
+
+const MW_CURSOR_ECHO_LAG = 0.1;
+const MW_CURSOR_ECHO_OPACITY = 0.45;
+const MW_CURSOR_DRIFT_PARTICLE_COUNT = 3;
+const MW_CURSOR_CLICK_PULSE = 1.5;
+const MW_CURSOR_EXIT_PULSE = 1.6;
+
+const MW_BOX_BURST_PARTICLE_COUNT = 5;
+
+const MW_SWEEP_DURATION = 0.45;
+const MW_SWEEP_WIDTH_RATIO = 0.4;
+
+const MW_BREATH_PERIOD = 0.85;
+const MW_BREATH_AMOUNT = 0.01;
+
+const MW_RESIDUAL_COUNT = 4;
+const MW_RESIDUAL_STAGGER = 0.16;
+const MW_RESIDUAL_DURATION = 0.65;
+
+const MW_HOLD_DURATION = 0.55;
+const MW_EXIT_DURATION = 0.5;
+const MW_EXIT_SCALE = 0.15;
+const MW_END_BUFFER = 0.1;
+// Direct spec: the tight sentence finishes building FIRST, THEN the chip
+// starts dragging in - a real, deliberate beat between the two rather
+// than the old overlapping cascade (which existed only to match the
+// pre-reserved-gap reading this correction replaced).
+const MW_PRE_CHIP_PAUSE = 0.2;
+// The two halves shove apart in exactly the chip's own final descent
+// window (chipHoverEnd->chipDropEnd, aliased below as pushStart/pushEnd)
+// so the push and the drop always read as ONE single forceful motion,
+// never two separate beats - see mwWordPushKeyframes' own doc comment
+// for the actual two-phase slam-then-settle shape of that motion.
+
+/** Every absolute time this template's own layers key off of, given how many words sit before/after the insertion point - shared by mouseWordDragMinDuration and buildMouseWordDragLayers so the two can never drift out of sync (same precedent as textPopOutMinDuration/buildTextPopOutLayers). */
+function computeMouseWordDragTiming(beforeCount, afterCount) {
+  const wordCount = beforeCount + afterCount;
+  // ONE continuous stagger across the WHOLE tight sentence (no gap, no
+  // chip-driven dependency) - "Work Smarter Every Day" builds as a
+  // single uninterrupted cascade, matching the "text together, no
+  // space" half of the direct correction.
+  const combinedRevealTimes = Array.from({ length: wordCount }, (_, i) => MW_BEFORE_START + i * MW_WORD_INTERVAL);
+  const beforeRevealTimes = combinedRevealTimes.slice(0, beforeCount);
+  const afterRevealTimes = combinedRevealTimes.slice(beforeCount);
+  const sentenceEnd = wordCount > 0 ? combinedRevealTimes[wordCount - 1] + MW_WORD_POP_DURATION : MW_BEFORE_START;
+
+  // The chip only starts dragging in once the tight sentence has fully
+  // landed - a real, deliberate beat (MW_PRE_CHIP_PAUSE), not an overlap.
+  const chipEnterStart = sentenceEnd + MW_PRE_CHIP_PAUSE;
+  const chipHoverStart = chipEnterStart + MW_CHIP_ENTER_DURATION;
+  const chipHoverEnd = chipHoverStart + MW_CHIP_HOVER_DURATION;
+  // The FORCE: both halves of the sentence shove apart in this exact
+  // same window the chip spends dropping from its hover point to its
+  // final landing slot - one synced motion, not two.
+  const pushStart = chipHoverEnd;
+  const chipDropEnd = chipHoverEnd + MW_CHIP_DROP_DURATION;
+  const pushEnd = chipDropEnd;
+  const chipSettleEnd = chipDropEnd + MW_CHIP_SETTLE_DURATION;
+  const chipCrystallizeEnd = chipSettleEnd + MW_CHIP_CRYSTALLIZE_DURATION;
+
+  const cursorFadeStart = chipCrystallizeEnd + MW_CURSOR_LINGER;
+  const cursorFadeEnd = cursorFadeStart + MW_CURSOR_FADE_DURATION;
+
+  const completeTime = Math.max(chipCrystallizeEnd, cursorFadeEnd);
+  const holdEnd = completeTime + MW_HOLD_DURATION;
+  const exitEnd = holdEnd + MW_EXIT_DURATION;
+  const exitStart = exitEnd - MW_EXIT_DURATION;
+
+  return {
+    beforeRevealTimes,
+    afterRevealTimes,
+    sentenceEnd,
+    chipEnterStart,
+    chipHoverStart,
+    chipHoverEnd,
+    pushStart,
+    chipDropEnd,
+    pushEnd,
+    chipSettleEnd,
+    chipCrystallizeEnd,
+    cursorFadeStart,
+    cursorFadeEnd,
+    completeTime,
+    holdEnd,
+    exitStart,
+    exitEnd,
+  };
+}
+
+function mouseWordDragMinDuration(beforeCount, afterCount) {
+  const t = computeMouseWordDragTiming(beforeCount, afterCount);
+  return t.exitEnd + MW_END_BUFFER;
+}
+
+/** Fresh scale-keyframes object for one word's own pop-in (overshoot then settle-undershoot then rest) - called separately per layer rather than sharing one object reference, so a later repair pass mutating one layer's own keyframes in place can never silently affect a sibling (the same cloneTrack-class caution documented elsewhere in this file). */
+function mwWordScaleKeyframes(revealTime) {
+  return {
+    keyframes: [
+      {
+        time: revealTime, value: [MW_WORD_START_SCALE, MW_WORD_START_SCALE], interpolation: 'easing', easing: 'easeOutCubic',
+      },
+      {
+        time: revealTime + MW_WORD_POP_DURATION * 0.6, value: [MW_WORD_SETTLE_UNDERSHOOT, MW_WORD_SETTLE_UNDERSHOOT], interpolation: 'easing', easing: 'easeOutCubic',
+      },
+      { time: revealTime + MW_WORD_POP_DURATION, value: [1, 1] },
+    ],
+  };
+}
+
+/** The PERMANENT white copy of a word - pops in once and stays for the rest of the layer's life (including through the group's own later exit-shrink). */
+function mwWordOpacityKeyframes(revealTime) {
+  return {
+    keyframes: [
+      { time: 0, value: 0, interpolation: 'hold' },
+      {
+        time: revealTime, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+      },
+      { time: revealTime + 0.08, value: 1 },
+    ],
+  };
+}
+
+/** The ACCENT "flash" copy stacked exactly on top of the white one - pops in at the identical instant, holds briefly, then fades out, revealing the already-full-opacity white copy underneath. This is how a color TRANSITION happens at all: `fillStyle` (sceneBuilder.js's buildTextDraw) is read once as a static string, never keyframed - two real, distinctly-colored text layers crossfading is the only way to animate a text layer's own color in this engine. */
+function mwFlashOpacityKeyframes(revealTime) {
+  const holdStart = revealTime + 0.08;
+  const fadeStart = holdStart + 0.02;
+  return {
+    keyframes: [
+      { time: 0, value: 0, interpolation: 'hold' },
+      {
+        time: revealTime, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+      },
+      { time: holdStart, value: 1, interpolation: 'hold' },
+      {
+        time: fadeStart, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+      },
+      { time: fadeStart + MW_WORD_FLASH_FADE_DURATION, value: 0 },
+    ],
+  };
+}
+
+// Real, confirmed-live bug found via a direct render of this template's
+// own accent "flash" (a real render showed a solid WHITE word the whole
+// time - no purple flash ever visible): `autoRepairBeat` (this file,
+// ~line 3310) forces ANY text layer's `fillStyle` to pure white whenever
+// its own real WCAG relative luminance is below 0.45 - a genuinely
+// correct, GENERAL safety net (this app's board background is always
+// dark/mid-toned, so dark text is presumed unreadable) with no per-layer
+// escape hatch, unlike the sibling-fill exemption `resolveIconBackdropRule`
+// gives text sitting on a KNOWN opaque surface. Most saturated accent
+// hues (violets/blues/reds especially) land well under 0.45 luminance
+// despite looking plenty "bright" - so `fillStyle: accentColor` on a bare
+// text layer silently loses its own color almost every time this
+// template runs, not just on this one test color. Rather than touching
+// that shared repair pass (its own reasoning is sound for the general
+// case; this template just needs a DIFFERENT color, not an exemption
+// from contrast safety), the flash's own glyph fill is lightened until
+// it clears the SAME threshold with real margin - the glow effect right
+// alongside it keeps the full, saturated accentColor, so the color
+// identity still reads through the halo even though the glyph itself is
+// a bright tint, not the deep hue.
+function mwBrightFlashColor(hex) {
+  const toLinear = (c) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const luminanceOf = (h) => {
+    const [r, g, b] = hexToRgbLocal(h);
+    return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+  };
+  let color = hex;
+  let factor = 0;
+  while (luminanceOf(color) < 0.5 && factor < 1) {
+    factor += 0.12;
+    color = adjustLightness(hex, factor);
+  }
+  return color;
+}
+
+/** Copies a position keyframes array with a fixed [dx,dy] added to every value - a fresh array/objects each call (never the same reference twice), used to give the cursor its OWN independent track that follows the chip carrier's own path without inheriting the carrier's drop-squash SCALE (a real mouse cursor doesn't squash when the thing it drops does). */
+function mwOffsetKeyframes(baseKeyframes, dx, dy) {
+  return {
+    keyframes: baseKeyframes.map((kf) => ({
+      ...kf,
+      value: Array.isArray(kf.value) ? [kf.value[0] + dx, kf.value[1] + dy] : kf.value,
+    })),
+  };
+}
+
+/** A brief, decaying alternating-offset shake around [baseX,baseY], centered on `impactTime` - direct follow-up ("too clean... i need the forced entry"). Holds at rest before/after the shake window so it never fights the group's own later exit-shrink (that track owns scale/opacity only; this owns position, and returns to the exact rest value every time). */
+function mwShakeKeyframes(baseX, baseY, impactTime, amplitude, duration, cycles) {
+  const keyframes = [
+    { time: 0, value: [baseX, baseY], interpolation: 'hold' },
+    {
+      time: impactTime, value: [baseX, baseY], interpolation: 'easing', easing: 'easeOutCubic',
+    },
+  ];
+  for (let i = 1; i <= cycles; i += 1) {
+    const time = impactTime + (i / cycles) * duration;
+    const decay = 1 - i / cycles;
+    const dx = (i % 2 === 0 ? 1 : -1) * amplitude * decay;
+    const dy = (i % 2 === 0 ? -1 : 1) * amplitude * 0.4 * decay;
+    keyframes.push({
+      time, value: [baseX + dx, baseY + dy], interpolation: 'easing', easing: 'easeOutCubic',
+    });
+  }
+  keyframes.push({ time: impactTime + duration, value: [baseX, baseY] });
+  return { keyframes };
+}
+
+/** Alternating 1 <-> 1+amount scale keyframes from `start` to `end` at `period`-spaced half-beats, ending with an explicit `endEasing` on its own outgoing segment (rather than the default) so the caller can hand off cleanly into whatever comes right after `end` - same idiom buttonDraw's own god-tier pass already established for "extremely subtle continuous scale breathing" during a hold. */
+function mwBreathingKeyframes(start, end, period, amount, endEasing) {
+  const keyframes = [];
+  let time = start;
+  let i = 0;
+  while (time < end - 0.001) {
+    const value = i % 2 === 0 ? [1, 1] : [1 + amount, 1 + amount];
+    keyframes.push({
+      time: +time.toFixed(4), value, interpolation: 'easing', easing: 'easeInOutSine',
+    });
+    time += period / 2;
+    i += 1;
+  }
+  keyframes.push({
+    time: +end.toFixed(4), value: [1, 1], interpolation: 'easing', easing: endEasing,
+  });
+  return keyframes;
+}
+
+function buildMouseWordDragLayers({
+  before, chip, after, accentColor,
+}) {
+  const beforeWords = before.split(' ').filter((w) => w.length > 0);
+  const afterWords = after.split(' ').filter((w) => w.length > 0);
+  const chipText = chip.trim();
+  const t = computeMouseWordDragTiming(beforeWords.length, afterWords.length);
+
+  const tokens = [...beforeWords, chipText, ...afterWords];
+  const chipIndex = beforeWords.length;
+
+  const measureCtx = createCanvas(10, 10).getContext('2d');
+  function measureAt(fontSize) {
+    measureCtx.font = `${MW_FONT_WEIGHT} ${fontSize}px ${MW_FONT_FAMILY}`;
+    const widths = tokens.map((tok) => measureCtx.measureText(tok).width);
+    const gap = fontSize * MW_WORD_GAP_RATIO;
+    return { widths, gap, total: widths.reduce((a, b) => a + b, 0) + gap * (tokens.length - 1) };
+  }
+  const MAX_TEXT_WIDTH = CANVAS_WIDTH - CANVAS_WIDTH * 0.14 * 2;
+  let fontSize = MW_FONT_SIZE_MAX;
+  let { widths: tokenWidths, gap: WORD_GAP, total: totalWidth } = measureAt(fontSize);
+  if (totalWidth > MAX_TEXT_WIDTH) {
+    fontSize = Math.max(22, fontSize * (MAX_TEXT_WIDTH / totalWidth));
+    ({ widths: tokenWidths, gap: WORD_GAP, total: totalWidth } = measureAt(fontSize));
+  }
+
+  // FINAL layout - every word's own resting spot once the chip has
+  // forced its way in (this is also where the chip itself lands).
+  let cursorX = -totalWidth / 2;
+  const tokenLocalX = tokenWidths.map((w) => {
+    const center = cursorX + w / 2;
+    cursorX += w + WORD_GAP;
+    return center;
+  });
+  const chipLocalX = tokenLocalX[chipIndex];
+  const chipWidth = tokenWidths[chipIndex];
+
+  // TIGHT layout - direct correction: "make the text be together no
+  // space, then the added [word] comes and literally forces itself in."
+  // The SAME per-word widths/gap/fontSize as the final layout above
+  // (never re-measured - both layouts must agree pixel-for-pixel on how
+  // wide each word is, only WHERE they sit differs), just with the chip
+  // token removed entirely before centering - this is where every word
+  // actually sits from its own reveal until the chip forces its way in.
+  // Centering both layouts independently around local x=0 is what makes
+  // the push itself fall out for free: adding the chip's own width back
+  // into the middle of an otherwise-identical word list shifts the
+  // before-half LEFT and the after-half RIGHT by construction, a real
+  // symmetric "make room" motion, not an arbitrary offset.
+  const tightWidths = tokenWidths.filter((_, i) => i !== chipIndex);
+  let tightCursorX = -((tightWidths.reduce((a, b) => a + b, 0) + WORD_GAP * (tightWidths.length - 1)) / 2);
+  const tightLocalX = tightWidths.map((w) => {
+    const center = tightCursorX + w / 2;
+    tightCursorX += w + WORD_GAP;
+    return center;
+  });
+  // The gap's own horizontal center in the TIGHT layout - where the chip
+  // hovers before it forces itself in (there's no reserved slot there
+  // yet, just the normal word-to-word gap between the two halves).
+  const seamX = tightLocalX[chipIndex - 1] + tightWidths[chipIndex - 1] / 2 + WORD_GAP / 2;
+
+  const layers = [];
+
+  layers.push({
+    id: '__mw_group__',
+    type: 'null',
+    // Direct follow-up ("add more impact... too clean"): a brief, real
+    // screen-shake centered on the exact impact instant (chipDropEnd) -
+    // the single biggest lever for "this was a forceful hit," applied to
+    // the WHOLE group so the shake reads on the sentence, the chip, and
+    // the cursor together, not just the two halves that are shoving apart.
+    position: mwShakeKeyframes(MW_CX, MW_TEXT_Y, t.chipDropEnd, MW_SHAKE_AMPLITUDE, MW_SHAKE_DURATION, MW_SHAKE_CYCLES),
+    // God-tier spec: "extremely subtle continuous scale + glow intensity
+    // breathing... so the hold feels alive" - real continuous breathing
+    // from the moment the chip locks in through the start of the exit
+    // (mwBreathingKeyframes, same idiom buttonDraw's own god-tier pass
+    // already established), which then hands off directly into the
+    // EXISTING exit shrink - the exit's own first keyframe was already
+    // [1,1] at exitStart, so breathing settling back to [1,1] there is a
+    // seamless join, not a new seam.
+    scale: {
+      keyframes: [
+        { time: 0, value: [1, 1], interpolation: 'hold' },
+        ...mwBreathingKeyframes(t.chipCrystallizeEnd, t.exitStart, MW_BREATH_PERIOD, MW_BREATH_AMOUNT, 'easeInCubic'),
+        { time: t.exitEnd, value: [MW_EXIT_SCALE, MW_EXIT_SCALE] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 1, interpolation: 'hold' },
+        {
+          time: t.exitStart, value: 1, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: t.exitEnd, value: 0 },
+      ],
+    },
+  });
+
+  const flashColor = mwBrightFlashColor(accentColor);
+  const wordLayerH = fontSize * 1.6;
+
+  // Fresh position-keyframes object per call (never shared) - holds at
+  // the TIGHT spot from the word's own reveal until the chip forces its
+  // way in, then SLAMS past its own final rest spot (MW_PUSH_OVERSHOOT_
+  // RATIO further out, in the SAME direction - `delta`'s own sign already
+  // encodes which way each half is moving) and springs back to the FINAL
+  // (post-insertion) spot - direct follow-up ("too clean... forced
+  // pushed apart"): a real two-phase SHOVE-then-settle, not a single
+  // eased glide, synced to the chip's own final descent (t.pushStart/
+  // pushEnd === t.chipHoverEnd/chipDropEnd) so the words visibly recoil
+  // from the exact instant the chip hits.
+  function mwWordPushKeyframes(tightX, finalX) {
+    const delta = finalX - tightX;
+    const overshootX = finalX + delta * MW_PUSH_OVERSHOOT_RATIO;
+    const slamTime = t.pushStart + (t.pushEnd - t.pushStart) * MW_PUSH_SLAM_FRACTION;
+    return {
+      keyframes: [
+        { time: 0, value: [tightX, 0], interpolation: 'hold' },
+        {
+          time: t.pushStart, value: [tightX, 0], interpolation: 'easing', easing: 'easeInQuad',
+        },
+        {
+          time: slamTime, value: [overshootX, 0], interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.pushEnd, value: [finalX, 0] },
+      ],
+    };
+  }
+
+  // width/height sized tightly to each word's own REAL measured extent
+  // (not left unset) - `withEffects` (sceneBuilder.js) falls back to the
+  // FULL FRAME for its effects buffer on any layer missing width/height -
+  // a previously-documented perf bug elsewhere in this file, avoided
+  // here from the start rather than discovered later via a real memory/
+  // speed check.
+  function pushWord(word, idPrefix, i, tightX, finalX, wordWidth, revealTime) {
+    const w = wordWidth + 24;
+    layers.push({
+      id: `__mw_${idPrefix}_${i}__`,
+      type: 'text',
+      parent: '__mw_group__',
+      text: word,
+      fontFamily: MW_FONT_FAMILY,
+      fontWeight: MW_FONT_WEIGHT,
+      fontSize,
+      fillStyle: ICON_BRIGHT_TINT,
+      textAlign: 'center',
+      maxWidth: CANVAS_WIDTH,
+      width: w,
+      height: wordLayerH,
+      position: mwWordPushKeyframes(tightX, finalX),
+      scale: mwWordScaleKeyframes(revealTime),
+      opacity: mwWordOpacityKeyframes(revealTime),
+      // God-tier spec: "tight core + subtle outer glow + clean drop
+      // shadow" + "very slight emboss or inner highlight." Explicit
+      // (tighter-blur than the generic auto-added version) outerGlow +
+      // a real `innerGlow` for the highlight/dimensionality - the
+      // dropShadow half of the ask is already covered project-wide by
+      // applyMographGlow's own auto-add (fires below, skips this layer
+      // since outerGlow is now already present, but dropShadow is a
+      // SEPARATE effect type that pass never touches either way).
+      effects: [
+        { type: 'outerGlow', params: { color: ICON_BRIGHT_TINT, opacity: MW_WORD_GLOW_OPACITY, blur: MW_WORD_GLOW_BLUR, blendMode: 'screen' } },
+        { type: 'innerGlow', params: { color: '#FFFFFF', opacity: MW_WORD_INNER_GLOW_OPACITY, blur: MW_WORD_INNER_GLOW_BLUR } },
+        { type: 'dropShadow', params: { color: '#000000', opacity: 0.4, blur: 8, offsetX: 0, offsetY: 6 } },
+      ],
+    });
+    layers.push({
+      id: `__mw_${idPrefix}_flash_${i}__`,
+      type: 'text',
+      parent: '__mw_group__',
+      text: word,
+      fontFamily: MW_FONT_FAMILY,
+      fontWeight: MW_FONT_WEIGHT,
+      fontSize,
+      fillStyle: flashColor,
+      textAlign: 'center',
+      maxWidth: CANVAS_WIDTH,
+      width: w,
+      height: wordLayerH,
+      position: mwWordPushKeyframes(tightX, finalX),
+      scale: mwWordScaleKeyframes(revealTime),
+      opacity: mwFlashOpacityKeyframes(revealTime),
+      effects: [
+        { type: 'outerGlow', params: { color: accentColor, opacity: 0.7, blur: 10, blendMode: 'screen' } },
+      ],
+    });
+  }
+
+  beforeWords.forEach((w, i) => pushWord(w, 'before', i, tightLocalX[i], tokenLocalX[i], tokenWidths[i], t.beforeRevealTimes[i]));
+  afterWords.forEach((w, i) => pushWord(
+    w,
+    'after',
+    i,
+    tightLocalX[chipIndex + i],
+    tokenLocalX[chipIndex + 1 + i],
+    tokenWidths[chipIndex + 1 + i],
+    t.afterRevealTimes[i],
+  ));
+
+  // The chip carrier - ONE shared transform for the dashed box + accent
+  // text + white text, so the drag/hover/drop path is authored exactly
+  // once (not copied across 3 children). The cursor deliberately does
+  // NOT parent to this (see mwOffsetKeyframes' own doc comment) so it
+  // tracks the same PATH without inheriting the drop's own squash scale.
+  // Hovers above the TIGHT seam (there's no reserved slot yet) and drops
+  // to the FINAL chip slot - since the two halves are shoving apart in
+  // this exact same window (t.pushStart/pushEnd), the chip visibly
+  // wedges itself into the opening gap as it lands, rather than falling
+  // into space that was already waiting for it.
+  const enterStartX = seamX - MW_CHIP_ENTER_OFFSET_X;
+  const hoverY = -fontSize * MW_CHIP_HOVER_Y_RATIO;
+  const carrierPositionKfs = [
+    { time: 0, value: [enterStartX, MW_CHIP_ENTER_START_Y], interpolation: 'hold' },
+    {
+      time: t.chipEnterStart, value: [enterStartX, MW_CHIP_ENTER_START_Y], interpolation: 'easing', easing: 'easeOutCubic',
+    },
+    { time: t.chipHoverStart, value: [seamX, hoverY], interpolation: 'hold' },
+    {
+      time: t.chipHoverEnd, value: [seamX, hoverY], interpolation: 'easing', easing: 'easeInCubic',
+    },
+    { time: t.chipDropEnd, value: [chipLocalX, 0] },
+  ];
+
+  layers.push({
+    id: '__mw_chip_carrier__',
+    type: 'null',
+    parent: '__mw_group__',
+    position: { keyframes: carrierPositionKfs },
+    rotation: {
+      keyframes: [
+        { time: 0, value: -6, interpolation: 'hold' },
+        {
+          time: t.chipEnterStart, value: -6, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.chipHoverStart, value: 2, interpolation: 'hold' },
+        {
+          time: t.chipHoverEnd, value: 2, interpolation: 'easing', easing: 'easeInQuint',
+        },
+        // Direct follow-up ("forced entry"): rocks PAST level on impact
+        // (MW_CHIP_ROTATION_OVERSHOOT) instead of landing dead flat,
+        // then settles - a real "hit hard enough to wobble" read.
+        {
+          time: t.chipDropEnd, value: MW_CHIP_ROTATION_OVERSHOOT, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.chipSettleEnd, value: 0 },
+      ],
+    },
+    // Direct follow-up ("too clean... i need the forced entry"): the
+    // final descent is now a fast, hard SLAM (easeInQuint - see
+    // rotation's own matching curve above) into a much more extreme
+    // squash, THEN a real overshoot REBOUND past 1x before settling -
+    // the original version just squashed and relaxed straight back,
+    // which read as gentle no matter how flat the squash itself was.
+    // God-tier spec 3a ("scale up with a clear overshoot as it drops
+    // into place"): the rebound is now a uniform pop past 1x
+    // (MW_CHIP_SETTLE_OVERSHOOT) rather than the asymmetric [0.94,1.07]
+    // this had before - a clean "grew into place, sprang past, settled"
+    // read instead of a lopsided one.
+    scale: {
+      keyframes: [
+        { time: 0, value: [1, 1], interpolation: 'hold' },
+        {
+          time: t.chipHoverEnd, value: [1, 1], interpolation: 'easing', easing: 'easeInQuint',
+        },
+        {
+          time: t.chipDropEnd, value: MW_CHIP_SQUASH_SCALE, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        {
+          time: t.chipSettleEnd, value: [MW_CHIP_SETTLE_OVERSHOOT, MW_CHIP_SETTLE_OVERSHOOT], interpolation: 'easing', easing: 'easeInOutCubic',
+        },
+        { time: t.chipCrystallizeEnd, value: [1, 1] },
+      ],
+    },
+  });
+
+  const chipBoxWidth = chipWidth + MW_CHIP_PAD_X * 2;
+  const chipBoxHeight = fontSize * MW_CHIP_BOX_HEIGHT_RATIO;
+  const chipTransitOpacity = {
+    keyframes: [
+      { time: 0, value: 0, interpolation: 'hold' },
+      {
+        time: t.chipEnterStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+      },
+      { time: t.chipEnterStart + 0.12, value: 1, interpolation: 'hold' },
+      {
+        time: t.chipSettleEnd, value: 1, interpolation: 'easing', easing: 'easeOutCubic',
+      },
+      { time: t.chipCrystallizeEnd, value: 0 },
+    ],
+  };
+
+  // God-tier spec: "a very faint, larger version of the dashed box that
+  // appears and fades behind the main one for depth." Same geometry,
+  // just scaled up and much lower opacity - sits FIRST so it draws
+  // behind the real box below.
+  layers.push({
+    id: '__mw_chip_ghost_box__',
+    type: 'shape',
+    parent: '__mw_chip_carrier__',
+    width: chipBoxWidth,
+    height: chipBoxHeight,
+    position: [0, 0],
+    scale: [MW_GHOST_BOX_SCALE, MW_GHOST_BOX_SCALE],
+    opacity: {
+      keyframes: chipTransitOpacity.keyframes.map((kf) => ({
+        ...kf, value: kf.value * MW_GHOST_BOX_OPACITY,
+      })),
+    },
+    contents: [
+      {
+        type: 'path',
+        shape: { kind: 'rectangle', params: { width: chipBoxWidth, height: chipBoxHeight, roundness: 5 } },
+      },
+      {
+        type: 'stroke', color: accentColor, width: 1.5, dash: [5, 4],
+      },
+    ],
+  });
+
+  // God-tier spec: "sharper dashes + soft outer glow so it feels more
+  // premium" + "a subtle pulse when it appears." Pulse is a real
+  // continuous scale breathe for as long as the box is actually visible
+  // (chipEnterStart->chipSettleEnd), not a one-shot - cheap since it's
+  // just one more keyframe track on a layer that already exists.
+  const boxPulseKfs = [];
+  {
+    let time = t.chipEnterStart + 0.12;
+    const pulseEnd = t.chipSettleEnd;
+    let i = 0;
+    while (time < pulseEnd - 0.001) {
+      const value = i % 2 === 0 ? 1 : 1 + MW_BOX_PULSE_AMOUNT;
+      boxPulseKfs.push({
+        time: +time.toFixed(4), value: [value, value], interpolation: 'easing', easing: 'easeInOutSine',
+      });
+      time += MW_BOX_PULSE_PERIOD / 2;
+      i += 1;
+    }
+    boxPulseKfs.push({ time: +pulseEnd.toFixed(4), value: [1, 1] });
+  }
+  layers.push({
+    id: '__mw_chip_box__',
+    type: 'shape',
+    parent: '__mw_chip_carrier__',
+    width: chipBoxWidth,
+    height: chipBoxHeight,
+    position: [0, 0],
+    scale: { keyframes: boxPulseKfs },
+    opacity: chipTransitOpacity,
+    contents: [
+      {
+        type: 'path',
+        shape: { kind: 'rectangle', params: { width: chipBoxWidth, height: chipBoxHeight, roundness: 5 } },
+      },
+      {
+        type: 'stroke', color: accentColor, width: 1.5, dash: [5, 4],
+      },
+    ],
+    effects: [
+      { type: 'outerGlow', params: { color: accentColor, opacity: MW_BOX_GLOW_OPACITY, blur: MW_BOX_GLOW_BLUR, blendMode: 'screen' } },
+    ],
+  });
+
+  const chipTextLayerW = chipWidth + 24;
+  layers.push({
+    id: '__mw_chip_text_accent__',
+    type: 'text',
+    parent: '__mw_chip_carrier__',
+    text: chipText,
+    fontFamily: MW_FONT_FAMILY,
+    fontWeight: MW_FONT_WEIGHT,
+    fontSize,
+    fillStyle: flashColor,
+    textAlign: 'center',
+    maxWidth: CANVAS_WIDTH,
+    width: chipTextLayerW,
+    height: wordLayerH,
+    position: [0, 0],
+    opacity: { keyframes: chipTransitOpacity.keyframes.map((kf) => ({ ...kf })) },
+    // God-tier spec: "make 'With AI' the clear accent - brighter,
+    // stronger glow" - boosted well past the plain word glow
+    // (MW_WORD_GLOW_OPACITY/BLUR above) so it reads as genuinely special
+    // while it's still in transit, not just differently colored.
+    effects: [
+      { type: 'outerGlow', params: { color: accentColor, opacity: MW_CHIP_GLOW_OPACITY, blur: MW_CHIP_GLOW_BLUR, blendMode: 'screen' } },
+    ],
+  });
+
+  layers.push({
+    id: '__mw_chip_text_white__',
+    type: 'text',
+    parent: '__mw_chip_carrier__',
+    text: chipText,
+    fontFamily: MW_FONT_FAMILY,
+    fontWeight: MW_FONT_WEIGHT,
+    fontSize,
+    fillStyle: ICON_BRIGHT_TINT,
+    textAlign: 'center',
+    maxWidth: CANVAS_WIDTH,
+    width: chipTextLayerW,
+    height: wordLayerH,
+    position: [0, 0],
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: t.chipSettleEnd, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.chipCrystallizeEnd, value: 1 },
+      ],
+    },
+    // God-tier spec 5b ("soft central glow can intensify slightly on
+    // the final lock"): even settled to white, this keeps a whisper of
+    // its own accentColor in the glow (MW_CHIP_LOCK_GLOW_OPACITY) so it
+    // stays visibly the "special" word rather than blending into the
+    // plain sentence around it - real dropShadow alongside it too,
+    // matching every other word's own treatment now.
+    effects: [
+      { type: 'outerGlow', params: { color: accentColor, opacity: MW_CHIP_LOCK_GLOW_OPACITY, blur: MW_WORD_GLOW_BLUR + 2, blendMode: 'screen' } },
+      { type: 'innerGlow', params: { color: '#FFFFFF', opacity: MW_WORD_INNER_GLOW_OPACITY, blur: MW_WORD_INNER_GLOW_BLUR } },
+      { type: 'dropShadow', params: { color: '#000000', opacity: 0.4, blur: 8, offsetX: 0, offsetY: 6 } },
+    ],
+  });
+
+  const cursorOffsetX = chipBoxWidth / 2 + 6;
+  const cursorOffsetY = chipBoxHeight / 2 + 2;
+  const cursorPositionKfs = mwOffsetKeyframes(carrierPositionKfs, cursorOffsetX, cursorOffsetY).keyframes;
+  // God-tier spec: "give it a quick scale pulse on click/insert" +
+  // cursor residual "tiny satisfied pulse... before disappearing" - two
+  // separate pulses, one right at impact (the "click"), one right as it
+  // starts to leave (the "satisfied" pulse), both real scale bumps on
+  // top of the base 1x rest size.
+  const cursorScaleKfs = [
+    { time: 0, value: [1, 1], interpolation: 'hold' },
+    {
+      time: t.chipDropEnd, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic',
+    },
+    {
+      time: t.chipDropEnd + 0.06, value: [MW_CURSOR_CLICK_PULSE, MW_CURSOR_CLICK_PULSE], interpolation: 'easing', easing: 'easeOutCubic',
+    },
+    {
+      time: t.chipDropEnd + 0.16, value: [1, 1], interpolation: 'easing', easing: 'easeOutCubic',
+    },
+    {
+      time: t.cursorFadeStart, value: [1, 1], interpolation: 'easing', easing: 'easeOutBack',
+    },
+    { time: t.cursorFadeEnd, value: [MW_CURSOR_EXIT_PULSE, MW_CURSOR_EXIT_PULSE] },
+  ];
+  layers.push({
+    id: '__mw_cursor__',
+    type: 'shape',
+    parent: '__mw_group__',
+    width: MW_CURSOR_SIZE,
+    height: MW_CURSOR_SIZE,
+    position: { keyframes: cursorPositionKfs },
+    scale: { keyframes: cursorScaleKfs },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: t.chipEnterStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.chipEnterStart + 0.1, value: 1, interpolation: 'hold' },
+        {
+          time: t.cursorFadeStart, value: 1, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        // God-tier spec: "leave a short fading trail before
+        // disappearing" - the exit scale pulse above (growing to
+        // MW_CURSOR_EXIT_PULSE right as opacity reaches 0) reads as a
+        // brief expanding "poof" rather than a flat shrink-to-nothing.
+        { time: t.cursorFadeEnd, value: 0 },
+      ],
+    },
+    contents: [
+      {
+        type: 'path',
+        shape: { kind: 'customPath', params: { anchors: MW_CURSOR_ANCHORS, closed: true } },
+      },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+    // God-tier spec: "upgrade the cursor - make it brighter."
+    effects: [
+      { type: 'outerGlow', params: { color: '#FFFFFF', opacity: 0.5, blur: 6, blendMode: 'screen' } },
+      { type: 'dropShadow', params: { color: '#000000', opacity: 0.5, blur: 3, offsetX: 1, offsetY: 2 } },
+    ],
+  });
+
+  // God-tier spec: "add a short trailing glow... as it moves" - a
+  // smaller, softer, time-LAGGED duplicate (same path, every keyframe's
+  // own TIME shifted forward by MW_CURSOR_ECHO_LAG, so it arrives at
+  // each point slightly after the real cursor did) rather than a spatial
+  // offset - a genuine trailing echo, same "shift time not space" idea
+  // buttonDraw's own leading-tip echo dot used for the opposite (leading,
+  // not trailing) case.
+  layers.push({
+    id: '__mw_cursor_echo__',
+    type: 'shape',
+    parent: '__mw_group__',
+    width: MW_CURSOR_SIZE * 0.75,
+    height: MW_CURSOR_SIZE * 0.75,
+    position: { keyframes: cursorPositionKfs.map((kf) => ({ ...kf, time: kf.time + MW_CURSOR_ECHO_LAG })) },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: t.chipEnterStart + MW_CURSOR_ECHO_LAG, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.chipEnterStart + MW_CURSOR_ECHO_LAG + 0.1, value: MW_CURSOR_ECHO_OPACITY, interpolation: 'hold' },
+        {
+          time: t.cursorFadeStart, value: MW_CURSOR_ECHO_OPACITY, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: t.cursorFadeEnd, value: 0 },
+      ],
+    },
+    contents: [
+      {
+        type: 'path',
+        shape: { kind: 'customPath', params: { anchors: MW_CURSOR_ANCHORS, closed: true } },
+      },
+      { type: 'fill', color: accentColor },
+    ],
+    effects: [
+      { type: 'outerGlow', params: { color: accentColor, opacity: 0.7, blur: 8, blendMode: 'screen' } },
+    ],
+  });
+
+  // God-tier spec: "tiny particle emission as it moves" - a handful of
+  // small flecks spawned along the drag's OWN approximate path (linear
+  // interpolation between the cursor's enter/hover offsets is plenty for
+  // tiny decorative dust, no need for the same real arc-length sampling
+  // the leading-tip system elsewhere in this file uses for an actual
+  // visible path).
+  const cursorEnterPos = [enterStartX + cursorOffsetX, MW_CHIP_ENTER_START_Y + cursorOffsetY];
+  const cursorHoverPos = [seamX + cursorOffsetX, hoverY + cursorOffsetY];
+  for (let p = 0; p < MW_CURSOR_DRIFT_PARTICLE_COUNT; p += 1) {
+    const frac = (p + 1) / (MW_CURSOR_DRIFT_PARTICLE_COUNT + 1);
+    const spawnTime = t.chipEnterStart + frac * MW_CHIP_ENTER_DURATION;
+    const sx = cursorEnterPos[0] + (cursorHoverPos[0] - cursorEnterPos[0]) * frac;
+    const sy = cursorEnterPos[1] + (cursorHoverPos[1] - cursorEnterPos[1]) * frac;
+    const life = 0.3;
+    layers.push({
+      id: `__mw_cursor_drift_${p}__`,
+      type: 'shape',
+      parent: '__mw_group__',
+      width: 3,
+      height: 3,
+      position: {
+        keyframes: [
+          {
+            time: spawnTime, value: [+sx.toFixed(2), +sy.toFixed(2)], interpolation: 'easing', easing: 'easeOutSine',
+          },
+          { time: spawnTime + life, value: [+sx.toFixed(2), +(sy + 14).toFixed(2)] },
+        ],
+      },
+      opacity: {
+        keyframes: [
+          { time: 0, value: 0, interpolation: 'hold' },
+          {
+            time: spawnTime, value: 0.6, interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: spawnTime + life, value: 0 },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: 3, height: 3 } } },
+        { type: 'fill', color: accentColor },
+      ],
+    });
+  }
+
+  // Direct follow-up ("add more impact... too clean, i need the forced
+  // entry"): a bigger/faster ring, a near-instant bright flash right at
+  // the impact point, and a real radial particle burst (8, evenly spaced
+  // around the landing point) - replaces the original single reused
+  // 2-particle helper now that the whole landing needs to read as a real
+  // forceful hit, not a polite arrival. All parented to the shared group
+  // so they move/fade with everything else during the shake and the exit.
+  layers.push({ ...buildCounterRing('__mw_drop_ring__', chipLocalX, 0, accentColor, t.chipDropEnd, MW_IMPACT_RING_SIZE, MW_IMPACT_RING_DURATION, 0.85), parent: '__mw_group__' });
+
+  layers.push({
+    id: '__mw_impact_flash__',
+    type: 'shape',
+    parent: '__mw_group__',
+    width: MW_IMPACT_FLASH_SIZE,
+    height: MW_IMPACT_FLASH_SIZE,
+    position: [chipLocalX, 0],
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: t.chipDropEnd, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        {
+          time: t.chipDropEnd + 0.03, value: 0.9, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: t.chipDropEnd + 0.14, value: 0 },
+      ],
+    },
+    contents: [
+      {
+        type: 'path',
+        shape: { kind: 'ellipse', params: { width: MW_IMPACT_FLASH_SIZE, height: MW_IMPACT_FLASH_SIZE } },
+      },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+    effects: [
+      { type: 'gaussianBlur', params: { radius: 14 } },
+    ],
+  });
+
+  for (let p = 0; p < MW_IMPACT_PARTICLE_COUNT; p += 1) {
+    const angle = (p / MW_IMPACT_PARTICLE_COUNT) * Math.PI * 2;
+    const endX = chipLocalX + Math.cos(angle) * MW_IMPACT_PARTICLE_DISTANCE;
+    const endY = Math.sin(angle) * MW_IMPACT_PARTICLE_DISTANCE;
+    layers.push({
+      id: `__mw_impact_particle_${p}__`,
+      type: 'shape',
+      parent: '__mw_group__',
+      width: 5,
+      height: 5,
+      position: {
+        keyframes: [
+          {
+            time: t.chipDropEnd, value: [chipLocalX, 0], interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: t.chipDropEnd + MW_IMPACT_PARTICLE_LIFE, value: [endX, endY] },
+        ],
+      },
+      opacity: {
+        keyframes: [
+          { time: 0, value: 0, interpolation: 'hold' },
+          {
+            time: t.chipDropEnd, value: 0.9, interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: t.chipDropEnd + MW_IMPACT_PARTICLE_LIFE, value: 0 },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: 5, height: 5 } } },
+        { type: 'fill', color: accentColor },
+      ],
+    });
+  }
+
+  // God-tier spec: "particles that emit from the box" - in ADDITION to
+  // the radial burst above (which comes from the insertion point), a
+  // few flecks spawned along the box's own perimeter right as it fades
+  // away at crystallize, drifting outward.
+  for (let p = 0; p < MW_BOX_BURST_PARTICLE_COUNT; p += 1) {
+    const edgeFrac = p / MW_BOX_BURST_PARTICLE_COUNT;
+    const startX = chipLocalX + (edgeFrac - 0.5) * chipBoxWidth;
+    const startY = (p % 2 === 0 ? -1 : 1) * (chipBoxHeight / 2);
+    const endX = startX + (edgeFrac - 0.5) * 20;
+    const endY = startY * 1.8;
+    const life = 0.3;
+    layers.push({
+      id: `__mw_box_burst_${p}__`,
+      type: 'shape',
+      parent: '__mw_group__',
+      width: 4,
+      height: 4,
+      position: {
+        keyframes: [
+          {
+            time: t.chipSettleEnd, value: [+startX.toFixed(2), +startY.toFixed(2)], interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: t.chipSettleEnd + life, value: [+endX.toFixed(2), +endY.toFixed(2)] },
+        ],
+      },
+      opacity: {
+        keyframes: [
+          { time: 0, value: 0, interpolation: 'hold' },
+          {
+            time: t.chipSettleEnd, value: 0.75, interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: t.chipSettleEnd + life, value: 0 },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: 4, height: 4 } } },
+        { type: 'fill', color: accentColor },
+      ],
+    });
+  }
+
+  // God-tier spec: "a quick light sweep that runs across the full final
+  // phrase once the insert is complete" + "a subtle horizontal energy
+  // streak that travels through the entire line as 'With AI' settles" -
+  // ONE combined sweep covers both (see this template's own top god-tier
+  // doc comment). A soft, blurred, screen-blended bar translating across
+  // the FINAL layout's own real total span (`totalWidth`, already
+  // measured above) - not a per-glyph reveal (no such primitive for
+  // text), just a light pass reading as energy running through the line.
+  const sweepStart = t.chipCrystallizeEnd + 0.05;
+  const sweepEnd = sweepStart + MW_SWEEP_DURATION;
+  const sweepW = fontSize * MW_SWEEP_WIDTH_RATIO;
+  const sweepH = wordLayerH * 1.4;
+  const sweepStartX = -totalWidth / 2 - sweepW;
+  const sweepEndX = totalWidth / 2 + sweepW;
+  const sweepHold = (sweepEnd - sweepStart) * 0.15;
+  layers.push({
+    id: '__mw_sweep__',
+    type: 'shape',
+    parent: '__mw_group__',
+    width: sweepW,
+    height: sweepH,
+    blendMode: 'screen',
+    position: {
+      keyframes: [
+        {
+          time: sweepStart, value: [sweepStartX, 0], interpolation: 'easing', easing: 'easeInOutCubic',
+        },
+        { time: sweepEnd, value: [sweepEndX, 0] },
+      ],
+    },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'hold' },
+        {
+          time: sweepStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+        },
+        { time: sweepStart + sweepHold, value: 0.55, interpolation: 'hold' },
+        {
+          time: sweepEnd - sweepHold, value: 0.55, interpolation: 'easing', easing: 'easeInCubic',
+        },
+        { time: sweepEnd, value: 0 },
+      ],
+    },
+    contents: [
+      {
+        type: 'path',
+        shape: { kind: 'rectangle', params: { width: sweepW, height: sweepH, roundness: sweepW / 2 } },
+      },
+      { type: 'fill', color: '#FFFFFF' },
+    ],
+    effects: [
+      { type: 'gaussianBlur', params: { radius: sweepW * 0.5 } },
+    ],
+  });
+
+  // God-tier spec 5a: "once the full sentence is locked, keep light
+  // residual motion (floating particles + micro-breathing)" - the
+  // breathing half lives on the group's own scale track above; this is
+  // the floating-particle half, spawned once at lock and staggered,
+  // parented to the group so they drift/fade away WITH everything else
+  // during the shared exit rather than being visibly left behind.
+  for (let p = 0; p < MW_RESIDUAL_COUNT; p += 1) {
+    const spawnT = t.chipCrystallizeEnd + p * MW_RESIDUAL_STAGGER;
+    const angle = -Math.PI / 2 + (p - (MW_RESIDUAL_COUNT - 1) / 2) * 0.3;
+    const startX = chipLocalX + Math.cos(angle) * 30;
+    const startY = Math.sin(angle) * 14;
+    const endX = startX + Math.cos(angle) * 26;
+    const endY = startY - 36;
+    layers.push({
+      id: `__mw_residual_${p}__`,
+      type: 'shape',
+      parent: '__mw_group__',
+      width: 3,
+      height: 3,
+      position: {
+        keyframes: [
+          {
+            time: spawnT, value: [+startX.toFixed(2), +startY.toFixed(2)], interpolation: 'easing', easing: 'easeOutSine',
+          },
+          { time: spawnT + MW_RESIDUAL_DURATION, value: [+endX.toFixed(2), +endY.toFixed(2)] },
+        ],
+      },
+      opacity: {
+        keyframes: [
+          { time: 0, value: 0, interpolation: 'hold' },
+          {
+            time: spawnT, value: 0.5, interpolation: 'easing', easing: 'easeOutCubic',
+          },
+          { time: spawnT + MW_RESIDUAL_DURATION, value: 0 },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width: 3, height: 3 } } },
+        { type: 'fill', color: accentColor },
+      ],
+    });
+  }
+
+  return layers;
+}
+
 /**
  * Dispatcher: compiles a beat's tiny `mograph` spec into real
  * `visual.layers`, called once per beat very early in validateSceneJSON
@@ -14583,6 +15764,19 @@ function buildMographBeatVisual(beat) {
       beat.params.duration = buttonDrawMinDuration();
     }
     layers = buildButtonDrawLayers({ text, accentColor });
+  } else if (spec.type === 'mouseWordDrag' && typeof spec.before === 'string' && spec.before.trim()
+    && typeof spec.chip === 'string' && spec.chip.trim() && typeof spec.after === 'string' && spec.after.trim()) {
+    const before = truncateAtWordBoundary(spec.before.trim(), 24);
+    const chip = truncateAtWordBoundary(spec.chip.trim(), 18);
+    const after = truncateAtWordBoundary(spec.after.trim(), 24);
+    const beforeCount = before.split(' ').filter((w) => w.length > 0).length;
+    const afterCount = after.split(' ').filter((w) => w.length > 0).length;
+    if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+      beat.params.duration = mouseWordDragMinDuration(beforeCount, afterCount);
+    }
+    layers = buildMouseWordDragLayers({
+      before, chip, after, accentColor,
+    });
   }
 
   if (layers) {
@@ -14697,7 +15891,7 @@ function validateSceneJSON(sceneJSON) {
     if (repeated.size > 0) {
       errors.push(`mograph: template(s) ${[...repeated].map((t) => `"${t}"`).join(', ')} used more than once - direct user requirement, each mograph template may appear AT MOST ONCE per video. Pick a different template for the repeat beat(s), even if it fits less perfectly than reusing one that already worked.`);
     } else if (seen.size < 5) {
-      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText/yearScroller/counter/lineReveal/typewriterLink/dotConstellation/buttonDraw). Add more template beats to reach at least 5.`);
+      errors.push(`mograph: only ${seen.size} distinct template(s) used (${[...seen].join(', ')}) - direct user requirement, every video must use between 5 and 7 DISTINCT mograph templates (nodeCluster/connectorList/phoneSwap/splitConverge/mergeCluster/nodeClusterExtended/textPopOut/squareSpin/tripleStack/nodeAbsorb/textTiers/blueprintText/yearScroller/counter/lineReveal/typewriterLink/dotConstellation/buttonDraw/mouseWordDrag). Add more template beats to reach at least 5.`);
     } else if (seen.size > 7) {
       errors.push(`mograph: ${seen.size} distinct templates used - direct user requirement, a video may use AT MOST 7. Trim beats down to 7 or fewer distinct templates.`);
     }
@@ -16668,5 +17862,6 @@ module.exports = {
   buildTypewriterLinkLayers,
   buildDotConstellationLayers,
   buildButtonDrawLayers,
+  buildMouseWordDragLayers,
   buildMographBeatVisual,
 };
