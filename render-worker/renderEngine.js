@@ -472,7 +472,6 @@ function relativeLuma([r, g, b]) {
   return 0.299 * r + 0.587 * g + 0.114 * b;
 }
 const LIGHT_BACKGROUND_LUMA_THRESHOLD = 150; // out of 255
-const LIGHT_TEXT_COLOR_LUMA_THRESHOLD = 150; // out of 255
 
 /**
  * Direct consequence of BOARD_BACKGROUND_HUES' own new light/cream
@@ -496,29 +495,51 @@ const LIGHT_TEXT_COLOR_LUMA_THRESHOLD = 150; // out of 255
  * the readable-text safety net that predates it.
  */
 function ensureTextContrastAgainstBackground(sceneJSON, boardBackgroundDef) {
-  const startLuma = relativeLuma(hexToRgbLocal(boardBackgroundDef.startColor));
-  const endLuma = relativeLuma(hexToRgbLocal(boardBackgroundDef.endColor));
-  const isLightBackground = (startLuma + endLuma) / 2 > LIGHT_BACKGROUND_LUMA_THRESHOLD;
-  if (!isLightBackground) return;
-
-  // Real, direct follow-up complaint after this first shipped
-  // (2026-09-03): "the text color is just disgusting and doesnt
-  // match." adjustLightness(-0.65) took whatever ARBITRARY hue the
-  // model/mechanical passes happened to pick for a dark background
-  // (gold, teal, whatever) and mechanically darkened THAT hue - which
-  // reliably produces a muddy, muted, accidental-looking color (an
-  // olive-brown squashed out of a bright gold, for instance), not a
-  // deliberate design choice. A flat, confident dark neutral reads as
-  // intentional against any light background regardless of what hue it
-  // started from - swapped the per-color darkening formula for one
-  // fixed, genuinely good charcoal instead of algorithmically muddying
-  // whatever arbitrary color was already there.
+  // Real, confirmed-live bug (2026-09-16, a full 19-template x 5-background
+  // contrast audit), TWO separate real problems in the old check here,
+  // found by comparing this function's own decision against a REAL WCAG
+  // contrast ratio computed the same way pickContrastSafeTint/
+  // ensureIconContrast already do for icons:
+  //
+  // 1. `isLightBackground` was a crude BT.601-perceptual-luma average
+  // (relativeLuma) compared against a flat 150/255 (~0.59) cutoff - NOT
+  // a real WCAG relative-luminance contrast check. A background can read
+  // as "not light" by that heuristic (luma < 150) while still being far
+  // too bright for white text to clear real 4.5:1 contrast (WCAG's
+  // gamma-corrected luminance and this simple weighted average diverge
+  // exactly in this mid-range). Directly reproduced: '#E74C3C' scores
+  // BT.601 luma 120.5/255 (below the 150 threshold, so the OLD code left
+  // any white/near-white text on it completely untouched) but only
+  // achieves a real 3.82:1 contrast ratio against white - a confirmed,
+  // shipped, sub-4.5 failure on every background landing in that gap
+  // (roughly BT.601 luma 47-150, a wide and common real range).
+  // 2. Even when the old code DID fire, it only ever checked the
+  // background's OWN start/end colors - never boardBackgroundDef's own
+  // poolColor, the radial gradient's much brighter real center tone that
+  // on-screen content actually sits on top of for 75% of generations
+  // (see ensureHarmoniousColors' own matching fix, same root cause).
+  //
+  // Replaced with the same real-WCAG-math, per-layer, guaranteed pattern
+  // pickContrastSafeTint already proves for icons: check THIS layer's
+  // OWN current color against the real bg reference; only touch it if it
+  // genuinely fails; prefer the established flat charcoal if that alone
+  // clears it (same "reads as intentional, not muddied" reasoning the
+  // original 2026-09-03 fix already established); fall through to a
+  // real true-black-vs-true-white comparison as the final, mathematically
+  // guaranteed resort otherwise - so there's no longer a silent gap where
+  // a background is "not light enough to trigger" but still too bright
+  // for the text sitting on it.
+  const bgRefColor = boardBackgroundDef.poolColor || boardBackgroundDef.startColor;
   const DARK_TEXT_COLOR = '#262220';
+  const TRUE_BLACK = '#000000';
+  const TRUE_WHITE = '#FFFFFF';
   const fixColor = (color) => {
     if (typeof color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(color)) return color;
-    const luma = relativeLuma(hexToRgbLocal(color));
-    if (luma < LIGHT_TEXT_COLOR_LUMA_THRESHOLD) return color; // already dark enough against a light bg - leave its own hue alone
-    return DARK_TEXT_COLOR;
+    if (contrastRatio(color, bgRefColor) >= MIN_ACCENT_CONTRAST_RATIO) return color; // already genuinely safe - leave its own hue alone
+    if (contrastRatio(DARK_TEXT_COLOR, bgRefColor) >= MIN_ACCENT_CONTRAST_RATIO) return DARK_TEXT_COLOR;
+    const blackRatio = contrastRatio(TRUE_BLACK, bgRefColor);
+    const whiteRatio = contrastRatio(TRUE_WHITE, bgRefColor);
+    return blackRatio >= whiteRatio ? TRUE_BLACK : TRUE_WHITE;
   };
 
   for (const scene of sceneJSON.scenes || []) {
@@ -631,21 +652,54 @@ function escapeYellowGreenBand(hue) {
  * harmonious AND genuinely readable, not just one or the other.
  */
 function buildHarmoniousAccentPalette(backgroundHex, rand, hueOffsets = [0, 30, -30, 18, -18]) {
-  const [bgH, , bgL] = hexToHsl(backgroundHex);
-  const needsDarkAccent = bgL > 0.5;
+  const [bgH] = hexToHsl(backgroundHex);
+  // Real, confirmed-live bug (2026-09-16, a full 19-template x 5-plus-
+  // sweep-background contrast audit): `needsDarkAccent` used to be
+  // `bgL > 0.5` off hexToHsl's own HSL lightness - perceptually mismatched
+  // for saturated blues/cyans, the MIRROR IMAGE of the yellow-band problem
+  // escapeYellowGreenBand already documents (yellow reads dark in WCAG
+  // terms despite a high HSL lightness; blue is the opposite - WCAG's
+  // luminance formula weights blue at only 0.0722, so a vivid blue can sit
+  // at HSL lightness 0.53 while its real WCAG luminance is only ~0.08).
+  // Directly reproduced: a background at HSL(240, ~0.7, 0.53) - a fully
+  // ordinary vivid blue - was classified `needsDarkAccent=false` (0.53>0.5
+  // is barely true, actually - the real failing case was one step darker,
+  // HSL L 0.35, still misclassified because 0.35's REAL WCAG luminance is
+  // even lower still) and searched for an accent by walking LIGHTER,
+  // capping at 0.96 - the wrong direction entirely for a background whose
+  // real WCAG luminance was too low for the walk to ever ellipse the
+  // 4.5:1 minimum in a mere 14 steps starting from the wrong end. Fixed by
+  // deciding direction from REAL WCAG luminance instead of HSL lightness.
+  const bgWcagLuma = wcagRelativeLuminance(hexToRgbLocal(backgroundHex));
+  const needsDarkAccent = bgWcagLuma > 0.35;
   return hueOffsets.map((offset) => {
     let hue = ((bgH + offset) % 360 + 360) % 360;
     if (needsDarkAccent) hue = escapeYellowGreenBand(hue);
     const sat = 0.62 + rand() * 0.22;
-    let light = needsDarkAccent ? 0.30 + rand() * 0.12 : 0.66 + rand() * 0.14;
-    let hex = hslToHex(hue, sat, light);
-    let guard = 0;
-    while (contrastRatio(hex, backgroundHex) < MIN_ACCENT_CONTRAST_RATIO && guard < 14) {
-      light = needsDarkAccent ? Math.max(0.06, light - 0.05) : Math.min(0.96, light + 0.05);
-      hex = hslToHex(hue, sat, light);
-      guard += 1;
+    function walk(startLight, towardDark) {
+      let light = startLight;
+      let hex = hslToHex(hue, sat, light);
+      let guard = 0;
+      while (contrastRatio(hex, backgroundHex) < MIN_ACCENT_CONTRAST_RATIO && guard < 14) {
+        light = towardDark ? Math.max(0.06, light - 0.05) : Math.min(0.96, light + 0.05);
+        hex = hslToHex(hue, sat, light);
+        guard += 1;
+      }
+      return { hex, ratio: contrastRatio(hex, backgroundHex) };
     }
-    return hex;
+    const primary = walk(needsDarkAccent ? 0.30 + rand() * 0.12 : 0.66 + rand() * 0.14, needsDarkAccent);
+    if (primary.ratio >= MIN_ACCENT_CONTRAST_RATIO) return primary.hex;
+    // Real, guaranteed bidirectional fallback (2026-09-16, same audit as
+    // above): even with the WCAG-luminance-based direction fix, a real
+    // background can still occasionally sit close enough to the decision
+    // boundary that the "wrong-feeling" direction is actually the one
+    // that clears contrast (a genuinely rare case, but this project's own
+    // standing rule - see pickContrastSafeTint's own true-black/white
+    // last resort - is that a color-safety guarantee must be
+    // UNCONDITIONAL, not "usually right"). Tries the opposite direction
+    // before accepting whichever candidate is genuinely closer to safe.
+    const fallback = walk(needsDarkAccent ? 0.66 + rand() * 0.14 : 0.30 + rand() * 0.12, !needsDarkAccent);
+    return fallback.ratio > primary.ratio ? fallback.hex : primary.hex;
   });
 }
 
@@ -776,7 +830,26 @@ function buildRingAccentPair(backgroundHex, rand) {
 
 function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
   const rand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x9E3779B1);
-  const bgRefColor = boardBackgroundDef.startColor;
+  // Real, confirmed-live bug (2026-09-16, a full 19-template x 5-background
+  // contrast audit): this used to be boardBackgroundDef.startColor alone -
+  // an EDGE/corner tone, never the radial gradient's own much brighter
+  // poolColor (buildBoardLayoutAndBackground's own doc comment: "center is
+  // always the BRIGHTEST point"). On-screen content (every icon/text this
+  // function's own ensureIconContrast call below checks) sits at/near the
+  // board's CENTER for the large majority of beats, which for a 'radial'
+  // background (75% of generations, see buildBoardLayoutAndBackground) is
+  // poolColor's own territory, not startColor's - so contrast was being
+  // measured against a color the content was never actually rendered on
+  // top of. Directly reproduced: a real icon tint (#F5F3FF) measured a
+  // passing 4.96:1 against a test startColor but only 3.48:1 against that
+  // same background's own real poolColor - a genuine, previously-shipped
+  // low-contrast failure on every 'radial' background where poolColor and
+  // startColor differ meaningfully (by design - see poolColor/edgeColor's
+  // own doc comment for why they're deliberately pushed apart for depth).
+  // Matches the SAME poolColor-first pattern this file already uses
+  // correctly elsewhere (see the hue-extraction call a few hundred lines
+  // below: `hexToHsl(backgroundDef.poolColor || backgroundDef.startColor)`).
+  const bgRefColor = boardBackgroundDef.poolColor || boardBackgroundDef.startColor;
   const palette = buildHarmoniousAccentPalette(bgRefColor, rand);
   const remap = new Map();
   let nextPaletteIndex = 0;
@@ -1001,6 +1074,17 @@ function resolveIconBackdropRule(layerId) {
   if (absorbRowIconMatch) return { fill: `__absorb_row_badge_${absorbRowIconMatch[1]}__` };
   const absorbRowTextMatch = layerId.match(/^__absorb_row_text_(\d+)__$/);
   if (absorbRowTextMatch) return { fill: `__absorb_row_bg_${absorbRowTextMatch[1]}__` };
+  // buttonDraw's own label sits on its button's own dark fill
+  // ('__bd_fill__', a near-black #0D0D0D regardless of board background),
+  // not the board itself - same sibling-fill reasoning as nodeAbsorb/
+  // tripleStack above. Without this, a light-classified board flattened
+  // the label's white fillStyle to dark charcoal (ensureTextContrast-
+  // AgainstBackground), making it nearly invisible against the also-dark
+  // button - confirmed via a real render's own extracted frames. (Synced
+  // here 2026-09-16 - this rule existed in backend/renderEngine.js but had
+  // never been copied to this file, a real pre-existing sync gap found
+  // during a full 19-template contrast audit.)
+  if (layerId === '__bd_text__') return { fill: '__bd_fill__' };
   // Everything else authored (nodeCluster/nodeClusterExtended's OWN
   // "__node_icon_N__" pre-explosion state, mergeCluster's small
   // orbiting "__merge_icon_N__", the decorative "__topic_icon__" card)
