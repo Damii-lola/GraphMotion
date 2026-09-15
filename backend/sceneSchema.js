@@ -6062,11 +6062,19 @@ function buildConnectorListLayers({ items, accentColor, outroText }) {
     // relationship to when the line-tip actually got there).
     const appearAt = timeLinePassesAnchor(i) + 0.45;
     lastAppearAt = Math.max(lastAppearAt, appearAt);
-    const nodeKf = { keyframes: [
+    // Real, confirmed-live finding (2026-09-15, Phase 7 deeper pass): once
+    // an early item lands it sits perfectly frozen at scale [1,1] for the
+    // rest of the reveal (while later items are still arriving) and for
+    // the beat's own real ~0.95s hold after the last item lands (no
+    // outroText case) - the line's own ongoing draw covers the FIRST part
+    // of that, but nothing at all covers the final hold. Small wiggle,
+    // same established technique as nodeCluster's own hold fix - cloned
+    // onto the icon via cloneTrack below, so bg+icon breathe in lockstep.
+    const nodeKf = { expression: 'wiggle(0.5, 0.02)', base: { keyframes: [
       { time: appearAt, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
       { time: appearAt + 0.35, value: [1.15, 1.15], interpolation: 'easing', easing: 'easeInOutCubic' },
       { time: appearAt + 0.5, value: [1, 1] },
-    ] };
+    ] } };
     const opacityKf = { keyframes: [{ time: appearAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.25, value: 1 }] };
     layers.push({
       id: `__list_node_${i}__`,
@@ -7913,14 +7921,27 @@ function buildNodeAbsorbLayers({
         { time: appearAt + NODE_ABSORB_ROW_POP_DURATION, value: [x, finalY] },
       ],
     });
+    // Real, confirmed-live finding (2026-09-15, Phase 7 deeper pass): once
+    // a row pops in it sits perfectly frozen at scale [1,1] right through
+    // NODE_ABSORB_PRE_EAT_DELAY (1.5s, a real direct user pacing choice -
+    // NOT shortened here, see that constant's own doc comment) until the
+    // header starts eating. Small wiggle, cheap (no extra layer/effect,
+    // just a sine evaluation on the existing scale track - doesn't touch
+    // the real per-pill glow/memory-cost decision documented right above
+    // for `__absorb_row_bg_N__`'s own contents/effects) - same
+    // established technique as nodeCluster/connectorList's own hold
+    // fixes this same pass.
     const popKf = {
-      keyframes: [
-        { time: appearAt, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: appearAt + NODE_ABSORB_ROW_POP_DURATION * 0.7, value: [1.08, 1.08], interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: appearAt + NODE_ABSORB_ROW_POP_DURATION, value: [1, 1] },
-        { time: eatenAt - 0.03, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
-        { time: eatenAt, value: [0.2, 0.2] },
-      ],
+      expression: 'wiggle(0.55, 0.018)',
+      base: {
+        keyframes: [
+          { time: appearAt, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: appearAt + NODE_ABSORB_ROW_POP_DURATION * 0.7, value: [1.08, 1.08], interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: appearAt + NODE_ABSORB_ROW_POP_DURATION, value: [1, 1] },
+          { time: eatenAt - 0.03, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+          { time: eatenAt, value: [0.2, 0.2] },
+        ],
+      },
     };
     const opacityKf = {
       keyframes: [
