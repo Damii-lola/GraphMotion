@@ -5,23 +5,26 @@
 <title>GraphMotion</title>
 <script>
   // GitHub Pages is static hosting with no server-side routing - a
-  // direct visit or refresh on a clean URL like /GraphMotion/abc123
-  // (rather than navigating there via a click inside the app) has no
-  // actual file to serve, so GitHub Pages falls back to serving THIS
-  // file. This repackages the real path into a query string and
-  // redirects to ai.html, which then unpacks it and restores the
-  // clean URL via history.replaceState - the standard technique for
-  // single-page-app routing on GitHub Pages (based on the
-  // rafgraph/spa-github-pages approach).
+  // direct visit or refresh on a clean URL like /abc123 (rather than
+  // navigating there via a click inside the app) has no actual file to
+  // serve, so GitHub Pages falls back to serving THIS file. This
+  // repackages the real path into a query string and redirects to
+  // ai.html, which then unpacks it and restores the clean URL via
+  // history.replaceState - the standard technique for single-page-app
+  // routing on GitHub Pages (based on the rafgraph/spa-github-pages
+  // approach).
   //
-  // This is a PROJECT-page deployment (damii-lola.github.io/GraphMotion/),
-  // not a root site - the real app now lives at /GraphMotion/ai.html
-  // (moved out of index.html, 2026-09-16, once index.html became the
-  // public landing/register page instead - deep-linked job URLs like
-  // /GraphMotion/<jobId> are unchanged, they just now fall through to
-  // ai.html instead of index.html). Must match BASE_PATH/APP_PATH in
-  // ai.html exactly.
-  const BASE_PATH = "/GraphMotion";
+  // The real app lives at BASE_PATH + "/ai.html" (moved out of
+  // index.html, 2026-09-16, once index.html became the public
+  // landing/register page instead - deep-linked job URLs like
+  // BASE_PATH + "/" + <jobId> are unchanged, they just now fall through
+  // to ai.html instead of index.html). Must match BASE_PATH/APP_PATH in
+  // ai.html exactly. BASE_PATH is "" (root) since the smartclips.org
+  // custom domain serves this repo's Pages content at the domain's own
+  // root - was "/GraphMotion" back when this was a project-page
+  // deployment at damii-lola.github.io/GraphMotion/ (see ai.html's own
+  // doc comment for the full history).
+  const BASE_PATH = "";
   const APP_PATH = BASE_PATH + "/ai.html";
   const path = location.pathname.slice(1); // drop the leading slash
   const search = location.search ? location.search.slice(1) + "&" : "";

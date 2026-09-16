@@ -535,12 +535,17 @@
 
   // Point this at your live Render backend.
   const API_BASE = "https://graphmotion.onrender.com";
-  // GitHub Pages serves this as a PROJECT site at
-  // damii-lola.github.io/GraphMotion/ - confirmed directly by the
-  // person who actually owns the deployment, not assumed. "/GraphMotion"
-  // is a permanent prefix on every URL this site ever has - every path
-  // built or read anywhere on this page has to account for it.
-  const BASE_PATH = "/GraphMotion";
+  // GitHub Pages originally served this as a PROJECT site at
+  // damii-lola.github.io/GraphMotion/, so BASE_PATH was "/GraphMotion" -
+  // a permanent prefix every path built or read on this page had to
+  // account for. Now "" (root): once a custom domain (smartclips.org)
+  // is attached in GitHub's Pages settings, the SAME repo content is
+  // served at the domain's own root instead, with no "/GraphMotion"
+  // prefix at all. The `BASE_PATH &&` guard at this file's own
+  // routeFromCurrentUrl/APP_PATH use sites already treats an empty
+  // string as "no prefix to strip," so this is a safe, self-contained
+  // change - see also 404.html's own matching BASE_PATH.
+  const BASE_PATH = "";
   // This file used to BE index.html, living directly at BASE_PATH's own
   // root - moved to ai.html (2026-09-16) once index.html became the
   // public landing/register page instead. Every deep-link job URL
@@ -1223,7 +1228,16 @@
     // no 404-redirect trick involved - GitHub Pages just serves it
     // directly) leaves "ai.html" itself as the "jobId" after stripping
     // BASE_PATH - not a real job, just this app's own fresh/reset state.
-    if (jobId && jobId !== "ai.html") {
+    // Real, live-confirmed bug (2026-09-16, production error log:
+    // `getJob failed: invalid input syntax for type uuid: "ai"`): a visit
+    // to BASE_PATH + "/ai" (no .html extension - e.g. someone typing the
+    // URL by hand, or a link that dropped the extension) goes through
+    // 404.html's redirect-and-restore trick, which strips BASE_PATH the
+    // same way and leaves bare "ai" as the "jobId" - only the literal
+    // "ai.html" was ever guarded against, so this got treated as a real
+    // job id and sent straight to a doomed getJob() lookup. Guard against
+    // both spellings now.
+    if (jobId && jobId !== "ai.html" && jobId !== "ai") {
       navigateToJob(jobId, pushUrl);
     } else {
       showFreshPromptState();

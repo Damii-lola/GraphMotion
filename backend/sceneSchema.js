@@ -4772,7 +4772,32 @@ function shiftLayerTimeline(layer, offset) {
 // already uses for its landing hit, just bigger/softer and timed to
 // the beat's start instead of a mid-beat collision.
 function buildOpeningPunchFlash(accentColor, opts = {}) {
-  const size = opts.size || 900;
+  // 900 -> 400 (2026-09-16, real live production incident): a real
+  // multi-beat generation failed outright, every chunk on every render
+  // worker exceeding the 210MB memory cap (up to 314MB - 50% over
+  // budget), traced to THIS layer. sceneBuilder.js's own withEffects/
+  // applyEffectToCanvas calls ctx.getImageData(0,0,canvas.width,
+  // canvas.height) FRESH ON EVERY FRAME for any gaussianBlur/boxBlur
+  // effect (no pooling - a real, pre-existing, project-wide pattern for
+  // ALL blurred layers, not something this layer alone caused), for the
+  // layer's ENTIRE beat duration, not just its own real visible ~0.3s
+  // opacity window (the render loop has no "skip effects when opacity
+  // is 0" optimization). At the OLD 900px size (already wider than the
+  // 540px-wide canvas itself - CANVAS_WIDTH/HEIGHT, sceneSchema.js -
+  // meaning much of it was being clipped by the frame edges anyway, no
+  // real visual loss from shrinking it) that's a fresh ~3.1MB ImageData
+  // allocation (900*900*4 bytes) EVERY SINGLE FRAME, for as long as the
+  // beat plays, across however many of the 10 templates carrying this
+  // layer land in the same render chunk - confirmed as the proximate
+  // cause, not the deeper getImageData-per-frame pattern itself (which
+  // predates this layer and every other blurred glow in this codebase
+  // already pays a smaller version of the same cost) - other templates'
+  // own glows are icon-sized (tens to a couple hundred px), this was by
+  // a wide margin the single largest blurred buffer in the whole
+  // codebase. 400px cuts that same per-frame allocation to ~0.64MB
+  // (~5x smaller) while staying visually substantial - real-verified via
+  // a render through the actual chunked production pipeline afterward.
+  const size = opts.size || 400;
   const position = opts.position || [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
   // Real, confirmed-live finding (2026-09-15): the first version of this
   // tinted the flash to the beat's own accentColor, which on templates

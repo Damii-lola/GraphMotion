@@ -1,5 +1,3 @@
-const { callOpenRouterRaw } = require('./openRouterClient');
-
 /**
  * Second-pass narration tagging - deliberately split from scene JSON
  * generation into its OWN focused step, per direct user request: the
@@ -141,36 +139,29 @@ function stripTagsAndNormalize(text) {
  * minor loss; sending hallucinated content to TTS is not something to
  * risk.
  */
-// Moved to OpenRouter/MiniMax (sceneGenClient.js's own provider now),
-// direct user instruction (2026-09-05): Groq removed entirely ("just
-// remove it completely"), everything unified onto one provider. Real,
-// known consequence worth remembering: this file fires one call per
-// beat IN PARALLEL (narrationPrefetch.js's Promise.all), so a multi-beat
-// video draws several requests from OpenRouter's shared 50/day free-tier
-// budget in a single burst, on top of the scene-generation calls that
-// already happened for the same video. This call already fails soft
-// (see the catch block below) - a quota-exhausted day degrades to
-// mechanical-only pause tagging per beat, not a broken video.
-async function annotateNarrationTags(plainText, feedback = '') {
-  const userMessage = feedback
-    ? `${plainText}\n\n(A previous take of this exact script was reviewed by an audio QA judge and rejected - apply this specific feedback this time: ${feedback})`
-    : plainText;
-  try {
-    // Real root cause found (2026-09-10): callOpenRouterRaw's own
-    // reasoning:{max_tokens} param wasn't honored for minimax-m3 and was
-    // eating the whole budget regardless of size - see
-    // openRouterClient.js's own doc comment. That param is gone now, so
-    // 1500 is real headroom again for this short per-beat tagging output.
-    const tagged = (await callOpenRouterRaw(TAGGING_SYSTEM_PROMPT, userMessage, { jsonMode: false, maxTokens: 1500, temperature: 0.4 })).trim();
-    if (stripTagsAndNormalize(tagged) !== stripTagsAndNormalize(plainText)) {
-      console.warn(`[narrationTagging] tagged text changed the actual words (likely hallucinated content) - using mechanical pause tags only. Original: "${plainText}" | Got: "${tagged}"`);
-      return ensurePauseTags(plainText);
-    }
-    return ensurePauseTags(tagged);
-  } catch (err) {
-    console.warn(`[narrationTagging] tag annotation failed, using mechanical pause tags only: ${err.message}`);
-    return ensurePauseTags(plainText);
-  }
+// OpenRouter removed entirely (2026-09-16, direct user instruction: "remove
+// openrouter ai"), same standing reason as every other provider this project
+// has dropped - real, live-confirmed unreliability, not a guess. Production
+// logs showed this call regularly returning the tagging model's own raw
+// chain-of-thought ("Here's a thinking process: 1. **Analyze User Input:**...")
+// instead of the actual tagged script, and separately truncating at
+// maxTokens=1500 mid-response - both correctly caught by the hallucination
+// guard/error handling below (falling back to mechanical-only tagging every
+// time), but that means the LLM call was never actually landing its real
+// job on these beats anyway - pure wasted latency (multiple seconds per
+// beat, in parallel across every beat in the video) and OpenRouter request-
+// budget for a result this file was already discarding. `ensurePauseTags`
+// (the deterministic, 100%-reliable fallback this was already falling back
+// to almost every time) is now the ONLY path - no quality regression versus
+// what was actually shipping, just without the retries/latency/failed calls
+// that used to sit in front of it. TAGGING_SYSTEM_PROMPT/stripTagsAndNormalize
+// are kept - stripTagsAndNormalize is still used by narrationPrefetch.js's
+// own audio-vs-script verification, and TAGGING_SYSTEM_PROMPT documents the
+// real pause-placement rules ensurePauseTags itself mechanically enforces a
+// subset of, useful reference if an LLM-based tagging pass is ever revisited
+// with a more reliable provider.
+async function annotateNarrationTags(plainText) {
+  return ensurePauseTags(plainText);
 }
 
 module.exports = {

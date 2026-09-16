@@ -1871,8 +1871,17 @@ const COMPACT_TEMPLATE_INFO = {
   },
   counter: {
     description: 'A number counts up to a target value with an optional icon and caption.',
-    fields: 'value*(count to), text*(4-8w caption), icon(opt), iconPosition(opt before|after)',
-    example: { template: 'counter', narration: 'The number speaks.', vars: { value: 45355, text: 'People who changed their mind' } },
+    // Real minimum is 4 words (validateCompactBeatVars in sceneGenClient.js
+    // - splitCounterCaptionLines needs a real 2-line split). Instructed
+    // here as "5-8, never fewer than 5" rather than "4-8" - a real,
+    // confirmed-live failure (2026-09-16 production logs) showed the 8B
+    // model repeatedly undershooting a stated "4" floor by exactly one
+    // word (landed on 3 words, 3+ retries in a row on the same beat).
+    // Naming a target one word above the actual hard floor absorbs that
+    // exact undershoot for free - if it undershoots "5" by one, it still
+    // clears the real floor of 4, instead of failing it.
+    fields: 'value*(count to), text*(5-8 words, NEVER fewer than 5), icon(opt), iconPosition(opt before|after)',
+    example: { template: 'counter', narration: 'The number speaks.', vars: { value: 45355, text: 'People who changed their mind completely' } },
   },
   lineReveal: {
     description: 'A line grows and moves to reveal a bold headline plus a secondary line.',
@@ -1936,7 +1945,16 @@ YOUR ${n} TEMPLATES FOR THIS VIDEO (already chosen, fixed - write EXACTLY one be
 TEMPLATES (name: fields; * = required, never leave blank):
 ${fieldLines}
 
-Icons must be REAL Iconify names, format "prefix:name" - "mdi:concept-name" for general ideas (e.g. mdi:rocket-launch, mdi:calendar-check), "simple-icons:brandname" for real brand logos. Never invent a name.
+Icons must be REAL Iconify names, format "prefix:name" - "mdi:concept-name" for general ideas, "simple-icons:brandname" for real brand logos (lowercase product name, e.g. simple-icons:youtube). NEVER invent a plausible-sounding name - a name that "sounds right" but doesn't exist on Iconify (confirmed real, live-failing examples: mdi:chart-trend, mdi:money-check, mdi:money-bank, mdi:money-bill - none of these are real) fails validation and forces a retry. When your concept matches one below, use that EXACT name - these are all confirmed real:
+money/finance: mdi:cash, mdi:cash-multiple, mdi:currency-usd, mdi:credit-card, mdi:bank, mdi:wallet, mdi:piggy-bank
+growth/charts: mdi:chart-line, mdi:chart-bar, mdi:trending-up, mdi:trending-down, mdi:finance
+time: mdi:clock-outline, mdi:calendar-check, mdi:timer-outline, mdi:history
+people: mdi:account, mdi:account-group, mdi:account-multiple, mdi:handshake
+communication: mdi:message-text, mdi:bullhorn, mdi:forum, mdi:email
+achievement: mdi:trophy, mdi:star, mdi:medal, mdi:check-circle
+health/food: mdi:heart-pulse, mdi:run, mdi:food-apple, mdi:water
+tech: mdi:rocket-launch, mdi:lightbulb-on, mdi:cog, mdi:cloud-upload
+For any OTHER concept not listed above, only use a "mdi:" name you are genuinely confident is a real, common Material Design Icon - if unsure, fall back to the closest concept above instead of guessing at a more specific one.
 
 RULES:
 - "beats" MUST have EXACTLY ${n} entries, one for EACH template listed above - not a subset, no extras, no repeats.
