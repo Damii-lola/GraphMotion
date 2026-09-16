@@ -16,6 +16,7 @@ const {
   listJobsForUser,
   deleteJob,
   uploadRenderedVideo,
+  addWaitlistSignup,
 } = require('./supabaseClient');
 
 const app = express();
@@ -65,6 +66,16 @@ const generateLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// The landing page's own register form is public, unauthenticated, and
+// has no per-user identifier to key off of the way /api/generate does -
+// a plain per-IP cap is the only real spam guard available here.
+const waitlistLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // A concrete, checkable marker for exactly this situation - rather
 // than trust "I deployed it" indirectly, hit this endpoint after
 // deploying. This GENUINELY inspects the deployed file's own source
@@ -83,14 +94,17 @@ app.get('/health', async (req, res) => {
     chunkHandoffFixPresent = null;
   }
 
-  // Answers "is the edit-a-video feature actually deployed" directly
-  // and unambiguously, rather than everyone guessing from symptoms.
-  // Checks the CODE (is the function even present) and the DATABASE
-  // (does the column it depends on actually exist) separately, since
-  // those are two genuinely independent things that both have to be
-  // true - a code deploy without running the schema migration would
-  // otherwise look identical to "nothing was deployed" from the
-  // outside, and this tells you exactly which one is missing.
+  // The video-editing feature is disabled (2026-09-16, direct request,
+  // paired 1:1 with POST /api/generate's own commented-out parentJobId
+  // handling below and ai.html's own hardcoded isInEditMode() - see that
+  // file's own doc comment). This health-check block is commented out
+  // to match, not just left running: it was ALREADY silently broken
+  // before this (geminiClient.js hasn't existed since scene generation
+  // moved to Cloudflare/sceneGenClient.js - this always read
+  // editFeatureCodePresent=null via the catch below, regardless of the
+  // feature's real state), so there's nothing useful left to report even
+  // if the feature is re-enabled without also fixing this check first.
+  /*
   let editFeatureCodePresent = false;
   try {
     const geminiSource = fs.readFileSync(path.join(__dirname, 'geminiClient.js'), 'utf8');
@@ -109,6 +123,7 @@ app.get('/health', async (req, res) => {
   } catch (err) {
     parentJobIdColumnExists = false;
   }
+  */
 
   res.json({
     ok: true,
@@ -117,17 +132,12 @@ app.get('/health', async (req, res) => {
       chunkHandoffFix: chunkHandoffFixPresent,
       progressThrottleFix: true,
       liveChunkConfig,
-      editFeature: {
-        codeDeployed: editFeatureCodePresent,
-        databaseMigrated: parentJobIdColumnExists,
-        fullyWorking: editFeatureCodePresent === true && parentJobIdColumnExists === true,
-      },
     },
   });
 });
 
 app.post('/api/generate', generateLimiter, async (req, res) => {
-  const { prompt, userId, targetDurationSeconds, parentJobId } = req.body || {};
+  const { prompt, userId, targetDurationSeconds } = req.body || {};
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 3) {
     return res.status(400).json({ error: 'prompt is required (min 3 chars)' });
@@ -148,13 +158,17 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
 
   const identifier = userId || req.ip;
 
-  // If this request is an edit of a previous video (not a fresh
-  // generation), verify BEFORE spending a daily use or spawning a
-  // worker: the parent job must actually exist, belong to THIS same
-  // user (an edit request naming someone else's job id shouldn't be
-  // able to piggyback on their video), and must have actually
-  // finished rendering - there's nothing to edit yet if it's still in
-  // progress or if it failed.
+  // Video editing is disabled (2026-09-16, direct request) - paired 1:1
+  // with ai.html's own hardcoded isInEditMode()===false and the removed
+  // /health editFeature block above. Every generation is now always a
+  // fresh one: parentSceneJSON stays null unconditionally (renderWorker.js's
+  // own `parentSceneJSON ? generateEditedSceneJSON(...) : generateSceneJSON(...)`
+  // ternary then always takes the fresh-generation branch, with no other
+  // change needed there), and any parentJobId a client might still send
+  // is ignored outright rather than looked up/trusted - re-enable by
+  // restoring this block AND ai.html's own isInEditMode() together, not
+  // separately.
+  /*
   let parentSceneJSON = null;
   let parentThreadIdForRequest = null;
   if (parentJobId) {
@@ -181,14 +195,16 @@ app.post('/api/generate', generateLimiter, async (req, res) => {
     // going forward instead of silently producing a null thread_id).
     parentThreadIdForRequest = parentJob.thread_id || parentJob.id;
   }
+  */
+  const parentSceneJSON = null;
 
   let job;
   try {
     job = await createJob({
       userId: identifier,
       prompt: prompt.trim(),
-      parentJobId: parentJobId || null,
-      parentThreadId: parentThreadIdForRequest,
+      parentJobId: null,
+      parentThreadId: null,
     });
   } catch (err) {
     console.error('[POST /api/generate] job creation failed:', err);
@@ -468,6 +484,25 @@ app.delete('/api/jobs/:id', async (req, res) => {
   } catch (err) {
     console.error('[DELETE /api/jobs/:id] failed:', err);
     return res.status(500).json({ error: 'Failed to delete job' });
+  }
+});
+
+// Real, simple email-format check - not RFC-5322-exhaustive, just
+// enough to reject "not an email at all" junk before it reaches the
+// database. Real verification (does this inbox exist) isn't worth
+// building for a coming-soon waitlist form.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim() : '';
+  if (!email || !EMAIL_RE.test(email)) {
+    return res.status(400).json({ error: 'Please enter a valid email address' });
+  }
+  try {
+    const result = await addWaitlistSignup({ email, source: 'landing_page' });
+    return res.json({ ok: true, alreadySubscribed: result.alreadySubscribed });
+  } catch (err) {
+    console.error('[POST /api/waitlist] failed:', err);
+    return res.status(500).json({ error: 'Something went wrong - please try again' });
   }
 });
 

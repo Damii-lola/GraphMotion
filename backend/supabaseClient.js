@@ -159,6 +159,24 @@ async function uploadRenderedVideo(jobId, localFilePath, buffer) {
   return publicUrlData.publicUrl;
 }
 
+/**
+ * Powers the landing page's own register/waitlist form (index.html).
+ * "23505" is Postgres's own unique-violation error code - a repeat
+ * signup from the same email is treated as a success (they're already
+ * on the list, which is the outcome they actually want), not surfaced
+ * as an error to the person filling out the form.
+ */
+async function addWaitlistSignup({ email, source }) {
+  const { error } = await supabase
+    .from('waitlist_signups')
+    .insert({ email: email.toLowerCase().trim(), source: source || null });
+
+  if (error && error.code !== '23505') {
+    throw new Error(`addWaitlistSignup failed: ${error.message}`);
+  }
+  return { alreadySubscribed: error?.code === '23505' };
+}
+
 module.exports = {
   supabase,
   createJob,
@@ -168,4 +186,5 @@ module.exports = {
   deleteJob,
   countJobsToday,
   uploadRenderedVideo,
+  addWaitlistSignup,
 };
