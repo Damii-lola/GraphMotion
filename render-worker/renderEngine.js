@@ -473,6 +473,102 @@ function relativeLuma([r, g, b]) {
 }
 const LIGHT_BACKGROUND_LUMA_THRESHOLD = 150; // out of 255
 
+// Real, direct user requirement (2026-09-16), on top of the same-session
+// contrast audit above: "ensure the color the nodes now use is a nice
+// similar but visible color of THAT SPECIFIC SCENE BG... just like how no
+// two scenes have the exact same bg, no two scenes should have the exact
+// same node's color." Before this, ensureHarmoniousColors/
+// ensureTextContrastAgainstBackground picked ONE bgRefColor for the WHOLE
+// video (poolColor||startColor, the fix above) and harmonized every
+// scene's accent against that SAME single reference - correct for
+// CONTRAST (every scene's own accent cleared 4.5:1 against something
+// close enough to be safe), but not for the user's real ask here: the
+// shared board background is one continuous gradient the camera pans
+// across (see buildBoardLayoutAndBackground's own doc comment - "the ONE
+// shared background... radial's own vignette... every beat sees a
+// DIFFERENT part of it depending on how far its own position is from the
+// gradient's center/radius"), so two scenes several beats apart can sit
+// on genuinely different points along that same gradient - similar hue
+// family, different actual shade, exactly matching the "bg of two scenes
+// are similar but not the same" framing. Accent colors should track that
+// same per-scene reality, not one single video-wide average.
+//
+// These three helpers replicate gradientRamp's OWN exact per-pixel math
+// (engine/generateEffects.js) and renderEngine's own board-geometry setup
+// (the real frame loop's own boardCenterX/boardCenterY/RADIAL_BG_RADIUS/
+// boardBgStartPoint/boardBgEndPoint computation, a few hundred lines
+// below) so "the color at this scene's own position" here is the SAME
+// real color that scene's own viewport actually renders, not an
+// approximation - deliberately duplicated math (not extracted into one
+// shared function both places call) since the frame loop's own version
+// works in canvas-pixel space across a WIDTHxHEIGHT viewport while this
+// runs once per scene at generation-adjacent time, long before any
+// canvas exists.
+function computeBoardPositionsForColors(sceneJSON) {
+  const { beatRanges } = buildTimeline(sceneJSON);
+  return buildBoardLayoutAndBackground(sceneJSON, beatRanges).positions;
+}
+function computeBoardGeometryForColors(boardPositions, boardBackgroundDef) {
+  const boardMinX = Math.min(...boardPositions.map((p) => p.x));
+  const boardMinY = Math.min(...boardPositions.map((p) => p.y));
+  const boardMaxX = Math.max(...boardPositions.map((p) => p.x)) + WIDTH;
+  const boardMaxY = Math.max(...boardPositions.map((p) => p.y)) + HEIGHT;
+  const boardW = boardMaxX - boardMinX;
+  const boardH = boardMaxY - boardMinY;
+  const boardCenterX = boardMinX + boardW / 2;
+  const boardCenterY = boardMinY + boardH / 2;
+  const radius = Math.hypot(boardW / 2, boardH / 2);
+  const bgStartPoint = boardBackgroundDef.shape === 'radial' ? [boardCenterX, boardCenterY] : [boardMinX, boardMinY];
+  const bgEndPoint = boardBackgroundDef.shape === 'radial' ? [boardCenterX + radius, boardCenterY] : [boardMinX, boardMinY + boardH];
+  return { bgStartPoint, bgEndPoint };
+}
+function sampleBoardBackgroundColor(boardBackgroundDef, geometry, worldX, worldY) {
+  const { bgStartPoint, bgEndPoint } = geometry;
+  const dx = bgEndPoint[0] - bgStartPoint[0];
+  const dy = bgEndPoint[1] - bgStartPoint[1];
+  const lenSq = dx * dx + dy * dy || 1;
+  const radius = Math.hypot(dx, dy) || 1;
+  let t;
+  if (boardBackgroundDef.shape === 'radial') {
+    t = Math.hypot(worldX - bgStartPoint[0], worldY - bgStartPoint[1]) / radius;
+  } else {
+    const px = worldX - bgStartPoint[0];
+    const py = worldY - bgStartPoint[1];
+    t = (px * dx + py * dy) / lenSq;
+  }
+  t = Math.min(1, Math.max(0, t));
+  const stops = boardBackgroundDef.shape === 'radial'
+    ? [
+      { offset: 0, rgb: hexToRgbLocal(boardBackgroundDef.poolColor) },
+      { offset: 0.45, rgb: hexToRgbLocal(boardBackgroundDef.startColor) },
+      { offset: 1, rgb: hexToRgbLocal(boardBackgroundDef.edgeColor) },
+    ]
+    : [
+      { offset: 0, rgb: hexToRgbLocal(boardBackgroundDef.startColor) },
+      { offset: 1, rgb: hexToRgbLocal(boardBackgroundDef.endColor) },
+    ];
+  let a = stops[0]; let b = stops[stops.length - 1];
+  for (let s = 0; s < stops.length - 1; s++) {
+    if (t >= stops[s].offset && t <= stops[s + 1].offset) { a = stops[s]; b = stops[s + 1]; break; }
+  }
+  const span = b.offset - a.offset;
+  const segT = span > 0 ? (t - a.offset) / span : 0;
+  return rgbToHexLocal([
+    a.rgb[0] + (b.rgb[0] - a.rgb[0]) * segT,
+    a.rgb[1] + (b.rgb[1] - a.rgb[1]) * segT,
+    a.rgb[2] + (b.rgb[2] - a.rgb[2]) * segT,
+  ]);
+}
+// boardPositions[i] is a beat's own viewport TOP-LEFT world corner (see
+// the real frame loop's own `boardMaxX = max(positions.x) + WIDTH`, which
+// only makes sense if positions.x is an origin, not a center) - sampling
+// at its own viewport CENTER (+WIDTH/2,+HEIGHT/2) reflects what's actually
+// behind on-screen content, not an unrepresentative corner.
+function getSceneLocalBgColor(boardBackgroundDef, geometry, boardPositions, sceneIndex) {
+  const pos = boardPositions[Math.min(sceneIndex, boardPositions.length - 1)] || { x: 0, y: 0 };
+  return sampleBoardBackgroundColor(boardBackgroundDef, geometry, pos.x + WIDTH / 2, pos.y + HEIGHT / 2);
+}
+
 /**
  * Direct consequence of BOARD_BACKGROUND_HUES' own new light/cream
  * entries (see its doc comment): every text/icon color this engine
@@ -529,22 +625,31 @@ function ensureTextContrastAgainstBackground(sceneJSON, boardBackgroundDef) {
   // guaranteed resort otherwise - so there's no longer a silent gap where
   // a background is "not light enough to trigger" but still too bright
   // for the text sitting on it.
-  const bgRefColor = boardBackgroundDef.poolColor || boardBackgroundDef.startColor;
   const DARK_TEXT_COLOR = '#262220';
   const TRUE_BLACK = '#000000';
   const TRUE_WHITE = '#FFFFFF';
-  const fixColor = (color) => {
+  function fixColor(color, bgRefColor) {
     if (typeof color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(color)) return color;
     if (contrastRatio(color, bgRefColor) >= MIN_ACCENT_CONTRAST_RATIO) return color; // already genuinely safe - leave its own hue alone
     if (contrastRatio(DARK_TEXT_COLOR, bgRefColor) >= MIN_ACCENT_CONTRAST_RATIO) return DARK_TEXT_COLOR;
     const blackRatio = contrastRatio(TRUE_BLACK, bgRefColor);
     const whiteRatio = contrastRatio(TRUE_WHITE, bgRefColor);
     return blackRatio >= whiteRatio ? TRUE_BLACK : TRUE_WHITE;
-  };
+  }
 
-  for (const scene of sceneJSON.scenes || []) {
+  // Real, direct user requirement (2026-09-16): each scene's own text
+  // should be checked against THAT scene's own real local background
+  // color (see computeBoardGeometryForColors' own doc comment above for
+  // why - the shared board is one continuous gradient, and different
+  // beats sit on genuinely different points along it), not one single
+  // bgRefColor for the whole video.
+  const boardPositions = computeBoardPositionsForColors(sceneJSON);
+  const geometry = computeBoardGeometryForColors(boardPositions, boardBackgroundDef);
+  const scenes = sceneJSON.scenes || [];
+  scenes.forEach((scene, sceneIndex) => {
     const layers = scene?.visual?.layers;
-    if (!Array.isArray(layers)) continue;
+    if (!Array.isArray(layers)) return;
+    const bgRefColor = getSceneLocalBgColor(boardBackgroundDef, geometry, boardPositions, sceneIndex);
     for (const layer of layers) {
       if (!layer || typeof layer !== 'object') continue;
       if (typeof layer.fillStyle !== 'string') continue;
@@ -561,9 +666,9 @@ function ensureTextContrastAgainstBackground(sceneJSON, boardBackgroundDef) {
       // measures real contrast against that sibling's own resolved fill -
       // defer to it entirely instead of guessing from the board here.
       if (typeof layer.id === 'string' && resolveIconBackdropRule(layer.id)) continue;
-      layer.fillStyle = fixColor(layer.fillStyle);
+      layer.fillStyle = fixColor(layer.fillStyle, bgRefColor);
     }
-  }
+  });
 }
 
 // A color counts as a real, deliberate ACCENT (needing hue-coordination
@@ -829,62 +934,76 @@ function buildRingAccentPair(backgroundHex, rand) {
 }
 
 function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
-  const rand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x9E3779B1);
-  // Real, confirmed-live bug (2026-09-16, a full 19-template x 5-background
-  // contrast audit): this used to be boardBackgroundDef.startColor alone -
-  // an EDGE/corner tone, never the radial gradient's own much brighter
-  // poolColor (buildBoardLayoutAndBackground's own doc comment: "center is
-  // always the BRIGHTEST point"). On-screen content (every icon/text this
-  // function's own ensureIconContrast call below checks) sits at/near the
-  // board's CENTER for the large majority of beats, which for a 'radial'
-  // background (75% of generations, see buildBoardLayoutAndBackground) is
-  // poolColor's own territory, not startColor's - so contrast was being
-  // measured against a color the content was never actually rendered on
-  // top of. Directly reproduced: a real icon tint (#F5F3FF) measured a
-  // passing 4.96:1 against a test startColor but only 3.48:1 against that
-  // same background's own real poolColor - a genuine, previously-shipped
-  // low-contrast failure on every 'radial' background where poolColor and
-  // startColor differ meaningfully (by design - see poolColor/edgeColor's
-  // own doc comment for why they're deliberately pushed apart for depth).
-  // Matches the SAME poolColor-first pattern this file already uses
-  // correctly elsewhere (see the hue-extraction call a few hundred lines
-  // below: `hexToHsl(backgroundDef.poolColor || backgroundDef.startColor)`).
-  const bgRefColor = boardBackgroundDef.poolColor || boardBackgroundDef.startColor;
-  const palette = buildHarmoniousAccentPalette(bgRefColor, rand);
-  const remap = new Map();
-  let nextPaletteIndex = 0;
-  const harmonize = (color) => {
-    if (!isVividAccentColor(color)) return color;
-    const key = color.toUpperCase();
-    if (!remap.has(key)) {
-      remap.set(key, palette[nextPaletteIndex % palette.length]);
-      nextPaletteIndex += 1;
-    }
-    return remap.get(key);
-  };
-  // Own independent stream (never perturbs the shared palette's own
-  // sequence above) + lazily computed so it's only ever drawn from if a
-  // scene actually contains the relevant nodeCluster layer.
-  const ringRand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x165667B1);
-  let ringAccentPair = null;
-  const getRingAccentPair = () => {
-    if (!ringAccentPair) ringAccentPair = buildRingAccentPair(bgRefColor, ringRand);
-    return ringAccentPair;
-  };
-  const getRingOuterAccent = () => getRingAccentPair().outer;
-  const getRingInnerAccent = () => getRingAccentPair().inner;
-  const harmonizeMaybeRing = (color) => {
-    if (color.toUpperCase() === NODE_CLUSTER_RIM_OUTER_RAW) return getRingOuterAccent();
-    if (color.toUpperCase() === NODE_CLUSTER_RIM_INNER_RAW) return getRingInnerAccent();
-    return harmonize(color);
-  };
-  const startLuma = relativeLuma(hexToRgbLocal(boardBackgroundDef.startColor));
-  const endLuma = relativeLuma(hexToRgbLocal(boardBackgroundDef.endColor));
-  const isLightBackground = (startLuma + endLuma) / 2 > LIGHT_BACKGROUND_LUMA_THRESHOLD;
+  // Real, direct user requirement (2026-09-16): "ensure the color the
+  // nodes now use is a nice similar but visible color of THAT SPECIFIC
+  // SCENE BG... no two scenes should have the exact same node's color" -
+  // on top of the same-session contrast-reference fix below. Moved the
+  // ENTIRE palette/remap/ring-accent construction from ONE shared
+  // instance for the whole video to a fresh one PER SCENE, each seeded
+  // off that scene's own real local background color (see
+  // computeBoardGeometryForColors/getSceneLocalBgColor above) rather than
+  // one video-wide bgRefColor - two scenes on genuinely different points
+  // of the shared gradient now get genuinely different (but still
+  // harmonious, still contrast-safe) accent shades, matching how their
+  // own backgrounds already differ. The rand seed is also salted with the
+  // scene's own index so even two scenes that happen to land on the same
+  // local color still draw independently, rather than producing an
+  // identical accent by coincidence.
+  const boardPositions = computeBoardPositionsForColors(sceneJSON);
+  const geometry = computeBoardGeometryForColors(boardPositions, boardBackgroundDef);
+  const scenes = sceneJSON.scenes || [];
 
-  for (const scene of sceneJSON.scenes || []) {
+  scenes.forEach((scene, sceneIndex) => {
     const layers = scene?.visual?.layers;
-    if (!Array.isArray(layers)) continue;
+    if (!Array.isArray(layers)) return;
+    // Real, confirmed-live bug (2026-09-16, a full 19-template x 5-background
+    // contrast audit): this used to be boardBackgroundDef.startColor alone -
+    // an EDGE/corner tone, never the radial gradient's own much brighter
+    // poolColor (buildBoardLayoutAndBackground's own doc comment: "center is
+    // always the BRIGHTEST point"). On-screen content (every icon/text this
+    // function's own ensureIconContrastForScene call below checks) sits
+    // at/near the board's CENTER for the large majority of beats, which for
+    // a 'radial' background (75% of generations) is poolColor's own
+    // territory, not startColor's - so contrast was being measured against
+    // a color the content was never actually rendered on top of. Directly
+    // reproduced: a real icon tint (#F5F3FF) measured a passing 4.96:1
+    // against a test startColor but only 3.48:1 against that same
+    // background's own real poolColor. Now goes one step further than just
+    // preferring poolColor globally: samples THIS scene's own real local
+    // point on the shared gradient (see the doc comment on
+    // computeBoardGeometryForColors above).
+    const bgRefColor = getSceneLocalBgColor(boardBackgroundDef, geometry, boardPositions, sceneIndex);
+    const rand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x9E3779B1 ^ (sceneIndex * 0x1000193));
+    const palette = buildHarmoniousAccentPalette(bgRefColor, rand);
+    const remap = new Map();
+    let nextPaletteIndex = 0;
+    const harmonize = (color) => {
+      if (!isVividAccentColor(color)) return color;
+      const key = color.toUpperCase();
+      if (!remap.has(key)) {
+        remap.set(key, palette[nextPaletteIndex % palette.length]);
+        nextPaletteIndex += 1;
+      }
+      return remap.get(key);
+    };
+    // Own independent stream (never perturbs the shared palette's own
+    // sequence above) + lazily computed so it's only ever drawn from if a
+    // scene actually contains the relevant nodeCluster layer.
+    const ringRand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x165667B1 ^ (sceneIndex * 0x1000193));
+    let ringAccentPair = null;
+    const getRingAccentPair = () => {
+      if (!ringAccentPair) ringAccentPair = buildRingAccentPair(bgRefColor, ringRand);
+      return ringAccentPair;
+    };
+    const getRingOuterAccent = () => getRingAccentPair().outer;
+    const getRingInnerAccent = () => getRingAccentPair().inner;
+    const harmonizeMaybeRing = (color) => {
+      if (color.toUpperCase() === NODE_CLUSTER_RIM_OUTER_RAW) return getRingOuterAccent();
+      if (color.toUpperCase() === NODE_CLUSTER_RIM_INNER_RAW) return getRingInnerAccent();
+      return harmonize(color);
+    };
+    const isLightBackground = relativeLuma(hexToRgbLocal(bgRefColor)) > LIGHT_BACKGROUND_LUMA_THRESHOLD;
+
     for (const layer of layers) {
       if (!layer || typeof layer !== 'object') continue;
       // Real, direct user instruction (2026-09-07), against real
@@ -928,24 +1047,26 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
         adaptGlowForBackground(layer.effects, isLightBackground);
       }
     }
-  }
 
-  // Real, direct user report with a real rendered video attached
-  // (2026-09-10): "some of the icons can't be seen cuz the shape behind
-  // the icon color were too similar to the icon color." First fix here
-  // was a set of specific hardcoded exceptions (this literal color, on
-  // this specific template, flip if the accent happened to be picked
-  // light) - the user directly and correctly rejected that approach on
-  // the NEXT live render ("u just hardcoded the icon color as black...
-  // YOU GAT SOLVE IT ONCE AND FOR ALL, create a system that finds the
-  // right node colors... based on the chosen bg"). Replaced entirely
-  // with a real system: for every icon layer, figure out what color is
-  // ACTUALLY behind it (a sibling shape's own resolved fill, the board
-  // background, or a fixed neutral surface like a badge/phone screen),
-  // then measure REAL WCAG contrast ratios for candidate tints against
-  // THAT specific color and pick whichever genuinely wins - not a
-  // light/dark binary guess keyed off the accent's own polarity.
-  ensureIconContrast(sceneJSON, bgRefColor, harmonize);
+    // Real, direct user report with a real rendered video attached
+    // (2026-09-10): "some of the icons can't be seen cuz the shape behind
+    // the icon color were too similar to the icon color." First fix here
+    // was a set of specific hardcoded exceptions (this literal color, on
+    // this specific template, flip if the accent happened to be picked
+    // light) - the user directly and correctly rejected that approach on
+    // the NEXT live render ("u just hardcoded the icon color as black...
+    // YOU GAT SOLVE IT ONCE AND FOR ALL, create a system that finds the
+    // right node colors... based on the chosen bg"). Replaced entirely
+    // with a real system: for every icon layer, figure out what color is
+    // ACTUALLY behind it (a sibling shape's own resolved fill, the board
+    // background, or a fixed neutral surface like a badge/phone screen),
+    // then measure REAL WCAG contrast ratios for candidate tints against
+    // THAT specific color and pick whichever genuinely wins - not a
+    // light/dark binary guess keyed off the accent's own polarity. Called
+    // per-scene now (2026-09-16) with THIS scene's own local bgRefColor,
+    // same reasoning as the rest of this function's own per-scene move.
+    ensureIconContrastForScene(scene, bgRefColor, harmonize);
+  });
 }
 
 const ICON_TINT_DARK = '#1A1712';
@@ -1080,10 +1201,7 @@ function resolveIconBackdropRule(layerId) {
   // tripleStack above. Without this, a light-classified board flattened
   // the label's white fillStyle to dark charcoal (ensureTextContrast-
   // AgainstBackground), making it nearly invisible against the also-dark
-  // button - confirmed via a real render's own extracted frames. (Synced
-  // here 2026-09-16 - this rule existed in backend/renderEngine.js but had
-  // never been copied to this file, a real pre-existing sync gap found
-  // during a full 19-template contrast audit.)
+  // button - confirmed via a real render's own extracted frames.
   if (layerId === '__bd_text__') return { fill: '__bd_fill__' };
   // Everything else authored (nodeCluster/nodeClusterExtended's OWN
   // "__node_icon_N__" pre-explosion state, mergeCluster's small
@@ -1094,75 +1212,77 @@ function resolveIconBackdropRule(layerId) {
   return null;
 }
 
-function ensureIconContrast(sceneJSON, bgRefColor, harmonize) {
-  for (const scene of sceneJSON.scenes || []) {
-    const layers = scene?.visual?.layers;
-    if (!Array.isArray(layers)) continue;
+// Real, direct user requirement (2026-09-16): operates on ONE scene at a
+// time now (was the whole sceneJSON, looping internally) so it can be
+// called with THAT scene's own local bgRefColor from ensureHarmoniousColors'
+// own per-scene loop above - see that function's own doc comment for why.
+function ensureIconContrastForScene(scene, bgRefColor, harmonize) {
+  const layers = scene?.visual?.layers;
+  if (!Array.isArray(layers)) return;
 
-    // Built once per beat: every shape layer's own resolved fill color,
-    // by id - these are already POST-harmonize by the time this runs
-    // (the main loop above already resolved every `contents[].fill`),
-    // so this reflects the REAL final color, not the raw authored one.
-    const fillById = new Map();
+  // Built once per beat: every shape layer's own resolved fill color,
+  // by id - these are already POST-harmonize by the time this runs
+  // (the main loop above already resolved every `contents[].fill`),
+  // so this reflects the REAL final color, not the raw authored one.
+  const fillById = new Map();
+  for (const layer of layers) {
+    if (!layer || layer.type !== 'shape' || !Array.isArray(layer.contents)) continue;
+    const fillItem = layer.contents.find((c) => c && c.type === 'fill' && typeof c.color === 'string');
+    if (fillItem) fillById.set(layer.id, fillItem.color);
+  }
+
+  // This beat's own harmonized accent - the SAME hue every ring/fill
+  // in this beat already uses (harmonize()'s own remap Map, keyed by
+  // the raw literal, guarantees this matches exactly). Icons default
+  // to a shade of THIS, not a flat neutral - see pickContrastSafeTint's
+  // own doc comment for why "similar to the bg" and "this beat's own
+  // accent" are the same thing in this project.
+  const rawAccent = scene.mograph && typeof scene.mograph === 'object' && typeof scene.mograph.accentColor === 'string' ? scene.mograph.accentColor : null;
+  let beatAccentHex = rawAccent ? harmonize(rawAccent) : null;
+  if (!beatAccentHex) {
+    // "accentColor" is OPTIONAL in the compact spec - sceneSchema.js
+    // auto-picks one when omitted and bakes it directly into this
+    // beat's own fills/strokes without ever writing it back onto
+    // mograph.accentColor. Fall back to whatever color this beat's
+    // own shapes already resolved to (fill first, then stroke - covers
+    // squareSpin's stroke-only squares, which have no fill at all) so
+    // icons still match this beat's real on-screen accent either way.
     for (const layer of layers) {
       if (!layer || layer.type !== 'shape' || !Array.isArray(layer.contents)) continue;
-      const fillItem = layer.contents.find((c) => c && c.type === 'fill' && typeof c.color === 'string');
-      if (fillItem) fillById.set(layer.id, fillItem.color);
+      const colorItem = layer.contents.find((c) => c && (c.type === 'fill' || c.type === 'stroke') && typeof c.color === 'string');
+      if (colorItem) { beatAccentHex = colorItem.color; break; }
     }
+  }
 
-    // This beat's own harmonized accent - the SAME hue every ring/fill
-    // in this beat already uses (harmonize()'s own remap Map, keyed by
-    // the raw literal, guarantees this matches exactly). Icons default
-    // to a shade of THIS, not a flat neutral - see pickContrastSafeTint's
-    // own doc comment for why "similar to the bg" and "this beat's own
-    // accent" are the same thing in this project.
-    const rawAccent = scene.mograph && typeof scene.mograph === 'object' && typeof scene.mograph.accentColor === 'string' ? scene.mograph.accentColor : null;
-    let beatAccentHex = rawAccent ? harmonize(rawAccent) : null;
-    if (!beatAccentHex) {
-      // "accentColor" is OPTIONAL in the compact spec - sceneSchema.js
-      // auto-picks one when omitted and bakes it directly into this
-      // beat's own fills/strokes without ever writing it back onto
-      // mograph.accentColor. Fall back to whatever color this beat's
-      // own shapes already resolved to (fill first, then stroke - covers
-      // squareSpin's stroke-only squares, which have no fill at all) so
-      // icons still match this beat's real on-screen accent either way.
-      for (const layer of layers) {
-        if (!layer || layer.type !== 'shape' || !Array.isArray(layer.contents)) continue;
-        const colorItem = layer.contents.find((c) => c && (c.type === 'fill' || c.type === 'stroke') && typeof c.color === 'string');
-        if (colorItem) { beatAccentHex = colorItem.color; break; }
-      }
-    }
-
-    for (const layer of layers) {
-      if (!layer || typeof layer !== 'object') continue;
-      if (layer.type === 'image' && typeof layer.iconColor === 'string' && typeof layer.id === 'string') {
-        const rule = resolveIconBackdropRule(layer.id);
-        const behindHex = rule
-          ? (rule.fixed || fillById.get(rule.fill) || bgRefColor)
-          : bgRefColor;
-        layer.iconColor = pickContrastSafeTint(behindHex, beatAccentHex);
-      } else if (layer.type === 'text' && typeof layer.id === 'string' && typeof layer.fillStyle === 'string') {
-        // Generalized from a single hardcoded '__phone_text__' check
-        // (2026-09-10) once tripleStack's own '__stack_text_N__' needed
-        // the exact same "sits on a fixed, known, opaque surface"
-        // treatment - resolveIconBackdropRule already covers both by id,
-        // same rule table icons use, via "fillStyle" instead of
-        // "iconColor". A text layer with no matching rule (a normal
-        // headline sitting on the harmonized board background) is left
-        // alone here - it's not a fixed-surface case, and every OTHER
-        // headline's own contrast is already handled by
-        // MIN_ACCENT_CONTRAST_RATIO's harmonize() pass above.
-        const rule = resolveIconBackdropRule(layer.id);
-        if (rule && rule.fixed) {
-          layer.fillStyle = pickContrastSafeTint(rule.fixed, beatAccentHex);
-        } else if (rule && rule.fill) {
-          // Same sibling-fill lookup the icon branch above uses - a text
-          // layer with a `fill` rule sits on a real filled shape (a
-          // node/row pill), not the raw board background, so measure
-          // contrast against THAT color the same way.
-          const behindHex = fillById.get(rule.fill) || bgRefColor;
-          layer.fillStyle = pickContrastSafeTint(behindHex, beatAccentHex);
-        }
+  for (const layer of layers) {
+    if (!layer || typeof layer !== 'object') continue;
+    if (layer.type === 'image' && typeof layer.iconColor === 'string' && typeof layer.id === 'string') {
+      const rule = resolveIconBackdropRule(layer.id);
+      const behindHex = rule
+        ? (rule.fixed || fillById.get(rule.fill) || bgRefColor)
+        : bgRefColor;
+      layer.iconColor = pickContrastSafeTint(behindHex, beatAccentHex);
+    } else if (layer.type === 'text' && typeof layer.id === 'string' && typeof layer.fillStyle === 'string') {
+      // Generalized from a single hardcoded '__phone_text__' check
+      // (2026-09-10) once tripleStack's own '__stack_text_N__' needed
+      // the exact same "sits on a fixed, known, opaque surface"
+      // treatment - resolveIconBackdropRule already covers both by id,
+      // same rule table icons use, via "fillStyle" instead of
+      // "iconColor". A text layer with no matching rule (a normal
+      // headline sitting on the harmonized board background) is left
+      // alone here - it's not a fixed-surface case, and every OTHER
+      // headline's own contrast is already handled by
+      // MIN_ACCENT_CONTRAST_RATIO's harmonize() pass above.
+      const rule = resolveIconBackdropRule(layer.id);
+      if (rule && rule.fixed) {
+        layer.fillStyle = pickContrastSafeTint(rule.fixed, beatAccentHex);
+      } else if (rule && rule.fill) {
+        // Same sibling-fill lookup the icon branch above uses - a text
+        // layer with a `fill` rule sits on a real filled shape (a
+        // node/row pill), not the raw board background, so measure
+        // contrast against THAT color the same way.
+        const behindHex = fillById.get(rule.fill) || bgRefColor;
+        layer.fillStyle = pickContrastSafeTint(behindHex, beatAccentHex);
       }
     }
   }
@@ -1612,9 +1732,15 @@ async function buildOneBeat(range) {
 // reasoning - originally set from a real production incident (2026-09-10,
 // a genuine Render "exceeded memory limit" platform alert), not a guessed
 // value. Lowered 420 -> 210 (2026-09-15, direct user requirement: "Ensuring
-// that render stays below 210MB of memory") - kept in sync with
-// backend/renderEngine.js's own copy of this same constant, per this
-// project's standing "keep both copies in sync" convention.
+// that render stays below 210MB of memory") - a real, deliberate tightening
+// of the enforced ceiling itself, not just the [[feedback_memory_budget]]
+// ~170-210MB TARGET this file's own templates have always been tuned
+// against (that number was previously only ever a design-time comment
+// here, never an enforced check - this is what makes it one now). Any
+// beat/chunk that trips this gets requeued (same path as any other render
+// error), same as it always has at the old ceiling - see this file's own
+// git history for which templates needed a real glow-layer trim to fit
+// once this got real-tested against the heaviest ones.
 const RENDER_MEMORY_SAFETY_LIMIT_MB = 210;
 
 async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, onProgress) {
