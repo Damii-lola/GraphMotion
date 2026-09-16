@@ -5872,21 +5872,80 @@ function buildNodeClusterExtendedLayers({
 //    incoming and outgoing control point (scaled per-segment so
 //    uneven spacing doesn't distort it) - this is what actually produces
 //    a smooth pass-through curve at every waypoint.
-// 0.33 -> 0.55 (2026-09-16, direct user requirement: "the line meant to
-// not be a straight line but a curved line... MAKE IT REQUIRED TO BE...
-// CURVED LINE, no exceptions"): a real, confirmed-live complaint against
-// a real generated video - with connectorList's own items count
-// previously allowed as low as 2, a 2-point path is mathematically
-// unable to curve at all (a straight line is the only shape 2 points can
-// ever describe, regardless of any tangent math here), and even at 3
-// points the old 0.33 tangent fraction rounded the corner only mildly,
-// reading more as "two straight segments with a soft corner" than a
-// genuinely flowing curve. Bumped to 0.55 so consecutive segments blend
-// into one continuous S-curve - paired with buildConnectorListLayers' own
-// item count now being hard-locked to exactly 3 (see its own doc
-// comment), which is what actually guarantees a curve is geometrically
-// possible in the first place.
+// 0.33 -> 0.55 -> real circular arc (2026-09-16, direct user requirement,
+// with a reference image attached showing a clean single bow): bumping
+// the neighbor-tangent fraction to 0.55 was a real, confirmed-live
+// REGRESSION, not an improvement - a direct render (frame-extracted and
+// inspected) showed a visible kink/pinch right at the middle node. Root
+// cause: the neighbor-direction tangent forces the SAME direction on
+// BOTH sides of the middle anchor, but each segment's own natural chord
+// angle differs from that forced direction - a small mismatch is a mild
+// "soft corner" (the old 0.33 case), but a LARGE tangent magnitude (0.55)
+// holds the forced direction for a much bigger stretch of the curve
+// before it can bend toward the segment's own real endpoint, concentrating
+// visible curvature (the kink) right around the shared node.
+//
+// Real fix, now that connectorList is hard-locked to EXACTLY 3 points
+// (see buildConnectorListLayers' own doc comment): fit the true
+// circumcircle through all 3 points (closed-form, solved algebraically)
+// and draw that circle's own arc - a real circle has perfectly CONSTANT
+// curvature everywhere, so a kink is mathematically impossible, and it
+// reads as exactly the single continuous clean bow the reference showed.
+// Each half of the arc (P0->P1, P1->P2) is converted to one cubic bezier
+// via the standard circular-arc kappa approximation
+// (kappa = (4/3)*tan(sweepAngle/4)) - accurate to a small fraction of a
+// pixel for the modest sweep angles this template's own geometry
+// produces, not a rough approximation.
 function buildConnectorLineAnchors(positions) {
+  if (positions.length === 3) {
+    const [p0, p1, p2] = positions;
+    const sq = (p) => p[0] * p[0] + p[1] * p[1];
+    const d = 2 * (p0[0] * (p1[1] - p2[1]) + p1[0] * (p2[1] - p0[1]) + p2[0] * (p0[1] - p1[1]));
+    // d === 0 only for 3 exactly-collinear points (no real circle passes
+    // through them) - falls through to the generic tangent approximation
+    // below, same as it already handles any point count other than 3.
+    if (Math.abs(d) > 1e-6) {
+      const cx = (sq(p0) * (p1[1] - p2[1]) + sq(p1) * (p2[1] - p0[1]) + sq(p2) * (p0[1] - p1[1])) / d;
+      const cy = (sq(p0) * (p2[0] - p1[0]) + sq(p1) * (p0[0] - p2[0]) + sq(p2) * (p1[0] - p0[0])) / d;
+      const r = Math.hypot(p0[0] - cx, p0[1] - cy);
+      const angleOf = (p) => Math.atan2(p[1] - cy, p[0] - cx);
+      const TAU = Math.PI * 2;
+      // Unwraps target's raw [-PI,PI] angle to whichever equivalent
+      // value is closest to base - keeps the 3 angles moving
+      // monotonically in the path's own real travel order instead of
+      // wrapping around the short way.
+      const unwrap = (base, target) => {
+        let t = target;
+        while (t - base > Math.PI) t -= TAU;
+        while (t - base < -Math.PI) t += TAU;
+        return t;
+      };
+      const a0 = angleOf(p0);
+      const a1 = unwrap(a0, angleOf(p1));
+      const a2 = unwrap(a1, angleOf(p2));
+      // Direction of travel: +1 if the path sweeps counter-clockwise
+      // (increasing angle), -1 if clockwise - the standard circle
+      // parametrization's own derivative (-sin(a), cos(a)) is the CCW
+      // tangent, so a CW sweep just negates it.
+      const sweepSign = a2 >= a0 ? 1 : -1;
+      const tangentAt = (a) => [-Math.sin(a) * sweepSign, Math.cos(a) * sweepSign];
+      const kappaMag = (fromAngle, toAngle) => (4 / 3) * Math.abs(Math.tan((toAngle - fromAngle) / 4)) * r;
+      const mag01 = kappaMag(a0, a1);
+      const mag12 = kappaMag(a1, a2);
+      const tan0 = tangentAt(a0);
+      const tan1 = tangentAt(a1);
+      const tan2 = tangentAt(a2);
+      return [
+        { point: p0, outTangent: [tan0[0] * mag01, tan0[1] * mag01] },
+        {
+          point: p1,
+          inTangent: [-tan1[0] * mag01, -tan1[1] * mag01],
+          outTangent: [tan1[0] * mag12, tan1[1] * mag12],
+        },
+        { point: p2, inTangent: [-tan2[0] * mag12, -tan2[1] * mag12] },
+      ];
+    }
+  }
   return positions.map((p, i) => {
     const prev = positions[i - 1];
     const next = positions[i + 1];
@@ -5897,12 +5956,12 @@ function buildConnectorLineAnchors(positions) {
     const ux = dirX / dirLen; const uy = dirY / dirLen;
     if (next) {
       const segLen = Math.hypot(next[0] - p[0], next[1] - p[1]);
-      const len = segLen * 0.55;
+      const len = segLen * 0.33;
       anchor.outTangent = [ux * len, uy * len];
     }
     if (prev) {
       const segLen = Math.hypot(p[0] - prev[0], p[1] - prev[1]);
-      const len = segLen * 0.55;
+      const len = segLen * 0.33;
       anchor.inTangent = [-ux * len, -uy * len];
     }
     return anchor;
@@ -5996,8 +6055,17 @@ function buildConnectorListLayers({ items, accentColor, outroText }) {
   // this function's own doc comment above for why.
   const anchors = rawAnchors.map((a) => ({ ...a, point: [a.point[0] - centerX, a.point[1] - centerY] }));
 
-  const totalRevealTime = 0.5 + items.length * 0.5;
   const LINE_START_TIME = 0.2;
+  // 1.15x faster line-draw (2026-09-16, direct user request): scales
+  // down only the actual DRAW window (from LINE_START_TIME to
+  // totalRevealTime), leaving the small fixed pre-roll pause before the
+  // line starts moving untouched - this is specifically about the
+  // line's own drawing speed, not the beat's opening delay. Mirrored at
+  // this function's own call site in buildMographBeatVisual (the
+  // duration-clamp's closed-form copy of this exact formula) so the
+  // beat's own authored/clamped duration stays in sync with the real
+  // animation instead of holding on a now-stale, slower estimate.
+  const totalRevealTime = LINE_START_TIME + (0.5 + items.length * 0.5 - LINE_START_TIME) / 1.15;
   // easeOutCubic -> linear (2026-09-16, direct user requirement: "has a
   // delay at the end that shouldnt be there remove it, right before the
   // last node spawns"): a real, confirmed-live pacing bug, not a
@@ -12494,7 +12562,14 @@ function buildTypewriterLinkLayers({
     },
     contents: [
       { type: 'path', shape: { kind: 'rectangle', params: { width: TWL_THICKNESS, height: fullBarHeight, roundness: TWL_THICKNESS / 2 } } },
-      { type: 'fill', color: '#FFFFFF' },
+      // '#FFFFFF' -> accentColor (2026-09-16, direct user follow-up after
+      // the connector's own stroke fix: "u were getting it correct, but
+      // it still ended up as the constant white line that i told u to
+      // remove" - this bar is the SAME connecting line the trace-in
+      // connector hands off to once it locks into its final vertical
+      // position at the left margin, not a genuinely separate flash
+      // element the way I'd first assumed - it needed the identical fix.
+      { type: 'fill', color: accentColor },
     ],
     // Direct correction: bright white glow (originally blur:8) at the shared
     // left margin - the SAME x every row's own text starts at - was washing
@@ -12514,7 +12589,7 @@ function buildTypewriterLinkLayers({
         type: 'outerGlow',
         params: {
           blur: 4,
-          color: '#FFFFFF',
+          color: accentColor,
           opacity: {
             keyframes: [
               { time: 0, value: 0.4, interpolation: 'hold' },
@@ -12530,7 +12605,7 @@ function buildTypewriterLinkLayers({
           blendMode: 'screen',
         },
       },
-      TWL_BAR_BLOOM_GLOW,
+      { type: 'outerGlow', params: { blur: TWL_BLOOM_GLOW_BLUR, color: accentColor, opacity: TWL_BLOOM_GLOW_OPACITY, blendMode: 'screen' } },
     ],
   };
 
@@ -15647,15 +15722,18 @@ function buildMographBeatVisual(beat) {
       }
       // Closed-form mirror of buildConnectorListLayers' own real timing
       // (totalRevealTime/lastAppearAt/outro landing - see that
-      // function's own comments for the source constants). The LAST
-      // item's own line-arrival fraction is always exactly 1 (it's the
-      // drawn path's own endpoint by construction), which is what makes
-      // this closed form exact rather than an approximation. Real,
-      // confirmed-live finding: at this template's own max item count
-      // (6), the OLD flat base duration finished a full ~1s BEFORE this
-      // real completion time, cutting the last item's own reveal off
-      // mid-animation.
-      const totalRevealTime = 0.5 + items.length * 0.5;
+      // function's own comments for the source constants, including the
+      // 1.15x line-draw speedup - LINE_START_TIME=0.2 must match exactly
+      // or this mirror silently drifts out of sync with the real
+      // animation). The LAST item's own line-arrival fraction is always
+      // exactly 1 (it's the drawn path's own endpoint by construction),
+      // which is what makes this closed form exact rather than an
+      // approximation. Real, confirmed-live finding: at this template's
+      // own max item count (6), the OLD flat base duration finished a
+      // full ~1s BEFORE this real completion time, cutting the last
+      // item's own reveal off mid-animation.
+      const LINE_START_TIME = 0.2;
+      const totalRevealTime = LINE_START_TIME + (0.5 + items.length * 0.5 - LINE_START_TIME) / 1.15;
       const completeTime = outroText ? totalRevealTime + 2.1 : totalRevealTime + 0.95;
       clampMographDuration(beat, completeTime);
     }
@@ -18103,12 +18181,33 @@ function buildCtaOutroLayers() {
         { time: CTA_BRAND_START + 0.1, value: 1 },
       ],
     },
+    // Real 3-layer "hero" glow stack (2026-09-16, direct user request to
+    // push the CTA's own visuals further) - tight core + medium bloom +
+    // wide atmosphere, the SAME multi-layer treatment nodeCluster's own
+    // hero circle uses for its selection moment (this file's own
+    // established "premium" look for a beat's single biggest reveal),
+    // not the flat single-glow every earlier draft of this beat used.
+    // The tight core keeps its own keyframed landing pulse; the medium/
+    // wide layers stay static (their job is ambient depth, not the
+    // impact moment itself).
     effects: [
       {
         type: 'outerGlow',
         params: {
+          color: CTA_ACCENT, blur: 60, opacity: 0.22, blendMode: 'screen',
+        },
+      },
+      {
+        type: 'outerGlow',
+        params: {
+          color: CTA_ACCENT, blur: 28, opacity: 0.4, blendMode: 'screen',
+        },
+      },
+      {
+        type: 'outerGlow',
+        params: {
           color: CTA_ACCENT,
-          blur: 16,
+          blur: 12,
           blendMode: 'screen',
           opacity: {
             keyframes: [
@@ -18127,6 +18226,28 @@ function buildCtaOutroLayers() {
       { type: 'dropShadow', params: { color: '#000000', opacity: 0.4, blur: 12, offsetX: 0, offsetY: 6 } },
     ],
   });
+
+  // Real impact "shockwave" - a burst ring + a pair of flying sparks,
+  // both coincident with the brand's own landing, reusing the SAME
+  // battle-tested components counter's own "big increase" moments use
+  // (buildCounterRing/buildCounterBurstParticles) rather than inventing
+  // new impact mechanics for a beat that only ever ships once. Local
+  // coordinates + an explicit `parent` (neither helper sets one on its
+  // own - see their own call sites in buildCounterLayers, which draw at
+  // the counter's own already-absolute position) keep both properly
+  // anchored to the group like every other CTA layer.
+  layers.push({
+    ...buildCounterRing('__cta_ring__', 0, CTA_BRAND_LOCAL_Y, CTA_ACCENT, t.brandEnd, 240, 0.55, 0.7),
+    parent: '__cta_group__',
+  });
+  buildCounterBurstParticles('cta', 0, CTA_BRAND_LOCAL_Y, ICON_BRIGHT_TINT, t.brandEnd)
+    .forEach((particle) => layers.push({ ...particle, parent: '__cta_group__' }));
+  // Soft ambient drifters through the hold - the SAME "keeps the final
+  // frame from reading as a dead static screenshot" idiom counter's own
+  // lock moment uses, timed to start right as the brand/flash/ring all
+  // land together.
+  buildCounterResidualParticles(0, CTA_BRAND_LOCAL_Y, CTA_ACCENT, t.brandEnd + 0.15)
+    .forEach((particle) => layers.push({ ...particle, parent: '__cta_group__' }));
 
   const urlLayerW = urlWidth + 24;
   layers.push({
