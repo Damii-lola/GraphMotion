@@ -424,8 +424,28 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
   const MAX_TASK_ATTEMPTS = 3;
   let completedCount = 0;
   const totalCount = chunkRanges.length;
+  // Real, confirmed-live bug fixed here (2026-09-16 production logs): a
+  // chunkWorker's "no such file or directory, open .../.frames-chunk-2/
+  // f000000.jpg" ENOENT right after a DIFFERENT chunk gave up. Root
+  // cause: requeueOrGiveUp used to THROW directly out of one loop
+  // (local or sibling) the instant a chunk exhausted its retries -
+  // Promise.all below rejects on the FIRST loop to throw, but does NOT
+  // cancel the other still-running loop(s), and the catch block's own
+  // cleanup (fs.unlink/fs.rm on workDir) ran immediately, deleting the
+  // directory a DIFFERENT loop was still actively writing frames into
+  // mid-render. Fixed by never throwing from inside a loop: a give-up
+  // now just sets this flag + records the error, claimTask() starts
+  // returning null once it's set (so every loop stops pulling NEW work
+  // as soon as possible), and Promise.all is only ever awaiting
+  // promises that resolve normally - so it genuinely waits for whatever
+  // was ALREADY in-flight to finish before this function moves on to
+  // check the flag and run cleanup, instead of racing a teardown
+  // against still-active renders.
+  let jobFailed = false;
+  let giveUpError = null;
 
   function claimTask() {
+    if (jobFailed) return null;
     return queue.length > 0 ? queue.shift() : null;
   }
 
@@ -435,25 +455,37 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
     if (onProgress) onProgress(Math.min(90, Math.round((completedCount / totalCount) * 90)));
   }
 
-  // Throws once a single chunk has failed MAX_TASK_ATTEMPTS times across
-  // (possibly different) workers - deliberately not swallowed, since
-  // silently dropping a chunk would ship an incomplete/wrong video.
-  // Otherwise requeues the task for whichever worker frees up next
-  // (maybe the same one, maybe a different one) to try again.
+  // Marks the job as given-up once a single chunk has failed
+  // MAX_TASK_ATTEMPTS times across (possibly different) workers -
+  // deliberately not silently dropped, since shipping an incomplete/
+  // wrong video is worse than failing loudly. Otherwise requeues the
+  // task for whichever worker frees up next (maybe the same one, maybe
+  // a different one) to try again.
   function requeueOrGiveUp(task, workerLabel, err) {
     const attempts = (failureCounts.get(task.index) || 0) + 1;
     failureCounts.set(task.index, attempts);
     if (attempts >= MAX_TASK_ATTEMPTS) {
-      throw new Error(`chunk ${task.index} failed ${attempts} time(s) across different workers (last: ${workerLabel} - ${err.message}) - giving up`);
+      jobFailed = true;
+      if (!giveUpError) giveUpError = new Error(`chunk ${task.index} failed ${attempts} time(s) across different workers (last: ${workerLabel} - ${err.message}) - giving up`);
+      return;
     }
     console.warn(`[chunkDispatch] job ${jobId} chunk ${task.index} failed on ${workerLabel} (attempt ${attempts}/${MAX_TASK_ATTEMPTS}), requeueing: ${err.message}`);
     queue.push(task);
   }
 
+  // Same non-throwing-out-of-a-loop fix as requeueOrGiveUp above applies
+  // to cancellation too - this used to `throw` directly, which raced
+  // teardown against a sibling loop's still-in-flight render exactly
+  // like the give-up path did.
+  function markCancelled() {
+    jobFailed = true;
+    if (!giveUpError) giveUpError = new RenderCancelledError(jobId);
+  }
+
   async function localWorkerLoop() {
     let task;
     while ((task = claimTask())) {
-      if (isCancelled && isCancelled()) throw new RenderCancelledError(jobId);
+      if (isCancelled && isCancelled()) { markCancelled(); return; }
       const { start, end, index } = task;
       const chunkPath = path.join(workDir, `chunk-${index}.mp4`);
       try {
@@ -470,7 +502,7 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
   async function siblingWorkerLoop(url) {
     let task;
     while ((task = claimTask())) {
-      if (isCancelled && isCancelled()) throw new RenderCancelledError(jobId);
+      if (isCancelled && isCancelled()) { markCancelled(); return; }
       try {
         const [chunk] = await requestHelp(url, jobId, sceneJSON, [task]);
         const chunkPath = path.join(workDir, `chunk-${task.index}.mp4`);
@@ -484,16 +516,23 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
     }
   }
 
-  try {
-    await Promise.all([localWorkerLoop(), ...siblingUrls.map((url) => siblingWorkerLoop(url))]);
-  } catch (err) {
+  // No loop above ever throws anymore (see requeueOrGiveUp/markCancelled's
+  // own doc comments) - every one of them only ever RESOLVES, once its
+  // queue naturally empties or jobFailed flips claimTask() to null. That
+  // means this Promise.all genuinely waits for whatever chunk renders
+  // were already in-flight to actually finish before execution reaches
+  // here, so the cleanup below can never race a still-writing chunk the
+  // way the old throw-straight-out-of-a-loop version did.
+  await Promise.all([localWorkerLoop(), ...siblingUrls.map((url) => siblingWorkerLoop(url))]);
+
+  if (jobFailed) {
     // Clean up whatever partial per-chunk files exist before propagating
     // - covers BOTH exit-via-cancellation and exit-via-exceeded-retries,
     // generalizing what the old static-split design only handled for
     // cancellation specifically.
     for (const p of chunkPathsByIndex.values()) fs.unlink(p, () => {});
     fs.rm(workDir, { recursive: true, force: true }, () => {});
-    throw err;
+    throw giveUpError;
   }
 
   // Re-sorted into original chronological order here, deliberately -

@@ -1741,7 +1741,15 @@ async function buildOneBeat(range) {
 // error), same as it always has at the old ceiling - see this file's own
 // git history for which templates needed a real glow-layer trim to fit
 // once this got real-tested against the heaviest ones.
-const RENDER_MEMORY_SAFETY_LIMIT_MB = 210;
+// 210 -> 240 (2026-09-16, direct user request after a real production
+// job kept failing outright even on heavy-but-legitimate beat
+// combinations like nodeAbsorb/blueprintText/nodeClusterExtended
+// together): the free-tier ceiling this margin is sized against is
+// still 512MB (see the throw site below for the full math), so 240
+// still leaves ~90MB+ of real headroom for the parent process, ffmpeg's
+// own encode-time memory, and OS overhead - this raises the ceiling,
+// it does not remove it.
+const RENDER_MEMORY_SAFETY_LIMIT_MB = 240;
 
 async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, onProgress) {
   const startFrame = Math.floor(timeStart * FPS);
