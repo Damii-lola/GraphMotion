@@ -1744,18 +1744,30 @@ async function buildOneBeat(range) {
 // 210 -> 240 -> 450 (2026-09-16, both direct user requests after a real
 // production job kept failing outright even on heavy-but-legitimate
 // beat combinations like nodeAbsorb/blueprintText/nodeClusterExtended
-// together, and 240 still wasn't enough on a real retest). 450 is only
-// safe together with the OTHER half of this same request - server.js's
-// sibling-worker chunk-pooling is now fully disabled (a job never
-// shares a worker's host with another job's chunk at the same time,
-// see MAX_CONCURRENT_RENDERS there) - a single worker's host has the
-// full ~512MB free-tier ceiling to itself per chunk now, instead of
-// needing to leave room for a second concurrent chunk. Chunks already
-// render strictly sequentially with a full process-exit wait between
-// them (longVideoOrchestrator.js's own renderLongFormVideo loop), so
-// this ceiling only ever needs to cover ONE chunk at a time, never
-// several stacked.
-const RENDER_MEMORY_SAFETY_LIMIT_MB = 450;
+// together, and 240 still wasn't enough on a real retest). The reasoning
+// for 450 accounted for sibling-worker chunk-pooling being disabled (a
+// job never shares a worker's host with another job's chunk at the same
+// time, see server.js's MAX_CONCURRENT_RENDERS) - true, but it overlooked
+// the OTHER reason 420 (not 512) was chosen in the first place: this
+// check only runs during the frame-render loop, so it says nothing about
+// ffmpeg's own encode-time memory, which stacks on top AFTER this loop
+// exits (see the RSS-check call site's own doc comment - same 2026-09-10
+// incident, "a chunk sitting at 404-407MB died once ffmpeg's own
+// encode-time memory stacked on top of that"). Both reasons for leaving
+// margin below 512 are real and independent; disabling sibling pooling
+// only retired one of them.
+// 450 -> 420 (2026-09-16, same day, real incident): a real production
+// job's chunk 5 logged a peak of only 271MB during frame rendering (well
+// under 450, safety check never tripped) then took down the ENTIRE
+// worker container - confirmed via the Render dashboard's own Events tab
+// as a genuine "Ran out of memory (used over 512MB)" platform kill, not
+// a guess - timed exactly at "frames done... starting ffmpeg encode"
+// with no "ffmpeg encode done" or graceful chunk_failed ever following.
+// Restored to the already-proven-safe 420 to rebuild the ffmpeg-encode
+// margin the 450 raise had silently spent. See the ffmpeg spawn call
+// site below for the added pre-encode check this incident also exposed
+// (this loop-only check has zero visibility into the encode phase).
+const RENDER_MEMORY_SAFETY_LIMIT_MB = 420;
 
 async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, onProgress) {
   const startFrame = Math.floor(timeStart * FPS);
@@ -2205,7 +2217,26 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
     }
 
     if (onProgress) onProgress(90);
-    console.log(`[renderEngine] frames done, +${((Date.now() - renderStartedAt) / 1000).toFixed(1)}s - starting ffmpeg encode`);
+
+    // Real gap this incident exposed: the periodic check above only runs
+    // DURING the frame loop, every 30 frames - it has zero visibility
+    // into whatever RSS did in the frames since its last check, and
+    // none at all into ffmpeg's own encode-time memory, which is a
+    // separate OS process invisible to process.memoryUsage() here. A
+    // real production chunk logged a peak of only 271MB during frame
+    // rendering (safety check never tripped) then took the whole
+    // container down once ffmpeg's own memory stacked on top - confirmed
+    // via the Render dashboard's own Events tab as a genuine platform
+    // OOM kill. One more check right here, immediately before the
+    // riskiest step, turns a close call into the same clean, already-
+    // handled "throw -> chunk_failed -> requeue" path every other render
+    // error already takes, instead of a catastrophic whole-container
+    // restart that loses every other in-flight job on this worker too.
+    const preEncodeRssMB = Math.round(process.memoryUsage().rss / 1024 / 1024);
+    if (preEncodeRssMB > RENDER_MEMORY_SAFETY_LIMIT_MB) {
+      throw new Error(`memory safety limit exceeded: rss=${preEncodeRssMB}MB > ${RENDER_MEMORY_SAFETY_LIMIT_MB}MB right before ffmpeg encode - aborting this chunk so it gets requeued instead of risking a platform-level OOM kill of the whole worker`);
+    }
+    console.log(`[renderEngine] frames done, +${((Date.now() - renderStartedAt) / 1000).toFixed(1)}s - starting ffmpeg encode, rss=${preEncodeRssMB}MB`);
 
     await new Promise((resolve, reject) => {
       const ffmpeg = spawn(ffmpegPath, [

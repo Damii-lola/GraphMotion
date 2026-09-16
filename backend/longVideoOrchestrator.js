@@ -65,7 +65,69 @@ const { buildTimeline } = require('./engine/timeline');
 // matters given Render's real throughput relative to local dev still
 // isn't something reliably measurable from here.
 const CHUNK_THRESHOLD_SECONDS = 10;
-const CHUNK_SIZE_SECONDS = 3;
+// Renamed from CHUNK_SIZE_SECONDS (2026-09-16, real production finding -
+// see computeChunkRanges below, kept in sync with render-worker's own
+// copy of this same fix): this is now a CEILING on a chunk's length,
+// not a fixed size every chunk actually used.
+const MAX_CHUNK_SECONDS = 3;
+// Must match renderEngine.js's own FPS - deliberately duplicated, not
+// imported, since this file never requires renderEngine.js (would load
+// @napi-rs/canvas and the whole effects chain into this long-lived
+// parent process for no reason). Needed so chunk boundaries can be
+// snapped to an exact frame time - see computeChunkRanges' own doc
+// comment (render-worker/longVideoOrchestrator.js has the full writeup;
+// kept here only where it differs from that copy).
+const FPS = 30;
+// A single beat only gets force-split once its own duration exceeds
+// this - see render-worker/longVideoOrchestrator.js's own copy of this
+// constant for the full real-numbers reasoning (production per-frame
+// cost vs. the 4-minute chunk timeout).
+const SINGLE_BEAT_SPLIT_THRESHOLD_SECONDS = 4;
+
+/**
+ * See render-worker/longVideoOrchestrator.js's own copy of this function
+ * for the full doc comment (real production finding, the sliver-chunk
+ * false start, and the frame-snapping correctness requirement) - kept
+ * identical here so this fallback (local-render) path produces the same
+ * chunk boundaries a worker would.
+ */
+function computeChunkRanges(sceneJSON) {
+  const { totalDuration, beatRanges } = buildTimeline(sceneJSON);
+  const snap = (t) => Math.round(t * FPS) / FPS;
+  const snappedBeats = beatRanges.map((r) => ({ start: snap(r.start), end: snap(r.end) }));
+  const snappedTotal = snap(totalDuration);
+
+  const chunkRanges = [];
+  const pushChunk = (start, end) => {
+    const clippedEnd = Math.min(end, snappedTotal);
+    if (clippedEnd <= start) return;
+    chunkRanges.push({ start, end: clippedEnd });
+  };
+
+  let pendingStart = 0;
+  for (let i = 0; i < snappedBeats.length; i++) {
+    const beat = snappedBeats[i];
+    const beatDuration = beat.end - beat.start;
+
+    if (beatDuration > SINGLE_BEAT_SPLIT_THRESHOLD_SECONDS) {
+      if (pendingStart < beat.start) pushChunk(pendingStart, beat.start);
+      const pieces = Math.ceil(beatDuration / MAX_CHUNK_SECONDS);
+      const pieceLen = beatDuration / pieces;
+      let pieceStart = beat.start;
+      for (let p = 0; p < pieces; p++) {
+        const pieceEnd = p === pieces - 1 ? beat.end : snap(pieceStart + pieceLen);
+        pushChunk(pieceStart, pieceEnd);
+        pieceStart = pieceEnd;
+      }
+      pendingStart = beat.end;
+    } else if (beat.end - pendingStart > MAX_CHUNK_SECONDS && pendingStart < beat.start) {
+      pushChunk(pendingStart, beat.start);
+      pendingStart = beat.start;
+    }
+  }
+  if (pendingStart < snappedTotal) pushChunk(pendingStart, snappedTotal);
+  return chunkRanges;
+}
 
 /**
  * Renders sceneJSON to outputPath, transparently chunking if the
@@ -112,10 +174,7 @@ async function renderLongFormVideo(jobId, sceneJSON, onProgress) {
     return finalOutputPath;
   }
 
-  const chunkRanges = [];
-  for (let t = 0; t < totalDuration; t += CHUNK_SIZE_SECONDS) {
-    chunkRanges.push({ start: t, end: Math.min(t + CHUNK_SIZE_SECONDS, totalDuration) });
-  }
+  const chunkRanges = computeChunkRanges(sceneJSON);
 
   const workDir = path.join(os.tmpdir(), 'shortform-renders', `${jobId}-chunks`);
   fs.mkdirSync(workDir, { recursive: true });
@@ -299,4 +358,4 @@ function concatChunks(chunkPaths, outputPath) {
   });
 }
 
-module.exports = { renderLongFormVideo, CHUNK_THRESHOLD_SECONDS, CHUNK_SIZE_SECONDS };
+module.exports = { renderLongFormVideo, CHUNK_THRESHOLD_SECONDS, MAX_CHUNK_SECONDS, computeChunkRanges };

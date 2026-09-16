@@ -88,8 +88,8 @@ app.get('/health', async (req, res) => {
   try {
     const orchestratorSource = fs.readFileSync(path.join(__dirname, 'longVideoOrchestrator.js'), 'utf8');
     chunkHandoffFixPresent = orchestratorSource.includes('hasExited') && orchestratorSource.includes('maybeFinish');
-    const { CHUNK_THRESHOLD_SECONDS, CHUNK_SIZE_SECONDS } = require('./longVideoOrchestrator');
-    liveChunkConfig = { CHUNK_THRESHOLD_SECONDS, CHUNK_SIZE_SECONDS };
+    const { CHUNK_THRESHOLD_SECONDS, MAX_CHUNK_SECONDS } = require('./longVideoOrchestrator');
+    liveChunkConfig = { CHUNK_THRESHOLD_SECONDS, MAX_CHUNK_SECONDS };
   } catch (err) {
     chunkHandoffFixPresent = null;
   }

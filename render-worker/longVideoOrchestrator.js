@@ -65,7 +65,23 @@ const { buildTimeline } = require('./engine/timeline');
 // matters given Render's real throughput relative to local dev still
 // isn't something reliably measurable from here.
 const CHUNK_THRESHOLD_SECONDS = 10;
-const CHUNK_SIZE_SECONDS = 3;
+// Renamed from CHUNK_SIZE_SECONDS (2026-09-16, real production finding):
+// this is now a CEILING on a chunk's length, not a fixed size every
+// chunk actually used - see computeChunkRanges below for why a blind
+// fixed-clock tick was a real, measured cost, not just an aesthetic
+// preference. Kept at the same value the old fixed-size scheme used, so
+// worst-case per-chunk frame count/timeout risk is provably no worse
+// than before this change - only HOW a cut is chosen changed, not how
+// big a chunk can ever get.
+const MAX_CHUNK_SECONDS = 3;
+// Must match renderEngine.js's own FPS - deliberately duplicated, not
+// imported, since this file's own top-of-file comment explains exactly
+// why it never requires renderEngine.js (would load @napi-rs/canvas and
+// the whole effects chain into this long-lived parent process for no
+// reason). Needed here so chunk boundaries can be snapped to an exact
+// frame time - see computeChunkRanges' own doc comment for why that
+// matters.
+const FPS = 30;
 
 /** Thrown by renderLongFormVideo when a job is cancelled mid-render - callers (render-worker/server.js) check for this specific error to write status 'cancelled' instead of 'failed'. */
 class RenderCancelledError extends Error {
@@ -75,26 +91,142 @@ class RenderCancelledError extends Error {
   }
 }
 
+// A single beat only gets force-split into multiple pieces once its OWN
+// duration exceeds this - anything at or under it becomes ONE chunk by
+// itself even if that's somewhat past MAX_CHUNK_SECONDS, rather than
+// splitting it into an awkward "cap-sized piece + tiny sliver". Sized
+// off real production numbers, not a guess: a real job's own chunks
+// (render-worker logs, 2026-09-16) measured 0.7-1.65s/frame depending on
+// content (worst case 1.65s/frame on a heavy chunk), against a hard
+// 4-minute (240s) per-chunk timeout. 4s x FPS(30) = 120 frames x 1.65s
+// = 198s, ~40s/17% margin under the timeout - deliberately NOT pushed
+// higher (e.g. 2x MAX_CHUNK_SECONDS = 6s/180 frames would cost up to
+// 297s, already past the timeout on the worst observed real per-frame
+// cost). A beat past this still gets split into MAX_CHUNK_SECONDS-target
+// pieces below, the same worst-case chunk size this file has always used.
+const SINGLE_BEAT_SPLIT_THRESHOLD_SECONDS = 4;
+
 /**
  * Extracted out of renderLongFormVideo so cross-worker chunk-splitting
  * (see ../chunkDispatch.js) can compute the SAME chunk boundaries a
  * solo render would use, without needing to actually start rendering -
  * a "primary" worker needs this list up front to decide how much to
  * hand off to a sibling before either of them starts real work.
+ *
+ * Real, measured finding (2026-09-16, from a real production job's own
+ * logs): the old version cut a fixed MAX_CHUNK_SECONDS-wide window
+ * starting at 0, with zero awareness of where beats actually start/end.
+ * renderEngine.js's own frame-building always includes any beat
+ * overlapping a chunk's window PLUS that beat's immediate predecessor
+ * (needed for the incoming camera pan) - so a chunk landing cleanly
+ * inside ONE beat only ever needs 2 beats built (it + predecessor), but
+ * a chunk whose window happened to straddle TWO beat boundaries (very
+ * likely with a blind fixed tick, since beat lengths are narration-
+ * duration-derived and essentially never line up with a clean multiple
+ * of MAX_CHUNK_SECONDS) needed 3 - real production chunks were measured
+ * at 230-372MB depending purely on which arrangement they landed on, and
+ * a beat straddled by two different chunks got its ENTIRE layer set
+ * rebuilt from scratch in BOTH of them - real wasted CPU on top of the
+ * memory cost.
+ *
+ * FIRST attempt at fixing this (extend a chunk to the latest beat
+ * boundary that fits under MAX_CHUNK_SECONDS, falling back to a raw
+ * MAX_CHUNK_SECONDS-wide cut whenever none fit) traded one real problem
+ * for another: a beat only slightly over the cap (e.g. 3.2s against a 3s
+ * cap) produced a normal-sized chunk PLUS a near-useless 0.2s "sliver"
+ * chunk for the remainder - a whole fork/prefetch/ffmpeg-encode's worth
+ * of fixed overhead spent on a handful of frames, worse than the
+ * problem being solved. Fixed by walking beats directly instead of
+ * hunting for boundaries: accumulate consecutive whole beats into one
+ * chunk up to MAX_CHUNK_SECONDS, and let a single beat that's already
+ * close to (or moderately over) the cap keep its own whole chunk rather
+ * than being cut - see SINGLE_BEAT_SPLIT_THRESHOLD_SECONDS above for
+ * exactly where "moderately over" stops and a real split starts. Only a
+ * beat past that threshold gets internally divided, into
+ * MAX_CHUNK_SECONDS-target pieces (never combined with a neighbor's
+ * own sliver). Net effect: a chunk needs more than 2 beats built only
+ * when it deliberately groups several short beats to make good use of
+ * the cap, never as an accident of a boundary landing mid-beat - and
+ * every beat gets built in exactly the chunk(s) that actually need its
+ * frames, never redundantly in a neighbor over a fragment it barely
+ * touches.
+ *
+ * Every boundary is snapped to an exact FRAME time (Math.round, not the
+ * raw beat-end float) before being used as a cut - required for
+ * correctness, not just cleanliness: renderTimelineRange computes
+ * startFrame/endFrame via Math.floor(time*FPS)/Math.ceil(time*FPS),
+ * which only agree across a chunk boundary (no duplicated or dropped
+ * frame in the final concat) when that boundary lands on a WHOLE frame
+ * number. The old fixed-multiples-of-MAX_CHUNK_SECONDS boundaries
+ * satisfied this by construction (MAX_CHUNK_SECONDS*FPS was already a
+ * whole number); a raw beat-end time generally does not, so using one
+ * unsnapped would render the same frame twice at every single cut - a
+ * real, visible freeze at every beat boundary. Snapping costs at most
+ * half a frame's worth of timing deviation, well inside the frame
+ * quantization every beat's own animation timing already goes through -
+ * this only affects where a CHUNK splits, never a beat's own recorded
+ * start/end used for its actual animation math.
  */
 function computeChunkRanges(sceneJSON) {
-  const { totalDuration } = buildTimeline(sceneJSON);
+  const { totalDuration, beatRanges } = buildTimeline(sceneJSON);
+  const snap = (t) => Math.round(t * FPS) / FPS;
+  // Snapped ONCE, up front, and used everywhere below (comparisons,
+  // pendingStart, chunk edges) - a real bug turned up testing this: an
+  // earlier version snapped only at the moment a chunk got pushed but
+  // carried the RAW beat.start forward into `pendingStart` for the next
+  // iteration, so a chunk's own (snapped) end and the next chunk's
+  // (unsnapped) start could differ by half a frame - reintroducing the
+  // exact duplicate-frame bug snapping exists to prevent, just moved to
+  // a different boundary. Working from one already-snapped array of
+  // {start,end} for the rest of this function closes that gap - nothing
+  // downstream ever touches a raw beatRanges value again.
+  const snappedBeats = beatRanges.map((r) => ({ start: snap(r.start), end: snap(r.end) }));
+  const snappedTotal = snap(totalDuration);
+
   const chunkRanges = [];
   let index = 0;
-  for (let t = 0; t < totalDuration; t += CHUNK_SIZE_SECONDS) {
-    // `index` is each range's GLOBAL position in the whole video - the
-    // solo path below never needs it (it just uses the array's own
-    // position, which is identical), but chunkDispatch.js's cross-
-    // worker split does: a sibling rendering a subset has no other way
-    // to know where its own chunks belong in the final concat order.
-    chunkRanges.push({ start: t, end: Math.min(t + CHUNK_SIZE_SECONDS, totalDuration), index });
-    index++;
+  const pushChunk = (start, end) => {
+    const clippedEnd = Math.min(end, snappedTotal);
+    if (clippedEnd <= start) return; // guards float rounding from ever emitting a zero/negative-length chunk
+    chunkRanges.push({ start, end: clippedEnd, index: index++ });
+  };
+
+  let pendingStart = 0; // start of whatever run of whole beats is currently being accumulated into one chunk
+  for (let i = 0; i < snappedBeats.length; i++) {
+    const beat = snappedBeats[i];
+    const beatDuration = beat.end - beat.start;
+
+    if (beatDuration > SINGLE_BEAT_SPLIT_THRESHOLD_SECONDS) {
+      // This one beat alone needs its own split - flush whatever whole
+      // beats were already accumulated first (ending exactly at this
+      // beat's own start, a real boundary), then divide just this beat
+      // into MAX_CHUNK_SECONDS-target pieces.
+      if (pendingStart < beat.start) pushChunk(pendingStart, beat.start);
+      const pieces = Math.ceil(beatDuration / MAX_CHUNK_SECONDS);
+      const pieceLen = beatDuration / pieces;
+      let pieceStart = beat.start;
+      for (let p = 0; p < pieces; p++) {
+        const pieceEnd = p === pieces - 1 ? beat.end : snap(pieceStart + pieceLen);
+        pushChunk(pieceStart, pieceEnd);
+        pieceStart = pieceEnd;
+      }
+      pendingStart = beat.end;
+    } else if (beat.end - pendingStart > MAX_CHUNK_SECONDS && pendingStart < beat.start) {
+      // Including this beat would push the accumulated run past the
+      // cap - flush what's already accumulated (ending at this beat's
+      // own start) and start a fresh run from here. The `pendingStart
+      // < beat.start` guard is what lets a FIRST beat in a fresh run
+      // keep its own whole chunk even when it's alone past the cap
+      // (nothing to flush ahead of it yet) - the whole point of
+      // SINGLE_BEAT_SPLIT_THRESHOLD_SECONDS existing as a separate,
+      // more generous threshold than this accumulation cap.
+      pushChunk(pendingStart, beat.start);
+      pendingStart = beat.start;
+    }
+    // else: still fits - keep accumulating, this beat's own end becomes
+    // the tentative chunk end whenever the run above is next flushed.
   }
+  if (pendingStart < snappedTotal) pushChunk(pendingStart, snappedTotal);
   return chunkRanges;
 }
 
@@ -104,8 +236,9 @@ function computeChunkRanges(sceneJSON) {
  * the WHOLE video regardless of how many chunks it took internally.
  * `isCancelled` (optional) is checked between chunks - direct user
  * request for a cancel button. Only checked at chunk boundaries, not
- * mid-chunk: chunks are already small (CHUNK_SIZE_SECONDS, a few
- * seconds of video each), so the worst case is finishing one chunk
+ * mid-chunk: chunks are already small (at most a few seconds of video
+ * each, see MAX_CHUNK_SECONDS/SINGLE_BEAT_SPLIT_THRESHOLD_SECONDS above),
+ * so the worst case is finishing one chunk
  * already in flight before actually stopping, not a real delay. The
  * short-video branch below is now just a single chunk covering the
  * whole video, so it gets the same one cancel-check the multi-chunk
@@ -349,7 +482,7 @@ module.exports = {
   renderLongFormVideo,
   RenderCancelledError,
   CHUNK_THRESHOLD_SECONDS,
-  CHUNK_SIZE_SECONDS,
+  MAX_CHUNK_SECONDS,
   // Exported specifically for chunkDispatch.js's cross-worker split -
   // a "helper" worker renders only ITS assigned subset of chunks via
   // renderSingleChunk directly (skipping renderLongFormVideo's own
