@@ -396,14 +396,23 @@ function validateCompactBeatVars(template, vars) {
       return null;
     }
     case 'typewriterLink': {
-      // Real lower-bound floor: line1 needs a real "space between the
-      // words" for the connector's own opening drop to spawn from (see
-      // buildTypewriterLinkLayers' own doc comment) - a 1-word line1
-      // degenerates to a dead-center spawn instead.
+      // Real, measured finding (2026-09-16 production logs): a hard
+      // >=2-words requirement on line1 (originally: the connector's own
+      // opening drop spawns from the space between two words, a 1-word
+      // line1 has no such gap) forced 6 wasted retries in a SINGLE job,
+      // all on this one field - Cloudflare Workers AI doesn't reliably
+      // honor it despite the prompt's own worked example already
+      // showing 2 words. buildTypewriterLinkLayers (sceneSchema.js) has
+      // ALWAYS had a real, deliberate fallback for exactly this case -
+      // "a real 1-word line1... falls back to spawning dead-center
+      // rather than crashing, same defensive spirit as every other
+      // template's own isolated-input tolerance" - so this was blocking
+      // a working, intentional code path, not preventing a broken one.
+      // Relaxed to match line2/line3's own "at least 1 word" bar.
       const l1 = typeof vars.line1 === 'string' ? vars.line1.trim().split(/\s+/).filter((w) => w.length > 0) : [];
       const l2 = typeof vars.line2 === 'string' ? vars.line2.trim().split(/\s+/).filter((w) => w.length > 0) : [];
       const l3 = typeof vars.line3 === 'string' ? vars.line3.trim().split(/\s+/).filter((w) => w.length > 0) : [];
-      if (l1.length < 2) return `needs "line1": at least 2 words (got ${l1.length}) - the connector's own opening drop spawns from the space between them`;
+      if (l1.length < 1) return 'needs "line1": a real short opening phrase (at least 1 word)';
       if (l2.length < 1) return 'needs "line2": a real short connector phrase (at least 1 word)';
       if (l3.length < 1) return 'needs "line3": a real outcome phrase (at least 1 word)';
       return null;

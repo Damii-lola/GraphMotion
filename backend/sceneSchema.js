@@ -15905,17 +15905,28 @@ function buildMographBeatVisual(beat) {
     layers = buildLineRevealLayers({ text1, text2, accentColor });
   } else if (spec.type === 'typewriterLink' && typeof spec.line1 === 'string' && spec.line1.trim() && typeof spec.line2 === 'string' && spec.line2.trim() && typeof spec.line3 === 'string' && spec.line3.trim()) {
     const line1Words = spec.line1.trim().split(/\s+/).filter((w) => w.length > 0).slice(0, 4);
-    if (line1Words.length >= 2) {
-      const line1 = line1Words.join(' ');
-      const line2 = truncateAtWordBoundary(spec.line2.trim(), 20);
-      const line3 = truncateAtWordBoundary(spec.line3.trim(), 26);
-      if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-        beat.params.duration = typewriterLinkMinDuration(line1Words.length);
-      }
-      layers = buildTypewriterLinkLayers({
-        line1, line2, line3, accentColor,
-      });
+    // Real bug found and fixed alongside relaxing sceneGenClient.js's own
+    // validateCompactBeatVars (2026-09-16/17): this used to require
+    // line1Words.length >= 2 too - a SEPARATE, redundant gate from the
+    // one just relaxed in validateCompactBeatVars, not something that
+    // gate's own relaxation alone would have fixed. Left as-is, a 1-word
+    // line1 would have PASSED generation validation but then silently
+    // produced a beat with `layers` still null here - no visual at all,
+    // worse than the wasted retry it was meant to save. line1Words.length
+    // is always >=1 by construction (the outer condition already checked
+    // spec.line1.trim() is non-empty) - buildTypewriterLinkLayers' own
+    // dead-center-spawn fallback (see its doc comment) is exactly what
+    // handles a 1-word line1 correctly; this gate was blocking that
+    // already-built, already-safe path from ever being reached.
+    const line1 = line1Words.join(' ');
+    const line2 = truncateAtWordBoundary(spec.line2.trim(), 20);
+    const line3 = truncateAtWordBoundary(spec.line3.trim(), 26);
+    if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+      beat.params.duration = typewriterLinkMinDuration(line1Words.length);
     }
+    layers = buildTypewriterLinkLayers({
+      line1, line2, line3, accentColor,
+    });
   } else if (spec.type === 'dotConstellation' && typeof spec.text === 'string' && spec.text.trim()) {
     const text = truncateAtWordBoundary(spec.text.trim(), 24);
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
