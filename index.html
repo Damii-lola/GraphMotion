@@ -148,6 +148,20 @@
     color: var(--orange);
     display: block;
   }
+  /* Real bug fixed here: .accent is display:block, which already forces
+     its own line break - the <br> that used to follow it in the markup
+     was a SECOND, redundant line break stacked on top of that implicit
+     one, doubling the gap before "IS HERE" (a real, confirmed-live
+     visual bug, not a deliberate design choice). Markup no longer has
+     that extra <br> at all; "IS HERE" gets its own block line here too,
+     sized UP rather than matching the other two lines so it reads as a
+     deliberate punchy close instead of just filling dead space with
+     more of the same size. */
+  .hero h1 .close {
+    display: block;
+    font-size: clamp(44px, 8.4vw, 84px);
+    margin-top: 4px;
+  }
   .hero p.subhead {
     max-width: 560px;
     margin: 0 auto 34px;
@@ -178,15 +192,10 @@
     align-items: center;
     gap: 4px;
   }
-  .domain {
-    font-size: 15px;
+  .domain-note {
+    font-size: 16px;
     font-weight: 700;
     color: var(--text);
-    letter-spacing: 0.2px;
-  }
-  .domain-note {
-    font-size: 12.5px;
-    color: var(--muted);
   }
 
   /* ---------- Mock preview strip ---------- */
@@ -198,48 +207,246 @@
     border-radius: 20px;
     padding: clamp(16px, 3vw, 26px);
     box-shadow: 0 24px 60px -30px rgba(43, 30, 19, 0.35);
+    text-align: left;
   }
   .preview-topbar {
     display: flex;
-    gap: 6px;
-    margin-bottom: 14px;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
   }
-  .preview-topbar span {
+  .preview-topbar .dots { display: flex; gap: 6px; }
+  .preview-topbar .dots span {
     width: 10px;
     height: 10px;
     border-radius: 50%;
     background: var(--border);
   }
+  .preview-topbar .label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+  }
   .preview-body {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 22px;
     background: var(--cream-soft);
     border-radius: 14px;
-    padding: 16px;
-    text-align: left;
+    padding: clamp(16px, 3vw, 24px);
   }
-  .preview-prompt {
-    flex: 1;
-    font-size: 13.5px;
+  .preview-left { flex: 1; min-width: 0; }
+  .preview-label {
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--orange-dark);
+    margin: 0 0 10px;
+  }
+  .preview-prompt-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .preview-prompt-box .cursor {
+    display: inline-block;
+    width: 2px;
+    height: 15px;
+    background: var(--orange);
+    margin-left: 2px;
+    vertical-align: -2px;
+    animation: blink 1s step-end infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .preview-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .preview-chips span {
+    font-size: 11.5px;
+    font-weight: 600;
     color: var(--muted);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 4px 10px;
   }
-  .preview-prompt b { color: var(--text); }
   .preview-arrow {
-    font-size: 18px;
+    font-size: 20px;
     color: var(--orange);
     flex-shrink: 0;
   }
   .preview-video {
     flex-shrink: 0;
-    width: 46px;
-    height: 82px;
-    border-radius: 8px;
+    width: 96px;
+    height: 170px;
+    border-radius: 14px;
     background: linear-gradient(160deg, var(--orange), #ffb27a);
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 14px 30px -10px rgba(255, 92, 26, 0.5);
+  }
+  .preview-video .play {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.28);
+    backdrop-filter: blur(2px);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 18px;
+    font-size: 13px;
+    color: #fff;
+  }
+  .preview-video .caption {
+    position: absolute;
+    left: 8px; right: 8px; bottom: 8px;
+    font-size: 9.5px;
+    font-weight: 700;
+    color: #fff;
+    text-align: center;
+    line-height: 1.3;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.35);
+  }
+  .preview-video .badge {
+    position: absolute;
+    top: 8px; right: 8px;
+    background: rgba(0,0,0,0.35);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 999px;
+  }
+
+  /* ---------- Showcase (real generated videos) ---------- */
+  .showcase {
+    padding: clamp(40px, 7vw, 70px) 0 clamp(20px, 4vw, 40px);
+    text-align: center;
+  }
+  .showcase h2 {
+    font-size: clamp(24px, 3.6vw, 32px);
+    font-weight: 800;
+    margin: 0 0 10px;
+    letter-spacing: -0.4px;
+  }
+  .showcase p {
+    color: var(--muted);
+    font-size: 15px;
+    max-width: 460px;
+    margin: 0 auto clamp(36px, 6vw, 56px);
+    line-height: 1.6;
+  }
+  .showcase-fan {
+    position: relative;
+    height: clamp(300px, 46vw, 360px);
+    margin: 0 auto;
+  }
+  /* Real bug fixed here: .showcase-card is position:absolute with no
+     "left" set, so each card's UNTRANSFORMED base position was left to
+     the browser's own (inconsistent, largely undefined for an abs-
+     positioned flex child) static-position fallback - the translateX
+     fan offsets below were then applied on top of that unreliable base,
+     which is exactly why the 3 cards didn't come out as a clean
+     symmetric fan. Fixed by anchoring every card explicitly at
+     "left: 50%" and starting EVERY slot's own transform with
+     "translate(-50%, 0)" - a real, known-good centered base that the
+     rest of each transform (the fan translateX + rotate) then offsets
+     from consistently. */
+  /* Real bug fixed here too (the "hover on a side card is buggy" report):
+     the old hover setup had TWO competing rules on the same card at once
+     - ".showcase-fan:hover .showcase-card.slot-0" (kept its rotation/
+     offset, small lift) and ".showcase-card:hover" (an !important rule
+     that REPLACED the whole transform, dropping the slot's own
+     translateX entirely) - the !important one always won, so hovering a
+     side card snapped it all the way back to dead-center while also
+     de-rotating and scaling, a big lurching jump instead of a clean
+     lift. Fixed by driving the transform off per-slot CSS custom
+     properties (--x/--rot are each slot's own fixed position/rotation,
+     --y/--scale are what hover actually changes) - now there is exactly
+     ONE hover rule, and it only ever touches lift/scale, never the
+     slot's own offset or rotation, so a side card lifts in place
+     instead of flying to center. */
+  .showcase-card {
+    --x: 0px;
+    --rot: 0deg;
+    --y: 0px;
+    --scale: 1;
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: clamp(150px, 22vw, 190px);
+    aspect-ratio: 9 / 16;
+    background: #1c1410;
+    border: 6px solid var(--card);
+    border-radius: 18px;
+    box-shadow: 0 18px 40px -14px rgba(43, 30, 19, 0.4);
+    overflow: hidden;
+    transform: translate(-50%, 0) translateX(var(--x)) translateY(var(--y)) rotate(var(--rot)) scale(var(--scale));
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+  }
+  .showcase-card video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    background: #1c1410;
+  }
+  .showcase-card .cap {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    padding: 18px 10px 10px;
+    background: linear-gradient(to top, rgba(0,0,0,0.75), transparent);
+    color: #fff;
+    font-size: 11.5px;
+    font-weight: 600;
+    text-align: center;
+    line-height: 1.35;
+    pointer-events: none;
+  }
+  .showcase-card.slot-0 { --x: calc(-1 * clamp(70px, 11vw, 100px)); --rot: -9deg; z-index: 1; }
+  .showcase-card.slot-1 { --y: -14px; z-index: 3; }
+  .showcase-card.slot-2 { --x: clamp(70px, 11vw, 100px); --rot: 9deg; z-index: 2; }
+  .showcase-card:hover {
+    --y: -24px;
+    --scale: 1.04;
+    z-index: 5;
+    box-shadow: 0 26px 50px -14px rgba(43, 30, 19, 0.5);
+  }
+  .showcase-card .placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(160deg, var(--orange-soft), var(--cream-soft));
+    color: var(--orange-dark);
+    font-size: 12px;
+    font-weight: 700;
+    text-align: center;
+    padding: 12px;
+  }
+  @media (max-width: 640px) {
+    .showcase-fan { height: clamp(240px, 62vw, 280px); }
+    .showcase-card { width: clamp(120px, 34vw, 150px); }
+    /* Override only the --x custom property here, not "transform"
+       directly - the base .showcase-card rule already builds transform
+       from --x/--rot/--y/--scale, so overriding "transform" outright
+       would silently break hover on mobile too (the same class of bug
+       just fixed above): --y/--scale changes from .showcase-card:hover
+       would have nothing left to apply to since a literal transform
+       value here doesn't reference those variables at all. */
+    .showcase-card.slot-0 { --x: -52%; }
+    .showcase-card.slot-2 { --x: 52%; }
   }
 
   /* ---------- Features ---------- */
@@ -279,22 +486,34 @@
   }
 
   /* ---------- Register ---------- */
+  /* Direct user request: this used to be a flat solid-dark box (var(--text)
+     as its own background) sitting on the cream page - visually a totally
+     separate panel bolted onto the rest of the site instead of feeling
+     like part of the same canvas. No solid fill anymore - just a soft,
+     oversized radial glow in the SAME orange used by the page's own
+     bg-curve decorations, sitting directly on the cream body background,
+     so this reads as one continuous warm surface with the rest of the
+     page instead of a disconnected inserted card. Every color below
+     (h2/lead/input/notice text) is repicked for a LIGHT background,
+     since the old values were only ever legible on the dark box they're
+     replacing.  */
   .register {
-    background: var(--text);
+    position: relative;
+    background: radial-gradient(ellipse 65% 100% at 50% 20%, rgba(255, 92, 26, 0.12), transparent 72%);
     border-radius: 28px;
     padding: clamp(36px, 7vw, 64px) clamp(20px, 6vw, 60px);
     text-align: center;
     margin-bottom: clamp(50px, 8vw, 90px);
   }
   .register h2 {
-    color: var(--cream);
+    color: var(--text);
     font-size: clamp(24px, 4vw, 34px);
     font-weight: 800;
     margin: 0 0 12px;
     letter-spacing: -0.5px;
   }
   .register p.lead {
-    color: #d8c9b8;
+    color: var(--muted);
     font-size: 15px;
     max-width: 440px;
     margin: 0 auto 28px;
@@ -309,16 +528,17 @@
   #emailInput {
     flex: 1;
     min-width: 0;
-    background: #3a2c1e;
-    border: 1px solid #4d3c2a;
-    color: #fff;
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--text);
     border-radius: 999px;
     padding: 15px 20px;
     font-size: 15px;
     outline: none;
     font-family: inherit;
+    box-shadow: 0 10px 24px -16px rgba(43, 30, 19, 0.3);
   }
-  #emailInput::placeholder { color: #a8927a; }
+  #emailInput::placeholder { color: var(--muted); }
   #emailInput:focus { border-color: var(--orange); }
   #submitBtn {
     background: var(--orange);
@@ -340,12 +560,12 @@
     font-size: 13.5px;
     font-weight: 600;
   }
-  .form-message.success { color: #8fe0a8; }
-  .form-message.error { color: #ff9d8a; }
+  .form-message.success { color: #1f9d5a; }
+  .form-message.error { color: #d6432f; }
   .register-note {
     margin-top: 18px;
     font-size: 12px;
-    color: #a8927a;
+    color: var(--muted);
   }
 
   /* ---------- Footer ---------- */
@@ -388,23 +608,37 @@
   <main>
     <section class="hero">
       <span class="eyebrow"><span class="dot"></span> Coming Soon</span>
-      <h1>THE FUTURE OF<br><span class="accent">TIKTOK AUTOMATION</span><br>IS HERE</h1>
+      <h1>THE FUTURE OF<br><span class="accent">TIKTOK AUTOMATION</span><span class="close">IS HERE</span></h1>
       <p class="subhead">
         Type an idea. SmartClips writes it, animates it, narrates it, and hands you a
         ready-to-post short-form video — no editing, no timeline, no experience needed.
       </p>
       <a href="#register" class="cta-btn">Get Early Access</a>
       <div class="domain-row">
-        <span class="domain">smartclips.org</span>
         <span class="domain-note">Launching soon — be the first to know</span>
       </div>
 
       <div class="preview">
-        <div class="preview-topbar"><span></span><span></span><span></span></div>
+        <div class="preview-topbar">
+          <div class="dots"><span></span><span></span><span></span></div>
+          <span class="label">SmartClips Studio</span>
+        </div>
         <div class="preview-body">
-          <div class="preview-prompt">Your prompt:<br><b>"why budgeting apps fail"</b></div>
+          <div class="preview-left">
+            <p class="preview-label">Your prompt</p>
+            <div class="preview-prompt-box">"why budgeting apps fail"<span class="cursor"></span></div>
+            <div class="preview-chips">
+              <span>🎙️ Narrated</span>
+              <span>🎞️ Animated</span>
+              <span>📱 Vertical</span>
+            </div>
+          </div>
           <div class="preview-arrow">→</div>
-          <div class="preview-video">🎬</div>
+          <div class="preview-video">
+            <span class="badge">0:24</span>
+            <span class="play">▶</span>
+            <span class="caption">"Most budgeting apps fail for one reason..."</span>
+          </div>
         </div>
       </div>
     </section>
@@ -424,6 +658,16 @@
         <div class="feature-icon">🚀</div>
         <h3>Post in minutes</h3>
         <p>A finished vertical video, ready to share, in the time it takes to think of the idea.</p>
+      </div>
+    </section>
+
+    <section class="showcase">
+      <h2>See it in action</h2>
+      <p>Real videos, generated start to finish by SmartClips - no editing, no timeline.</p>
+      <div class="showcase-fan" id="showcaseFan">
+        <div class="showcase-card slot-0" id="showcaseCard0"><div class="placeholder">Loading…</div></div>
+        <div class="showcase-card slot-1" id="showcaseCard1"><div class="placeholder">Loading…</div></div>
+        <div class="showcase-card slot-2" id="showcaseCard2"><div class="placeholder">Loading…</div></div>
       </div>
     </section>
 
@@ -486,6 +730,64 @@
       submitBtn.disabled = false;
       submitBtn.textContent = "Notify Me";
     }
+  });
+
+  // Showcase section: 3 REAL, hand-picked past generations, not random
+  // ones off the live job table - direct user request, so replace these
+  // with the actual job ids to feature before this goes live. Pulled via
+  // the same GET /api/jobs/:id the app itself (ai.html) already uses,
+  // which returns the job row as-is (video_url, prompt, status) straight
+  // from Supabase - no new backend endpoint needed for this.
+  const SHOWCASE_JOB_IDS = [
+    "REPLACE_WITH_REAL_JOB_ID_1",
+    "REPLACE_WITH_REAL_JOB_ID_2",
+    "REPLACE_WITH_REAL_JOB_ID_3",
+  ];
+
+  function truncateCaption(text, maxWords = 10) {
+    if (!text) return "";
+    const words = text.trim().split(/\s+/);
+    return words.length <= maxWords ? text.trim() : `${words.slice(0, maxWords).join(" ")}…`;
+  }
+
+  async function loadShowcaseCard(jobId, cardEl) {
+    if (!jobId || jobId.startsWith("REPLACE_WITH_REAL_JOB_ID")) {
+      cardEl.innerHTML = '<div class="placeholder">Coming soon</div>';
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/jobs/${encodeURIComponent(jobId)}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.job || data.job.status !== "done" || !data.job.video_url) {
+        throw new Error("not ready");
+      }
+      const video = document.createElement("video");
+      video.src = data.job.video_url;
+      video.muted = true;
+      video.loop = true;
+      video.playsInline = true;
+      video.preload = "metadata";
+      video.controls = false;
+      const cap = document.createElement("div");
+      cap.className = "cap";
+      cap.textContent = truncateCaption(data.job.prompt);
+      cardEl.innerHTML = "";
+      cardEl.appendChild(video);
+      cardEl.appendChild(cap);
+      // Autoplay muted preview on hover (desktop) - a real, working
+      // browser affordance since it's muted; falls back to a static
+      // first-frame poster everywhere else (no autoplay-blocked error
+      // states to handle since we never call play() unprompted).
+      cardEl.addEventListener("mouseenter", () => video.play().catch(() => {}));
+      cardEl.addEventListener("mouseleave", () => { video.pause(); video.currentTime = 0; });
+    } catch (err) {
+      cardEl.innerHTML = '<div class="placeholder">Coming soon</div>';
+    }
+  }
+
+  [0, 1, 2].forEach((i) => {
+    const cardEl = document.getElementById(`showcaseCard${i}`);
+    if (cardEl) loadShowcaseCard(SHOWCASE_JOB_IDS[i], cardEl);
   });
 </script>
 
