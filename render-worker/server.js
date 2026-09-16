@@ -373,6 +373,21 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 // get the fastest theoretically possible time.
 const MAX_WORKERS_PER_JOB = 2;
 
+// Direct user instruction (2026-09-16): "limit it to one render worker,
+// dont split it into 2" - cross-worker chunk pooling (recruiting a
+// SIBLING worker to render some of this job's chunks in parallel,
+// below) is now fully disabled. Whichever single worker picks up a job
+// renders every one of its own chunks itself, sequentially, through
+// the plain renderLongFormVideo path - paired with
+// RENDER_MEMORY_SAFETY_LIMIT_MB raised to 450 (renderEngine.js) on the
+// reasoning that a chunk no longer needs to leave headroom for a
+// SECOND job's chunk landing on a sibling worker at the same moment.
+// getAvailableSiblings/requestHelp (chunkDispatch.js) and the
+// queue-based pooling loops below are kept, not deleted, in case this
+// needs to be re-enabled later - just never reached while this flag is
+// false.
+const SIBLING_HELP_ENABLED = false;
+
 async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled) {
   const chunkRanges = computeChunkRanges(sceneJSON);
 
@@ -384,7 +399,7 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
     return renderLongFormVideo(jobId, renderSceneJSON, onProgress, isCancelled);
   }
 
-  const availableSiblings = await getAvailableSiblings();
+  const availableSiblings = SIBLING_HELP_ENABLED ? await getAvailableSiblings() : [];
   if (availableSiblings.length === 0) {
     const renderSceneJSON = await prefetchIconsIsolated(sceneJSON, jobId);
     return renderLongFormVideo(jobId, renderSceneJSON, onProgress, isCancelled);

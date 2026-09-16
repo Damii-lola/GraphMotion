@@ -1741,15 +1741,21 @@ async function buildOneBeat(range) {
 // error), same as it always has at the old ceiling - see this file's own
 // git history for which templates needed a real glow-layer trim to fit
 // once this got real-tested against the heaviest ones.
-// 210 -> 240 (2026-09-16, direct user request after a real production
-// job kept failing outright even on heavy-but-legitimate beat
-// combinations like nodeAbsorb/blueprintText/nodeClusterExtended
-// together): the free-tier ceiling this margin is sized against is
-// still 512MB (see the throw site below for the full math), so 240
-// still leaves ~90MB+ of real headroom for the parent process, ffmpeg's
-// own encode-time memory, and OS overhead - this raises the ceiling,
-// it does not remove it.
-const RENDER_MEMORY_SAFETY_LIMIT_MB = 240;
+// 210 -> 240 -> 450 (2026-09-16, both direct user requests after a real
+// production job kept failing outright even on heavy-but-legitimate
+// beat combinations like nodeAbsorb/blueprintText/nodeClusterExtended
+// together, and 240 still wasn't enough on a real retest). 450 is only
+// safe together with the OTHER half of this same request - server.js's
+// sibling-worker chunk-pooling is now fully disabled (a job never
+// shares a worker's host with another job's chunk at the same time,
+// see MAX_CONCURRENT_RENDERS there) - a single worker's host has the
+// full ~512MB free-tier ceiling to itself per chunk now, instead of
+// needing to leave room for a second concurrent chunk. Chunks already
+// render strictly sequentially with a full process-exit wait between
+// them (longVideoOrchestrator.js's own renderLongFormVideo loop), so
+// this ceiling only ever needs to cover ONE chunk at a time, never
+// several stacked.
+const RENDER_MEMORY_SAFETY_LIMIT_MB = 450;
 
 async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, onProgress) {
   const startFrame = Math.floor(timeStart * FPS);

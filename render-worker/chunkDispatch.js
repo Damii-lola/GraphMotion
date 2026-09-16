@@ -40,7 +40,12 @@ function loadSiblingUrls() {
 
 const SIBLING_URLS = loadSiblingUrls();
 if (SIBLING_URLS.length > 0) {
-  console.log(`[chunkDispatch] ${SIBLING_URLS.length} sibling worker(s) configured for cross-worker chunk splitting`);
+  // Direct user instruction (2026-09-16): sibling recruitment is
+  // disabled at the call site (server.js's own SIBLING_HELP_ENABLED
+  // flag) - this log still reports what's CONFIGURED via env vars, not
+  // what's actually used, so it says so explicitly rather than
+  // implying cross-worker splitting is active when it isn't.
+  console.log(`[chunkDispatch] ${SIBLING_URLS.length} sibling worker(s) configured but NOT used (SIBLING_HELP_ENABLED=false in server.js - each job renders solo on whichever worker picks it up)`);
 }
 
 // Real bug found on the FIRST live production test: this was 5000ms,
