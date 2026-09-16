@@ -579,8 +579,27 @@ async function prefetchNarration(sceneJSON, jobId) {
       // test, so this value IS the real perceived pause length directly -
       // no multiply-by-speed-factor derivation needed while that stays
       // at 1.0 (see audioMux.js's own comment if that ever changes).
-      renderScenes[index].params.duration = duration + 0.5;
-      extendPrematureLayerFadeOuts(renderScenes[index], duration + 0.5);
+      //
+      // Real, confirmed-live bug fixed here (2026-09-16, direct user
+      // report against a real generated video: scenes visibly cutting
+      // before their own animation finished, "the scene speed shouldnt
+      // be dependent on the audio... the audio should be the one to fit
+      // with the scene"): this used to be a blind overwrite
+      // (`= duration + 0.5`), unconditionally REPLACING the beat's own
+      // already-computed duration - the one buildMographBeatVisual's own
+      // clampMographDuration (sceneSchema.js) carefully derived from that
+      // SPECIFIC template's real animation completion time (hero settle,
+      // line-draw finish, etc.). If the TTS clip happened to be SHORTER
+      // than the template's own true minimum, the visual got cut off
+      // mid-animation to match the shorter audio - exactly backwards from
+      // what was asked. Now takes the MAX of the two: the beat only ever
+      // EXTENDS to make room for narration that runs long (unavoidable -
+      // audio can never be cut mid-word), never shrinks below what the
+      // template's own choreography actually needs to finish naturally.
+      const audioDrivenDuration = duration + 0.5;
+      const finalDuration = Math.max(renderScenes[index].params.duration || 0, audioDrivenDuration);
+      renderScenes[index].params.duration = finalDuration;
+      extendPrematureLayerFadeOuts(renderScenes[index], finalDuration);
     } catch (err) {
       console.warn(`[narrationPrefetch] beat ${index} narration failed, keeping authored duration: ${err.message}`);
     }
