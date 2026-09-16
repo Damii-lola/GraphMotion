@@ -129,6 +129,33 @@ function computeChunkRanges(sceneJSON) {
   return chunkRanges;
 }
 
+// See render-worker/longVideoOrchestrator.js's own copy of these for the
+// full real-production-incident writeup (a chunk failure had ZERO retry
+// logic on this fallback-local-render path, and a direct user
+// requirement to wait before retrying so residual memory pressure has a
+// real chance to clear rather than repeating an identical doomed
+// attempt). Kept identical here so local fallback rendering behaves the
+// same way a worker does.
+const CHUNK_RETRY_MAX_ATTEMPTS = 3;
+const CHUNK_RETRY_DELAY_MS = 15 * 1000;
+
+async function renderChunkWithRetries(jobId, sceneJSON, start, end, chunkPath, index, onChunkProgress) {
+  let attempt = 1;
+  for (;;) {
+    try {
+      await renderSingleChunk(jobId, sceneJSON, start, end, chunkPath, index, onChunkProgress);
+      return;
+    } catch (err) {
+      if (attempt >= CHUNK_RETRY_MAX_ATTEMPTS) {
+        throw new Error(`chunk ${index} failed ${attempt} time(s), giving up: ${err.message}`);
+      }
+      console.warn(`[longVideoOrchestrator] job ${jobId} chunk ${index} failed (attempt ${attempt}/${CHUNK_RETRY_MAX_ATTEMPTS}): ${err.message} - waiting ${CHUNK_RETRY_DELAY_MS / 1000}s then retrying`);
+      attempt++;
+      await new Promise((resolve) => setTimeout(resolve, CHUNK_RETRY_DELAY_MS));
+    }
+  }
+}
+
 /**
  * Renders sceneJSON to outputPath, transparently chunking if the
  * video is long enough to need it. onProgress receives 0-100 across
@@ -164,7 +191,7 @@ async function renderLongFormVideo(jobId, sceneJSON, onProgress) {
     const workDir = path.join(os.tmpdir(), 'shortform-renders', `${jobId}-chunks`);
     fs.mkdirSync(workDir, { recursive: true });
     const chunkPath = path.join(workDir, 'chunk-0.mp4');
-    await renderSingleChunk(jobId, sceneJSON, 0, totalDuration, chunkPath, 0, (pct) => {
+    await renderChunkWithRetries(jobId, sceneJSON, 0, totalDuration, chunkPath, 0, (pct) => {
       if (onProgress) onProgress(Math.min(99, pct)); // hold at 99 until the rename below actually finishes, matching the multi-chunk path's own convention
     });
     const finalOutputPath = path.join(os.tmpdir(), 'shortform-renders', `${jobId}.mp4`);
@@ -190,12 +217,18 @@ async function renderLongFormVideo(jobId, sceneJSON, onProgress) {
     const { start, end } = chunkRanges[i];
     const chunkPath = path.join(workDir, `chunk-${i}.mp4`);
 
-    await renderSingleChunk(jobId, sceneJSON, start, end, chunkPath, i, (chunkPct) => {
-      if (onProgress) {
-        const overallPct = Math.round(((i + chunkPct / 100) / chunkRanges.length) * 100);
-        onProgress(Math.min(99, overallPct)); // hold at 99 until concat actually finishes
-      }
-    });
+    try {
+      await renderChunkWithRetries(jobId, sceneJSON, start, end, chunkPath, i, (chunkPct) => {
+        if (onProgress) {
+          const overallPct = Math.round(((i + chunkPct / 100) / chunkRanges.length) * 100);
+          onProgress(Math.min(99, overallPct)); // hold at 99 until concat actually finishes
+        }
+      });
+    } catch (err) {
+      for (const p of chunkPaths) fs.unlink(p, () => {});
+      fs.rm(workDir, { recursive: true, force: true }, () => {});
+      throw err;
+    }
 
     chunkPaths.push(chunkPath);
 
