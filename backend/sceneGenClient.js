@@ -292,8 +292,12 @@ function validateCompactBeatVars(template, vars) {
       if (icons.length < 3) return `needs "icons": at least 3 real Iconify names (got ${icons.length} valid ones)`;
       return null;
     case 'connectorList': {
+      // 2+ -> exactly 3 (2026-09-16, direct user requirement, "no
+      // exceptions"): a 2-item connector line is mathematically straight
+      // (no curve possible through only 2 points) - see sceneSchema.js's
+      // own buildConnectorListLayers dispatch for the full reasoning.
       const items = Array.isArray(vars.items) ? vars.items.filter((it) => isPlainObjectLocal(it) && isRealIcon(it.icon) && typeof it.label === 'string' && it.label.trim()) : [];
-      if (items.length < 2) return `needs "items": at least 2 entries, each a real {icon,label} (got ${items.length} valid ones)`;
+      if (items.length !== 3) return `needs "items": EXACTLY 3 entries, each a real {icon,label} (got ${items.length} valid ones)`;
       return null;
     }
     case 'phoneSwap':

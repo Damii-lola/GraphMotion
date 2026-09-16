@@ -4755,93 +4755,13 @@ function shiftLayerTimeline(layer, offset) {
   return shifted;
 }
 
-// Real, direct user requirement (2026-09-15): every template's own
-// opening ~0.3-0.6s must read as an immediate, eye-catching,
-// scroll-stopping hook - a real Phase 7 audit (rendered every one of
-// the 19 templates in isolation, frame-extracted the full clip, not
-// just the first few frames) found several opening on a near-blank
-// frame while their own icons/text ease in over that same window.
-// Rather than rework each already-tuned per-template entrance timing
-// individually, this fires ONE shared big soft flash at the very
-// start of the beat's own content clock (localT=0, i.e. right when
-// the incoming camera pan has already handed off - see engine/
-// timeline.js's own pan-then-unfreeze comment) so there's always real,
-// high-contrast motion on screen from frame one, on top of whatever
-// that template's own content build does. Same white-ellipse +
-// gaussianBlur "impact" shape mouseWordDrag's own __mw_impact_flash__
-// already uses for its landing hit, just bigger/softer and timed to
-// the beat's start instead of a mid-beat collision.
-function buildOpeningPunchFlash(accentColor, opts = {}) {
-  // 900 -> 400 (2026-09-16, real live production incident): a real
-  // multi-beat generation failed outright, every chunk on every render
-  // worker exceeding the 210MB memory cap (up to 314MB - 50% over
-  // budget), traced to THIS layer. sceneBuilder.js's own withEffects/
-  // applyEffectToCanvas calls ctx.getImageData(0,0,canvas.width,
-  // canvas.height) FRESH ON EVERY FRAME for any gaussianBlur/boxBlur
-  // effect (no pooling - a real, pre-existing, project-wide pattern for
-  // ALL blurred layers, not something this layer alone caused), for the
-  // layer's ENTIRE beat duration, not just its own real visible ~0.3s
-  // opacity window (the render loop has no "skip effects when opacity
-  // is 0" optimization). At the OLD 900px size (already wider than the
-  // 540px-wide canvas itself - CANVAS_WIDTH/HEIGHT, sceneSchema.js -
-  // meaning much of it was being clipped by the frame edges anyway, no
-  // real visual loss from shrinking it) that's a fresh ~3.1MB ImageData
-  // allocation (900*900*4 bytes) EVERY SINGLE FRAME, for as long as the
-  // beat plays, across however many of the 10 templates carrying this
-  // layer land in the same render chunk - confirmed as the proximate
-  // cause, not the deeper getImageData-per-frame pattern itself (which
-  // predates this layer and every other blurred glow in this codebase
-  // already pays a smaller version of the same cost) - other templates'
-  // own glows are icon-sized (tens to a couple hundred px), this was by
-  // a wide margin the single largest blurred buffer in the whole
-  // codebase. 400px cuts that same per-frame allocation to ~0.64MB
-  // (~5x smaller) while staying visually substantial - real-verified via
-  // a render through the actual chunked production pipeline afterward.
-  const size = opts.size || 400;
-  const position = opts.position || [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
-  // Real, confirmed-live finding (2026-09-15): the first version of this
-  // tinted the flash to the beat's own accentColor, which on templates
-  // whose default board background is already a warm/light harmonized
-  // hue (connectorList's own cream/peach glow, confirmed via a real
-  // render + frame extraction) blended almost invisibly into the
-  // existing ambient background glow instead of reading as a real flash.
-  // Always white now (the accentColor param is accepted for call-site
-  // compatibility but intentionally unused) - a plain white flash read
-  // clearly against every background tested (both the light connectorList
-  // case and the dark mergeCluster case), tighter blur + higher peak
-  // opacity than the original pass so it reads as a real pop rather than
-  // a soft bloom that can still get lost against a bright board.
-  const peakOpacity = opts.peakOpacity != null ? opts.peakOpacity : 0.68;
-  return {
-    id: opts.id || '__opening_punch_flash__',
-    type: 'shape',
-    width: size,
-    height: size,
-    position,
-    opacity: {
-      keyframes: [
-        { time: 0, value: 0 },
-        {
-          time: 0.05, value: peakOpacity, interpolation: 'easing', easing: 'easeOutCubic',
-        },
-        {
-          time: 0.32, value: 0, interpolation: 'easing', easing: 'easeInCubic',
-        },
-      ],
-    },
-    contents: [
-      { type: 'path', shape: { kind: 'ellipse', params: { width: size, height: size } } },
-      { type: 'fill', color: '#FFFFFF' },
-    ],
-    effects: [{ type: 'gaussianBlur', params: { radius: 42 } }],
-  };
-}
-
-function buildNodeClusterLayers({ icons, chosenIndex, accentColor, introText }) {
+function buildNodeClusterLayers({
+  icons, chosenIndex, accentColor, introText, label,
+}) {
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
   const RING_RADIUS = 150;
   const NODE_SIZE = 70;
-  const layers = [buildOpeningPunchFlash(accentColor, { position: CENTER })];
+  const layers = [];
   icons.forEach((icon, i) => {
     const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
     const x = CENTER[0] + Math.cos(angle) * RING_RADIUS;
@@ -5329,6 +5249,35 @@ function buildNodeClusterLayers({ icons, chosenIndex, accentColor, introText }) 
     ],
   });
 
+  // Direct user requirement (2026-09-16): "text should appear after the
+  // nodes combine underneath the icon" - OPTIONAL, same "name what was
+  // just settled on" idiom mergeCluster's own "label" already uses for
+  // its result circle, timed to land right after the hero's own
+  // explosive settle (HERO_SETTLE_TIME) rather than fighting it for
+  // attention mid-explosion.
+  if (typeof label === 'string' && label.trim()) {
+    layers.push({
+      id: '__node_hero_label__',
+      type: 'text',
+      text: label,
+      fontFamily: 'Poppins Black',
+      fontWeight: '900',
+      fontSize: 30,
+      fillStyle: '#FFFFFF',
+      textAlign: 'center',
+      maxWidth: CANVAS_WIDTH - 100,
+      position: [CENTER[0], CENTER[1] + NODE_SIZE * 2.15 + 40],
+      opacity: { keyframes: [
+        { time: HERO_SETTLE_TIME + 0.1, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: HERO_SETTLE_TIME + 0.35, value: 1 },
+      ] },
+      scale: { keyframes: [
+        { time: HERO_SETTLE_TIME + 0.1, value: [0.85, 0.85], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: HERO_SETTLE_TIME + 0.35, value: [1, 1] },
+      ] },
+    });
+  }
+
   if (introText) {
     const shiftedLayers = layers.map((l) => shiftLayerTimeline(l, INTRO_TEXT_DURATION));
     return [...buildIntroTextLayers(introText, accentColor), ...shiftedLayers];
@@ -5360,7 +5309,7 @@ function buildNodeClusterExtendedLayers({
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
   const RING_RADIUS = 150;
   const NODE_SIZE = 70;
-  const layers = [buildOpeningPunchFlash(accentColor, { position: CENTER })];
+  const layers = [];
   icons.forEach((icon, i) => {
     const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
     const x = CENTER[0] + Math.cos(angle) * RING_RADIUS;
@@ -5923,6 +5872,20 @@ function buildNodeClusterExtendedLayers({
 //    incoming and outgoing control point (scaled per-segment so
 //    uneven spacing doesn't distort it) - this is what actually produces
 //    a smooth pass-through curve at every waypoint.
+// 0.33 -> 0.55 (2026-09-16, direct user requirement: "the line meant to
+// not be a straight line but a curved line... MAKE IT REQUIRED TO BE...
+// CURVED LINE, no exceptions"): a real, confirmed-live complaint against
+// a real generated video - with connectorList's own items count
+// previously allowed as low as 2, a 2-point path is mathematically
+// unable to curve at all (a straight line is the only shape 2 points can
+// ever describe, regardless of any tangent math here), and even at 3
+// points the old 0.33 tangent fraction rounded the corner only mildly,
+// reading more as "two straight segments with a soft corner" than a
+// genuinely flowing curve. Bumped to 0.55 so consecutive segments blend
+// into one continuous S-curve - paired with buildConnectorListLayers' own
+// item count now being hard-locked to exactly 3 (see its own doc
+// comment), which is what actually guarantees a curve is geometrically
+// possible in the first place.
 function buildConnectorLineAnchors(positions) {
   return positions.map((p, i) => {
     const prev = positions[i - 1];
@@ -5934,12 +5897,12 @@ function buildConnectorLineAnchors(positions) {
     const ux = dirX / dirLen; const uy = dirY / dirLen;
     if (next) {
       const segLen = Math.hypot(next[0] - p[0], next[1] - p[1]);
-      const len = segLen * 0.33;
+      const len = segLen * 0.55;
       anchor.outTangent = [ux * len, uy * len];
     }
     if (prev) {
       const segLen = Math.hypot(p[0] - prev[0], p[1] - prev[1]);
-      const len = segLen * 0.33;
+      const len = segLen * 0.55;
       anchor.inTangent = [-ux * len, -uy * len];
     }
     return anchor;
@@ -6019,7 +5982,7 @@ function buildOutroTextLayer(outroText, accentColor, appearAt) {
 function buildConnectorListLayers({ items, accentColor, outroText }) {
   const NODE_SIZE = 90;
   const positions = computeZigzagPositions(items.length);
-  const layers = [buildOpeningPunchFlash(accentColor)];
+  const layers = [];
 
   const rawAnchors = buildConnectorLineAnchors(positions);
   const xs = positions.map((p) => p[0]);
@@ -6035,18 +5998,26 @@ function buildConnectorListLayers({ items, accentColor, outroText }) {
 
   const totalRevealTime = 0.5 + items.length * 0.5;
   const LINE_START_TIME = 0.2;
-  // Real spec (2026-09-07): "as [the line] passes a point that an (icon &
-  // text) is meant to appear after a 0.45 sec delay". The trim's own
-  // "end" ramps 0->100 between LINE_START_TIME and totalRevealTime under
-  // easeOutCubic - inverting that analytically (1-(1-x)^3, solved for x
-  // given a target value) gives the EXACT real time the trim reaches any
-  // given %, not an assumed-linear approximation.
+  // easeOutCubic -> linear (2026-09-16, direct user requirement: "has a
+  // delay at the end that shouldnt be there remove it, right before the
+  // last node spawns"): a real, confirmed-live pacing bug, not a
+  // perception issue - easeOutCubic decelerates hard as it approaches
+  // 100% (its own derivative goes to ~0 right at completion), so the
+  // trim's draw genuinely CRAWLED through its final stretch in real wall-
+  // clock time even though the analytic inversion below still computed
+  // the "correct" time for each anchor's own % along the curve - the
+  // last item's own appearAt landed close to totalRevealTime, but the
+  // visibly slow crawl getting there read as a dead pause right before
+  // it. Linear removes that deceleration entirely - the line now draws
+  // at one constant real speed start to finish, so nothing lags before
+  // the final node. timeLinePassesAnchor's own formula below is
+  // simplified to match (no cubic-root inversion needed for a linear
+  // ramp - frac IS the fraction of elapsed time now).
   const cumLengths = computeCumulativeArcLengths(rawAnchors);
   const totalLength = cumLengths[cumLengths.length - 1] || 1;
   function timeLinePassesAnchor(i) {
     const frac = cumLengths[i] / totalLength;
-    const tNorm = 1 - (1 - frac) ** (1 / 3);
-    return LINE_START_TIME + tNorm * (totalRevealTime - LINE_START_TIME);
+    return LINE_START_TIME + frac * (totalRevealTime - LINE_START_TIME);
   }
 
   layers.push({
@@ -6058,7 +6029,7 @@ function buildConnectorListLayers({ items, accentColor, outroText }) {
     rotation: 0,
     contents: [
       { type: 'path', shape: { kind: 'customPath', params: { anchors, closed: false } } },
-      { type: 'trim', start: 0, end: { keyframes: [{ time: LINE_START_TIME, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: totalRevealTime, value: 100 }] } },
+      { type: 'trim', start: 0, end: { keyframes: [{ time: LINE_START_TIME, value: 0 }, { time: totalRevealTime, value: 100 }] } },
       // Real spec (2026-09-07): "give the line multiple layers: Core -
       // thin bright stroke, Mid - slightly thicker semi-transparent glow,
       // Outer - wide soft atmospheric bloom." A single stroke can't carry
@@ -6087,19 +6058,11 @@ function buildConnectorListLayers({ items, accentColor, outroText }) {
     // relationship to when the line-tip actually got there).
     const appearAt = timeLinePassesAnchor(i) + 0.45;
     lastAppearAt = Math.max(lastAppearAt, appearAt);
-    // Real, confirmed-live finding (2026-09-15, Phase 7 deeper pass): once
-    // an early item lands it sits perfectly frozen at scale [1,1] for the
-    // rest of the reveal (while later items are still arriving) and for
-    // the beat's own real ~0.95s hold after the last item lands (no
-    // outroText case) - the line's own ongoing draw covers the FIRST part
-    // of that, but nothing at all covers the final hold. Small wiggle,
-    // same established technique as nodeCluster's own hold fix - cloned
-    // onto the icon via cloneTrack below, so bg+icon breathe in lockstep.
-    const nodeKf = { expression: 'wiggle(0.5, 0.02)', base: { keyframes: [
+    const nodeKf = { keyframes: [
       { time: appearAt, value: [0, 0], interpolation: 'easing', easing: 'easeOutCubic' },
       { time: appearAt + 0.35, value: [1.15, 1.15], interpolation: 'easing', easing: 'easeInOutCubic' },
       { time: appearAt + 0.5, value: [1, 1] },
-    ] } };
+    ] };
     const opacityKf = { keyframes: [{ time: appearAt, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: appearAt + 0.25, value: 1 }] };
     layers.push({
       id: `__list_node_${i}__`,
@@ -6220,7 +6183,6 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
   const bodyScale = { keyframes: [{ time: 0, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.4, value: [1, 1] }] };
 
   const layers = [
-    buildOpeningPunchFlash(accentColor, { position: CENTER }),
     // Real, direct spec: "a faint larger soft shape... behind the phone
     // at low opacity to create hierarchy and depth." Pushed first (the
     // back of the stack) and sized bigger than the phone itself - safe
@@ -6599,7 +6561,6 @@ function buildSplitConvergeLayers({ icon, accentColor, label }) {
     { time: ARRIVE_TIME, value: 1, interpolation: 'easing', easing: 'easeOutCubic' },
   ] };
   const layers = [
-    buildOpeningPunchFlash(accentColor, { position: CENTER }),
     // Real, confirmed-live bug (2026-09-10, direct user report with the
     // actual video attached: a whole beat rendering completely blank
     // except its own label text). Root cause: every OTHER visible layer
@@ -6834,32 +6795,27 @@ function buildMergeClusterLayers({
   // popped up.
   const CONVERGE_MOVE_DURATION = 0.3;
   // Real, direct user spec (2026-09-08): "the scene shouldn't start
-  // until the camera is in place." Originally solved HERE with a manual
-  // CAMERA_SETTLE_DELAY (matching renderEngine.js's own pan duration)
-  // added to every icon's own start delay. Removed entirely (2026-09-15,
-  // Phase 7 audit) - a real, confirmed-live DOUBLE WAIT, not just a stale
-  // mirrored constant: two days after this fix shipped, a general,
-  // engine-level fix landed for the exact same problem (renderEngine.js's
-  // own frame loop now computes `beatLocalT = Math.max(0, localT -
-  // panDuration)`, so EVERY beat's own content clock already holds at its
-  // first frame until the camera has genuinely arrived, automatically,
-  // beat-index-aware, no per-template opt-in needed - see engine/
-  // timeline.js's own doc comment). This template's own manual delay was
-  // never removed once that landed, so it was adding a SECOND wait on
-  // top of the engine's already-shifted local time - real frame
-  // extraction confirmed the first icon wasn't appearing until nearly
-  // double the real pan duration into the beat. Every other template in
-  // this file already relies purely on the engine-level hold (their own
-  // per-element delays start near 0, e.g. nodeCluster's `0.05*i`) - this
-  // just brings mergeCluster in line with that same convention.
-  const CONVERGE_TIME = REVEAL_INTERVAL * (icons.length - 1) + ICON_SETTLE_TIME + HOLD_BEFORE_CONVERGE;
-  const layers = [buildOpeningPunchFlash(accentColor, { position: CENTER })];
+  // until the camera is in place." Every beat after the first pans/zooms
+  // in from the previous one (renderEngine.js's own DEFAULT_PAN_DURATION_
+  // SECONDS, 0.75s) - but a beat's own content already starts animating
+  // from ITS OWN local time 0 regardless of whether that pan is still
+  // playing, so without this, the first icon or two could already be
+  // popping in while the camera was still mid-transition, arriving into
+  // a scene that had already started rather than a settled one. Matches
+  // renderEngine.js's own default exactly (kept as a separate constant,
+  // not imported, since this file is deliberately dependency-free from
+  // the render engine's own internals - see this file's other "mirrors
+  // renderEngine.js" comments for the same pattern) - update both
+  // together if the render engine's own default ever changes.
+  const CAMERA_SETTLE_DELAY = 0.75;
+  const CONVERGE_TIME = CAMERA_SETTLE_DELAY + REVEAL_INTERVAL * (icons.length - 1) + ICON_SETTLE_TIME + HOLD_BEFORE_CONVERGE;
+  const layers = [];
 
   icons.forEach((icon, i) => {
     const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
     const startX = CENTER[0] + Math.cos(angle) * START_RADIUS;
     const startY = CENTER[1] + Math.sin(angle) * START_RADIUS;
-    const delay = REVEAL_INTERVAL * i;
+    const delay = CAMERA_SETTLE_DELAY + REVEAL_INTERVAL * i;
     const posKf = { keyframes: [
       { time: delay, value: [startX, startY], interpolation: 'easing', easing: 'easeOutCubic' },
       { time: delay + 0.25, value: [startX, startY] },
@@ -7657,8 +7613,8 @@ function nodeAbsorbPillEffects(color, glow = 1) {
 function buildNodeAbsorbLayers({
   headerIcon, headerText, items, accentColor,
 }) {
+  const layers = [];
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
-  const layers = [buildOpeningPunchFlash(accentColor, { position: CENTER })];
   const HEADER_UP_Y = CANVAS_HEIGHT / 2 - 150;
 
   const rowY = items.map((_, i) => HEADER_UP_Y + NODE_ABSORB_HEADER_HEIGHT / 2 + NODE_ABSORB_ROW_GAP
@@ -7946,27 +7902,14 @@ function buildNodeAbsorbLayers({
         { time: appearAt + NODE_ABSORB_ROW_POP_DURATION, value: [x, finalY] },
       ],
     });
-    // Real, confirmed-live finding (2026-09-15, Phase 7 deeper pass): once
-    // a row pops in it sits perfectly frozen at scale [1,1] right through
-    // NODE_ABSORB_PRE_EAT_DELAY (1.5s, a real direct user pacing choice -
-    // NOT shortened here, see that constant's own doc comment) until the
-    // header starts eating. Small wiggle, cheap (no extra layer/effect,
-    // just a sine evaluation on the existing scale track - doesn't touch
-    // the real per-pill glow/memory-cost decision documented right above
-    // for `__absorb_row_bg_N__`'s own contents/effects) - same
-    // established technique as nodeCluster/connectorList's own hold
-    // fixes this same pass.
     const popKf = {
-      expression: 'wiggle(0.55, 0.018)',
-      base: {
-        keyframes: [
-          { time: appearAt, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: appearAt + NODE_ABSORB_ROW_POP_DURATION * 0.7, value: [1.08, 1.08], interpolation: 'easing', easing: 'easeOutCubic' },
-          { time: appearAt + NODE_ABSORB_ROW_POP_DURATION, value: [1, 1] },
-          { time: eatenAt - 0.03, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
-          { time: eatenAt, value: [0.2, 0.2] },
-        ],
-      },
+      keyframes: [
+        { time: appearAt, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: appearAt + NODE_ABSORB_ROW_POP_DURATION * 0.7, value: [1.08, 1.08], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: appearAt + NODE_ABSORB_ROW_POP_DURATION, value: [1, 1] },
+        { time: eatenAt - 0.03, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+        { time: eatenAt, value: [0.2, 0.2] },
+      ],
     };
     const opacityKf = {
       keyframes: [
@@ -8145,16 +8088,13 @@ const TEXT_TIERS_EXIT_END_SCALE = 0.72;
 // total time the staggered exit needs end-to-end.
 const TEXT_TIERS_EXIT_DURATION = TEXT_TIERS_EXIT_LINE_STAGGER * 2 + TEXT_TIERS_EXIT_WORD_DURATION;
 // 0.5 -> 2.0 (2026-09-11): direct user ask, "make the text last 1.5s
-// longer before the outro kicks in". 2.0 -> 1.0 (2026-09-15): direct
-// FOLLOW-UP user ask, Phase 7's real full-scene pacing audit ("judge
-// the WHOLE scene... make it fastpace if it aint") - a real render +
-// full-duration frame extraction found this 2.0s hold sitting
-// completely static for roughly 60% of the beat's own total runtime,
-// the single largest dead zone found across all 19 templates this
-// pass. Split the difference rather than reverting all the way to the
-// original 0.5 - still real breathing room to read the line, just no
-// longer long enough to read as frozen.
-const TEXT_TIERS_MIN_HOLD_AFTER_BUILD = 1.0;
+// longer before the outro kicks in" - a real, deliberate +1.5s on top
+// of the original hold, not a re-derivation from anything else. Same
+// "explicit user pacing override, not governed by the generic
+// MOGRAPH_MAX_HOLD_AFTER_SETTLE clamp" reasoning as nodeAbsorb's own
+// NODE_ABSORB_PRE_EAT_DELAY - this template sets its own duration
+// directly via textTiersMinDuration, never through clampMographDuration.
+const TEXT_TIERS_MIN_HOLD_AFTER_BUILD = 2.0;
 const TEXT_TIERS_END_BUFFER = 0.15;
 
 // Distributes words across the 3 lines as evenly as this template's own
@@ -8279,14 +8219,11 @@ function buildTextTiersLayers({ text, accentColor, duration }) {
   // No group-level exit animation anymore (see TEXT_TIERS_EXIT_* consts'
   // own doc comment) - each word carries its own exit now, so the group
   // itself only ever needs to hold the shared position.
-  const layers = [
-    buildOpeningPunchFlash(accentColor, { position: CENTER }),
-    {
-      id: '__tiers_group__',
-      type: 'null',
-      position: CENTER,
-    },
-  ];
+  const layers = [{
+    id: '__tiers_group__',
+    type: 'null',
+    position: CENTER,
+  }];
 
   // Line 3 exits first, line 1 last - reverse of build order.
   const lineExitOrder = [2, 1, 0];
@@ -8747,7 +8684,7 @@ function computeBlueprintTiming(sentence1, sentence2) {
 }
 
 function buildBlueprintTextLayers({ sentence1, sentence2, accentColor }) {
-  const layers = [buildOpeningPunchFlash(accentColor)];
+  const layers = [];
   const fontFamily = 'Playfair Display Italic';
   const lineHeight = BLUEPRINT_TEXT_FONT_SIZE * BLUEPRINT_TEXT_LINE_HEIGHT_RATIO;
 
@@ -11758,7 +11695,6 @@ function buildLineRevealLayers({ text1, text2, accentColor }) {
   const bgGlow = buildLineRevealBgGlow(CX, LINE_REVEAL_HOME_Y, accentColor);
 
   return [
-    buildOpeningPunchFlash(accentColor, { position: [CX, LINE_REVEAL_HOME_Y] }),
     bgGlow,
     text1Matte,
     text2Matte,
@@ -12301,7 +12237,19 @@ function buildTypewriterLinkLayers({
           ],
         },
       },
-      { type: 'stroke', color: '#FFFFFF', width: TWL_THICKNESS, cap: 'round' },
+      // '#FFFFFF' -> accentColor (2026-09-16, direct user complaint: "why
+      // is that line always white, it's color shouldnt be constant, it's
+      // a variable, make it a variable, and make sure to implement
+      // contrast system") - this stroke was a literal hardcoded hex, the
+      // one real hardcoded-color gap in this template (line2/its own
+      // glow already correctly use accentColor, see this function's own
+      // param list). Now tracks the beat's own accentColor like every
+      // other accent-carrying stroke in this file, so it goes through
+      // ensureHarmoniousColors' real per-scene contrast/harmonization
+      // pass at render time exactly like every other accent element
+      // already does, instead of staying a flat, un-harmonized white
+      // regardless of the scene's own background.
+      { type: 'stroke', color: accentColor, width: TWL_THICKNESS, cap: 'round' },
       // Real, found-via-real-pipeline-testing bug: attachLineRevealSparks
       // (an existing, unrelated general-purpose pass - it auto-attaches a
       // traveling spark to ANY customPath+trim+stroke shape with no fill,
@@ -12324,9 +12272,15 @@ function buildTypewriterLinkLayers({
     // as the fullBar above. God-tier pass adds a second, LOW-opacity bloom
     // layer (0.14, well under the 0.85 default that caused the original
     // wash-out) for "bright core + soft bloom" without reintroducing it.
+    // Both glows below now track accentColor too (see the stroke's own
+    // doc comment above for the full reasoning) - TWL_BAR_BLOOM_GLOW (a
+    // shared white constant, still correctly white for the SEPARATE
+    // "fullBar" impact-flash element further down, a deliberate white-
+    // flash design choice for that different shape) isn't reused here
+    // anymore since it can't take a per-call color.
     effects: [
-      { type: 'outerGlow', params: { blur: 4, color: '#FFFFFF', opacity: 0.4, blendMode: 'screen' } },
-      TWL_BAR_BLOOM_GLOW,
+      { type: 'outerGlow', params: { blur: 4, color: accentColor, opacity: 0.4, blendMode: 'screen' } },
+      { type: 'outerGlow', params: { blur: TWL_BLOOM_GLOW_BLUR, color: accentColor, opacity: TWL_BLOOM_GLOW_OPACITY, blendMode: 'screen' } },
     ],
   };
 
@@ -15649,7 +15603,10 @@ function buildMographBeatVisual(beat) {
     if (icons.length >= 3) {
       const chosenIndex = Number.isInteger(spec.chosenIndex) && spec.chosenIndex >= 0 && spec.chosenIndex < icons.length ? spec.chosenIndex : 0;
       const introText = typeof spec.introText === 'string' && spec.introText.trim() ? truncateAtWordBoundary(spec.introText.trim(), 40) : null;
-      layers = buildNodeClusterLayers({ icons, chosenIndex, accentColor, introText });
+      const label = typeof spec.label === 'string' && spec.label.trim() ? truncateAtWordBoundary(spec.label.trim().toUpperCase(), 24) : null;
+      layers = buildNodeClusterLayers({
+        icons, chosenIndex, accentColor, introText, label,
+      });
       // The intro text phase adds INTRO_TEXT_DURATION seconds of real
       // screen time BEFORE the icon cluster even starts - if the beat's
       // own authored duration isn't extended to cover it, the icon
@@ -15659,14 +15616,26 @@ function buildMographBeatVisual(beat) {
       if (introText && isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
         beat.params.duration += INTRO_TEXT_DURATION;
       }
-      clampMographDuration(beat, HERO_SETTLE_TIME + (introText ? INTRO_TEXT_DURATION : 0));
+      // +0.45: mirrors mergeCluster's own "+0.45 for the label's own
+      // landing" floor - buildNodeClusterLayers' own label lands at
+      // HERO_SETTLE_TIME+0.35, so the beat needs at least that much
+      // extra room past the hero's own settle or the label gets cut off
+      // mid pop-in.
+      clampMographDuration(beat, HERO_SETTLE_TIME + (introText ? INTRO_TEXT_DURATION : 0) + (label ? 0.45 : 0));
     }
   } else if (spec.type === 'connectorList' && Array.isArray(spec.items)) {
+    // 2-6 -> exactly 3 (2026-09-16, direct user requirement, "no
+    // exceptions"): the connector line's own curve (buildConnectorLineAnchors)
+    // is mathematically a straight segment with only 2 points - no
+    // amount of tangent smoothing can curve a 2-point path - so a real
+    // generated video with only 2 items always rendered a dead-straight
+    // line, a direct user complaint. Locking to exactly 3 is what
+    // actually guarantees the curve requirement below is even possible.
     const items = spec.items
       .filter((it) => isPlainObject(it) && typeof it.icon === 'string' && MOGRAPH_ICON_RE.test(it.icon) && typeof it.label === 'string' && it.label.trim())
-      .slice(0, 6)
+      .slice(0, 3)
       .map((it) => ({ icon: it.icon, label: truncateAtWordBoundary(it.label.trim().toUpperCase(), 18) }));
-    if (items.length >= 2) {
+    if (items.length === 3) {
       const outroText = typeof spec.outroText === 'string' && spec.outroText.trim() ? truncateAtWordBoundary(spec.outroText.trim(), 40) : null;
       layers = buildConnectorListLayers({ items, accentColor, outroText });
       // Same reasoning as nodeCluster's own introText auto-extend above -
@@ -15709,18 +15678,14 @@ function buildMographBeatVisual(beat) {
     const label = typeof spec.label === 'string' && spec.label.trim() ? truncateAtWordBoundary(spec.label.trim().toUpperCase(), 24) : null;
     if (icons.length >= 2) {
       layers = buildMergeClusterLayers({ icons, resultIcon: spec.resultIcon, accentColor, label });
-      // Mirrors buildMergeClusterLayers' own REVEAL_INTERVAL(0.4)/
-      // ICON_SETTLE_TIME(0.25)/HOLD_BEFORE_CONVERGE(0.35) CONVERGE_TIME
-      // formula, plus the result circle's own +0.45s arrival bounce
-      // after that. Real, confirmed-live finding: at this template's own
-      // max icon count (5), the OLD flat base duration finished BEFORE
-      // this real completion time, cutting the result circle's own
-      // pop-in off mid-motion. CAMERA_SETTLE_DELAY(0.75) term removed
-      // (2026-09-15, Phase 7 audit) - see buildMergeClusterLayers' own
-      // doc comment for why it was a real double-wait with the engine's
-      // own generic camera-sync hold, not a genuine part of this
-      // template's own completion time.
-      const convergeTime = 0.4 * (icons.length - 1) + 0.25 + 0.35;
+      // Mirrors buildMergeClusterLayers' own CAMERA_SETTLE_DELAY(0.75)/
+      // REVEAL_INTERVAL(0.4)/ICON_SETTLE_TIME(0.25)/HOLD_BEFORE_CONVERGE
+      // (0.35) CONVERGE_TIME formula, plus the result circle's own
+      // +0.45s arrival bounce after that. Real, confirmed-live finding:
+      // at this template's own max icon count (5), the OLD flat base
+      // duration finished BEFORE this real completion time, cutting the
+      // result circle's own pop-in off mid-motion.
+      const convergeTime = 0.75 + 0.4 * (icons.length - 1) + 0.25 + 0.35;
       clampMographDuration(beat, convergeTime + 0.45);
     }
   } else if (spec.type === 'squareSpin' && typeof spec.text === 'string' && spec.text.trim() && typeof spec.icon1 === 'string' && MOGRAPH_ICON_RE.test(spec.icon1) && typeof spec.icon2 === 'string' && MOGRAPH_ICON_RE.test(spec.icon2)) {
@@ -15766,20 +15731,10 @@ function buildMographBeatVisual(beat) {
         // constant's own doc comment) - same introText auto-extend as
         // plain nodeCluster, PLUS a floor under the total so Phase 2
         // never gets cut off by a short authored duration.
-        // Real, confirmed-live bug (2026-09-15, Phase 7's full-scene
-        // pacing audit): this used to be a raw floor-only Math.max, with
-        // NO ceiling at all - unlike every other mograph template, which
-        // goes through clampMographDuration's own [complete+minHold,
-        // complete+MOGRAPH_MAX_HOLD_AFTER_SETTLE] clamp. A real isolated
-        // render measured this template landing at 6.4s minimum already
-        // (by far the longest of all 19), and with no ceiling, a longer
-        // AI-authored narration could stretch its own trailing dead hold
-        // arbitrarily further. Now routed through the same shared clamp
-        // as everything else, just with its own real completeTime floor.
-        if (introText && isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-          beat.params.duration += INTRO_TEXT_DURATION;
+        if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
+          if (introText) beat.params.duration += INTRO_TEXT_DURATION;
+          beat.params.duration = Math.max(beat.params.duration, NODE_CLUSTER_EXTENDED_MIN_DURATION + (introText ? INTRO_TEXT_DURATION : 0));
         }
-        clampMographDuration(beat, NODE_CLUSTER_EXTENDED_MIN_DURATION + (introText ? INTRO_TEXT_DURATION : 0), 0);
       }
     }
   } else if (spec.type === 'textPopOut' && typeof spec.text === 'string' && spec.text.trim()) {
@@ -17975,62 +17930,54 @@ function requireAtLeastOneRealPhoto(sceneJSON, errors) {
 // `beat.mograph?.type`) and can never compete with or get crowded out by
 // whatever the AI itself picked for the rest of the video.
 //
-// Sequence, revised three times on direct follow-up from an initial
-// "GraphMotion -> url -> strike it out -> Coming soon" draft: (1) "the
-// very top, big and bold: THE FUTURE OF TIKTOK AUTOMATION IS HERE" - a
-// real scroll-stopping HOOK line leads the whole beat, landing
-// fastest/hardest of everything here; (2) the brand name pops in next
-// (the identity); (3) the url pops in beneath it, no longer struck
-// through - direct correction, "dont cross out the link"; (4) a caption
-// beneath the link instead: "Click the link for more info and to be
-// notified when [brand] is fully released." Brand renamed GraphMotion ->
-// SmartClips (smartclips.org) on a later direct follow-up - VISUAL copy
-// only, per direct instruction ("leave the technical aspectss") - the
-// product/repo/package names elsewhere in this codebase are deliberately
-// untouched. No exit - this is the LAST thing on screen for the whole
-// video, so the final HELD frame needs to stay fully legible/on-screen,
-// not fade toward nothing.
+// Rebuilt from scratch (2026-09-16), direct user complaint against the
+// original 4-part version ("THE FUTURE OF TIKTOK AUTOMATION IS HERE"
+// headline + brand + url + a full-sentence caption): "too much wordsss"
+// and "the animation for it is rubbish." Cut from 4 text blocks down to
+// 2 ("SmartClips" + "smartclips.org" - the headline duplicated the
+// landing page's own hero copy for no reason, and the caption sentence
+// was pure word-bloat nobody needs to read on a closing card) and
+// rebuilt the motion as one coherent sequence instead of 4 separately
+// popping blocks: brand lands with a real impact flash (the SAME white-
+// blurred-ellipse language the project's now-reverted per-template
+// opening flash used, but a ONE-OFF here, authored once for this single
+// beat, not a project-wide per-frame cost multiplied across every
+// template the way that reverted pass was), then a drawn accent
+// underline trims in beneath the url (real motion, not another pop),
+// giving this beat its own distinct "reveal" identity instead of
+// reusing the exact same scale-overshoot four times in a row.
 const CTA_ACCENT = '#8B5CF6';
-const CTA_GROUP_Y = CANVAS_HEIGHT * 0.44;
-const CTA_HEADLINE_FONT_SIZE = 34;
-const CTA_BRAND_FONT_SIZE = 46;
+const CTA_GROUP_Y = CANVAS_HEIGHT * 0.46;
+const CTA_BRAND_FONT_SIZE = 56;
 const CTA_URL_FONT_SIZE = 25;
-const CTA_CAPTION_FONT_SIZE = 17;
 // Local Y offsets from CTA_GROUP_Y - see the group's own doc comment
 // below for why these are LOCAL (breathing during the hold scales
 // correctly around the composition's own center only if every child is a
 // local offset from the group, never an absolute canvas position).
-const CTA_HEADLINE_LOCAL_Y = -175;
 const CTA_BRAND_LOCAL_Y = -20;
-const CTA_URL_LOCAL_Y = 42;
-const CTA_CAPTION_LOCAL_Y = 88;
+const CTA_URL_LOCAL_Y = 44;
+const CTA_LINE_LOCAL_Y = 66;
 
-// The hook leads, fast and hard - direct spec is this exact line is what
-// has to stop the scroll, so it lands first, fastest, and with the
-// biggest pop of anything in this beat (see its own doc comment below).
-const CTA_HEADLINE_START = 0.05;
-const CTA_HEADLINE_POP_DURATION = 0.3;
-const CTA_BRAND_START = 0.42;
-const CTA_BRAND_POP_DURATION = 0.28;
-const CTA_URL_START = 0.78;
-const CTA_URL_POP_DURATION = 0.22;
-const CTA_CAPTION_START = 1.1;
-const CTA_CAPTION_POP_DURATION = 0.24;
-const CTA_HOLD_DURATION = 1.7;
+const CTA_BRAND_START = 0.08;
+const CTA_BRAND_POP_DURATION = 0.32;
+const CTA_URL_START = 0.46;
+const CTA_URL_POP_DURATION = 0.2;
+const CTA_LINE_START = 0.58;
+const CTA_LINE_DRAW_DURATION = 0.24;
+const CTA_HOLD_DURATION = 1.6;
 const CTA_END_BUFFER = 0.2;
 const CTA_BREATH_PERIOD = 0.9;
 const CTA_BREATH_AMOUNT = 0.012;
 
 function computeCtaOutroTiming() {
-  const headlineEnd = CTA_HEADLINE_START + CTA_HEADLINE_POP_DURATION;
   const brandEnd = CTA_BRAND_START + CTA_BRAND_POP_DURATION;
   const urlEnd = CTA_URL_START + CTA_URL_POP_DURATION;
-  const captionEnd = CTA_CAPTION_START + CTA_CAPTION_POP_DURATION;
-  const completeTime = captionEnd;
+  const lineEnd = CTA_LINE_START + CTA_LINE_DRAW_DURATION;
+  const completeTime = Math.max(urlEnd, lineEnd);
   const holdEnd = completeTime + CTA_HOLD_DURATION;
   const totalEnd = holdEnd + CTA_END_BUFFER;
   return {
-    headlineEnd, brandEnd, urlEnd, captionEnd, completeTime, holdEnd, totalEnd,
+    brandEnd, urlEnd, lineEnd, completeTime, holdEnd, totalEnd,
   };
 }
 
@@ -18066,168 +18013,62 @@ function buildCtaOutroLayers() {
     id: '__cta_glow_bg__',
     type: 'shape',
     parent: '__cta_group__',
-    width: 340,
-    height: 320,
+    width: 320,
+    height: 300,
     position: [0, CTA_BRAND_LOCAL_Y],
     opacity: {
       keyframes: [
         { time: 0, value: 0, interpolation: 'hold' },
         {
-          time: CTA_HEADLINE_START, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+          time: CTA_BRAND_START, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
         },
-        { time: CTA_HEADLINE_START + 0.4, value: 0.22 },
+        { time: CTA_BRAND_START + 0.4, value: 0.22 },
       ],
     },
     contents: [
-      { type: 'path', shape: { kind: 'ellipse', params: { width: 340, height: 320 } } },
+      { type: 'path', shape: { kind: 'ellipse', params: { width: 320, height: 300 } } },
       { type: 'fill', color: CTA_ACCENT },
     ],
     effects: [
-      // 60 -> 30: a real measured speed fix, not just a size preference -
-      // this project's own established "blur cost scales with buffer
-      // area, not just visual size" lesson (project_render_speed_levers)
-      // confirmed directly here too: the first real render of this beat
-      // alone took ~100s for 98 frames, unusually slow even for a heavy
-      // template this session, traced to this blur + the two headline
-      // glows below stacking every frame. Still a genuinely soft ambient
-      // bloom at 30, just far cheaper per frame.
+      // Blur cost scales with buffer area, not just visual size (this
+      // project's own established render-speed lesson) - kept at 30, not
+      // the original 60, for the same reason it was lowered originally.
       { type: 'gaussianBlur', params: { radius: 30 } },
     ],
   });
 
-  // The HOOK - direct spec: "at the very top, big and bold: THE FUTURE OF
-  // TIKTOK AUTOMATION IS HERE." This is the beat's own scroll-stopping
-  // moment, so it gets the hardest pop of anything here: a real DOUBLE
-  // overshoot (past 1x, back down past 1x the other way, then settle -
-  // not the usual single-bounce pop every other text in this file uses)
-  // plus a bright flash-style glow spike coincident with landing (the
-  // SAME keyframed-effect-param technique buttonDraw's own closing-impact
-  // glow boost uses - confirmed project-wide supported, not a new
-  // mechanism). Two lines, hand-broken (not auto-wrap) for exact control
-  // over where "TIKTOK" lands, verified via a real render.
+  // A real one-off impact flash coincident with the brand landing -
+  // small (well under the 900/400px sizes the now-reverted per-template
+  // flash used at its worst), used exactly ONCE per video on this single
+  // beat, not multiplied across every template's own opening.
   layers.push({
-    id: '__cta_headline_1__',
-    type: 'text',
+    id: '__cta_flash__',
+    type: 'shape',
     parent: '__cta_group__',
-    text: 'THE FUTURE OF TIKTOK',
-    fontFamily: 'Poppins Black',
-    fontWeight: '900',
-    fontSize: CTA_HEADLINE_FONT_SIZE,
-    fillStyle: ICON_BRIGHT_TINT,
-    textAlign: 'center',
-    maxWidth: CANVAS_WIDTH - 20,
-    width: CANVAS_WIDTH - 10,
-    height: CTA_HEADLINE_FONT_SIZE * 1.4,
-    position: [0, CTA_HEADLINE_LOCAL_Y],
-    scale: {
-      keyframes: [
-        {
-          time: CTA_HEADLINE_START, value: [1.7, 1.7], interpolation: 'easing', easing: 'easeOutCubic',
-        },
-        {
-          time: CTA_HEADLINE_START + 0.16, value: [0.88, 0.88], interpolation: 'easing', easing: 'easeOutCubic',
-        },
-        {
-          time: CTA_HEADLINE_START + 0.24, value: [1.06, 1.06], interpolation: 'easing', easing: 'easeOutCubic',
-        },
-        { time: t.headlineEnd, value: [1, 1] },
-      ],
-    },
+    width: 260,
+    height: 260,
+    position: [0, CTA_BRAND_LOCAL_Y],
     opacity: {
       keyframes: [
-        { time: 0, value: 0, interpolation: 'hold' },
+        { time: t.brandEnd - 0.02, value: 0 },
         {
-          time: CTA_HEADLINE_START, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+          time: t.brandEnd, value: 0.6, interpolation: 'easing', easing: 'easeOutCubic',
         },
-        { time: CTA_HEADLINE_START + 0.06, value: 1 },
+        {
+          time: t.brandEnd + 0.28, value: 0, interpolation: 'easing', easing: 'easeInCubic',
+        },
       ],
     },
-    effects: [
-      {
-        type: 'outerGlow',
-        params: {
-          color: CTA_ACCENT,
-          blur: 14,
-          blendMode: 'screen',
-          opacity: {
-            keyframes: [
-              { time: 0, value: 0.5, interpolation: 'hold' },
-              {
-                time: t.headlineEnd, value: 0.5, interpolation: 'easing', easing: 'easeOutCubic',
-              },
-              {
-                time: t.headlineEnd + 0.1, value: 1, interpolation: 'easing', easing: 'easeOutCubic',
-              },
-              { time: t.headlineEnd + 0.32, value: 0.5 },
-            ],
-          },
-        },
-      },
-      { type: 'dropShadow', params: { color: '#000000', opacity: 0.45, blur: 12, offsetX: 0, offsetY: 6 } },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: 260, height: 260 } } },
+      { type: 'fill', color: '#FFFFFF' },
     ],
-  });
-  layers.push({
-    id: '__cta_headline_2__',
-    type: 'text',
-    parent: '__cta_group__',
-    text: 'AUTOMATION IS HERE',
-    fontFamily: 'Poppins Black',
-    fontWeight: '900',
-    fontSize: CTA_HEADLINE_FONT_SIZE,
-    fillStyle: ICON_BRIGHT_TINT,
-    textAlign: 'center',
-    maxWidth: CANVAS_WIDTH - 20,
-    width: CANVAS_WIDTH - 10,
-    height: CTA_HEADLINE_FONT_SIZE * 1.4,
-    position: [0, CTA_HEADLINE_LOCAL_Y + CTA_HEADLINE_FONT_SIZE * 1.15],
-    scale: {
-      keyframes: [
-        {
-          time: CTA_HEADLINE_START, value: [1.7, 1.7], interpolation: 'easing', easing: 'easeOutCubic',
-        },
-        {
-          time: CTA_HEADLINE_START + 0.16, value: [0.88, 0.88], interpolation: 'easing', easing: 'easeOutCubic',
-        },
-        {
-          time: CTA_HEADLINE_START + 0.24, value: [1.06, 1.06], interpolation: 'easing', easing: 'easeOutCubic',
-        },
-        { time: t.headlineEnd, value: [1, 1] },
-      ],
-    },
-    opacity: {
-      keyframes: [
-        { time: 0, value: 0, interpolation: 'hold' },
-        {
-          time: CTA_HEADLINE_START, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
-        },
-        { time: CTA_HEADLINE_START + 0.06, value: 1 },
-      ],
-    },
-    effects: [
-      {
-        type: 'outerGlow',
-        params: {
-          color: CTA_ACCENT,
-          blur: 14,
-          blendMode: 'screen',
-          opacity: {
-            keyframes: [
-              { time: 0, value: 0.5, interpolation: 'hold' },
-              {
-                time: t.headlineEnd, value: 0.5, interpolation: 'easing', easing: 'easeOutCubic',
-              },
-              {
-                time: t.headlineEnd + 0.1, value: 1, interpolation: 'easing', easing: 'easeOutCubic',
-              },
-              { time: t.headlineEnd + 0.32, value: 0.5 },
-            ],
-          },
-        },
-      },
-      { type: 'dropShadow', params: { color: '#000000', opacity: 0.45, blur: 12, offsetX: 0, offsetY: 6 } },
-    ],
+    effects: [{ type: 'gaussianBlur', params: { radius: 28 } }],
   });
 
+  // The brand - now the hero of this beat (no separate headline sentence
+  // duplicating the landing page's own copy). Real anticipation + settle
+  // pop, landing right as the impact flash above fires.
   layers.push({
     id: '__cta_brand__',
     type: 'text',
@@ -18245,10 +18086,10 @@ function buildCtaOutroLayers() {
     scale: {
       keyframes: [
         {
-          time: CTA_BRAND_START, value: [1.4, 1.4], interpolation: 'easing', easing: 'easeOutCubic',
+          time: CTA_BRAND_START, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutCubic',
         },
         {
-          time: CTA_BRAND_START + 0.2, value: [0.95, 0.95], interpolation: 'easing', easing: 'easeOutCubic',
+          time: CTA_BRAND_START + 0.22, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeOutCubic',
         },
         { time: t.brandEnd, value: [1, 1] },
       ],
@@ -18263,8 +18104,27 @@ function buildCtaOutroLayers() {
       ],
     },
     effects: [
-      { type: 'outerGlow', params: { color: CTA_ACCENT, opacity: 0.7, blur: 14, blendMode: 'screen' } },
-      { type: 'dropShadow', params: { color: '#000000', opacity: 0.4, blur: 10, offsetX: 0, offsetY: 6 } },
+      {
+        type: 'outerGlow',
+        params: {
+          color: CTA_ACCENT,
+          blur: 16,
+          blendMode: 'screen',
+          opacity: {
+            keyframes: [
+              { time: 0, value: 0.55, interpolation: 'hold' },
+              {
+                time: t.brandEnd, value: 0.55, interpolation: 'easing', easing: 'easeOutCubic',
+              },
+              {
+                time: t.brandEnd + 0.1, value: 1, interpolation: 'easing', easing: 'easeOutCubic',
+              },
+              { time: t.brandEnd + 0.32, value: 0.55 },
+            ],
+          },
+        },
+      },
+      { type: 'dropShadow', params: { color: '#000000', opacity: 0.4, blur: 12, offsetX: 0, offsetY: 6 } },
     ],
   });
 
@@ -18286,7 +18146,7 @@ function buildCtaOutroLayers() {
     scale: {
       keyframes: [
         {
-          time: CTA_URL_START, value: [1.25, 1.25], interpolation: 'easing', easing: 'easeOutCubic',
+          time: CTA_URL_START, value: [1.2, 1.2], interpolation: 'easing', easing: 'easeOutCubic',
         },
         { time: t.urlEnd, value: [1, 1] },
       ],
@@ -18305,48 +18165,52 @@ function buildCtaOutroLayers() {
     ],
   });
 
-  // Caption beneath the link - direct spec: "click link for more info and
-  // to be notified when SmartClips is fully released." A light tint of
-  // the brand accent (mwBrightFlashColor, shared utility from
-  // mouseWordDrag's own build) rather than the raw accent hex directly:
-  // autoRepairBeat (this file, ~line 3310) forces ANY text layer's
-  // fillStyle to pure white whenever its own real WCAG luminance is below
-  // 0.45, and CTA_ACCENT's violet lands well under that - the raw hex
-  // would silently lose its own color the exact same way mouseWordDrag's
-  // own flash word did before that fix.
-  const captionColor = mwBrightFlashColor(CTA_ACCENT);
+  // Real drawn motion instead of a fourth pop-in block: a short accent
+  // line trims in underneath the url, left-to-right, same trim/stroke
+  // technique this file already uses elsewhere (lineReveal/buttonDraw)
+  // for a real "being drawn" moment rather than another scale-overshoot.
+  const lineHalfWidth = Math.max(60, urlLayerW / 2 - 10);
   layers.push({
-    id: '__cta_caption__',
-    type: 'text',
+    id: '__cta_underline__',
+    type: 'shape',
     parent: '__cta_group__',
-    text: 'Click the link for more info and to be notified when SmartClips is fully released',
-    fontFamily: 'Poppins Medium',
-    fontWeight: '500',
-    fontSize: CTA_CAPTION_FONT_SIZE,
-    lineHeight: CTA_CAPTION_FONT_SIZE * 1.4,
-    fillStyle: captionColor,
-    textAlign: 'center',
-    maxWidth: CANVAS_WIDTH - 120,
-    width: CANVAS_WIDTH - 100,
-    height: CTA_CAPTION_FONT_SIZE * 1.4 * 3,
-    position: [0, CTA_CAPTION_LOCAL_Y],
-    scale: {
-      keyframes: [
-        {
-          time: CTA_CAPTION_START, value: [1.15, 1.15], interpolation: 'easing', easing: 'easeOutCubic',
-        },
-        { time: t.captionEnd, value: [1, 1] },
-      ],
-    },
+    width: lineHalfWidth * 2,
+    height: 8,
+    position: [0, CTA_LINE_LOCAL_Y],
     opacity: {
       keyframes: [
-        { time: 0, value: 0, interpolation: 'hold' },
-        {
-          time: CTA_CAPTION_START, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
-        },
-        { time: CTA_CAPTION_START + 0.1, value: 1 },
+        { time: CTA_LINE_START - 0.01, value: 0 },
+        { time: CTA_LINE_START, value: 1 },
       ],
     },
+    contents: [
+      {
+        type: 'path',
+        shape: {
+          kind: 'customPath',
+          params: {
+            anchors: [{ point: [-lineHalfWidth, 0] }, { point: [lineHalfWidth, 0] }],
+            closed: false,
+          },
+        },
+      },
+      {
+        type: 'trim',
+        start: 0,
+        end: {
+          keyframes: [
+            {
+              time: CTA_LINE_START, value: 0, interpolation: 'easing', easing: 'easeOutCubic',
+            },
+            { time: t.lineEnd, value: 100 },
+          ],
+        },
+      },
+      { type: 'stroke', color: CTA_ACCENT, width: 3, cap: 'round' },
+    ],
+    effects: [
+      { type: 'outerGlow', params: { blur: 6, color: CTA_ACCENT, opacity: 0.6, blendMode: 'screen' } },
+    ],
   });
 
   return layers;

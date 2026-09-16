@@ -1805,14 +1805,14 @@ function listTreatmentBeatHeaders(treatment) {
 // so a new template can never add one list without the other.
 const COMPACT_TEMPLATE_INFO = {
   nodeCluster: {
-    description: 'Icons drift in and orbit, then one gets chosen/highlighted.',
-    fields: 'icons(3-8), chosenIndex(0-based), introText(opt<=5w)',
-    example: { template: 'nodeCluster', narration: 'Which one actually works?', vars: { icons: ['mdi:water', 'mdi:run', 'mdi:book'], chosenIndex: 1 }, accentColor: '#8B5CF6' },
+    description: 'Icons drift in and orbit, then one gets chosen/highlighted, optionally naming it underneath.',
+    fields: 'icons(3-8), chosenIndex(0-based), introText(opt<=5w), label(opt,1-3w, appears under the chosen icon once it settles)',
+    example: { template: 'nodeCluster', narration: 'Which one actually works?', vars: { icons: ['mdi:water', 'mdi:run', 'mdi:book'], chosenIndex: 1, label: 'The Winner' }, accentColor: '#8B5CF6' },
   },
   connectorList: {
-    description: 'A short list of icon+label items drops in one by one.',
-    fields: 'items(2-6 {icon,label*1-2w}), outroText(opt<=6w)',
-    example: { template: 'connectorList', narration: 'Sleep, protein, routine.', vars: { items: [{ icon: 'mdi:sleep', label: 'Sleep' }, { icon: 'mdi:food-drumstick', label: 'Protein' }] }, accentColor: '#8B5CF6' },
+    description: 'A short list of exactly 3 icon+label items drops in one by one along a curved line.',
+    fields: 'items(EXACTLY 3 {icon,label*1-2w}), outroText(opt<=6w)',
+    example: { template: 'connectorList', narration: 'Sleep, protein, routine.', vars: { items: [{ icon: 'mdi:sleep', label: 'Sleep' }, { icon: 'mdi:food-drumstick', label: 'Protein' }, { icon: 'mdi:run', label: 'Routine' }] }, accentColor: '#8B5CF6' },
   },
   phoneSwap: {
     description: 'A phone mockup on screen with a headline/icon swapped in.',
