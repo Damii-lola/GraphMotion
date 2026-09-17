@@ -40,12 +40,12 @@ function loadSiblingUrls() {
 
 const SIBLING_URLS = loadSiblingUrls();
 if (SIBLING_URLS.length > 0) {
-  // Direct user instruction (2026-09-16): sibling recruitment is
-  // disabled at the call site (server.js's own SIBLING_HELP_ENABLED
-  // flag) - this log still reports what's CONFIGURED via env vars, not
-  // what's actually used, so it says so explicitly rather than
-  // implying cross-worker splitting is active when it isn't.
-  console.log(`[chunkDispatch] ${SIBLING_URLS.length} sibling worker(s) configured but NOT used (SIBLING_HELP_ENABLED=false in server.js - each job renders solo on whichever worker picks it up)`);
+  // Re-enabled 2026-09-17 (server.js's own SIBLING_HELP_ENABLED flag,
+  // now true, MAX_WORKERS_PER_JOB raised 2->5 alongside it) - this log
+  // still reports what's CONFIGURED via env vars, not a runtime claim
+  // about any specific job's own pooling, so it stays accurate either
+  // way without needing to track the flag's value here too.
+  console.log(`[chunkDispatch] ${SIBLING_URLS.length} sibling worker(s) configured, up to 5 used per job (SIBLING_HELP_ENABLED=true in server.js)`);
 }
 
 // Real bug found on the FIRST live production test: this was 5000ms,

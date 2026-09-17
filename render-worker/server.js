@@ -360,33 +360,60 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 // no network fetch at all in the common case.
 // Direct user instruction (2026-09-10): a single job used to grab EVERY
 // currently-free sibling - real, measured speedup for that one job
-// (~3.5x with all 5 workers), but a real, confirmed problem for anyone
-// else: while that job's pool holds all 5 workers, a second user's
-// generation starting at the same moment finds nothing free to help it,
-// and falls back to near-solo speed. The explicit design principle
-// going forward (direct user statement): assume many users could be
-// generating at the exact same time, not just one - a single job's own
-// speed is not worth starving the rest of the fleet for. Capped so one
-// job uses at most this many workers total (itself + siblings), no
-// matter how many more are sitting idle - the other workers stay free
-// for whoever else shows up, even if that means this one job doesn't
-// get the fastest theoretically possible time.
-const MAX_WORKERS_PER_JOB = 2;
+// (~3.5x with all 5 workers, back when the fleet WAS 5 workers), but a
+// real, confirmed problem for anyone else: while that job's pool holds
+// every worker, a second user's generation starting at the same moment
+// finds nothing free to help it, and falls back to near-solo speed. The
+// explicit design principle going forward (direct user statement):
+// assume many users could be generating at the exact same time, not
+// just one - a single job's own speed is not worth starving the rest of
+// the fleet for. Capped so one job uses at most this many workers total
+// (itself + siblings), no matter how many more are sitting idle - the
+// other workers stay free for whoever else shows up, even if that means
+// this one job doesn't get the fastest theoretically possible time.
+//
+// 2 -> 5 (2026-09-17, direct user request, re-enabling sibling help
+// below at the same time): the fleet itself has grown to 20 workers
+// since the original 2-of-5 decision (this file's own loadSiblingUrls
+// already supports up to 20, chunkDispatch.js's own URL loader too) - 5
+// of 20 is actually a SMALLER share of the fleet (25%) than the original
+// 2 of 5 (40%) was, while still giving real, genuinely parallel CPU:
+// unlike running multiple chunks concurrently on ONE worker (rejected
+// the same day - a single worker's 0.1 CPU allocation would just get
+// time-sliced between them, no real speedup, see
+// [[project_render_speed_levers]]), each sibling is a SEPARATE
+// container with its OWN independent 0.1 CPU and 512MB RAM - N workers
+// helping one job is N genuinely parallel CPU allocations, not one
+// split thinner. Real per-frame cost is CPU-bound (confirmed via actual
+// profiling, not assumed - see the same memory file), which is exactly
+// what sibling pooling multiplies, unlike same-worker concurrency.
+const MAX_WORKERS_PER_JOB = 5;
 
-// Direct user instruction (2026-09-16): "limit it to one render worker,
-// dont split it into 2" - cross-worker chunk pooling (recruiting a
-// SIBLING worker to render some of this job's chunks in parallel,
-// below) is now fully disabled. Whichever single worker picks up a job
-// renders every one of its own chunks itself, sequentially, through
-// the plain renderLongFormVideo path - paired with
-// RENDER_MEMORY_SAFETY_LIMIT_MB raised to 450 (renderEngine.js) on the
-// reasoning that a chunk no longer needs to leave headroom for a
-// SECOND job's chunk landing on a sibling worker at the same moment.
-// getAvailableSiblings/requestHelp (chunkDispatch.js) and the
-// queue-based pooling loops below are kept, not deleted, in case this
-// needs to be re-enabled later - just never reached while this flag is
-// false.
-const SIBLING_HELP_ENABLED = false;
+// 2026-09-16: "limit it to one render worker, dont split it into 2" -
+// cross-worker chunk pooling (recruiting SIBLING workers to render some
+// of this job's chunks in parallel, below) was fully disabled - paired
+// at the time with RENDER_MEMORY_SAFETY_LIMIT_MB raised to 450
+// (renderEngine.js) on the reasoning that a chunk no longer needed to
+// leave headroom for a SECOND job's chunk landing on a sibling worker at
+// the same moment.
+//
+// RE-ENABLED (2026-09-17, direct user request, paired with
+// MAX_WORKERS_PER_JOB above). Both memory-safety concerns that
+// motivated the original disable are independently resolved by now:
+// (1) RENDER_MEMORY_SAFETY_LIMIT_MB has SINCE been reverted 450->420 for
+// an unrelated, real reason (a confirmed production OOM - ffmpeg's own
+// encode-time memory needs real headroom regardless of sibling pooling,
+// see that constant's own doc comment) - 420 is correct either way,
+// nothing to change here. (2) withRenderLock (this file) already
+// serializes actual Skia rendering to ONE chunk at a time per worker
+// host regardless of how many jobs/siblings that worker is nominally
+// juggling - a worker helping this job while also holding another job's
+// own solo render still only ever renders one chunk at a time, so the
+// per-chunk memory ceiling stays valid no matter how many jobs a worker
+// is involved in. getAvailableSiblings/requestHelp (chunkDispatch.js)
+// and the queue-based pooling loops below were kept, not deleted, while
+// disabled specifically so this re-enable is a one-line flip.
+const SIBLING_HELP_ENABLED = true;
 
 async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled) {
   const chunkRanges = computeChunkRanges(sceneJSON);
@@ -437,6 +464,16 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
   const chunkPathsByIndex = new Map();
   const failureCounts = new Map();
   const MAX_TASK_ATTEMPTS = 3;
+  // Real gap found re-enabling sibling pooling (2026-09-17): this queue-
+  // based retry requeued a failed chunk with ZERO delay - the SAME
+  // worker's own loop below would immediately try to claim another task,
+  // possibly the identical one it just failed, with no chance for
+  // whatever caused the failure (most often residual memory pressure) to
+  // actually clear. longVideoOrchestrator.js's renderChunkWithRetries
+  // already does this correctly for the solo (non-sibling-pooled) path -
+  // same direct user requirement, same 15s wait, applied here now that
+  // this path is live again too.
+  const TASK_RETRY_DELAY_MS = 15 * 1000;
   let completedCount = 0;
   const totalCount = chunkRanges.length;
   // Real, confirmed-live bug fixed here (2026-09-16 production logs): a
@@ -476,16 +513,21 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
   // wrong video is worse than failing loudly. Otherwise requeues the
   // task for whichever worker frees up next (maybe the same one, maybe
   // a different one) to try again.
+  // Returns true if the task was requeued (caller should wait
+  // TASK_RETRY_DELAY_MS before its own next claim attempt - see that
+  // constant's own doc comment), false if this was the final attempt and
+  // the job has now given up (no point waiting, nothing left to retry).
   function requeueOrGiveUp(task, workerLabel, err) {
     const attempts = (failureCounts.get(task.index) || 0) + 1;
     failureCounts.set(task.index, attempts);
     if (attempts >= MAX_TASK_ATTEMPTS) {
       jobFailed = true;
       if (!giveUpError) giveUpError = new Error(`chunk ${task.index} failed ${attempts} time(s) across different workers (last: ${workerLabel} - ${err.message}) - giving up`);
-      return;
+      return false;
     }
-    console.warn(`[chunkDispatch] job ${jobId} chunk ${task.index} failed on ${workerLabel} (attempt ${attempts}/${MAX_TASK_ATTEMPTS}), requeueing: ${err.message}`);
+    console.warn(`[chunkDispatch] job ${jobId} chunk ${task.index} failed on ${workerLabel} (attempt ${attempts}/${MAX_TASK_ATTEMPTS}), waiting ${TASK_RETRY_DELAY_MS / 1000}s then requeueing: ${err.message}`);
     queue.push(task);
+    return true;
   }
 
   // Same non-throwing-out-of-a-loop fix as requeueOrGiveUp above applies
@@ -509,7 +551,10 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
         completedCount++;
         reportProgress();
       } catch (err) {
-        requeueOrGiveUp(task, 'this worker', err);
+        if (requeueOrGiveUp(task, 'this worker', err)) {
+          await new Promise((resolve) => setTimeout(resolve, TASK_RETRY_DELAY_MS));
+          if (isCancelled && isCancelled()) { markCancelled(); return; }
+        }
       }
     }
   }
@@ -526,7 +571,10 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
         completedCount++;
         reportProgress();
       } catch (err) {
-        requeueOrGiveUp(task, url, err);
+        if (requeueOrGiveUp(task, url, err)) {
+          await new Promise((resolve) => setTimeout(resolve, TASK_RETRY_DELAY_MS));
+          if (isCancelled && isCancelled()) { markCancelled(); return; }
+        }
       }
     }
   }
