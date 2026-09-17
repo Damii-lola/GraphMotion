@@ -237,15 +237,123 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
   // adding this back is a real, separate tradeoff being knowingly
   // accepted here - Deepgram's raw, unboosted loudness is what actually
   // sounds right, even if it reads quieter than modern platform norms.
-  // assembledPath goes straight into the final mux now.
+  // assembledPath goes into sound-design mixing next, then the final mux.
+
+  // Direct user request (2026-09-17): "audio feels so empty" - a
+  // continuous music bed underneath the whole video, plus real sound
+  // effects at real animation moments (not just narration+silence).
+  // Mixed into its own audio track HERE, before the final video mux -
+  // keeps this step independently testable/skippable (mixSoundDesign
+  // returns assembledPath unchanged if anything about it fails) without
+  // touching the already-proven video+narration mux below at all.
+  const finalAudioPath = await mixSoundDesign(assembledPath, sceneJSON, beats, workDir, jobId).catch((err) => {
+    console.warn(`[audioMux] sound-design mix failed, shipping plain narration instead: ${err.message}`);
+    return assembledPath;
+  });
+
   const outputPath = videoPath.replace(/\.mp4$/, '-narrated.mp4');
-  await run(['-y', '-i', videoPath, '-i', assembledPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest', outputPath]);
+  await run(['-y', '-i', videoPath, '-i', finalAudioPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest', outputPath]);
 
   fs.unlink(listPath, () => {});
   fs.unlink(assembledPath, () => {});
+  if (finalAudioPath !== assembledPath) fs.unlink(finalAudioPath, () => {});
   cleanupPaths.forEach((p) => fs.unlink(p, () => {}));
 
   return outputPath;
+}
+
+const SFX_DIR = path.join(__dirname, 'assets', 'sfx');
+const MUSIC_PATH = path.join(__dirname, 'assets', 'music', 'background.mp3');
+// Kenney's free UI/Interface Sounds packs (CC0 - kenney.nl, no
+// attribution required, commercial use explicitly allowed). "pop" is the
+// one every burst-particle-driven cue below maps to for now (breadth
+// over variety - see deriveSoundCuesFromLayers' own doc comment,
+// sceneSchema.js).
+const SFX_VOLUME = 0.55;
+// Background: incompetech.com, "Deliberate Thought" by Kevin MacLeod -
+// CC-BY (attribution required, unlike the CC0 SFX above). Kept quiet and
+// constant rather than sidechain-ducked under narration - simpler to
+// implement correctly and reason about than real ducking, and this
+// project's own narration already has real silence gaps between beats
+// (audioDrivenDuration's own +0.5s buffer, narrationPrefetch.js) where a
+// low constant bed reads as natural background presence rather than
+// needing to duck around anything.
+const MUSIC_VOLUME = 0.1;
+
+/**
+ * Mixes the assembled narration track with real sound-effect cues
+ * (beat.visual.soundCues, plus a "whoosh" synthesized here at every
+ * beat's own pan-start) and a continuous low-volume music bed underneath
+ * everything. Returns narrationPath UNCHANGED (not a copy) if there's
+ * nothing to add or the music bed is missing, so a missing/corrupt asset
+ * never blocks a real video from shipping with at least its narration.
+ */
+async function mixSoundDesign(narrationPath, sceneJSON, beats, workDir, jobId) {
+  const cues = [];
+  beats.forEach((beat, i) => {
+    // Whoosh at every beat-to-beat pan (every beat but the first - see
+    // renderEngine.js's own beatLocalT/panDuration mechanism, the same
+    // "does this beat pan in" condition used there).
+    if (i > 0) cues.push({ time: beat.start, sound: 'whoosh' });
+    const beatCues = beat.scene && beat.scene.visual && Array.isArray(beat.scene.visual.soundCues)
+      ? beat.scene.visual.soundCues : [];
+    beatCues.forEach((cue) => {
+      if (typeof cue.time === 'number' && typeof cue.sound === 'string') {
+        cues.push({ time: beat.start + cue.time, sound: cue.sound });
+      }
+    });
+  });
+
+  const hasMusic = fs.existsSync(MUSIC_PATH);
+  if (cues.length === 0 && !hasMusic) return narrationPath;
+
+  const videoDuration = beats.length > 0 ? beats[beats.length - 1].end : 0;
+  const inputs = ['-i', narrationPath];
+  const filterParts = [];
+  const mixLabels = ['[0:a]'];
+  // Narration itself also gets the same format-normalize pass as every
+  // other branch below - amix silently produces odd/quiet output when
+  // its inputs don't already agree on sample rate/channel layout, and
+  // Deepgram's own output format isn't guaranteed to match the SFX/music
+  // assets' own (different source, different encode).
+  filterParts.push('[0:a]aformat=sample_rates=44100:channel_layouts=stereo[a0]');
+  mixLabels[0] = '[a0]';
+
+  let inputIndex = 1;
+  for (const cue of cues) {
+    const sfxPath = path.join(SFX_DIR, `${cue.sound}.mp3`);
+    if (!fs.existsSync(sfxPath)) continue;
+    inputs.push('-i', sfxPath);
+    const delayMs = Math.max(0, Math.round(cue.time * 1000));
+    const label = `sfx${inputIndex}`;
+    filterParts.push(`[${inputIndex}:a]aformat=sample_rates=44100:channel_layouts=stereo,adelay=${delayMs}|${delayMs},volume=${SFX_VOLUME}[${label}]`);
+    mixLabels.push(`[${label}]`);
+    inputIndex++;
+  }
+
+  if (hasMusic) {
+    inputs.push('-i', MUSIC_PATH);
+    const label = `music${inputIndex}`;
+    // atrim to the real video length - the source track (2:57) is
+    // already far longer than this project's own 45s hard cap
+    // (narrationPrefetch.js's MAX_TOTAL_DURATION_SECONDS), so no loop is
+    // needed, just a trim.
+    filterParts.push(`[${inputIndex}:a]aformat=sample_rates=44100:channel_layouts=stereo,atrim=0:${videoDuration.toFixed(2)},volume=${MUSIC_VOLUME}[${label}]`);
+    mixLabels.push(`[${label}]`);
+    inputIndex++;
+  }
+
+  filterParts.push(`${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=first:dropout_transition=0[aout]`);
+
+  const outPath = path.join(workDir, `${jobId}-sound-design.mp3`);
+  await run([
+    '-y', ...inputs,
+    '-filter_complex', filterParts.join(';'),
+    '-map', '[aout]',
+    '-c:a', 'libmp3lame', '-q:a', '4',
+    outPath,
+  ]);
+  return outPath;
 }
 
 // Direct user request: every finished video is sped up before it's

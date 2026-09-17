@@ -4684,6 +4684,37 @@ function buildIconBurstParticles(index, x, y, color, burstTime) {
   return particles;
 }
 
+/**
+ * Direct user request (2026-09-17): sound effects across every template,
+ * without hand-threading a cue list through the dozens of template
+ * builder functions (buildIconBurstParticles/buildCounterBurstParticles/
+ * buildYearScrollerLockParticles/etc - 5 real call sites, ~20 total
+ * invocations - all deeply nested in per-template code, none of which
+ * currently have any notion of "audio" at all - real, high-risk churn to
+ * thread a new parameter through safely). Instead, scans a beat's
+ * ALREADY-BUILT `layers` array for the particle-burst pattern every one
+ * of those helpers already shares (id containing "burst"/"lock" +
+ * opacity that stays 0 then jumps to a real peak value at one specific
+ * keyframe, back to 0 shortly after - see buildIconBurstParticles' own
+ * shape just above) and derives one 'pop' cue per distinct burst moment
+ * (deduped by time - each burst spawns 2-4 individual particle layers at
+ * the identical instant). Zero changes needed to any of the 15+ existing
+ * call sites - this covers every template using them for free, and
+ * automatically covers any NEW template built the same way in future.
+ */
+function deriveSoundCuesFromLayers(layers) {
+  if (!Array.isArray(layers)) return [];
+  const times = new Set();
+  for (const layer of layers) {
+    if (!layer || typeof layer.id !== 'string' || !/burst|lock/i.test(layer.id)) continue;
+    const kfs = layer.opacity && Array.isArray(layer.opacity.keyframes) ? layer.opacity.keyframes : null;
+    if (!kfs) continue;
+    const peak = kfs.find((k) => k && typeof k.time === 'number' && k.time > 0 && typeof k.value === 'number' && k.value > 0);
+    if (peak) times.add(Math.round(peak.time * 100) / 100);
+  }
+  return [...times].sort((a, b) => a - b).map((time) => ({ time, sound: 'pop' }));
+}
+
 // Real, direct user spec (2026-09-07, against a reference video): "there
 // is a text at the beginning (which is a variable that the ai can
 // change) with an animation then it goes into the main scene." Purely
@@ -5899,52 +5930,57 @@ function buildNodeClusterExtendedLayers({
 function buildConnectorLineAnchors(positions) {
   if (positions.length === 3) {
     const [p0, p1, p2] = positions;
-    const sq = (p) => p[0] * p[0] + p[1] * p[1];
-    const d = 2 * (p0[0] * (p1[1] - p2[1]) + p1[0] * (p2[1] - p0[1]) + p2[0] * (p0[1] - p1[1]));
-    // d === 0 only for 3 exactly-collinear points (no real circle passes
-    // through them) - falls through to the generic tangent approximation
-    // below, same as it already handles any point count other than 3.
-    if (Math.abs(d) > 1e-6) {
-      const cx = (sq(p0) * (p1[1] - p2[1]) + sq(p1) * (p2[1] - p0[1]) + sq(p2) * (p0[1] - p1[1])) / d;
-      const cy = (sq(p0) * (p2[0] - p1[0]) + sq(p1) * (p0[0] - p2[0]) + sq(p2) * (p1[0] - p0[0])) / d;
-      const r = Math.hypot(p0[0] - cx, p0[1] - cy);
-      const angleOf = (p) => Math.atan2(p[1] - cy, p[0] - cx);
-      const TAU = Math.PI * 2;
-      // Unwraps target's raw [-PI,PI] angle to whichever equivalent
-      // value is closest to base - keeps the 3 angles moving
-      // monotonically in the path's own real travel order instead of
-      // wrapping around the short way.
-      const unwrap = (base, target) => {
-        let t = target;
-        while (t - base > Math.PI) t -= TAU;
-        while (t - base < -Math.PI) t += TAU;
-        return t;
-      };
-      const a0 = angleOf(p0);
-      const a1 = unwrap(a0, angleOf(p1));
-      const a2 = unwrap(a1, angleOf(p2));
-      // Direction of travel: +1 if the path sweeps counter-clockwise
-      // (increasing angle), -1 if clockwise - the standard circle
-      // parametrization's own derivative (-sin(a), cos(a)) is the CCW
-      // tangent, so a CW sweep just negates it.
-      const sweepSign = a2 >= a0 ? 1 : -1;
-      const tangentAt = (a) => [-Math.sin(a) * sweepSign, Math.cos(a) * sweepSign];
-      const kappaMag = (fromAngle, toAngle) => (4 / 3) * Math.abs(Math.tan((toAngle - fromAngle) / 4)) * r;
-      const mag01 = kappaMag(a0, a1);
-      const mag12 = kappaMag(a1, a2);
-      const tan0 = tangentAt(a0);
-      const tan1 = tangentAt(a1);
-      const tan2 = tangentAt(a2);
-      return [
-        { point: p0, outTangent: [tan0[0] * mag01, tan0[1] * mag01] },
-        {
-          point: p1,
-          inTangent: [-tan1[0] * mag01, -tan1[1] * mag01],
-          outTangent: [tan1[0] * mag12, tan1[1] * mag12],
-        },
-        { point: p2, inTangent: [-tan2[0] * mag12, -tan2[1] * mag12] },
-      ];
-    }
+    // Real, direct user request (2026-09-17, with a reference image):
+    // "change the line from a half circle to an S, so it will move in an
+    // S motion" - replaces the earlier single-constant-curvature circular
+    // arc (still correct for what IT was asked to do - one clean,
+    // consistent bow - see git history) with a genuine S-curve: the
+    // FIRST half bulges one way, the SECOND half bulges the opposite
+    // way, with a smooth (not kinked) inflection passing through p1.
+    //
+    // The construction: p0's own outgoing tangent points straight at p1
+    // (that segment's real chord direction), and p2's own incoming
+    // tangent points straight from p1 (that segment's real chord
+    // direction) - neither outer point gets any artificial bulge bias of
+    // its own. p1 (the middle, inflection point) instead uses the SPINE
+    // direction (straight p0-to-p2) for BOTH its in and out tangent, one
+    // single direction shared by both segments - this is what actually
+    // produces the S: segment 1 starts along the p0-p1 chord but must
+    // curve to END along the spine direction, bulging one way to do it;
+    // segment 2 starts along that same spine direction but must curve to
+    // END along the p1-p2 chord, bulging the OTHER way, since the spine
+    // deviates from each of the two chords in opposite rotational senses
+    // whenever p1 sits off to one side of the direct p0-p2 line (the
+    // normal case - 3 co-linear points would degenerate to a straight
+    // line here, correctly, since there's no offset to bulge around).
+    // Same shape family as a Catmull-Rom spline's own interior-point
+    // tangent rule, just applied deliberately instead of falling back to
+    // the generic approximation below (which uses a flatter 0.33
+    // fraction tuned for the "N points, one gentle overall flow" case,
+    // not a crisp 2-point S).
+    const seg01Len = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) || 1;
+    const seg12Len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) || 1;
+    const spineLen = Math.hypot(p2[0] - p0[0], p2[1] - p0[1]) || 1;
+    const spineDirX = (p2[0] - p0[0]) / spineLen;
+    const spineDirY = (p2[1] - p0[1]) / spineLen;
+    const dir01X = (p1[0] - p0[0]) / seg01Len;
+    const dir01Y = (p1[1] - p0[1]) / seg01Len;
+    const dir12X = (p2[0] - p1[0]) / seg12Len;
+    const dir12Y = (p2[1] - p1[1]) / seg12Len;
+    // Tangent-length fraction of each segment's own chord - a standard
+    // cubic-bezier "control point at T% along the chord direction"
+    // magnitude (0.33 matches the generic fallback's own established
+    // value below, kept consistent rather than re-tuned from scratch).
+    const T = 0.33;
+    return [
+      { point: p0, outTangent: [dir01X * seg01Len * T, dir01Y * seg01Len * T] },
+      {
+        point: p1,
+        inTangent: [-spineDirX * seg01Len * T, -spineDirY * seg01Len * T],
+        outTangent: [spineDirX * seg12Len * T, spineDirY * seg12Len * T],
+      },
+      { point: p2, inTangent: [-dir12X * seg12Len * T, -dir12Y * seg12Len * T] },
+    ];
   }
   return positions.map((p, i) => {
     const prev = positions[i - 1];
@@ -7318,6 +7354,11 @@ function buildSquareSpinLayers({
 // into this project's own CANVAS_WIDTH/HEIGHT.
 const TRIPLE_STACK_NODE_WIDTH = 435;
 const TRIPLE_STACK_NODE_HEIGHT = 108;
+// Shared between buildTripleStackLayers (the stack itself) and
+// buildWordCascadeCaptionLayer (the caption above it), so the caption can
+// anchor to the stack's own real top edge instead of a magic number - see
+// TRIPLE_STACK_CAPTION_Y's own doc comment for the bug this fixes.
+const TRIPLE_STACK_TOP = CANVAS_HEIGHT / 2 - (TRIPLE_STACK_NODE_HEIGHT * 3) / 2;
 const TRIPLE_STACK_ICON_SIZE = 64;
 const TRIPLE_STACK_ENTER_DURATION = 0.5;
 const TRIPLE_STACK_SETTLE_HOLD = 0.15;
@@ -7357,12 +7398,47 @@ const TRIPLE_STACK_COMPLETE_TIME = TRIPLE_STACK_ENTER_DURATION + TRIPLE_STACK_SE
  */
 const TRIPLE_STACK_CAPTION_POP_SCALE = 1.16;
 const TRIPLE_STACK_CAPTION_WINDOW_HALF_WIDTH_DIVISOR = 2.6; // half-width = 100/(usedCount*this) - a bit under one word's own slot
+const TRIPLE_STACK_CAPTION_FONT_SIZE = 26;
+const TRIPLE_STACK_CAPTION_LINE_HEIGHT = 32;
+// Real, direct user report (2026-09-17, VV2 scene 4): "WHYYY IS THE
+// CAPTION TEXT SOOOOO SEPERATE FROM THE REST OF THE NODES?" - the caption
+// used to sit at a FIXED position:[.., 150] with zero relationship to
+// where the stack itself actually lands (TRIPLE_STACK_TOP, computed from
+// CANVAS_HEIGHT and the node count), so on this canvas's real 960px
+// height the caption ended up floating in near-empty space ~130-190px
+// above the nearest node. Fixed by measuring the caption's own real
+// wrapped line count (same greedy-wrap approach buildTextPopOutLayers
+// already uses) and anchoring its vertical CENTER (this engine's own
+// `position[1]` convention for text layers - see textAnimator.js's
+// startY = centerY - totalHeight/2) so its bottom edge sits a small,
+// fixed gap above the stack's real top edge, however many lines the
+// narration text itself wraps to.
+const TRIPLE_STACK_CAPTION_GAP_ABOVE_STACK = 40;
 function buildWordCascadeCaptionLayer(narrationText, estimatedDuration) {
   const words = narrationText.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return null;
   const usedCount = words.length;
   const revealWindow = Math.max(0.4, estimatedDuration - 0.3);
   const halfWidthPct = 100 / (usedCount * TRIPLE_STACK_CAPTION_WINDOW_HALF_WIDTH_DIVISOR);
+
+  const captionMaxWidth = CANVAS_WIDTH - EDGE_MARGIN_PX * 2 - 40;
+  const measureCtx = createCanvas(10, 10).getContext('2d');
+  measureCtx.font = `700 ${TRIPLE_STACK_CAPTION_FONT_SIZE}px Poppins Bold`;
+  const captionGap = measureCtx.measureText(' ').width;
+  let lineCount = 1;
+  let lineWidth = 0;
+  words.forEach((w, i) => {
+    const wWidth = measureCtx.measureText(w).width;
+    const addWidth = wWidth + (lineWidth > 0 ? captionGap : 0);
+    if (lineWidth + addWidth > captionMaxWidth && lineWidth > 0) {
+      lineCount += 1;
+      lineWidth = wWidth;
+    } else {
+      lineWidth += addWidth;
+    }
+  });
+  const captionTotalHeight = lineCount * TRIPLE_STACK_CAPTION_LINE_HEIGHT;
+  const captionCenterY = TRIPLE_STACK_TOP - TRIPLE_STACK_CAPTION_GAP_ABOVE_STACK - captionTotalHeight / 2;
 
   const startKfs = [];
   const endKfs = [];
@@ -7381,12 +7457,12 @@ function buildWordCascadeCaptionLayer(narrationText, estimatedDuration) {
     text: narrationText,
     fontFamily: 'Poppins Bold',
     fontWeight: '700',
-    fontSize: 26,
-    lineHeight: 32,
+    fontSize: TRIPLE_STACK_CAPTION_FONT_SIZE,
+    lineHeight: TRIPLE_STACK_CAPTION_LINE_HEIGHT,
     fillStyle: ICON_BRIGHT_TINT,
     textAlign: 'center',
-    maxWidth: CANVAS_WIDTH - EDGE_MARGIN_PX * 2 - 40,
-    position: [CANVAS_WIDTH / 2, 150],
+    maxWidth: captionMaxWidth,
+    position: [CANVAS_WIDTH / 2, captionCenterY],
     animators: [
       {
         selector: {
@@ -7414,7 +7490,7 @@ function buildWordCascadeCaptionLayer(narrationText, estimatedDuration) {
 function buildTripleStackLayers({ items, accentColor, narrationText }) {
   const layers = [];
 
-  const stackTop = CANVAS_HEIGHT / 2 - (TRIPLE_STACK_NODE_HEIGHT * 3) / 2;
+  const stackTop = TRIPLE_STACK_TOP;
   // Direct user correction, twice over: "move to the middle" first
   // meant a brick-offset layout with more breathing room, then an
   // explicit, unambiguous follow-up rejected the brick offset entirely
@@ -12920,9 +12996,6 @@ function computeDotConstellationTiming() {
     popStart[i] = travelEnd + (3 - i) * DC_ORGANIZE_STAGGER;
   }
 
-  const textPopStart = travelEnd;
-  const textSettleEnd = textPopStart + DC_TEXT_POP_DURATION + DC_TEXT_SETTLE_DURATION;
-
   // The FIRST arc starts as soon as ITS OWN two dots (index 3 and 4) are
   // far enough through their own pop/landing to visually "catch" them -
   // not once the whole row or the caption has settled. Later arcs keep
@@ -12933,7 +13006,19 @@ function computeDotConstellationTiming() {
   const arcFadeEnd = arcStart.map((s) => s + DC_ARC_DRAW_DURATION + DC_ARC_HOLD + DC_ARC_FADE);
   const arcsEnd = arcFadeEnd[3];
 
-  const holdStart = arcsEnd;
+  // Real, confirmed-live bug (2026-09-17, direct user report + confirmed
+  // against the actual delivered video's own frames): this used to be
+  // `travelEnd` - the caption appeared the instant the dots finished
+  // landing, well BEFORE the arcs actually connected them, overlapping
+  // visually with the still-mid-animation dots/arcs instead of revealing
+  // once the connecting was actually done. This template's own doc
+  // comment has always described the real intended sequence - "Dots fall
+  // in and connect with drawn arcs into a line, revealing a caption" -
+  // caption last, after connecting, not during. Now anchored to arcsEnd.
+  const textPopStart = arcsEnd;
+  const textSettleEnd = textPopStart + DC_TEXT_POP_DURATION + DC_TEXT_SETTLE_DURATION;
+
+  const holdStart = textSettleEnd;
   const holdEnd = holdStart + DC_HOLD_DURATION;
 
   const outroStart = holdEnd;
@@ -15595,17 +15680,85 @@ function buildTextPopOutLayers({
   const MAX_TEXT_WIDTH = CANVAS_WIDTH - CANVAS_WIDTH * 0.12 * 2;
   let FONT_SIZE = FONT_SIZE_MAX;
   let { widths: wordWidths, gap: WORD_GAP, total: totalWidth } = measureWordsAt(FONT_SIZE);
-  if (totalWidth > MAX_TEXT_WIDTH) {
-    FONT_SIZE = Math.max(30, FONT_SIZE * (MAX_TEXT_WIDTH / totalWidth));
-    ({ widths: wordWidths, gap: WORD_GAP, total: totalWidth } = measureWordsAt(FONT_SIZE));
-  }
+  let wordLocalX;
+  let wordLocalY;
+  let groupWidth = totalWidth;
+  const WORD_LINE_HEIGHT = FONT_SIZE_MAX * 1.25;
 
-  let cursor = -totalWidth / 2;
-  const wordLocalX = wordWidths.map((w) => {
-    const center = cursor + w / 2;
-    cursor += w + WORD_GAP;
-    return center;
-  });
+  if (totalWidth <= MAX_TEXT_WIDTH) {
+    let cursor = -totalWidth / 2;
+    wordLocalX = wordWidths.map((w) => {
+      const center = cursor + w / 2;
+      cursor += w + WORD_GAP;
+      return center;
+    });
+    wordLocalY = words.map(() => 0);
+  } else {
+    // Real, confirmed-live bug (2026-09-17, direct user report: "u
+    // should have done textwrapping there"): the ORIGINAL fix here
+    // (shrink the font until the phrase fits on one line) has a 30px
+    // readability floor - a phrase even a little longer than the one
+    // that motivated that fix ("Track, don't motivate", 3 words) can
+    // still overflow past the floor with nowhere left to shrink to (a
+    // real observed case: "Most people make these mistakes", 5 words,
+    // ran off the right edge even at the floor). Wrapping onto a second
+    // line at FULL, readable size is tried FIRST now - only falls back
+    // to the old shrink-to-one-line behavior if even 2+ lines can't
+    // hold it. This template's own "each word rises independently at
+    // its own fixed local position" animation (see the word-building
+    // loop below) already generalizes to 2D with zero timing changes -
+    // only X was ever really "fixed for life" (per this function's own
+    // now-stale doc comment below), Y just needs to be per-word too.
+    const wrapLines = [];
+    let current = [];
+    let currentWidth = 0;
+    for (let i = 0; i < words.length; i++) {
+      const addWidth = wordWidths[i] + (current.length > 0 ? WORD_GAP : 0);
+      if (currentWidth + addWidth > MAX_TEXT_WIDTH && current.length > 0) {
+        wrapLines.push(current);
+        current = [];
+        currentWidth = 0;
+      }
+      current.push(i);
+      currentWidth += wordWidths[i] + (current.length > 1 ? WORD_GAP : 0);
+    }
+    if (current.length > 0) wrapLines.push(current);
+
+    const lineWidths = wrapLines.map((idxs) => idxs.reduce((s, i) => s + wordWidths[i], 0) + WORD_GAP * (idxs.length - 1));
+    const everyLineFits = lineWidths.every((w) => w <= MAX_TEXT_WIDTH);
+
+    if (everyLineFits) {
+      wordLocalX = new Array(words.length);
+      wordLocalY = new Array(words.length);
+      const blockHeight = wrapLines.length * WORD_LINE_HEIGHT;
+      wrapLines.forEach((idxs, lineIdx) => {
+        const lineWidth = lineWidths[lineIdx];
+        const lineY = -blockHeight / 2 + WORD_LINE_HEIGHT / 2 + lineIdx * WORD_LINE_HEIGHT;
+        let cursor = -lineWidth / 2;
+        idxs.forEach((wordIdx) => {
+          const w = wordWidths[wordIdx];
+          wordLocalX[wordIdx] = cursor + w / 2;
+          wordLocalY[wordIdx] = lineY;
+          cursor += w + WORD_GAP;
+        });
+      });
+      groupWidth = Math.max(...lineWidths);
+    } else {
+      // Even wrapping can't save this (e.g. one single word alone wider
+      // than MAX_TEXT_WIDTH) - same shrink-to-one-line fallback as
+      // before, unchanged.
+      FONT_SIZE = Math.max(30, FONT_SIZE * (MAX_TEXT_WIDTH / totalWidth));
+      ({ widths: wordWidths, gap: WORD_GAP, total: totalWidth } = measureWordsAt(FONT_SIZE));
+      let cursor = -totalWidth / 2;
+      wordLocalX = wordWidths.map((w) => {
+        const center = cursor + w / 2;
+        cursor += w + WORD_GAP;
+        return center;
+      });
+      wordLocalY = words.map(() => 0);
+      groupWidth = totalWidth;
+    }
+  }
 
   const lastWordStart = TEXT_POP_OUT_WORD_INTERVAL * (words.length - 1);
   const buildEnd = lastWordStart + TEXT_POP_OUT_WORD_RISE_DURATION;
@@ -15633,12 +15786,21 @@ function buildTextPopOutLayers({
   const EXIT_START = EXIT_END - TEXT_POP_OUT_EXIT_DURATION;
 
   const BUILD_Y = CANVAS_HEIGHT * 0.5;
-  // Where the FIRST word's own left edge sits for the whole build phase
-  // - that edge is always at local x = -totalWidth/2 (see wordLocalX
-  // above), so the null's own position.x is solved once to put it
-  // exactly here; the null never moves at all until the exit shrink.
-  const BUILD_LEFT_MARGIN = CANVAS_WIDTH * 0.12;
-  const GROUP_X = BUILD_LEFT_MARGIN + totalWidth / 2;
+  // Real, confirmed-live bug (2026-09-17, direct user report: "WHAT THE
+  // FUCK is it meant to be??? ... middle aligned" - a real render
+  // measured GROUP_X=168.8 for a short 2-word phrase against this
+  // canvas's own true center of 270 (CANVAS_WIDTH/2), nowhere close):
+  // this used to anchor the group to a
+  // FIXED left margin (BUILD_LEFT_MARGIN) plus half the phrase's own
+  // width - only ever lands ON true center when the phrase is nearly
+  // MAX_TEXT_WIDTH wide (BUILD_LEFT_MARGIN + MAX_TEXT_WIDTH/2 does equal
+  // CANVAS_WIDTH/2 exactly, by construction), so any shorter phrase - the
+  // common case, most real captions don't fill the full available width -
+  // sat visibly left of center instead. wordLocalX/wordLocalY (above)
+  // already center each word WITHIN the group around local (0,0), so the
+  // group itself just needs to sit at the canvas's own true center -
+  // no left-margin math needed at all.
+  const GROUP_X = CANVAS_WIDTH / 2;
 
   const layers = [{
     id: '__pop_group__',
@@ -15672,13 +15834,15 @@ function buildTextPopOutLayers({
       textAlign: 'center',
       maxWidth: CANVAS_WIDTH,
       // X is fixed for life (see this function's own doc comment); Y
-      // rises from TEXT_POP_OUT_WORD_RISE_DISTANCE below the shared
-      // baseline up to 0 - once it lands, it holds there (two identical
+      // rises from TEXT_POP_OUT_WORD_RISE_DISTANCE below the word's own
+      // landed row (wordLocalY[i] - 0 for every word when the phrase
+      // fits on one line, its own row's Y when wrapped) up to that
+      // landed row - once it lands, it holds there (two identical
       // trailing keyframes) for the rest of the layer's life, including
       // through the group's own later exit-shrink.
       position: { keyframes: [
-        { time: riseStart, value: [wordLocalX[i], TEXT_POP_OUT_WORD_RISE_DISTANCE], interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: riseStart + TEXT_POP_OUT_WORD_RISE_DURATION, value: [wordLocalX[i], 0] },
+        { time: riseStart, value: [wordLocalX[i], wordLocalY[i] + TEXT_POP_OUT_WORD_RISE_DISTANCE], interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: riseStart + TEXT_POP_OUT_WORD_RISE_DURATION, value: [wordLocalX[i], wordLocalY[i]] },
       ] },
       opacity: { keyframes: [
         { time: riseStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
@@ -15885,7 +16049,13 @@ function buildMographBeatVisual(beat) {
     if (items.length === 3) {
       const narrationText = isPlainObject(beat.params) && typeof beat.params.narration === 'string' ? beat.params.narration : '';
       layers = buildTripleStackLayers({ items, accentColor, narrationText });
-      clampMographDuration(beat, TRIPLE_STACK_COMPLETE_TIME);
+      // Direct user ask (VV2 scene 4): "the nodes should say on for a 1s
+      // more to allow ppl to read them" - the default minHold (0.4s, see
+      // clampMographDuration's own default) left the 3 landed nodes on
+      // screen barely long enough to read all 3 labels. +1s over that
+      // default floor, same mechanism every other template's own
+      // per-call minHold override already uses.
+      clampMographDuration(beat, TRIPLE_STACK_COMPLETE_TIME, 1.4);
     }
   } else if (spec.type === 'nodeAbsorb' && typeof spec.headerIcon === 'string' && MOGRAPH_ICON_RE.test(spec.headerIcon) && typeof spec.headerText === 'string' && spec.headerText.trim() && Array.isArray(spec.items)) {
     const items = spec.items
@@ -16083,7 +16253,7 @@ function buildMographBeatVisual(beat) {
 
   if (layers) {
     applyMographGlow(layers);
-    beat.visual = { layers };
+    beat.visual = { layers, soundCues: deriveSoundCuesFromLayers(layers) };
   }
 }
 
