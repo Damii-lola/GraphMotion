@@ -265,10 +265,11 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
 const SFX_DIR = path.join(__dirname, 'assets', 'sfx');
 const MUSIC_PATH = path.join(__dirname, 'assets', 'music', 'background.mp3');
 // Kenney's free UI/Interface Sounds packs (CC0 - kenney.nl, no
-// attribution required, commercial use explicitly allowed). "pop" is the
-// one every burst-particle-driven cue below maps to for now (breadth
-// over variety - see deriveSoundCuesFromLayers' own doc comment,
-// sceneSchema.js).
+// attribution required, commercial use explicitly allowed). Which of
+// pop/tick/drop/chime a given cue resolves to is decided in
+// sceneSchema.js's deriveSoundCuesFromLayers/NODE_SOUND_CUE_RULES, based
+// on what the moment actually is (a lock-in, a settle, the outro CTA,
+// etc.) - this file just plays whatever `cue.sound` name it's given.
 const SFX_VOLUME = 0.55;
 // Background: incompetech.com, "Deliberate Thought" by Kevin MacLeod -
 // CC-BY (attribution required, unlike the CC0 SFX above). Kept quiet and

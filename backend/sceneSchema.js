@@ -4648,16 +4648,24 @@ const NODE_CLUSTER_EXTENDED_MIN_DURATION = 6.4;
  * smoothly from frame 0, not a real hold - see buildSplitConvergeLayers'
  * own doc comment for the original bug this avoids).
  */
-function buildIconBurstParticles(index, x, y, color, burstTime) {
+// `label` is purely cosmetic - an optional, descriptive id suffix (falls
+// back to the numeric `index` when omitted, so every pre-existing call
+// site keeps the exact same id it always had) that lets
+// deriveSoundCuesFromLayers' own keyword matching pick a sound fitting
+// THIS burst's real meaning (e.g. nodeAbsorb's "eating" a row is a
+// distinct moment from an icon just settling into place) without
+// changing the angle math `index` still drives below.
+function buildIconBurstParticles(index, x, y, color, burstTime, label) {
   const PARTICLE_COUNT = 4;
   const particles = [];
+  const idSuffix = label || index;
   for (let p = 0; p < PARTICLE_COUNT; p++) {
     const angle = (p / PARTICLE_COUNT) * Math.PI * 2 + index * 0.7;
     const dist = 16 + (p % 2) * 12;
     const endX = x + Math.cos(angle) * dist;
     const endY = y + Math.sin(angle) * dist;
     particles.push({
-      id: `__node_burst_${index}_${p}__`,
+      id: `__node_burst_${idSuffix}_${p}__`,
       type: 'shape',
       width: 7,
       height: 7,
@@ -4696,23 +4704,59 @@ function buildIconBurstParticles(index, x, y, color, burstTime) {
  * of those helpers already shares (id containing "burst"/"lock" +
  * opacity that stays 0 then jumps to a real peak value at one specific
  * keyframe, back to 0 shortly after - see buildIconBurstParticles' own
- * shape just above) and derives one 'pop' cue per distinct burst moment
+ * shape just above) and derives one cue per distinct burst moment
  * (deduped by time - each burst spawns 2-4 individual particle layers at
  * the identical instant). Zero changes needed to any of the 15+ existing
  * call sites - this covers every template using them for free, and
  * automatically covers any NEW template built the same way in future.
+ *
+ * Real, direct user follow-up (2026-09-17): "don't just use one UI sound
+ * effect, have a whole list of them" - this used to map EVERY single
+ * burst moment to the same 'pop' regardless of what actually happens
+ * there (a counter digit ticking, a row getting absorbed, a lock-in
+ * moment, the outro CTA landing all sounded identical). The callers
+ * already pass a descriptive `id`/`index` into buildCounterBurstParticles
+ * et al (e.g. 'twl_lock', 'dc_settle', 'cta') which lands directly in the
+ * resulting layer id - matched here against a few real keywords already
+ * present in those ids to pick a sound that actually fits the moment,
+ * still with zero changes needed at any of those call sites.
  */
+const NODE_SOUND_CUE_RULES = [
+  // Order matters - first match wins. nodeAbsorb's header "eating" a row
+  // (see its own buildIconBurstParticles(..., `roweat${i}`) call) is a
+  // distinct, rhythmic, repeated moment - reuses the same firm tick as a
+  // lock-in below rather than the softer default pop every OTHER
+  // template's own generic bursts get.
+  { pattern: /roweat/i, sound: 'tick' },
+  // A "lock"-style moment (a value settling into place: year-scroller's
+  // lock, typewriterLink's own 'twl_lock') reads as a firmer mechanical
+  // tick, not a soft pop.
+  { pattern: /lock/i, sound: 'tick' },
+  // A "settle" moment (dotConstellation's 'dc_settle', a hero icon
+  // coming to rest) reads as a soft landing thud, not a bright pop.
+  { pattern: /settle/i, sound: 'drop' },
+  // The outro CTA/brand reveal is the one unambiguously POSITIVE, "we're
+  // done, here's the payoff" moment in every video - a brighter, more
+  // celebratory sound than any of the mid-video beats get.
+  { pattern: /cta|brand/i, sound: 'chime' },
+];
+function pickSoundForCueId(id) {
+  const rule = NODE_SOUND_CUE_RULES.find((r) => r.pattern.test(id));
+  return rule ? rule.sound : 'pop';
+}
 function deriveSoundCuesFromLayers(layers) {
   if (!Array.isArray(layers)) return [];
-  const times = new Set();
+  const cuesByTime = new Map();
   for (const layer of layers) {
     if (!layer || typeof layer.id !== 'string' || !/burst|lock/i.test(layer.id)) continue;
     const kfs = layer.opacity && Array.isArray(layer.opacity.keyframes) ? layer.opacity.keyframes : null;
     if (!kfs) continue;
     const peak = kfs.find((k) => k && typeof k.time === 'number' && k.time > 0 && typeof k.value === 'number' && k.value > 0);
-    if (peak) times.add(Math.round(peak.time * 100) / 100);
+    if (!peak) continue;
+    const time = Math.round(peak.time * 100) / 100;
+    if (!cuesByTime.has(time)) cuesByTime.set(time, pickSoundForCueId(layer.id));
   }
-  return [...times].sort((a, b) => a - b).map((time) => ({ time, sound: 'pop' }));
+  return [...cuesByTime.entries()].sort((a, b) => a[0] - b[0]).map(([time, sound]) => ({ time, sound }));
 }
 
 // Real, direct user spec (2026-09-07, against a reference video): "there
@@ -7754,6 +7798,51 @@ function nodeAbsorbPillEffects(color, glow = 1) {
   ];
 }
 
+// The header pill only has vertical room for 2 lines of text (see
+// NODE_ABSORB_HEADER_HEIGHT) - real measured wrap against the box's own
+// actual width (not a guessed character count, see this function's own
+// call site for the bug that caused) decides whether the AI's real
+// headerText fits as-is, and only truncates (at a word boundary, with an
+// ellipsis) in the rare case it genuinely can't even at this template's
+// intended font size.
+function fitNodeAbsorbHeaderText(text, boxWidth) {
+  const FONT_FAMILY = 'Poppins Bold';
+  const FONT_WEIGHT = '700';
+  const FONT_SIZE = 28;
+  const MAX_LINES = 2;
+  const measureCtx = createCanvas(10, 10).getContext('2d');
+  measureCtx.font = `${FONT_WEIGHT} ${FONT_SIZE}px ${FONT_FAMILY}`;
+
+  function wrapLineCount(words) {
+    let lines = 1;
+    let lineWidth = 0;
+    words.forEach((w, i) => {
+      const wWidth = measureCtx.measureText(w).width;
+      const spaceWidth = i > 0 ? measureCtx.measureText(' ').width : 0;
+      if (lineWidth > 0 && lineWidth + spaceWidth + wWidth > boxWidth) {
+        lines += 1;
+        lineWidth = wWidth;
+      } else {
+        lineWidth += spaceWidth + wWidth;
+      }
+    });
+    return lines;
+  }
+
+  const words = text.split(/\s+/).filter(Boolean);
+  if (wrapLineCount(words) <= MAX_LINES) return text;
+
+  // Doesn't fit even at 2 lines - drop trailing words (word boundary,
+  // never mid-word) until what's left does, same "never overflow the
+  // box" guarantee the old char-count cap was aiming for, just driven by
+  // the box's own real measured width instead of an arbitrary count.
+  let fitCount = words.length - 1;
+  while (fitCount > 1 && wrapLineCount(words.slice(0, fitCount)) > MAX_LINES) {
+    fitCount -= 1;
+  }
+  return `${words.slice(0, fitCount).join(' ')}...`;
+}
+
 function buildNodeAbsorbLayers({
   headerIcon, headerText, items, accentColor,
 }) {
@@ -7841,7 +7930,28 @@ function buildNodeAbsorbLayers({
   // header sliding through with its tilt flipping sign mid-glide (direct
   // user feedback on the first render: "the eating animation isn't
   // clean").
-  const headerRotKfs = [{ time: RISE_END, value: 0, interpolation: 'easing', easing: 'easeInOutCubic' }];
+  //
+  // Real, confirmed-live bug (2026-09-17, direct user report "nodes not
+  // in right position" + confirmed against a real generated video's own
+  // frames): this track used to have its FIRST tilt keyframe at
+  // eatArriveAt[0], with only the single RISE_END(=0) keyframe before
+  // it. Property.valueAt interpolates continuously between whatever two
+  // keyframes bracket the current time (see engine/keyframes.js) - with
+  // nothing pinning rotation back to 0 at EAT_START, the ENTIRE
+  // NODE_ABSORB_PRE_EAT_DELAY pause (1.5s, meant to hold the header
+  // upright while the full row list sits still and readable) instead
+  // spent that whole window slowly, continuously rotating from 0 toward
+  // the first tilt value - a visibly crooked, constantly-drifting header
+  // the entire time the rows are supposed to be calmly on display,
+  // confirmed in the real video's own frames. Pinning an explicit 0 at
+  // EAT_START keeps rotation flat through the whole pause; the tilt ramp
+  // now only starts during the actual (brief, NODE_ABSORB_EAT_STEP_
+  // DURATION) travel leg into row 0, same as every later leg already did
+  // correctly between its own eatDepartAt/eatArriveAt pair.
+  const headerRotKfs = [
+    { time: RISE_END, value: 0, interpolation: 'easing', easing: 'easeInOutCubic' },
+    { time: EAT_START, value: 0, interpolation: 'easing', easing: 'easeInOutCubic' },
+  ];
   items.forEach((_, i) => {
     const tilt = i % 2 === 0 ? -7 : 7;
     headerRotKfs.push({ time: eatArriveAt[i], value: tilt, interpolation: 'easing', easing: 'easeOutCubic' });
@@ -7973,6 +8083,20 @@ function buildNodeAbsorbLayers({
   // the real icon lands, making room for the header's own text.
   const centeredX = 0;
   const withTextX = -NODE_ABSORB_HEADER_WIDTH / 2 + 44;
+  // Real box geometry the text actually renders into - textBoxRight is
+  // the pill's own right inner edge (with margin), textBoxStart is where
+  // text begins just clear of the icon. Used for BOTH the real fit-check
+  // below and the layer's own position/maxWidth, so they can never
+  // disagree with each other the way the old hardcoded
+  // `NODE_ABSORB_HEADER_WIDTH / 2 - 30` maxWidth used to (a real,
+  // confirmed-live mismatch: that literal only ever matched HALF of the
+  // real available box width, wrapping text a full ~40% narrower than it
+  // needed to).
+  const headerTextBoxRight = NODE_ABSORB_HEADER_WIDTH / 2 - 30;
+  const headerTextBoxStart = withTextX + NODE_ABSORB_HEADER_ICON_SIZE / 2 + 16;
+  const headerTextBoxWidth = headerTextBoxRight - headerTextBoxStart;
+  const headerTextLocalX = headerTextBoxStart + headerTextBoxWidth / 2;
+  const fittedHeaderText = fitNodeAbsorbHeaderText(headerText, headerTextBoxWidth);
   NODE_ABSORB_CYCLE_ICONS.forEach((cycleIcon, ci) => {
     const visibleStart = FLYIN_END + ci * NODE_ABSORB_CYCLE_STEP;
     const visibleEnd = visibleStart + NODE_ABSORB_CYCLE_STEP;
@@ -8019,14 +8143,14 @@ function buildNodeAbsorbLayers({
     id: '__absorb_header_text__',
     type: 'text',
     parent: '__absorb_header__',
-    text: headerText,
+    text: fittedHeaderText,
     fontFamily: 'Poppins Bold',
     fontWeight: '700',
     fontSize: 28,
     fillStyle: ICON_BRIGHT_TINT,
     textAlign: 'left',
-    maxWidth: NODE_ABSORB_HEADER_WIDTH / 2 - 30,
-    position: [withTextX + NODE_ABSORB_HEADER_ICON_SIZE / 2 + 16 + (NODE_ABSORB_HEADER_WIDTH / 2 - 30 - withTextX - NODE_ABSORB_HEADER_ICON_SIZE / 2 - 16) / 2, 0],
+    maxWidth: headerTextBoxWidth,
+    position: [headerTextLocalX, 0],
     opacity: {
       // Real, confirmed-live bug (2026-09-17, direct user report + a
       // real render's own frame-by-frame confirmation): this used to
@@ -8178,7 +8302,7 @@ function buildNodeAbsorbLayers({
   // be visible bursting around the header, never hidden behind it.
   items.forEach((item, i) => {
     const rowPos = [CENTER[0], rowY[i]];
-    layers.push(...buildIconBurstParticles(i, rowPos[0], rowPos[1], ICON_BRIGHT_TINT, eatArriveAt[i]));
+    layers.push(...buildIconBurstParticles(i, rowPos[0], rowPos[1], ICON_BRIGHT_TINT, eatArriveAt[i], `roweat${i}`));
   });
   layers.push(...buildIconBurstParticles(11, CENTER[0], CENTER[1], ICON_BRIGHT_TINT, RETURN_END));
 
@@ -16063,7 +16187,18 @@ function buildMographBeatVisual(beat) {
       .slice(0, 4)
       .map((it) => ({ icon: it.icon, text: truncateAtWordBoundary(it.text.trim(), 20) }));
     if (items.length === 4) {
-      const headerText = truncateAtWordBoundary(spec.headerText.trim(), 16);
+      // Real, confirmed-live bug (2026-09-17, direct user report against
+      // a real generated video: header read "What Rich and", a mid-
+      // sentence fragment): this used to hard-truncate to 16 CHARACTERS
+      // before the text layer ever saw it - nowhere near what the
+      // header's own real text box can hold (measured, see
+      // buildNodeAbsorbLayers' own fitHeaderText below), so a normal
+      // phrase like "What Rich People Have" got chopped mid-thought for
+      // no visual reason. Only a generous safety backstop against a
+      // truly pathological AI-authored wall of text stays here now -
+      // buildNodeAbsorbLayers does the REAL fit against its own actual
+      // measured box width.
+      const headerText = truncateAtWordBoundary(spec.headerText.trim(), 80);
       const result = buildNodeAbsorbLayers({
         headerIcon: spec.headerIcon, headerText, items, accentColor,
       });
