@@ -4,7 +4,6 @@ const os = require('os');
 const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 const deepgramTts = require('./deepgramTtsGen');
-const fishTts = require('./fishTtsGen');
 const edgeTts = require('./ttsGen');
 const { annotateNarrationTags } = require('./narrationTagging');
 const { getWordTimings } = require('./wordTiming');
@@ -12,24 +11,19 @@ const { getWordTimings } = require('./wordTiming');
 /**
  * Production narration voice promoted to Deepgram's Aura-2 (orpheus)
  * after direct user comparison against Fish Audio's free tier - a real
- * generated sample, blind listen, "sounds way better." Three-tier
- * fallback, each a real independent failure mode worth falling back
- * from rather than losing a beat's narration entirely: Deepgram first
- * (needs DEEPGRAM_API_KEY + its own account), then Fish Audio (needs
- * FISH_API_KEY, was the previous primary), then msedge-tts's Eric
+ * generated sample, blind listen, "sounds way better." Fish Audio
+ * REMOVED entirely (2026-09-17, direct user request) - it was a
+ * transitional middle tier from before Deepgram became primary, no
+ * longer needed. Two-tier fallback now: Deepgram first (needs
+ * DEEPGRAM_API_KEY + its own account), then msedge-tts's Eric
  * (zero-key/zero-account, the original zero-dependency fallback this
- * project has always had).
+ * project has always had) if Deepgram fails outright.
  */
 async function generateSpeech(text) {
   try {
     return await deepgramTts.generateSpeech(text);
   } catch (err) {
-    console.warn(`[narrationPrefetch] Deepgram TTS failed, falling back to Fish Audio: ${err.message}`);
-  }
-  try {
-    return await fishTts.generateSpeech(text);
-  } catch (err) {
-    console.warn(`[narrationPrefetch] Fish Audio TTS also failed, falling back to Eric: ${err.message}`);
+    console.warn(`[narrationPrefetch] Deepgram TTS failed, falling back to Eric: ${err.message}`);
     return edgeTts.generateSpeech(text);
   }
 }
@@ -467,8 +461,12 @@ async function synthesizeBeatClip(taggedText, dir, index, attempt) {
  * Generates narration audio for every beat that has one, IN PARALLEL
  * across beats (like imagePrefetch.js) - was sequential when the only
  * engine was msedge-tts's single-connection-per-call websocket, but
- * Fish Audio (the primary engine now, see generateSpeech above) is a
- * stateless REST API with no such constraint. Narration verification
+ * Deepgram (the primary engine now, see generateSpeech above) is a
+ * stateless REST API with no such constraint - staggered below (see
+ * TTS_REQUEST_STAGGER_MS) rather than fully sequential, since "no shared
+ * code state between beats" was never the same thing as "the real
+ * external provider has no concurrency limit of its own." Narration
+ * verification
  * has a real history here worth knowing if this ever needs revisiting:
  * first a judge call with up to 5 retries, then a single judge call
  * with no retry (real API-call-volume consequences from the retry
@@ -517,7 +515,37 @@ async function prefetchNarration(sceneJSON, jobId) {
   const dir = narrationDirFor(jobId);
   fs.mkdirSync(dir, { recursive: true });
 
-  await Promise.all(beatsWithNarration.map(async ({ scene, index }) => {
+  // Real, likely-live bug (2026-09-17, direct user report against a real
+  // generated video: narration says one line then goes silent for the
+  // rest of a 30s video, several beats later in the video with no
+  // audio). Every beat's own TTS request fires in the EXACT same instant
+  // via this Promise.all - fine from THIS codebase's own perspective
+  // (each beat only touches its own index, no shared state, per this
+  // function's own doc comment above), but that doc comment never
+  // considered the actual TTS PROVIDERS' side: Deepgram/Fish Audio/
+  // msedge-tts are 3 real external services, none of this file's own
+  // code, and a synchronized burst of 6-7 simultaneous requests hitting
+  // a real per-account concurrency/rate limit is a well-known TTS
+  // integration failure mode - generateSpeech's own single, IMMEDIATE
+  // (no backoff) retry wouldn't help against a genuine rate limit either,
+  // since it re-hits the identical limit a few ms later. A beat that
+  // fails all 3 tiers falls through to prefetchNarration's own catch
+  // below, silently keeping its authored duration with NO audio -
+  // exactly the "some beats have narration, the rest are silent"
+  // symptom reported, and worse for a video with MORE beats (more
+  // simultaneous requests, more likely to trip a real limit) - matching
+  // the "should be talking throughout" expectation failing specifically
+  // on longer videos. Staggering each beat's own request start (not
+  // making them fully sequential - beats still overlap/pipeline, this
+  // only avoids every request landing in the identical instant) is a
+  // standard, low-risk mitigation for exactly this failure class,
+  // regardless of which specific provider's limit was actually tripped.
+  const TTS_REQUEST_STAGGER_MS = 400;
+
+  await Promise.all(beatsWithNarration.map(async ({ scene, index }, position) => {
+    if (position > 0) {
+      await new Promise((resolve) => setTimeout(resolve, position * TTS_REQUEST_STAGGER_MS));
+    }
     try {
       // Scene generation writes PLAIN narration on purpose (see
       // scenePrompts.js) - tag annotation is this deliberately separate

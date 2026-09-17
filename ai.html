@@ -898,24 +898,36 @@
     const POLL_INTERVAL_MS = 2000;
     // Backend's own worst-case budget, kept in sync with the actual
     // current backend numbers (this drifted stale once before - re-
-    // verified against the real code, not copied forward blind):
-    // generation itself now has a hard 6-minute outer timeout
-    // (mistralClient.js), then rendering chunks at CHUNK_SIZE_SECONDS=3s
-    // each with its own 4-minute safety timeout (longVideoOrchestrator.js)
-    // - a real, working, TYPICAL render (a default ~12s video is 4
-    // chunks) can legitimately take several minutes past generation
-    // without anything being stuck. This does NOT need to cover the
-    // absolute pathological worst case (every single chunk timing out
-    // independently) - that scenario resolves to a real job.status
-    // "failed" on its own (the backend's own per-chunk/per-generation
-    // timeouts guarantee that), which this poll loop already detects
-    // and surfaces immediately below, regardless of MAX_WAIT_MS. This
-    // only needs to comfortably cover ordinary, still-succeeding-but-
-    // slow operation. Giving up client-side while the backend is still
-    // genuinely working just misreports a slow-but-working render as
-    // failed (the job itself isn't lost - refreshing the page resumes
-    // polling it - but the user sees a false error first).
-    const MAX_WAIT_MS = 20 * 60 * 1000; // give up after 20 minutes
+    // verified against the real code, not copied forward blind, and
+    // corrected again 2026-09-17: the mistralClient.js/6-minute figure
+    // this comment used to cite is gone - scene generation is on
+    // Cloudflare Workers AI now, GENERATION_HARD_TIMEOUT_MS = 11 minutes
+    // in sceneGenClient.js): generation has an 11-minute hard outer
+    // timeout, then rendering chunks (beat-aligned, roughly 3-4s each -
+    // see longVideoOrchestrator.js's computeChunkRanges) each with their
+    // own 4-minute per-attempt safety timeout, retried up to 3 times
+    // with a 15s wait between attempts on failure (renderChunkWithRetries,
+    // same file) - a real, working, TYPICAL render can legitimately take
+    // several minutes past generation, and a job that hit a retry or two
+    // adds real extra time on top without anything actually being stuck.
+    // This does NOT need to cover the absolute pathological worst case
+    // (every single chunk exhausting every retry) - that scenario
+    // resolves to a real job.status "failed" on its own (the backend's
+    // own per-chunk/per-generation timeouts guarantee that), which this
+    // poll loop already detects and surfaces immediately below,
+    // regardless of MAX_WAIT_MS. This only needs to comfortably cover
+    // ordinary, still-succeeding-but-slow operation. Giving up client-
+    // side while the backend is still genuinely working just misreports
+    // a slow-but-working render as failed (the job itself isn't lost -
+    // refreshing the page resumes polling it - but the user sees a
+    // false error first).
+    // 20 -> 25 minutes (2026-09-17, direct user request): the new
+    // per-chunk retry-with-wait logic can legitimately add several
+    // minutes to a job that hit a transient chunk failure or two, and a
+    // job that's still genuinely progressing shouldn't get misreported
+    // as failed client-side just because retries pushed it past the old
+    // 20-minute budget.
+    const MAX_WAIT_MS = 25 * 60 * 1000; // give up after 25 minutes
     const MAX_CONSECUTIVE_FAILURES = 5; // tolerate ~10s of blips (e.g. a server restart) before giving up
     const startedAt = Date.now();
     let consecutiveFailures = 0;

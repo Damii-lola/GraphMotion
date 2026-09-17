@@ -7812,7 +7812,26 @@ function buildNodeAbsorbLayers({
   glowKfs.push({ time: RETURN_END + 0.15, value: GLOW_CALM });
   const headerGlowTrack = { keyframes: glowKfs };
 
-  layers.push({
+  // Real, confirmed-live bug (2026-09-17, direct user report + confirmed
+  // directly against the actual delivered video's own frames, not
+  // assumed): the header's own layers used to be pushed to `layers`
+  // BEFORE the row layers below, meaning rows drew ON TOP of the header
+  // in z-order. That's backwards for what "eating" a row is supposed to
+  // look like - the header travels down and is meant to visually COVER
+  // the row as it arrives, but a row's own fade-out only starts 30ms
+  // before the header's arrival keyframe, while the header's OWN
+  // approach (easing toward that same keyframe) is already visually
+  // close to/overlapping the row well before that instant. With rows on
+  // top, that overlap window showed the still-nearly-full-opacity row's
+  // own text/badge bleeding through OVER the header pill's surface,
+  // exactly the "remnant"/ghosting artifact reported. Collected into
+  // their own array and pushed to `layers` AFTER the row content below
+  // (but before the row-eaten particle bursts, which stay on top of
+  // everything so they still read as a visible "poof") - the header now
+  // always draws over any row it might overlap, regardless of timing.
+  const headerLayers = [];
+
+  headerLayers.push({
     id: '__absorb_header__',
     type: 'null',
     position: { keyframes: headerPosKfs },
@@ -7820,7 +7839,7 @@ function buildNodeAbsorbLayers({
     scale: { keyframes: headerScaleKfs },
   });
 
-  layers.push({
+  headerLayers.push({
     id: '__absorb_header_bg__',
     type: 'shape',
     parent: '__absorb_header__',
@@ -7881,7 +7900,7 @@ function buildNodeAbsorbLayers({
   NODE_ABSORB_CYCLE_ICONS.forEach((cycleIcon, ci) => {
     const visibleStart = FLYIN_END + ci * NODE_ABSORB_CYCLE_STEP;
     const visibleEnd = visibleStart + NODE_ABSORB_CYCLE_STEP;
-    layers.push({
+    headerLayers.push({
       id: `__absorb_cycle_icon_${ci}__`,
       type: 'image',
       parent: '__absorb_header__',
@@ -7899,7 +7918,7 @@ function buildNodeAbsorbLayers({
       },
     });
   });
-  layers.push({
+  headerLayers.push({
     id: '__absorb_header_icon__',
     type: 'image',
     parent: '__absorb_header__',
@@ -7920,7 +7939,7 @@ function buildNodeAbsorbLayers({
       ],
     },
   });
-  layers.push({
+  headerLayers.push({
     id: '__absorb_header_text__',
     type: 'text',
     parent: '__absorb_header__',
@@ -7933,10 +7952,19 @@ function buildNodeAbsorbLayers({
     maxWidth: NODE_ABSORB_HEADER_WIDTH / 2 - 30,
     position: [withTextX + NODE_ABSORB_HEADER_ICON_SIZE / 2 + 16 + (NODE_ABSORB_HEADER_WIDTH / 2 - 30 - withTextX - NODE_ABSORB_HEADER_ICON_SIZE / 2 - 16) / 2, 0],
     opacity: {
+      // Real, confirmed-live bug (2026-09-17, direct user report + a
+      // real render's own frame-by-frame confirmation): this used to
+      // start fading in at CYCLE_END+0.05, but __absorb_header_icon__
+      // above doesn't finish sliding from centered to its left slot
+      // until CYCLE_END+0.08 - a real ~30ms window where the still-
+      // moving icon and the already-appearing text visually overlapped,
+      // reading as a stray icon/shape sitting on top of the header text.
+      // Now starts exactly when the icon's own move completes, never
+      // before it.
       keyframes: [
         { time: 0, value: 0, interpolation: 'hold' },
-        { time: CYCLE_END + 0.05, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: CYCLE_END + 0.18, value: 1 },
+        { time: CYCLE_END + 0.08, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: CYCLE_END + 0.21, value: 1 },
       ],
     },
   });
@@ -8057,10 +8085,24 @@ function buildNodeAbsorbLayers({
       scale: cloneTrack(popKf),
       opacity: cloneTrack(opacityKf),
     });
-    // Real, direct user ask: "add the other miniature details like the
-    // popup animation" - a tiny particle burst right as each row gets
-    // eaten, the same reusable pop effect other templates already use.
-    layers.push(...buildIconBurstParticles(i, rowPos[0], rowPos[1], ICON_BRIGHT_TINT, eatenAt));
+  });
+
+  // Header pushed here - AFTER every row's own bg/badge/icon/text above,
+  // BEFORE the particle bursts below - so it always draws on top of any
+  // row it visually overlaps while eating it (see this function's own
+  // z-order bug writeup above `const headerLayers = []`), while the
+  // "poof" particles still render on top of the header itself.
+  layers.push(...headerLayers);
+
+  // Real, direct user ask: "add the other miniature details like the
+  // popup animation" - a tiny particle burst right as each row gets
+  // eaten, the same reusable pop effect other templates already use.
+  // Pushed in its own pass (not inline in the row-building loop above)
+  // so it lands after `headerLayers` in z-order - these should always
+  // be visible bursting around the header, never hidden behind it.
+  items.forEach((item, i) => {
+    const rowPos = [CENTER[0], rowY[i]];
+    layers.push(...buildIconBurstParticles(i, rowPos[0], rowPos[1], ICON_BRIGHT_TINT, eatArriveAt[i]));
   });
   layers.push(...buildIconBurstParticles(11, CENTER[0], CENTER[1], ICON_BRIGHT_TINT, RETURN_END));
 
@@ -11111,6 +11153,35 @@ function truncateAtWordBoundary(text, maxChars) {
   return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trim();
 }
 
+// Used after a raw word-count slice (see blueprintText's dispatch branch
+// below) to keep the truncated result from visibly dangling on a
+// low-content word - a real, confirmed-live example: "...one's a status
+// symbol, the" (cut exactly at word 8, landing on "the"). Deliberately
+// small/conservative (articles, a handful of prepositions/conjunctions)
+// rather than a full stopword list - this only needs to catch the
+// specific "ends mid-clause" cases that read as visibly broken, not
+// aggressively re-edit otherwise-fine short phrases.
+const TRAILING_STOPWORDS = new Set(['a', 'an', 'the', 'of', 'in', 'on', 'to', 'and', 'or', 'is', 'was', 'are', 'that', 'this', 'with', 'for', 'at', 'by', 'as']);
+function trimTrailingStopword(text) {
+  const words = text.split(/\s+/).filter((w) => w.length > 0);
+  while (words.length > 2 && TRAILING_STOPWORDS.has(words[words.length - 1].toLowerCase().replace(/[.,!?;:]+$/, ''))) {
+    words.pop();
+  }
+  // Real, confirmed-live follow-up (found verifying the fix above with a
+  // real render): stripping a trailing stopword can UNCOVER a dangling
+  // comma/semicolon that was only ever meant to lead into the word just
+  // removed ("...status symbol, the" -> stopword-trim -> "...status
+  // symbol," - still visibly mid-clause, just one punctuation mark later
+  // now). A trailing comma/semicolon always signals "there was more after
+  // this," regardless of whether a stopword needed removing, so it's
+  // stripped unconditionally here too.
+  const last = words[words.length - 1];
+  if (last && /[,;]$/.test(last)) {
+    words[words.length - 1] = last.replace(/[,;]+$/, '');
+  }
+  return words.join(' ');
+}
+
 /**
  * New mograph template (15th), built from a direct reference video (A9.mp4)
  * per an explicit, verbatim user request: "copy the scene design for
@@ -11544,15 +11615,51 @@ function lineRevealBreatheKeyframes(holdStart) {
   };
 }
 
-function buildLineRevealLayers({ text1, text2, accentColor }) {
+function buildLineRevealLayers({ text1: rawText1, text2: rawText2, accentColor }) {
   const t = computeLineRevealTiming();
   const CX = CANVAS_WIDTH / 2;
-  const pairing = FONT_PAIRINGS[hashString(text1 + text2) % FONT_PAIRINGS.length];
+  const pairing = FONT_PAIRINGS[hashString(rawText1 + rawText2) % FONT_PAIRINGS.length];
+
+  // Real, confirmed-live bug (2026-09-17, direct user report + confirmed
+  // directly against the actual delivered video's own frames): every
+  // Y-position/gap constant below (LINE_REVEAL_TEXT1_Y/TEXT2_Y and the
+  // matte-height formula just below) is tuned assuming text1 and text2
+  // each render as exactly ONE line - true for a typical 2-4 word
+  // headline, but a real example ("RICH VS WEALTHY", 3 words) wrapped to
+  // 2 lines at this font size/maxWidth. First attempt at a fix (make the
+  // matte tall enough to cover N lines, computed via measureTextWrap)
+  // stopped the top-clipping but, verified with a real render, uncovered
+  // a WORSE issue the clipping had been accidentally hiding: text1's
+  // real second line now visibly overlapped text2, since the fixed
+  // TEXT1_Y/TEXT2_Y gap only has room for one line each. Reworking that
+  // whole gap/timing system to be wrap-aware would be a much bigger,
+  // riskier change than this template's actual field spec calls for
+  // ("2-4w bold headline" - a genuinely short single-line headline was
+  // always the real intent). Fixed at the actual root instead: clamp
+  // each text to however many of its OWN words actually fit on one real
+  // line at this font/width (measureTextWrap - the same real wrap
+  // prediction blueprintText/textTiers already use elsewhere), dropping
+  // trailing words until it does. This keeps the original, already-tuned
+  // single-line matte/spacing formulas valid by construction, rather
+  // than trying to make them handle a multi-line case they were never
+  // designed for.
+  function clampToOneLine(text, fontFamily, fontSize) {
+    let words = text.split(/\s+/).filter((w) => w.length > 0);
+    while (words.length > 1 && measureTextWrap(words.join(' ').toUpperCase(), {
+      fontFamily, fontWeight: '400', fontSize, maxWidth: LINE_REVEAL_MAX_WIDTH,
+    }).lineCount > 1) {
+      words = words.slice(0, -1);
+    }
+    return words.join(' ');
+  }
+  const text1 = clampToOneLine(rawText1, pairing.serif.heavy, LINE_REVEAL_TEXT1_FONT_SIZE);
+  const text2 = clampToOneLine(rawText2, pairing.sans.regular, LINE_REVEAL_TEXT2_FONT_SIZE);
 
   // Generous enough to comfortably cover each font's own ascenders and
   // descenders regardless of the exact glyphs used - these are the REAL
   // edges the crossing-time search below locks the reveal to, not just a
-  // notional shape.
+  // notional shape. Safe to assume exactly one line each again now that
+  // clampToOneLine above guarantees it.
   const text1MatteHeight = LINE_REVEAL_TEXT1_FONT_SIZE * 2.2;
   const text1MatteTop = LINE_REVEAL_TEXT1_Y - LINE_REVEAL_TEXT1_FONT_SIZE * 0.9;
   const text1MatteBottom = text1MatteTop + text1MatteHeight;
@@ -15866,8 +15973,19 @@ function buildMographBeatVisual(beat) {
     // Same "no redundant upper-bound reject" lesson textTiers' own
     // retry-exhaustion bug just taught - truncate gracefully here
     // instead of hard-rejecting an over-length sentence.
-    const sentence1 = spec.sentence1.trim().split(/\s+/).filter((w) => w.length > 0).slice(0, 8).join(' ');
-    const sentence2 = spec.sentence2.trim().split(/\s+/).filter((w) => w.length > 0).slice(0, 8).join(' ');
+    //
+    // Preventive fix, 2026-09-17: applied here alongside lineReveal's own
+    // copy of this same fix (see that branch's doc comment for the real,
+    // confirmed-live example this was found from - "...one's a status
+    // symbol, the", a dangling article from THAT template's own
+    // truncation). A raw .slice(0,8) has the identical blind-truncation
+    // shape - zero awareness of WHERE it lands - so it carries the same
+    // real risk even without its own confirmed incident yet.
+    // trimTrailingStopword walks backward off the truncated end, dropping
+    // any trailing low-content word so the result never visibly ends
+    // mid-clause on a word like "the"/"of"/"and" - no extra retry cost.
+    const sentence1 = trimTrailingStopword(spec.sentence1.trim().split(/\s+/).filter((w) => w.length > 0).slice(0, 8).join(' '));
+    const sentence2 = trimTrailingStopword(spec.sentence2.trim().split(/\s+/).filter((w) => w.length > 0).slice(0, 8).join(' '));
     if (sentence1.split(' ').length >= 2 && sentence2.split(' ').length >= 2) {
       // Unlike textTiers/textPopOut, this builder's own exit timing is
       // NOT anchored to the beat's authored duration (both sentences'
@@ -15897,8 +16015,17 @@ function buildMographBeatVisual(beat) {
       value, text, icon, iconPosition, accentColor,
     });
   } else if (spec.type === 'lineReveal' && typeof spec.text1 === 'string' && spec.text1.trim() && typeof spec.text2 === 'string' && spec.text2.trim()) {
-    const text1 = truncateAtWordBoundary(spec.text1.trim(), 26);
-    const text2 = truncateAtWordBoundary(spec.text2.trim(), 32);
+    // Real, confirmed-live bug (2026-09-17, direct user report against a
+    // real generated video: "RICH VS WEALTHY" / "ONE'S A STATUS SYMBOL,
+    // THE" - a real delivered example ending on a dangling article).
+    // truncateAtWordBoundary is already word-boundary-safe (never cuts
+    // mid-WORD), but has no idea whether the word it lands ON reads as a
+    // complete thought - trimTrailingStopword (see blueprintText's own
+    // copy of this exact fix, same underlying pathology, different
+    // truncation function) catches the specific "ends mid-clause on a/
+    // an/the/of/etc" cases that read as visibly broken.
+    const text1 = trimTrailingStopword(truncateAtWordBoundary(spec.text1.trim(), 26));
+    const text2 = trimTrailingStopword(truncateAtWordBoundary(spec.text2.trim(), 32));
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
       beat.params.duration = lineRevealMinDuration();
     }

@@ -5,8 +5,8 @@ const fetch = require('node-fetch');
  * narration engine after direct user comparison against Fish Audio's
  * free tier: blind listen on a real generated sample, "sounds way
  * better." Same generateSpeech(text) -> Promise<Buffer> shape as
- * fishTtsGen.js/ttsGen.js on purpose, so narrationPrefetch.js's
- * fallback chain can try all three with zero shape mismatches.
+ * ttsGen.js on purpose, so narrationPrefetch.js's fallback chain can
+ * try both with zero shape mismatches.
  *
  * Free-tier economics: $200 signup credit, no credit card required, no
  * expiry, at $0.03/1K characters - roughly 6.67M characters before any
@@ -40,8 +40,7 @@ const VOICES = {
 const DEFAULT_MODEL = VOICES.arcas;
 
 /**
- * Single call, no retry - generateSpeech (below) owns the retry, same
- * split as fishTtsGen.js's speakOnce/generateSpeech.
+ * Single call, no retry - generateSpeech (below) owns the retry.
  */
 async function speakOnce(text, model) {
   const apiKey = process.env.DEEPGRAM_API_KEY;
@@ -72,11 +71,21 @@ async function speakOnce(text, model) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-/** Generates speech audio for one line of narration, with one retry on failure/timeout - mirrors fishTtsGen.js's generateSpeech shape exactly. */
+/** Generates speech audio for one line of narration, with one retry on failure/timeout. */
 async function generateSpeech(text, model = DEFAULT_MODEL) {
   try {
     return await speakOnce(text, model);
   } catch (err) {
+    // Real, likely-live bug fixed here (2026-09-17): this retry used to
+    // fire IMMEDIATELY - no help at all against a genuine rate-limit
+    // rejection (narrationPrefetch.js fires every beat's TTS request in
+    // the same instant, and a real per-account concurrency/rate limit
+    // rejecting several of them at once was the leading suspect for
+    // "narration says one line then goes silent" on longer videos),
+    // since an instant retry just re-hits the identical still-active
+    // limit window. A short wait gives that window a real chance to
+    // clear first - standard practice for any real rate-limited API.
+    await new Promise((resolve) => setTimeout(resolve, 800));
     return await speakOnce(text, model);
   }
 }
