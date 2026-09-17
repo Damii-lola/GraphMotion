@@ -230,13 +230,34 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
     assembledPath = paddedPath;
   }
 
-  // Loudness normalization REMOVED per direct user request, based on a
-  // real staged A/B listening test: it was the specific step where
-  // "unnaturalness" became noticeable, worse than the plain assembled
-  // track. The earlier -29.5dB "too quiet" finding that motivated
-  // adding this back is a real, separate tradeoff being knowingly
-  // accepted here - Deepgram's raw, unboosted loudness is what actually
-  // sounds right, even if it reads quieter than modern platform norms.
+  // Real, direct user report (2026-09-18): "the tts volume rn is
+  // extremely silent." Loudnorm-based correction was already tried
+  // TWICE for this exact -29.5dB/-28 LUFS "too quiet" issue (Deepgram's
+  // raw, unboosted output) and pulled back out both times - full
+  // mastering chain (highpass/compressor/loudnorm/alimiter) caused an
+  // "auditorium"/echo complaint, and even the pared-down loudnorm-only
+  // version (no compressor) was later rejected in a real staged A/B
+  // test for sounding "unnatural" against the plain track. Reaching for
+  // loudnorm a third time risks the exact same rejection - it's a multi-
+  // pass, psychoacoustically-modeled correction that reshapes the signal,
+  // not a pure "turn it up." This is deliberately the simplest possible
+  // alternative instead: a single FLAT linear gain (no dynamics, no
+  // per-band modeling, nothing adaptive to "pump" or otherwise color the
+  // voice) sized off the same real -29.5dB measurement that motivated
+  // both earlier attempts, landing around a -17dB mean - audible and
+  // comfortable next to modern platform norms without pushing all the
+  // way to loudnorm's own -16 LUFS target, some margin held back
+  // specifically because a flat gain (unlike loudnorm) has no per-signal
+  // headroom awareness of its own. alimiter is pure safety insurance
+  // against a peak that happens to sit hotter than the measured mean
+  // clipping post-boost - it only ever acts on rare peak overshoot, never
+  // touches quiet passages the way the earlier rejected compressor did,
+  // so it can't reintroduce that same pumping artifact.
+  const NARRATION_VOLUME_BOOST_DB = 12.5;
+  const boostedPath = path.join(workDir, `${jobId}-assembled-narration-boosted.mp3`);
+  await run(['-y', '-i', assembledPath, '-af', `volume=${NARRATION_VOLUME_BOOST_DB}dB,alimiter=limit=0.891`, '-c:a', 'libmp3lame', '-q:a', '4', boostedPath]);
+  fs.unlink(assembledPath, () => {});
+  assembledPath = boostedPath;
   // assembledPath goes into sound-design mixing next, then the final mux.
 
   // Direct user request (2026-09-17): "audio feels so empty" - a
