@@ -2472,6 +2472,26 @@ function attachLineRevealSparks(beat) {
           { time: endTime, value: 0 },
         ],
       },
+      // Real, direct user report against a real generated video: this
+      // spark appeared to freeze in place partway along the line and
+      // stay visible for the rest of the beat instead of reaching the
+      // line's own tip and fading out with it - same category of "should
+      // be governed by an opacity->0 track but isn't" symptom found and
+      // defended against elsewhere this session (nodeAbsorb's cycle icon
+      // and eaten-row remnants - see their own doc comments), never
+      // reproduced in isolated or chunked local test renders despite
+      // real effort. Redundant, independent safeguard: scaling to
+      // genuinely zero area on the exact same schedule opacity already
+      // fades on means no visible pixel can remain regardless of what's
+      // suppressing (or failing to suppress) opacity in whatever real-
+      // pipeline scenario triggers this.
+      scale: {
+        keyframes: [
+          { time: startTime, value: [1, 1] },
+          { time: fadeStart, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
+          { time: endTime, value: [0, 0] },
+        ],
+      },
       contents: [
         { type: 'path', shape: { kind: 'ellipse', params: { width: dotSize, height: dotSize } } },
         { type: 'fill', color: '#FFFFFF' },
@@ -8122,6 +8142,29 @@ function buildNodeAbsorbLayers({
           { time: visibleEnd, value: 0, interpolation: 'hold' },
         ],
       },
+      // Real, direct user report against TWO separate real generated
+      // videos (2026-09-17): one of these two placeholder icons
+      // (mdi:circle-outline / mdi:square-rounded-outline) sometimes
+      // stays faintly visible, overlapping the header text, well after
+      // its own cycling window ends - opacity alone provably holds at 0
+      // past visibleEnd (Property.valueAt clamps to the last keyframe's
+      // value for any t at or past it - engine/keyframes.js), and this
+      // could NOT be reproduced in isolated single-beat or 2-beat local
+      // test renders despite real effort, pointing at something specific
+      // to the real chunked multi-process render pipeline rather than
+      // this track's own per-frame math. Redundant, independent
+      // safeguard rather than a guessed root-cause fix: scaling to
+      // genuinely zero area at the same times opacity already does means
+      // even if opacity were somehow not fully suppressing this layer in
+      // whatever real-pipeline scenario triggers it, there is no longer
+      // any visible pixel for it to leave behind either way.
+      scale: {
+        keyframes: [
+          { time: 0, value: [0, 0], interpolation: 'hold' },
+          { time: visibleStart, value: [1, 1], interpolation: 'hold' },
+          { time: visibleEnd, value: [0, 0], interpolation: 'hold' },
+        ],
+      },
     });
   });
   headerLayers.push({
@@ -8210,7 +8253,18 @@ function buildNodeAbsorbLayers({
         { time: appearAt + NODE_ABSORB_ROW_POP_DURATION * 0.7, value: [1.08, 1.08], interpolation: 'easing', easing: 'easeOutCubic' },
         { time: appearAt + NODE_ABSORB_ROW_POP_DURATION, value: [1, 1] },
         { time: eatenAt - 0.03, value: [1, 1], interpolation: 'easing', easing: 'easeInCubic' },
-        { time: eatenAt, value: [0.2, 0.2] },
+        // 0.2 -> 0 (2026-09-17, direct user report against a real
+        // generated video: small remnants of eaten rows left behind
+        // after the header moved on). opacityKf already goes to 0 at
+        // this same instant, which should already make a 0.2-scale
+        // remnant invisible on its own - but since that provably-correct
+        // opacity track apparently isn't fully suppressing SOMETHING in
+        // whatever real-pipeline scenario triggers this (see the cycle
+        // icon's own doc comment just above, same category of bug, also
+        // never reproduced in isolated local testing), a genuinely zero
+        // scale is a redundant, independent guarantee: no visible pixel
+        // exists to leave behind regardless of what opacity is doing.
+        { time: eatenAt, value: [0, 0] },
       ],
     };
     const opacityKf = {

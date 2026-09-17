@@ -1,10 +1,7 @@
 const { jsonrepair } = require('jsonrepair');
 const fetch = require('node-fetch');
 const { validateSceneJSON, buildMographBeatVisual, buildCtaOutroBeat } = require('./sceneSchema');
-const {
-  buildCompactGenerationSystemPrompt, buildTemplatePickerSystemPrompt,
-  pickRandomTemplates, COMPACT_TEMPLATE_NAMES,
-} = require('./scenePrompts');
+const { buildCompactGenerationSystemPrompt, pickRandomTemplates } = require('./scenePrompts');
 const { callCloudflareRaw } = require('./cloudflareClient');
 
 /**
@@ -560,11 +557,10 @@ async function generateCompactBeatSpec(userPrompt, {
   // passes the SAME chosenTemplates back through (see every recursive
   // call below) so it only ever fixes narration/vars issues, never
   // re-picks the template set mid-generation. `chosenTemplates` itself
-  // is now normally the AI's own topic-fit pick, already shuffled into
-  // its final order, from generateSceneJSON below - pickRandomTemplates
-  // here is only the FAILSAFE for a caller that never went through that
-  // (or a genuinely fully-failed pick step, see pickTemplatesForTopic's
-  // own doc comment).
+  // is now always pickRandomTemplates's own uniform pick, already
+  // shuffled into its final order, from generateSceneJSON below -
+  // pickRandomTemplates here only covers a caller that skips that (a
+  // direct unit test, etc.) and never passes chosenTemplates at all.
   const templates = chosenTemplates || pickRandomTemplates();
   const systemPrompt = buildCompactGenerationSystemPrompt(templates);
   // `topic` defaults to the raw prompt for any caller that skips the
@@ -692,7 +688,7 @@ async function splitPromptIntoTopicAndStyle(userPrompt) {
   }
 }
 
-/** Plain Fisher-Yates, same real algorithm scenePrompts.js's own pickRandomTemplates uses (not the "sort by random comparator" non-uniform trick) - reused here to randomize the ORDER of whichever 6 templates pickTemplatesForTopic below picked, a deliberately separate concern from the picking itself. */
+/** Plain Fisher-Yates, same real algorithm scenePrompts.js's own pickRandomTemplates uses (not the "sort by random comparator" non-uniform trick) - reused here to randomize the ORDER of whichever 6 templates pickRandomTemplates just picked, a deliberately separate concern from the picking itself. */
 function shuffleArray(arr) {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i -= 1) {
@@ -702,45 +698,31 @@ function shuffleArray(arr) {
   return copy;
 }
 
-const TEMPLATE_PICK_COUNT = 6;
-const TEMPLATE_PICK_RETRY_BUDGET = 2;
-
-/**
- * Direct user requirement (2026-09-15): "i dont want there to be ANY
- * FUCKING GAURENTEED TEMPLATE... remove the template randomizer
- * completely, or put it as a failsafe... give the ai ALLL the templates
- * names and a short description for each... based on this prompt, pick
- * 6... then the 6 will go through a randomizer to randomize the order."
- * Replaces the OLD design (pickRandomTemplates chosen blind, before the
- * AI ever saw the topic, then the AI stuck with whatever it got) - now
- * the AI picks by genuine topical fit FIRST, using
- * buildTemplatePickerSystemPrompt's own short name+description list (a
- * separate, much smaller prompt than the real compact-generation one -
- * no field specs/examples needed just to pick 6 labels). A small retry
- * budget handles a malformed/invalid response; pickRandomTemplates is
- * kept as the pure-code FAILSAFE if this whole step still fails after
- * retries, so generation can never block on it entirely.
- */
-async function pickTemplatesForTopic(topic, retriesLeft = TEMPLATE_PICK_RETRY_BUDGET) {
-  try {
-    const raw = await callCloudflareRaw(buildTemplatePickerSystemPrompt(), `Topic: ${topic}`, { jsonMode: true, maxTokens: 150, temperature: 0.4 });
-    const parsed = extractJson(raw);
-    if (!Array.isArray(parsed.templates)) throw new Error('"templates" was not an array');
-    const valid = parsed.templates.filter((name) => COMPACT_TEMPLATE_NAMES.includes(name));
-    const distinct = [...new Set(valid)];
-    if (distinct.length !== TEMPLATE_PICK_COUNT) {
-      throw new Error(`expected ${TEMPLATE_PICK_COUNT} distinct real template names, got ${distinct.length} (${JSON.stringify(parsed.templates)})`);
-    }
-    return distinct;
-  } catch (err) {
-    if (retriesLeft > 0) {
-      console.warn(`[sceneGenClient] template pick failed (${err.message}), retrying (${retriesLeft - 1} left)...`);
-      return pickTemplatesForTopic(topic, retriesLeft - 1);
-    }
-    console.warn(`[sceneGenClient] template pick failed after retries (${err.message}) - falling back to the random-pick failsafe`);
-    return null;
-  }
-}
+// pickTemplatesForTopic (an AI call asking the model to pick 6 templates
+// by "genuine topical fit") REMOVED (2026-09-17, direct user demand: run
+// REAL tests confirming every template has an equal, verifiable chance
+// of being picked, "no strings attach to make it pick mainly these ones
+// and forget the restttt"). A real 25-call test against this exact
+// function found textPopOut picked 25/25 times (100%), counter 22/25
+// (88%), connectorList 20/25 (80%), while phoneSwap, mergeCluster,
+// typewriterLink and mouseWordDrag were picked ZERO times - "topical
+// fit" in practice meant an LLM gravitating toward whichever templates
+// read as generically-applicable to almost any topic, exactly the bias
+// suspected. pickRandomTemplates (scenePrompts.js) - previously only the
+// failsafe for when this AI call failed - is now the ONLY selection
+// mechanism: a plain, proven-unbiased Fisher-Yates shuffle, mathematically
+// guaranteeing every template an equal 1/COMPACT_TEMPLATE_NAMES.length
+// chance per slot - see pickRandomTemplates' own doc comment for why
+// that's a real property of the algorithm itself (derived from the live
+// template count, never a hardcoded percentage anywhere) and not just
+// true for today's specific count of 19, plus the real 100,000-iteration
+// local test confirming it in practice, not just reasoned about. This
+// does trade away the earlier "AI picks what actually fits the topic"
+// behavior (a separate, direct user request from 2026-09-15) - the two
+// requirements are fundamentally incompatible (genuine topical fit is,
+// by definition, topic-dependent and can never be uniform), and this
+// session's explicit, repeated instruction was to prioritize guaranteed
+// equal probability.
 
 // targetDurationSeconds kept as a parameter (callers still pass it) but
 // not used yet - the compact flow assigns each beat a flat base
@@ -756,14 +738,12 @@ async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
 
   const { topic, styleNotes } = await splitPromptIntoTopicAndStyle(userPrompt);
 
-  // AI picks its own 6 templates by real topical fit; pickRandomTemplates
-  // (scenePrompts.js) only ever runs as the failsafe if that whole step
-  // fails - see pickTemplatesForTopic's own doc comment. Either way, the
-  // ORDER is randomized separately and always (a real, deliberate
-  // "selection and ordering are two different concerns" split, not just
-  // when the AI pick succeeds).
-  const pickedTemplates = await pickTemplatesForTopic(topic);
-  const chosenTemplates = shuffleArray(pickedTemplates || pickRandomTemplates());
+  // Always a uniform random pick now (pickRandomTemplates's own doc
+  // comment has the full reasoning/measured data) - selection and
+  // ordering stay two separate concerns (shuffleArray here is a second,
+  // independent shuffle of the ALREADY-chosen 6, not part of picking
+  // which 6), same split as before.
+  const chosenTemplates = shuffleArray(pickRandomTemplates());
 
   const sceneJSON = await generateCompactBeatSpec(userPrompt, { chosenTemplates, topic, styleNotes });
 

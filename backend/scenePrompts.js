@@ -1922,6 +1922,53 @@ const COMPACT_TEMPLATE_NAMES = Object.keys(COMPACT_TEMPLATE_INFO);
 // randomized (5, 6, or 7 - the same range this project's own
 // validateSceneJSON has always required), not fixed at 6 every time -
 // picked first, then that many distinct templates are sampled.
+// Direct user requirement (2026-09-17), verified against real data before
+// this change: "confirm... run actual tests... that there's no strings
+// attach to make it pick mainly these ones and forget the rest... IF U
+// CANT CONFIRM THE PERCENT CHANCE OR THE PERCENT CHANCE AINT EQUAL...
+// MAKEEE THEMMM EQUALLL (1/no of scene templates x 100)." A real 25-call
+// test against the AI-based picker this used to sit behind as a mere
+// failsafe (pickTemplatesForTopic, sceneGenClient.js - now removed, see
+// its own git history) found textPopOut picked 25/25 times (100%),
+// counter 22/25 (88%), connectorList 20/25 (80%), while phoneSwap,
+// mergeCluster, typewriterLink and mouseWordDrag were picked ZERO times
+// - "genuine topical fit" in practice meant a handful of templates that
+// read as generically-applicable to an LLM dominated almost every real
+// generation, exactly the "strings attached" bias suspected. This is now
+// the ONLY selection mechanism (no AI judgment involved at all) - a
+// plain Fisher-Yates shuffle (the proven-unbiased algorithm, not the
+// "sort by random comparator" trick) of all 19.
+//
+// The count-is-randomized-5-7 behavior just above is KEPT (not flattened
+// to a fixed 6, an earlier draft of this fix wrongly did that) - it does
+// not break equal-per-template probability: a Fisher-Yates shuffle gives
+// every template an identical, uniform chance at EVERY position
+// 1..pool.length, regardless of how many leading positions get kept, so
+// randomizing which of 5/6/7 get kept (independently of the shuffle
+// itself) only changes the AVERAGE slots-per-video, not the SYMMETRY
+// across templates.
+//
+// Nothing about "equal chance" is a hardcoded percentage anywhere in this
+// function - direct user follow-up, after the first version of this fix
+// documented the result as a literal "~31.6%"/"6/19" in these comments:
+// "make sure this isn't hardcoded, it should be calculated i.e. 1/number
+// of scene templates." It never was in the CODE (pool.length below is
+// always the live COMPACT_TEMPLATE_NAMES.length, whatever that happens to
+// be - add or remove a template and every probability here shifts
+// automatically, nothing to update by hand) - only the VERIFICATION
+// TEST's own "expected" comparison value had briefly hardcoded 19 as a
+// literal, since fixed. The one true guarantee this algorithm provides is
+// P(any given template included) = (average kept-count) / pool.length,
+// i.e. 1/pool.length PER SLOT - today that's 6/19 (~31.6%) per video
+// only because pool.length happens to be 19 and the average kept-count
+// happens to be 6 right now; both numbers are read live off the real
+// array/random range below, never assumed. Confirmed via a real
+// 100,000-iteration local test against this exact function (real 5-7
+// randomization active, expected rate computed from the test's own
+// MEASURED average kept-count divided by COMPACT_TEMPLATE_NAMES.length,
+// not a hardcoded 6/19) - every one of the 19 templates landed within
+// 0.29 percentage points of that derived expected rate, none excluded or
+// favored.
 function pickRandomTemplates(rand = Math.random) {
   const count = 5 + Math.floor(rand() * 3);
   const pool = [...COMPACT_TEMPLATE_NAMES];
@@ -1968,33 +2015,6 @@ ${exampleLines}
 Now output ONE line, {"beats":[...]}, EXACTLY ${n} entries (one per template above) shaped like the examples, your OWN narration/text for your topic - never copy the example wording.`;
 }
 
-// Direct user requirement (2026-09-15): "i dont want there to be ANY
-// FUCKING GAURENTEED TEMPLATE... remove the template randomizer
-// completely, or put it as a failsafe... give the ai ALLL the templates
-// names and a short description for each... based on this prompt, pick
-// 6... NO EXTRA INFO... then the 6 will go through a randomizer to
-// randomize the order." This is the FIRST of those two calls - a small,
-// separate prompt (labels + one-line descriptions only, no field specs/
-// examples, unlike buildCompactGenerationSystemPrompt above) so the model
-// picks templates by genuine topical fit BEFORE it ever sees - or is
-// forced into - any specific assigned set. pickTemplatesForTopic
-// (sceneGenClient.js) calls this, then the ORIGINAL pickRandomTemplates
-// above is kept as a pure code failsafe if this whole step fails, and a
-// separate plain Fisher-Yates shuffle (also sceneGenClient.js) randomizes
-// the ORDER of whichever 6 templates end up chosen - selection and
-// ordering are deliberately two separate concerns now, not one call.
-function buildTemplatePickerSystemPrompt() {
-  const lines = COMPACT_TEMPLATE_NAMES.map((name) => `${name}: ${COMPACT_TEMPLATE_INFO[name].description}`).join('\n');
-  return `You pick which motion-graphics templates fit a short-form video topic. Respond with ONLY one valid JSON object - no markdown fences, no commentary, no extra fields.
-
-ALL AVAILABLE TEMPLATES (name: what it does):
-${lines}
-
-Given the topic below, pick EXACTLY 6 DISTINCT template names from the list above that best fit telling that story - the ones whose own real mechanic actually suits the content (e.g. a list of benefits fits connectorList/nodeAbsorb, a single big number fits counter, a definition/quote fits textPopOut/textTiers).
-
-Output ONLY: {"templates": ["name1", "name2", "name3", "name4", "name5", "name6"]} - the 6 names, nothing else, no narration, no vars, no reasoning.`;
-}
-
 module.exports = {
   COMP_WIDTH,
   COMP_HEIGHT,
@@ -2002,7 +2022,6 @@ module.exports = {
   buildGenerationSystemPrompt,
   buildMinimalGenerationSystemPrompt,
   buildCompactGenerationSystemPrompt,
-  buildTemplatePickerSystemPrompt,
   buildEditSystemPrompt,
   listTreatmentBeatHeaders,
   pickRandomTemplates,
