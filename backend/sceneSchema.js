@@ -2438,7 +2438,31 @@ function attachLineRevealSparks(beat) {
     const { table, totalLength } = buildBezierArcLengthTable(anchors);
     if (!(totalLength > 0)) return;
 
-    const N = 20;
+    // Real root cause of the traveling dot visibly drifting off the
+    // line, found via direct numeric/visual analysis of a real render
+    // (2026-09-18), not guessed: this bakes a FIXED, small number of
+    // (time, x, y) keyframes once at build time, and the render engine
+    // then does a plain LINEAR (straight-line) interpolation of position
+    // between whichever two of them straddle a given frame - correct
+    // only where the underlying curve is nearly straight between
+    // samples. The connector line is anything but straight (see
+    // buildConnectorLineAnchors' own doc comment on the real curvature
+    // this template now has) and renders at 30fps (render-worker's own
+    // FPS constant) - N=20 samples spread across the WHOLE multi-segment
+    // reveal window (well under 2s in practice) works out to roughly one
+    // baked point every 2-3 real video frames, so on every frame between
+    // two baked points the dot was cutting a straight chord across the
+    // bow instead of hugging it, while the line itself (redrawn from the
+    // true curve every single frame by the real trim/path renderer) does
+    // not - exactly the "dot not on the line" gap seen in real footage.
+    // Oversampling well past real frame density (60/sec, double 30fps)
+    // makes each baked segment shorter than the curve can meaningfully
+    // bend within one frame, so the line-segment interpolation between
+    // baked points becomes visually indistinguishable from sitting
+    // exactly on the true curve - cheap to do since these are just extra
+    // pre-baked keyframes, no added cost at actual render time.
+    const SPARK_SAMPLES_PER_SECOND = 60;
+    const N = Math.max(20, Math.ceil((endTime - startTime) * SPARK_SAMPLES_PER_SECOND));
     const sparkKeyframes = [];
     for (let k = 0; k <= N; k++) {
       const time = startTime + (k / N) * (endTime - startTime);
@@ -6002,32 +6026,46 @@ function buildConnectorLineAnchors(positions) {
     const [p0, p1, p2] = positions;
     // Real, direct user request (2026-09-17, with a reference image):
     // "change the line from a half circle to an S, so it will move in an
-    // S motion" - replaces the earlier single-constant-curvature circular
-    // arc (still correct for what IT was asked to do - one clean,
-    // consistent bow - see git history) with a genuine S-curve: the
-    // FIRST half bulges one way, the SECOND half bulges the opposite
-    // way, with a smooth (not kinked) inflection passing through p1.
+    // S motion." The FIRST attempt at this (shared spine tangent at p1,
+    // see git history) LOOKED right in the doc comment's own reasoning
+    // but was proven wrong the hard way (2026-09-18) via actual numeric
+    // curvature-sign sampling of the real bezier curve it produces: the
+    // tangent angle it gives p1 (the straight p0->p2 spine direction)
+    // sits BETWEEN dir01 and dir12's own angles, which means going
+    // dir01->spine->dir12 rotates the tangent in the SAME rotational
+    // sense the entire way - i.e. curvature never actually changes sign,
+    // it's still mathematically one continuous bow (a "half circle" by
+    // another name), just built from a smoother blended formula instead
+    // of a literal circular arc. Measured directly: offset from the
+    // straight p0-p2 spine stayed >= 0 for both segments, zero sign
+    // crossings anywhere except two negligible sub-pixel blips right at
+    // the anchor tips - exactly consistent with this still reading as
+    // "not an S" after shipping.
     //
-    // The construction: p0's own outgoing tangent points straight at p1
-    // (that segment's real chord direction), and p2's own incoming
-    // tangent points straight from p1 (that segment's real chord
-    // direction) - neither outer point gets any artificial bulge bias of
-    // its own. p1 (the middle, inflection point) instead uses the SPINE
-    // direction (straight p0-to-p2) for BOTH its in and out tangent, one
-    // single direction shared by both segments - this is what actually
-    // produces the S: segment 1 starts along the p0-p1 chord but must
-    // curve to END along the spine direction, bulging one way to do it;
-    // segment 2 starts along that same spine direction but must curve to
-    // END along the p1-p2 chord, bulging the OTHER way, since the spine
-    // deviates from each of the two chords in opposite rotational senses
-    // whenever p1 sits off to one side of the direct p0-p2 line (the
-    // normal case - 3 co-linear points would degenerate to a straight
-    // line here, correctly, since there's no offset to bulge around).
-    // Same shape family as a Catmull-Rom spline's own interior-point
-    // tangent rule, just applied deliberately instead of falling back to
-    // the generic approximation below (which uses a flatter 0.33
-    // fraction tuned for the "N points, one gentle overall flow" case,
-    // not a crisp 2-point S).
+    // A genuine S needs the tangent's rotation direction to REVERSE
+    // partway through, not just slow down - which requires p1's shared
+    // tangent (and p0/p2's own) to sit OUTSIDE the [dir01, dir12] angle
+    // range, not between them. Verified this specific fix empirically
+    // two ways before shipping: (1) numeric curvature-sign sampling of
+    // the real cubicBezierPointAt output showed a genuine sign reversal
+    // with a real, non-trivial magnitude (tens of px, not a sub-pixel
+    // blip) on both segments, not just at the tips; (2) rendered the
+    // actual candidate curves with @napi-rs/canvas (this project's real
+    // rendering library) side by side against the currently-deployed
+    // formula - only this construction visually reads as an "S", the
+    // spine-tangent version is unambiguously still a single bow.
+    //
+    // Construction: p0's outgoing tangent and p2's incoming tangent are
+    // each rotated PAST their own straight chord-to-neighbor direction,
+    // continuing further in the direction the spine already deviates
+    // that chord - i.e. a deliberate "wind-up" that makes the curve
+    // swing slightly toward the OPPOSITE side before committing to its
+    // main bulge. p1's shared tangent (still one continuous direction
+    // for both segments - no kink) is similarly rotated a smaller amount
+    // past the spine itself. `turnSign` (the sign of dir01 x spine)
+    // captures which rotational sense the spine deviates in for THIS
+    // zigzag's actual orientation, so this generalizes rather than
+    // assuming a specific up/down layout.
     const seg01Len = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) || 1;
     const seg12Len = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]) || 1;
     const spineLen = Math.hypot(p2[0] - p0[0], p2[1] - p0[1]) || 1;
@@ -6037,19 +6075,34 @@ function buildConnectorLineAnchors(positions) {
     const dir01Y = (p1[1] - p0[1]) / seg01Len;
     const dir12X = (p2[0] - p1[0]) / seg12Len;
     const dir12Y = (p2[1] - p1[1]) / seg12Len;
+    const turnSign = Math.sign(dir01X * spineDirY - dir01Y * spineDirX) || 1;
+    const rotate = (vx, vy, angleRad) => {
+      const cos = Math.cos(angleRad); const sin = Math.sin(angleRad);
+      return [vx * cos - vy * sin, vx * sin + vy * cos];
+    };
+    // Degrees, not a fraction - chosen by rendering the actual candidate
+    // curves and picking the smallest angles that still read unambiguously
+    // as an S rather than a subtle wiggle (see doc comment above).
+    const OUTER_OVERSHOOT_DEG = 75;
+    const P1_EXTRA_DEG = 20;
+    const overshootRad = turnSign * (OUTER_OVERSHOOT_DEG * Math.PI / 180);
+    const p1ExtraRad = turnSign * (P1_EXTRA_DEG * Math.PI / 180);
+    const [p0TanX, p0TanY] = rotate(dir01X, dir01Y, overshootRad);
+    const [p1TanX, p1TanY] = rotate(spineDirX, spineDirY, p1ExtraRad);
+    const [p2TanX, p2TanY] = rotate(dir12X, dir12Y, -overshootRad);
     // Tangent-length fraction of each segment's own chord - a standard
     // cubic-bezier "control point at T% along the chord direction"
     // magnitude (0.33 matches the generic fallback's own established
     // value below, kept consistent rather than re-tuned from scratch).
     const T = 0.33;
     return [
-      { point: p0, outTangent: [dir01X * seg01Len * T, dir01Y * seg01Len * T] },
+      { point: p0, outTangent: [p0TanX * seg01Len * T, p0TanY * seg01Len * T] },
       {
         point: p1,
-        inTangent: [-spineDirX * seg01Len * T, -spineDirY * seg01Len * T],
-        outTangent: [spineDirX * seg12Len * T, spineDirY * seg12Len * T],
+        inTangent: [-p1TanX * seg01Len * T, -p1TanY * seg01Len * T],
+        outTangent: [p1TanX * seg12Len * T, p1TanY * seg12Len * T],
       },
-      { point: p2, inTangent: [-dir12X * seg12Len * T, -dir12Y * seg12Len * T] },
+      { point: p2, inTangent: [-p2TanX * seg12Len * T, -p2TanY * seg12Len * T] },
     ];
   }
   return positions.map((p, i) => {
