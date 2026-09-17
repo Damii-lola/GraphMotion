@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { fork } = require('child_process');
 const rateLimit = require('express-rate-limit');
-const { cancelJobOnWorker } = require('./renderDispatch');
+const { cancelJobOnWorker, pingBusyWorkers } = require('./renderDispatch');
 const { speedUpVideo } = require('./audioMux');
 
 const {
@@ -241,6 +241,59 @@ const RENDER_WORKER_MAX_OLD_SPACE_MB = 100;
 // since cancelling THAT job means notifying the worker too, not just
 // this process - the child here will have already exited by then.
 const activeJobs = new Map();
+
+// Real, direct user report (2026-09-18): "some workers fell asleep [mid-
+// render]... keep pinging the workers that are working on the
+// rendering... when there isn't any rendering to be done, it won't
+// ping... it will ONLY ping the render workers that are rendering." A
+// dispatched job's own real completion never reaches this process via
+// any callback - once 'dispatched_to_worker' fires below, this server's
+// own involvement with that job is done; render/mux/upload/status are
+// entirely the WORKER's own responsibility from there (see
+// renderDispatch.js's own doc comment) - so activeJobs entries with a
+// workerUrl set were ALSO never being cleaned up at all before this,
+// growing unboundedly for the life of the process. This reuses that
+// same existing map (rather than a second, parallel one) and adds the
+// missing cleanup as a side effect of the very check the keep-alive
+// needs anyway: for every still-tracked dispatched job, ask Supabase
+// (the worker's own real, live source of truth for its status) whether
+// it's actually finished yet - if so, stop tracking it; if not, its
+// worker gets a ping this tick. A worker with nothing left dispatched to
+// it simply never appears in the ping list again, letting Render's own
+// free-tier sleep policy take over exactly as intended for genuinely
+// idle workers - this is deliberately NOT the same mechanism as the
+// blanket keep-alive removed in the 750-hour-overage fix (2026-09-17),
+// which pinged every configured worker forever regardless of real
+// activity.
+const TERMINAL_JOB_STATUSES = new Set(['done', 'failed', 'cancelled']);
+async function pingActivelyRenderingWorkers() {
+  const dispatchedEntries = [...activeJobs.entries()].filter(([, state]) => state.workerUrl);
+  if (dispatchedEntries.length === 0) return;
+
+  const busyWorkerUrls = new Set();
+  await Promise.all(dispatchedEntries.map(async ([jobId, state]) => {
+    try {
+      const job = await getJob(jobId);
+      if (!job || TERMINAL_JOB_STATUSES.has(job.status)) {
+        activeJobs.delete(jobId);
+        return;
+      }
+      busyWorkerUrls.add(state.workerUrl);
+    } catch (err) {
+      // Lookup failure is transient (a Supabase blip, not evidence the
+      // job is done) - leave it tracked and just skip pinging its
+      // worker THIS tick rather than guessing either way.
+      console.warn(`[server] status lookup for dispatched job ${jobId} failed (non-fatal): ${err.message}`);
+    }
+  }));
+
+  if (busyWorkerUrls.size > 0) await pingBusyWorkers(busyWorkerUrls);
+}
+function startActiveWorkerKeepAlive(intervalMs = 3 * 60 * 1000) {
+  setInterval(() => {
+    pingActivelyRenderingWorkers().catch((err) => console.warn('[server] pingActivelyRenderingWorkers failed (non-fatal):', err.message));
+  }, intervalMs);
+}
 
 function startRenderWorker(jobId, prompt, targetDurationSeconds, parentSceneJSON, onSettled) {
   const child = fork(path.join(__dirname, 'renderWorker.js'), {
@@ -509,22 +562,18 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`[server] listening on port ${PORT}`);
-  // startWorkerKeepAlive() REMOVED (2026-09-17, direct user report: a
-  // real Render "exceeded 750 free hours" email). That function pinged
-  // EVERY configured render-worker every 3 minutes, forever, regardless
-  // of whether any job was running - the entire point of Render's free
-  // tier is that a service SLEEPS after ~15min of no inbound traffic and
-  // sleep time is free, only awake time counts against the shared
-  // 750hr/month pool. Forcing 20+ workers to never sleep meant paying
-  // for 24/7 uptime on all of them even when 100% idle - with the fleet
-  // growing (a 10-worker addition was already being discussed when this
-  // was found), that math only gets worse. Removed entirely rather than
-  // just disabled - dispatchToWorker/selectWorker (renderDispatch.js)
-  // already fail soft toward local rendering when a worker doesn't
-  // respond in time, which is exactly what happens on a cold, sleeping
-  // worker's first request (Render still wakes it from that same
-  // request even if our own timeout gives up first) - so a job hitting
-  // a sleeping worker fleet just falls back to local rendering for that
-  // one job instead of failing, the same safety net this file's own
-  // doc comment already describes for "worker down" more generally.
+  // The old startWorkerKeepAlive() (REMOVED 2026-09-17, a real Render
+  // "exceeded 750 free hours" email) pinged EVERY configured render-
+  // worker every 3 minutes, forever, regardless of whether any job was
+  // running - see this function's own git history for the full
+  // reasoning on why that was wrong. startActiveWorkerKeepAlive (above)
+  // is the deliberately narrower replacement: only pings a worker while
+  // it genuinely has a dispatched job still in progress (checked against
+  // that job's own live Supabase status every tick), added back after a
+  // real, separate follow-up report - a long chunked render's own
+  // inbound HTTP request apparently isn't always enough by itself to
+  // keep a free-tier worker from sleeping mid-job. A fleet with nothing
+  // currently dispatched to it goes right back to costing zero free-tier
+  // hours, same as the fix this replaces intended.
+  startActiveWorkerKeepAlive();
 });

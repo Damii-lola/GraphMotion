@@ -365,7 +365,26 @@ async function mixSoundDesign(narrationPath, sceneJSON, beats, workDir, jobId) {
     inputIndex++;
   }
 
-  filterParts.push(`${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=first:dropout_transition=0[aout]`);
+  // Real root cause of the boosted narration still coming out quiet in
+  // delivered videos, found the hard way (2026-09-18): amix's `normalize`
+  // option defaults to 1, which scales EVERY input down while more than
+  // one is playing at once, specifically to keep the sum from clipping -
+  // it has no idea one of those inputs (narration) was deliberately
+  // boosted upstream and the others (music/SFX) were deliberately kept
+  // quiet via their own `volume=` filters above. Music plays under the
+  // ENTIRE video whenever hasMusic is true (essentially always, since
+  // MUSIC_PATH is a bundled asset), so narration is mixed simultaneously
+  // with something else for practically the whole runtime - meaning this
+  // auto-scaling was silently fighting the +12.5dB narration boost on
+  // nearly every frame of every real render, not just an edge case.
+  // `normalize=0` makes amix a pure sum and lets the explicit per-track
+  // volume= gains above be the ONLY thing that decides relative loudness,
+  // which is what they were already written to do. Pure summation can
+  // clip where auto-normalize couldn't, so alimiter right after is the
+  // same cheap safety-net role it already plays after the narration
+  // boost - not shaping loudness, just catching a rare simultaneous peak.
+  filterParts.push(`${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=first:dropout_transition=0:normalize=0[amixed]`);
+  filterParts.push('[amixed]alimiter=limit=0.978[aout]');
 
   const outPath = path.join(workDir, `${jobId}-sound-design.mp3`);
   await run([

@@ -149,4 +149,37 @@ async function cancelJobOnWorker(workerUrl, jobId) {
   }
 }
 
-module.exports = { dispatchToWorker, cancelJobOnWorker, WORKER_URLS };
+// Real, direct user report (2026-09-18): "some workers fell asleep [while
+// rendering]... as rendering is going on, keep pinging the workers that
+// are working on the rendering to keep them awake, and when there isn't
+// any rendering to be done, it won't ping." A LONG chunked render's own
+// inbound /render request apparently isn't enough by itself to keep a
+// free-tier worker from sleeping mid-job (a real, observed gap, not
+// theoretical) - real production evidence for exactly the case the
+// blanket keep-alive removed earlier this session (2026-09-17, the
+// runaway-hours incident) was over-solving: THAT one pinged every
+// configured worker forever regardless of whether anything was running
+// on it, which is what actually burned through the 750-hour free pool.
+// This is the deliberately narrow middle ground - see server.js's own
+// pingActivelyRenderingWorkers for how it decides WHICH worker URLs to
+// pass in here (only ones with a real, still-in-progress dispatched job,
+// checked against that job's own live Supabase status) - this function
+// itself just does the actual pinging once handed that already-filtered
+// list, same forgiving timeout the old keep-alive used (a sleeping
+// worker's first response after waking routinely takes well past a
+// normal request's own timeout).
+const KEEP_ALIVE_TIMEOUT_MS = 30000;
+async function pingBusyWorkers(workerUrls) {
+  await Promise.all([...workerUrls].map(async (url) => {
+    try {
+      const res = await fetchWithTimeout(`${url}/health`, {}, KEEP_ALIVE_TIMEOUT_MS);
+      if (!res.ok) console.warn(`[renderDispatch] keep-alive ping to ${url} (actively rendering) returned HTTP ${res.status}`);
+    } catch (err) {
+      console.warn(`[renderDispatch] keep-alive ping to ${url} (actively rendering) failed: ${err.message}`);
+    }
+  }));
+}
+
+module.exports = {
+  dispatchToWorker, cancelJobOnWorker, pingBusyWorkers, WORKER_URLS,
+};
