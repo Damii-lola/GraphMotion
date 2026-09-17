@@ -895,6 +895,75 @@ function recomputeTypewriterCursorTrack(layers, beatContext) {
 // Top-level: one beat's whole visual
 // ---------------------------------------------------------------------
 
+// Real, direct user report (2026-09-18, twice over): a connectorList
+// beat's traveling line-reveal spark (backend/sceneSchema.js's
+// attachLineRevealSparks) visibly drifts off its own source line in real
+// delivered videos - confirmed by direct frame inspection of the actual
+// video, NOT reproduced despite extensive local re-testing (single-beat,
+// multi-beat, chunked rendering, the exact real icons, the full whole-
+// scene validation pass, and a simulated long TTS-driven duration all
+// came out correct). Since the bug provably exists in real production but
+// resists every local reproduction attempt, this is a real, permanent
+// diagnostic (not a one-off debug print) checked on EVERY beat build, so
+// the actual failing data gets caught with hard evidence the next time
+// this happens instead of continuing to guess. Cheap - runs once per
+// beat build, a handful of layers to scan, never per-frame.
+function auditLineRevealSparkSync(layers) {
+  if (!Array.isArray(layers)) return;
+  const TIME_DRIFT_TOLERANCE = 0.02;
+  const POSITION_DRIFT_TOLERANCE = 1.5; // px, in this beat's own internal (pre-scale) layout units
+  layers.forEach((layer) => {
+    if (!layer || typeof layer.id !== 'string' || !layer.id.endsWith('__spark')) return;
+    const sourceId = layer.id.slice(0, -'__spark'.length);
+    const source = layers.find((l) => l && l.id === sourceId);
+    if (!source || !Array.isArray(source.contents)) {
+      console.warn(`[sceneBuilder] spark audit: "${layer.id}" has no matching source layer "${sourceId}" in this beat's own layers - orphaned spark.`);
+      return;
+    }
+    const trimItem = source.contents.find((c) => c && c.type === 'trim');
+    const pathItem = source.contents.find((c) => c && c.type === 'path' && c.shape && c.shape.kind === 'customPath');
+    if (!trimItem || !isPlainObjectLocal(trimItem.end) || !Array.isArray(trimItem.end.keyframes) || !pathItem) return;
+    const trimKfs = trimItem.end.keyframes;
+    if (trimKfs.length < 2) return;
+    const trimStart = trimKfs[0].time;
+    const trimEnd = trimKfs[trimKfs.length - 1].time;
+
+    const sparkKfs = layer.position && Array.isArray(layer.position.keyframes) ? layer.position.keyframes : null;
+    if (!sparkKfs || sparkKfs.length < 2) return;
+    const sparkStart = sparkKfs[0].time;
+    const sparkEnd = sparkKfs[sparkKfs.length - 1].time;
+
+    if (Math.abs(sparkStart - trimStart) > TIME_DRIFT_TOLERANCE || Math.abs(sparkEnd - trimEnd) > TIME_DRIFT_TOLERANCE) {
+      console.warn(`[sceneBuilder] SPARK/TRIM TIMING MISMATCH on "${sourceId}": trim's own reveal spans [${trimStart},${trimEnd}], but its spark's own baked position track spans [${sparkStart},${sparkEnd}] - something retimed one without the other AFTER the spark was baked. This WILL visibly drift the dot off the line.`);
+    }
+
+    // Position sanity check, independent of timing: the spark's own LAST
+    // baked position should coincide exactly with the source path's own
+    // final anchor point (a bezier curve at u=1 always lands exactly on
+    // its own last control point) - if the path's anchors were moved
+    // AFTER the spark was baked (any later repositioning/repair pass),
+    // this catches it even when timing is perfectly in sync.
+    const anchors = pathItem.shape.params && Array.isArray(pathItem.shape.params.anchors) ? pathItem.shape.params.anchors : null;
+    const sourcePos = Array.isArray(source.position) && source.position.length === 2 ? source.position : null;
+    if (anchors && anchors.length > 0 && sourcePos) {
+      const lastAnchor = anchors[anchors.length - 1];
+      if (lastAnchor && Array.isArray(lastAnchor.point) && lastAnchor.point.length === 2) {
+        const expectedFinal = [lastAnchor.point[0] + sourcePos[0], lastAnchor.point[1] + sourcePos[1]];
+        const sparkFinal = sparkKfs[sparkKfs.length - 1].value;
+        if (Array.isArray(sparkFinal) && sparkFinal.length === 2) {
+          const dx = sparkFinal[0] - expectedFinal[0];
+          const dy = sparkFinal[1] - expectedFinal[1];
+          const drift = Math.hypot(dx, dy);
+          if (drift > POSITION_DRIFT_TOLERANCE) {
+            console.warn(`[sceneBuilder] SPARK/PATH POSITION MISMATCH on "${sourceId}": spark's own baked final position is [${sparkFinal[0].toFixed(2)},${sparkFinal[1].toFixed(2)}], but the source path's own current final anchor now resolves to [${expectedFinal[0].toFixed(2)},${expectedFinal[1].toFixed(2)}] (drift: ${drift.toFixed(2)}px) - the path was moved/repositioned AFTER the spark was baked against its old position.`);
+          }
+        }
+      }
+    }
+  });
+}
+function isPlainObjectLocal(v) { return typeof v === 'object' && v !== null && !Array.isArray(v); }
+
 /**
  * Builds ONE beat's renderable scene: { render(ctx, localT) }. Chosen
  * once per beat (not per frame - the whole point of building objects
@@ -904,6 +973,7 @@ function recomputeTypewriterCursorTrack(layers, beatContext) {
 function buildBeatVisual(visual, beatContext) {
   const { width, height, duration } = beatContext;
   const idMap = new Map();
+  auditLineRevealSparkSync(visual.layers);
   recomputeTypewriterCursorTrack(visual.layers, beatContext);
 
   // Mutates visual.layers in place, expanding any layer.textAnimation

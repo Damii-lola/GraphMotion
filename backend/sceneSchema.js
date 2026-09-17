@@ -7035,6 +7035,26 @@ function buildMergeClusterLayers({
   });
 
   const RESULT_SIZE = 150;
+  // Real, direct user report against a real generated video: "after the
+  // popup into multiple bubbles, the icon still remains?? The icon isn't
+  // meant to remain." Confirmed as a real gap, not a misreading: this
+  // result circle+icon used to only ever fade IN (two keyframes, landing
+  // at opacity 1 with nothing after) - once a `label` names what was
+  // built, this function's OWN doc comment below already frames that as
+  // the actual payoff ("naming what was just built, not just showing an
+  // icon and moving on"), but nothing ever made the icon/circle GIVE WAY
+  // to that payoff - they just sat there at full opacity for the rest of
+  // the beat regardless, competing with the label instead of yielding to
+  // it. Only fades when a label actually exists (`hasLabel` computed
+  // once below, needed here since the label layer itself is built AFTER
+  // this) - with no label, the icon IS the payoff (this function's own
+  // doc comment: "a beat that genuinely has no good short name for its
+  // result can omit it"), so it should keep holding exactly as before.
+  const hasLabel = typeof label === 'string' && label.trim().length > 0;
+  const resultFadeOutKfs = hasLabel ? [
+    { time: CONVERGE_TIME + 0.1, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
+    { time: CONVERGE_TIME + 1.5, value: 0 },
+  ] : [];
   layers.push({
     id: '__merge_result_bg__',
     type: 'shape',
@@ -7046,7 +7066,10 @@ function buildMergeClusterLayers({
       { time: CONVERGE_TIME + 0.3, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
       { time: CONVERGE_TIME + 0.45, value: [1, 1] },
     ] },
-    opacity: { keyframes: [{ time: CONVERGE_TIME - 0.05, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: CONVERGE_TIME + 0.1, value: 1 }] },
+    opacity: { keyframes: [
+      { time: CONVERGE_TIME - 0.05, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+      ...resultFadeOutKfs,
+    ] },
     contents: [
       { type: 'path', shape: { kind: 'ellipse', params: { width: RESULT_SIZE, height: RESULT_SIZE } } },
       { type: 'fill', color: accentColor },
@@ -7070,7 +7093,10 @@ function buildMergeClusterLayers({
       { time: CONVERGE_TIME + 0.3, value: [1.12, 1.12], interpolation: 'easing', easing: 'easeInOutCubic' },
       { time: CONVERGE_TIME + 0.45, value: [1, 1] },
     ] },
-    opacity: { keyframes: [{ time: CONVERGE_TIME - 0.05, value: 0, interpolation: 'easing', easing: 'easeOutCubic' }, { time: CONVERGE_TIME + 0.1, value: 1 }] },
+    opacity: { keyframes: [
+      { time: CONVERGE_TIME - 0.05, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+      ...resultFadeOutKfs,
+    ] },
   });
 
   // Real, direct reference-video finding (frame-by-frame comparison,
@@ -10670,19 +10696,100 @@ function counterMinDuration(value, text) {
 }
 
 /**
- * Direct spec: "the text will textwrap into 2 lines, having the 2nd
- * line have more text than the first one." Automatic word-wrap
- * (layoutText's own greedy fill) naturally does the OPPOSITE - it packs
- * as many words as fit on line 1 first, only overflowing to line 2 -
- * so this splits the words manually instead, biasing the break toward
- * the front ~40% of the word count (rounded down, minimum 1 word on
- * line 1) so line 2 consistently ends up with more words.
+ * Direct spec (original, 2-line-only era): "the text will textwrap into
+ * 2 lines, having the 2nd line have more text than the first one." Real,
+ * confirmed-live bug found later (2026-09-18, direct user report against
+ * a real generated video: "AI SYSTEM FAILURES HAVE" - a grammatically
+ * incomplete sentence, cut off mid-thought): this used to be a BLIND
+ * 40/60 word-COUNT split assuming exactly 2 lines always existed, fed by
+ * a caption `text` that was itself hard-capped to 24 CHARACTERS
+ * (buildMographBeatVisual's own dispatch) - nowhere near enough room for
+ * a real 5-8 word sentence (this template's own spec), so the model's
+ * actual, complete sentence got truncated at the DATA level before this
+ * function ever saw it. Direct user instruction: "if the text is long,
+ * you shouldn't cut it off, you should wrap it into 3 lines" - the
+ * upstream character cap is raised separately (see the dispatch call
+ * site), and THIS function now does a real measured greedy wrap (same
+ * technique textPopOut's own wrap uses) against the caption's actual
+ * font/width, producing 1-3 lines depending on how much real text there
+ * is, rather than always assuming exactly 2. Only wraps to a 3rd line
+ * when 2 genuinely isn't enough - short captions still render exactly as
+ * before (1-2 lines, unchanged).
  */
-function splitCounterCaptionLines(text) {
+const COUNTER_CAPTION_MAX_LINES = 3;
+function splitCounterCaptionLines(text, fontSize, fontFamily, maxWidth) {
   const words = text.trim().split(/\s+/).filter((w) => w.length > 0);
-  if (words.length <= 1) return [words, []];
-  const splitIdx = Math.max(1, Math.floor(words.length * 0.4));
-  return [words.slice(0, splitIdx), words.slice(splitIdx)];
+  if (words.length <= 1) return [words];
+  const measureCtx = createCanvas(10, 10).getContext('2d');
+  // Real, confirmed-live bug found via an actual render (not just the
+  // JSON data - that looked fine): buildCounterCaptionLineLayer's own
+  // rendered text is UPPERCASE at fontWeight '400', but this used to
+  // measure the original mixed-case words at weight '700' - both bolder
+  // AND lowercase measure NARROWER than the real bold-reading-as-caps
+  // uppercase '400' text actually renders, so this underestimated real
+  // width, packed too many words onto a "line", and the text layer's own
+  // maxWidth then wrapped THAT internally into extra sub-lines the fixed
+  // per-line Y position never accounted for - three overlapping, doubled-
+  // up rows instead of three clean ones. Must match the real render
+  // spec exactly, not an approximation of it.
+  measureCtx.font = `400 ${fontSize}px ${fontFamily}`;
+  const gap = measureCtx.measureText(' ').width;
+  // Real, confirmed-live residual gap found via an actual render even
+  // AFTER matching case/weight exactly: this Node measurement context
+  // and the real render engine's own font loading still don't measure
+  // pixel-identical (a real, small font-metric difference between the
+  // two contexts, not something worth chasing further) - a line that
+  // measured as "fits" here still wrapped internally at render time.
+  // A flat safety margin absorbs that gap generically rather than
+  // re-tuning against one specific font pairing.
+  const SAFETY_MARGIN = 0.85;
+  const effectiveMaxWidth = maxWidth * SAFETY_MARGIN;
+
+  // Real, confirmed-live bug found via an actual render, TWICE over: an
+  // earlier version of this function capped itself to 3 "lines" by
+  // simply refusing to break once at the last allowed one, dumping every
+  // remaining word onto it regardless of width - for anything longer
+  // than 2 lines' worth, that final "line" was still too wide and the
+  // text layer's own maxWidth wrapped it AGAIN internally, producing 4+
+  // visually overlapping rows crammed into 3 fixed Y-slots. A real cap
+  // on rendered lines and a real cap on LINE WIDTH are two separate
+  // constraints - this now wraps with NO line-count limit at all (so
+  // every single line this produces is guaranteed to actually fit,
+  // full stop), and only AFTER that's done, checks whether the result
+  // still needs trimming down to COUNTER_CAPTION_MAX_LINES.
+  function wrapAll(ws) {
+    const result = [];
+    let current = [];
+    let currentWidth = 0;
+    ws.forEach((wRaw) => {
+      const w = wRaw.toUpperCase();
+      const wWidth = measureCtx.measureText(w).width;
+      const addWidth = wWidth + (current.length > 0 ? gap : 0);
+      if (currentWidth + addWidth > effectiveMaxWidth && current.length > 0) {
+        result.push(current);
+        current = [w];
+        currentWidth = wWidth;
+      } else {
+        current.push(w);
+        currentWidth += addWidth;
+      }
+    });
+    if (current.length > 0) result.push(current);
+    return result;
+  }
+
+  let lines = wrapAll(words);
+  // Genuinely doesn't fit in COUNTER_CAPTION_MAX_LINES real lines even at
+  // this width (should be rare - the caller's own character cap already
+  // keeps content reasonably bounded) - drop trailing WORDS (never a
+  // partial word) and re-wrap, same "cut at a word boundary, never mid-
+  // word" principle every other truncation in this file already follows,
+  // until what's left genuinely fits in the line budget.
+  while (lines.length > COUNTER_CAPTION_MAX_LINES && words.length > 1) {
+    words.pop();
+    lines = wrapAll(words);
+  }
+  return lines;
 }
 
 /**
@@ -10787,40 +10894,36 @@ function buildCounterCaptionLineLayer({
 function buildCounterCaptionLayers({
   text, startTime, accentColor, exitStart, exitDuration,
 }) {
-  const [line1Words, line2Words] = splitCounterCaptionLines(text);
   const pairing = FONT_PAIRINGS[hashString(text) % FONT_PAIRINGS.length];
   const fontFamily = pairing.serif.heavy;
+  const lineWords = splitCounterCaptionLines(text, COUNTER_CAPTION_FONT_SIZE, fontFamily, COUNTER_CAPTION_MAX_WIDTH);
   const layers = [];
-  const line1 = buildCounterCaptionLineLayer({
-    id: '__counter_caption_line1__',
-    words: line1Words,
-    wordIndexOffset: 0,
-    startTime,
-    accentColor,
-    centerX: COUNTER_CENTER_X,
-    centerY: COUNTER_CAPTION_CENTER_Y - COUNTER_CAPTION_LINE_GAP / 2,
-    maxWidth: COUNTER_CAPTION_MAX_WIDTH,
-    fontSize: COUNTER_CAPTION_FONT_SIZE,
-    fontFamily,
-    exitStart,
-    exitDuration,
+  // Evenly spaced around the shared center, same GAP as the original
+  // fixed 2-line layout - a 1-line caption sits dead on center, 2 lines
+  // split ±GAP/2 exactly as before (unchanged from the original design),
+  // 3 lines add a genuinely new ±GAP row rather than cramming into the
+  // same 2-row space.
+  let wordIndexOffset = 0;
+  const firstLineCenterY = COUNTER_CAPTION_CENTER_Y + (0 - (lineWords.length - 1) / 2) * COUNTER_CAPTION_LINE_GAP;
+  lineWords.forEach((words, i) => {
+    const centerY = COUNTER_CAPTION_CENTER_Y + (i - (lineWords.length - 1) / 2) * COUNTER_CAPTION_LINE_GAP;
+    const line = buildCounterCaptionLineLayer({
+      id: `__counter_caption_line${i + 1}__`,
+      words,
+      wordIndexOffset,
+      startTime,
+      accentColor,
+      centerX: COUNTER_CENTER_X,
+      centerY,
+      maxWidth: COUNTER_CAPTION_MAX_WIDTH,
+      fontSize: COUNTER_CAPTION_FONT_SIZE,
+      fontFamily,
+      exitStart,
+      exitDuration,
+    });
+    if (line) layers.push(line);
+    wordIndexOffset += words.length;
   });
-  if (line1) layers.push(line1);
-  const line2 = buildCounterCaptionLineLayer({
-    id: '__counter_caption_line2__',
-    words: line2Words,
-    wordIndexOffset: line1Words.length,
-    startTime,
-    accentColor,
-    centerX: COUNTER_CENTER_X,
-    centerY: COUNTER_CAPTION_CENTER_Y + COUNTER_CAPTION_LINE_GAP / 2,
-    maxWidth: COUNTER_CAPTION_MAX_WIDTH,
-    fontSize: COUNTER_CAPTION_FONT_SIZE,
-    fontFamily,
-    exitStart,
-    exitDuration,
-  });
-  if (line2) layers.push(line2);
 
   // Direct spec: "move the horizontal line to in between the value and
   // the text, increase the length - it will act like a border between
@@ -10829,9 +10932,9 @@ function buildCounterCaptionLayers({
   // it's a DIVIDER separating the number from the whole caption block,
   // so it belongs in the gap above line 1 (not under line 2) and should
   // appear as the caption phase BEGINS (not after it finishes).
-  const totalWords = line1Words.length + line2Words.length;
+  const totalWords = lineWords.reduce((sum, words) => sum + words.length, 0);
   if (totalWords > 0) {
-    const underlineY = COUNTER_CENTER_Y + (COUNTER_CAPTION_CENTER_Y - COUNTER_CAPTION_LINE_GAP / 2 - COUNTER_CAPTION_FONT_SIZE / 2 - COUNTER_CENTER_Y) / 2;
+    const underlineY = COUNTER_CENTER_Y + (firstLineCenterY - COUNTER_CAPTION_FONT_SIZE / 2 - COUNTER_CENTER_Y) / 2;
     layers.push({
       id: '__counter_caption_underline__',
       type: 'shape',
@@ -16372,14 +16475,40 @@ function buildMographBeatVisual(beat) {
     }
   } else if (spec.type === 'yearScroller' && Number.isFinite(spec.year) && typeof spec.text === 'string' && spec.text.trim()) {
     const year = Math.round(Math.max(YEAR_SCROLLER_MIN_YEAR, Math.min(YEAR_SCROLLER_MAX_YEAR, spec.year)));
-    const text = truncateAtWordBoundary(spec.text.trim(), 30);
+    // 30 -> 55 (2026-09-18, direct user report against a real generated
+    // video: "WHEN AI SYSTEMS STARTED TO" - a real complete sentence cut
+    // off mid-thought by this cap, well before the actual thought
+    // finished). This field's own spec asks for a short "1-4w headline",
+    // but real generations routinely run longer - this reveal text
+    // already had generous height budgeted (buildYearScrollerRevealText's
+    // own height: fontSize*4) and wraps naturally via maxWidth, so a
+    // longer phrase just flows onto more lines instead of needing to be
+    // destroyed. Direct user instruction: "if the text is long, you
+    // shouldn't cut it off, wrap it into 3 lines" - this is now generous
+    // enough that a real 6-8 word sentence fits without truncation.
+    const text = truncateAtWordBoundary(spec.text.trim(), 55);
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
       beat.params.duration = yearScrollerMinDuration(year, text);
     }
     layers = buildYearScrollerLayers({ year, text, accentColor });
   } else if (spec.type === 'counter' && Number.isFinite(spec.value) && typeof spec.text === 'string' && spec.text.trim()) {
     const value = Math.round(Math.max(COUNTER_MIN_VALUE, Math.min(COUNTER_MAX_VALUE, spec.value)));
-    const text = truncateAtWordBoundary(spec.text.trim(), 24);
+    // 24 -> 48 (2026-09-18, direct user report against a real generated
+    // video: "AI SYSTEM FAILURES HAVE" - a real complete sentence cut off
+    // mid-thought). This field's own spec explicitly asks for 5-8 words,
+    // never fewer than 5 - 24 characters isn't even enough room for a
+    // legitimate 5-word sentence half the time, let alone 8. Raised
+    // alongside splitCounterCaptionLines' own new real measured wrap
+    // (now flows to a 3rd line when genuinely needed, instead of always
+    // assuming exactly 2) - direct user instruction: "if the text is
+    // long, you shouldn't cut it off, wrap it into 3 lines." 48, not a
+    // more generous number, because that IS this template's own real,
+    // measured 3-line capacity at its actual caption font/width/safety-
+    // margin (splitCounterCaptionLines' own SAFETY_MARGIN) - going higher
+    // just means MORE captions would need that function's own word-drop
+    // fallback (still word-boundary-safe, never mid-sentence garbage, but
+    // real content loss all the same), not less.
+    const text = truncateAtWordBoundary(spec.text.trim(), 48);
     const icon = typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon) ? spec.icon : null;
     const iconPosition = spec.iconPosition === 'after' ? 'after' : 'before';
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
