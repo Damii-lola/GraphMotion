@@ -453,9 +453,22 @@ function buildBoardLayoutAndBackground(sceneJSON, beatRanges) {
   // Only meaningful for 'radial' shape (a linear ramp has no center to
   // pool at) - render loop below falls back to the plain 2-stop ramp
   // for 'linear'.
+  // Saturation floors raised (2026-09-17, direct user report: "the
+  // visuals feel a bit plain... not getting that jolt of adrenaline") -
+  // the OLD formula's center (poolColor) leaned on a high lightness cap
+  // (+0.32, up to 0.82) with only a moderate saturation floor, which
+  // reads as a pale, washed-out pastel glow rather than a vivid pop of
+  // color - confirmed against real rendered frames from a reported
+  // video. Saturation floors raised on both stops (center AND edge) for
+  // genuinely richer color throughout; the lightness cap on the center
+  // is also trimmed slightly (0.82 -> 0.76) so "bright" doesn't mean
+  // "pale." The monotonic center-brightest/edge-darkest "pooling" shape
+  // itself (and every downstream WCAG contrast check, which computes
+  // real luminance from whatever these end up being rather than
+  // assuming a fixed range) is untouched.
   const [baseHue, baseSat, baseLight] = hexToHsl(baseColor);
-  const poolColor = hslToHex(baseHue, Math.min(1, baseSat * 0.55 + 0.4), Math.min(0.82, baseLight + 0.32));
-  const edgeColor = hslToHex(baseHue, Math.min(1, baseSat * 0.7 + 0.15), Math.max(0.05, baseLight * 0.22));
+  const poolColor = hslToHex(baseHue, Math.min(1, baseSat * 0.7 + 0.55), Math.min(0.76, baseLight + 0.32));
+  const edgeColor = hslToHex(baseHue, Math.min(1, baseSat * 0.85 + 0.25), Math.max(0.05, baseLight * 0.22));
 
   return {
     positions,
@@ -1767,6 +1780,46 @@ async function buildOneBeat(range) {
 // margin the 450 raise had silently spent. See the ffmpeg spawn call
 // site below for the added pre-encode check this incident also exposed
 // (this loop-only check has zero visibility into the encode phase).
+// Direct user ask (2026-09-17): "not getting that jolt of adrenaline...
+// the visuals feel a bit plain." Every burst/lock moment already has a
+// real, precise timestamp driving its own SFX cue (deriveSoundCuesFrom-
+// Layers, sceneSchema.js) - this reuses those SAME timestamps to give
+// the FRAME itself a physical hit-reaction (a brief camera shake plus a
+// quick white flash) instead of just a soft settle, so beats read as
+// impacts. Deliberately keyed off the identical data the audio mix
+// already uses (not a second, independently-authored timing track) so
+// the visual "hit" and its own sound effect always land on the same
+// frame, and every template gets this for free with zero per-template
+// changes - same "scan the already-built layers" trick soundCues itself
+// already proved out.
+const IMPACT_SHAKE_DURATION = 0.14;
+const IMPACT_SHAKE_MAGNITUDE = 5;
+const IMPACT_FLASH_DURATION = 0.09;
+const IMPACT_FLASH_PEAK_OPACITY = 0.22;
+
+function pseudoRandom01(seed) {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// A beat's own soundCues are already sorted by time
+// (deriveSoundCuesFromLayers) and, at this ~0.1s window scale, never
+// overlap meaningfully - so "the most recent cue at or before
+// beatLocalT, if we're still inside its own impact window" is enough,
+// no need to scan for the single closest one every frame.
+function findActiveImpact(soundCues, beatLocalT) {
+  if (!Array.isArray(soundCues) || soundCues.length === 0) return null;
+  let active = null;
+  for (const cue of soundCues) {
+    if (typeof cue.time !== 'number' || cue.time > beatLocalT) break;
+    active = cue;
+  }
+  if (!active) return null;
+  const elapsed = beatLocalT - active.time;
+  if (elapsed < 0 || elapsed >= Math.max(IMPACT_SHAKE_DURATION, IMPACT_FLASH_DURATION)) return null;
+  return { cue: active, elapsed };
+}
+
 const RENDER_MEMORY_SAFETY_LIMIT_MB = 420;
 
 async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, onProgress) {
@@ -1962,7 +2015,39 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       // entirely) burned before it's even visible.
       const beatLocalT = Math.max(0, localT - panDuration);
 
+      // Impacts only apply once a beat is actually parked and playing
+      // its own content, not mid pan-transition (a shake/flash during
+      // the zoom-punch transition would fight that effect's own motion
+      // rather than read as a distinct hit).
+      const sceneBeatForImpact = sceneJSON.scenes[beatIndex];
+      const activeImpact = !inPan && sceneBeatForImpact && sceneBeatForImpact.visual
+        ? findActiveImpact(sceneBeatForImpact.visual.soundCues, beatLocalT) : null;
+      let impactShakeX = 0;
+      let impactShakeY = 0;
+      if (activeImpact && activeImpact.elapsed < IMPACT_SHAKE_DURATION) {
+        const decay = 1 - activeImpact.elapsed / IMPACT_SHAKE_DURATION;
+        const seed = activeImpact.cue.time * 1000 + frame;
+        impactShakeX = (pseudoRandom01(seed) * 2 - 1) * IMPACT_SHAKE_MAGNITUDE * decay;
+        impactShakeY = (pseudoRandom01(seed + 91.7) * 2 - 1) * IMPACT_SHAKE_MAGNITUDE * decay;
+      }
+
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
+      // Real bug caught on the first test render: translating the WHOLE
+      // frame (background included) for the shake below exposes a thin
+      // sliver of the cleared, still-transparent canvas at whichever
+      // edge the shift moves away from - JPEG has no alpha channel, so
+      // that sliver encoded as a stark black bar right at the frame
+      // edge, not a subtle shake. Pre-filling with an approximation of
+      // the board's own background color means that sliver (a few px,
+      // for a handful of frames) shows a plausible color instead - only
+      // paid on actual impact frames, never on the vast majority with no
+      // shake at all.
+      if (impactShakeX !== 0 || impactShakeY !== 0) {
+        ctx.fillStyle = boardBackgroundDef.poolColor || boardBackgroundDef.startColor;
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+      }
+      ctx.save();
+      ctx.translate(impactShakeX, impactShakeY);
 
       // Camera position, in BOARD space, is a cubic-eased interpolation
       // from the previous beat's own spot to this beat's WHILE panning,
@@ -2094,6 +2179,19 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         drawZoomed(transitionCurrCanvas, currPos.x - camX, currPos.y - camY, inScale, panProgress);
       } else {
         renderWithMotionBlur(ctx, WIDTH, HEIGHT, beatLocalT, FRAME_DURATION, withLogicalScale(withBeatZoom((c, st) => visualObj.render(c, st), range.contentDuration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
+      }
+
+      // Undoes the impact-shake translate above - the flash right below
+      // deliberately draws in screen space (unshaken), so it reads as a
+      // light hitting the lens, not another jittering layer.
+      ctx.restore();
+      if (activeImpact && activeImpact.elapsed < IMPACT_FLASH_DURATION) {
+        const flashOpacity = IMPACT_FLASH_PEAK_OPACITY * (1 - activeImpact.elapsed / IMPACT_FLASH_DURATION);
+        ctx.save();
+        ctx.globalAlpha = flashOpacity;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        ctx.restore();
       }
 
       // JPEG, not PNG: measured directly (not assumed) via a controlled

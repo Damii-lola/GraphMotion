@@ -4441,16 +4441,22 @@ function validateBeat(beat, path = 'beat') {
     // not just advice. 14 words is generous for a single short sentence
     // or fragment at natural pace but firmly excludes stacking a second
     // clause on top of one.
-    // Cap tightened 14 -> 8, direct user request after watching a real
-    // reference video: "the audio script was extremely short like
-    // seriously it was just 4 extremely short sentences" for the whole
-    // video. 8 words is close to that reference's own real per-line
-    // length while still leaving room for a real sentence/fragment, not
-    // just a bare word or two.
+    // Cap tightened 14 -> 8 (direct user request at the time, chasing a
+    // reference video's own extremely short lines), then reopened 8 -> 25
+    // (2026-09-17, direct user reversal: "the audio script is still short
+    // short sentences combined into one... instead of multiple short
+    // short sentences, i want one long sentence" - explicitly the
+    // opposite direction from the 8-word request above). 25 words is
+    // roughly 8-10s of speech at this project's own ~2.5-3 words/sec
+    // pacing estimate - a real, complete, flowing sentence with room for
+    // a clause or two, not a bare fragment, while still bounded (an
+    // earlier fully-uncapped attempt measured a video speaking at
+    // roughly DOUBLE its own target duration - see scenePrompts.js's own
+    // narration guidance for that incident).
     const wordCount = beat.params.narration.trim().split(/\s+/).length;
-    const MAX_NARRATION_WORDS = 8;
+    const MAX_NARRATION_WORDS = 25;
     if (wordCount > MAX_NARRATION_WORDS) {
-      errors.push(`${path}.params.narration: "${beat.params.narration.trim()}" is ${wordCount} words - too long for one beat (cap is ${MAX_NARRATION_WORDS}). Real reference footage uses EXTREMELY short lines - cut this down to a short fragment, or split it into two separate beats, each with its own short line.`);
+      errors.push(`${path}.params.narration: "${beat.params.narration.trim()}" is ${wordCount} words - too long for one beat (cap is ${MAX_NARRATION_WORDS}). Tighten the wording while keeping it ONE natural, flowing spoken sentence - don't just chop it into a fragment.`);
     }
     // Real, direct user report on a live render: a beat's narration
     // came back as "...not just a watch—Rolex.com" - the model
@@ -16052,7 +16058,16 @@ function applyMographGlow(layers) {
 // cutting the last element's own pop-in off mid-motion) and now also
 // caps dead-air hold at the end.
 const MOGRAPH_MAX_HOLD_AFTER_SETTLE = 1.5;
-function clampMographDuration(beat, completeTime, minHold = 0.4) {
+// 0.4 -> 0.25 (2026-09-17, direct user report: "not getting that jolt of
+// adrenaline... visuals feel plain") - this is pure IDLE time after a
+// beat's own animation has already finished landing, before the next
+// beat's content is even allowed to start (narration permitting) - not
+// any template's own designed choreography, so trimming it doesn't touch
+// the hard-won per-template timing this file's own history is full of.
+// Left as a per-call override (tripleStack's own +1.4 stays exactly as
+// its own direct "hold 1s longer" request specified) - this only lowers
+// the DEFAULT floor every other template falls back to.
+function clampMographDuration(beat, completeTime, minHold = 0.25) {
   if (!isPlainObject(beat.params) || typeof beat.params.duration !== 'number') return;
   const lo = completeTime + minHold;
   const hi = completeTime + MOGRAPH_MAX_HOLD_AFTER_SETTLE;

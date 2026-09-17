@@ -45,18 +45,6 @@ if (WORKER_URLS.length > 0) {
 
 const CAPACITY_CHECK_TIMEOUT_MS = 5000;
 const DISPATCH_TIMEOUT_MS = 15000;
-// Real, confirmed-live finding (2026-09-16 production logs): keep-alive
-// pings were using the same 5s CAPACITY_CHECK_TIMEOUT_MS as real-time
-// job-routing checks (where a fast response genuinely matters), but a
-// SLEEPING Render free-tier worker's very first response after waking
-// routinely takes well past 5s (cold dyno spin-up), so almost every
-// keep-alive ping to an asleep worker was hitting this abort - not a
-// real failure (the inbound request itself still reaches Render and
-// triggers the wake-up either way), just noisy "aborted" log spam with
-// no real health-check result captured. Keep-alive has no such latency
-// requirement (it only cares that a request landed, not how fast it
-// answered), so it gets its own, far more forgiving timeout.
-const KEEP_ALIVE_TIMEOUT_MS = 30000;
 
 async function fetchWithTimeout(url, opts, timeoutMs) {
   const controller = new AbortController();
@@ -161,24 +149,4 @@ async function cancelJobOnWorker(workerUrl, jobId) {
   }
 }
 
-/** Periodic ping to every configured worker's /health - the only thing that actually keeps a Render free-tier worker instance awake (Render sleeps on inbound-traffic idleness; nothing internal to the worker can substitute for real inbound requests). Also doubles as a lightweight liveness log. */
-// 10min -> 3min: direct user request, tighter safety margin against
-// Render's free-tier ~15min inbound-idle sleep threshold. A plain
-// setInterval in this long-lived process, unlike a GitHub Actions cron
-// (see the .github/workflows keep-alive job for the backend's OWN
-// external pinger) - no platform-imposed minimum interval here.
-function startWorkerKeepAlive(intervalMs = 3 * 60 * 1000) {
-  if (WORKER_URLS.length === 0) return;
-  setInterval(() => {
-    WORKER_URLS.forEach(async (url) => {
-      try {
-        const res = await fetchWithTimeout(`${url}/health`, {}, KEEP_ALIVE_TIMEOUT_MS);
-        if (!res.ok) console.warn(`[renderDispatch] keep-alive ping to ${url} returned HTTP ${res.status}`);
-      } catch (err) {
-        console.warn(`[renderDispatch] keep-alive ping to ${url} failed: ${err.message}`);
-      }
-    });
-  }, intervalMs);
-}
-
-module.exports = { dispatchToWorker, cancelJobOnWorker, startWorkerKeepAlive, WORKER_URLS };
+module.exports = { dispatchToWorker, cancelJobOnWorker, WORKER_URLS };

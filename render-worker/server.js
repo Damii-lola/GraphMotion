@@ -92,11 +92,16 @@ app.post('/cancel/:jobId', (req, res) => {
 });
 
 // Polled by the coordinator (../backend/renderDispatch.js) to pick a
-// worker with a free slot - the SAME request also serves as the
-// keep-alive ping that stops this service's Render free-tier instance
-// from sleeping (Render sleeps on inbound-traffic idleness, so an
-// internal setInterval here couldn't accomplish that on its own; the
-// coordinator's periodic hit on this endpoint is what does it).
+// worker with a free slot. Used to ALSO double as a forced keep-alive
+// (the coordinator pinged this on a timer regardless of real jobs) -
+// removed (2026-09-17, direct user report: a real Render "exceeded 750
+// free hours" email) because forcing every worker to never sleep is
+// exactly what free-tier hour billing punishes. This service now sleeps
+// normally when idle, same as Render's free tier is designed for - a
+// real dispatch attempt hitting a sleeping worker still wakes it (via
+// this same endpoint), it just costs that one job a cold-start delay,
+// same tradeoff selectWorker's own fallback-to-local-render already
+// exists to absorb.
 app.get('/capacity', (req, res) => {
   res.json({ activeRenders, maxConcurrent: MAX_CONCURRENT_RENDERS, available: activeRenders < MAX_CONCURRENT_RENDERS });
 });

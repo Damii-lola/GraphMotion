@@ -1958,7 +1958,7 @@ For any OTHER concept not listed above, only use a "mdi:" name you are genuinely
 
 RULES:
 - "beats" MUST have EXACTLY ${n} entries, one for EACH template listed above - not a subset, no extras, no repeats.
-- Every beat needs "narration": a short SPOKEN line, 8 words max, matching what's on screen.${needsOwnText.length ? `\n- ${needsOwnText.join('/')} ALSO need${needsOwnText.length === 1 ? 's' : ''} their own "text" in "vars" - a SEPARATE on-screen string, even if it overlaps with narration. Never skip it.` : ''}
+- Every beat needs "narration": ONE full, flowing SPOKEN sentence (not a short fragment, not multiple short sentences stitched together) that says what's on screen in natural spoken language, up to 25 words.${needsOwnText.length ? `\n- ${needsOwnText.join('/')} ALSO need${needsOwnText.length === 1 ? 's' : ''} their own "text" in "vars" - a SEPARATE on-screen string, even if it overlaps with narration. Never skip it.` : ''}
 - FIRST beat's narration must contain "you"/"your", end "?"/"!", or start Stop/Imagine/Picture/Wait/Guess/"What if"/Never - never a flat statement of fact.
 - "accentColor" is optional per beat, a hex string like "#8B5CF6" - omit it to auto-pick one.
 

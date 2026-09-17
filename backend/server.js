@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { fork } = require('child_process');
 const rateLimit = require('express-rate-limit');
-const { startWorkerKeepAlive, cancelJobOnWorker } = require('./renderDispatch');
+const { cancelJobOnWorker } = require('./renderDispatch');
 const { speedUpVideo } = require('./audioMux');
 
 const {
@@ -509,5 +509,22 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`[server] listening on port ${PORT}`);
-  startWorkerKeepAlive();
+  // startWorkerKeepAlive() REMOVED (2026-09-17, direct user report: a
+  // real Render "exceeded 750 free hours" email). That function pinged
+  // EVERY configured render-worker every 3 minutes, forever, regardless
+  // of whether any job was running - the entire point of Render's free
+  // tier is that a service SLEEPS after ~15min of no inbound traffic and
+  // sleep time is free, only awake time counts against the shared
+  // 750hr/month pool. Forcing 20+ workers to never sleep meant paying
+  // for 24/7 uptime on all of them even when 100% idle - with the fleet
+  // growing (a 10-worker addition was already being discussed when this
+  // was found), that math only gets worse. Removed entirely rather than
+  // just disabled - dispatchToWorker/selectWorker (renderDispatch.js)
+  // already fail soft toward local rendering when a worker doesn't
+  // respond in time, which is exactly what happens on a cold, sleeping
+  // worker's first request (Render still wakes it from that same
+  // request even if our own timeout gives up first) - so a job hitting
+  // a sleeping worker fleet just falls back to local rendering for that
+  // one job instead of failing, the same safety net this file's own
+  // doc comment already describes for "worker down" more generally.
 });
