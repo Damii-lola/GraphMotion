@@ -28,10 +28,16 @@ const fetch = require('node-fetch');
  * automatically exclude "myself" from this list; whoever deploys these
  * services is responsible for pointing each worker at the OTHER
  * worker(s), not its own URL.
+ *
+ * 20 -> 100 (2026-09-17, direct user report: the fleet already grew past
+ * the old hardcoded ceiling, 22 real workers silently losing the last 2 -
+ * same fix as ../backend/renderDispatch.js's own copy of this loop).
+ * Checking an env var that isn't set is a free no-op, so this is set
+ * with real headroom rather than just bumped to match today's count.
  */
 function loadSiblingUrls() {
   const urls = [];
-  for (let i = 1; i <= 20; i++) {
+  for (let i = 1; i <= 100; i++) {
     const v = process.env[`RENDER_WORKER_URL_${i}`];
     if (v && v.trim()) urls.push(v.trim().replace(/\/$/, ''));
   }

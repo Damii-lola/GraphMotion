@@ -23,9 +23,15 @@ const fetch = require('node-fetch');
 // Same numbered-env-var convention as geminiClient.js's loadKeys() -
 // RENDER_WORKER_URL_1, _2, ... - for consistency with how this codebase
 // already configures a variable-length list of credentials/endpoints.
+// 20 -> 100 (2026-09-17, direct user report: the fleet already grew past
+// the old hardcoded ceiling, 22 real workers silently losing the last 2).
+// Checking an env var that isn't set is a free no-op, so this is set
+// with real headroom rather than just bumped to match today's count -
+// no reason to hit this same silent ceiling again next time the fleet
+// grows.
 function loadWorkerUrls() {
   const urls = [];
-  for (let i = 1; i <= 20; i++) {
+  for (let i = 1; i <= 100; i++) {
     const v = process.env[`RENDER_WORKER_URL_${i}`];
     if (v && v.trim()) urls.push(v.trim().replace(/\/$/, ''));
   }
