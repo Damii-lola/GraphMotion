@@ -1803,71 +1803,87 @@ function listTreatmentBeatHeaders(treatment) {
 // (which teach the model how to FILL IN a template it's already been
 // assigned). Kept in this SAME object, not a parallel map, specifically
 // so a new template can never add one list without the other.
+// Every example's "narration" below deliberately STATES the same specific
+// content its own "vars" show on screen (2026-09-18, real-video QA finding):
+// generating and reviewing 4 real videos found the model's narration was
+// almost always generic, content-free filler ("you might be surprised at
+// the sheer scale of this phenomenon", "this is how you break free",
+// "let's dive in!") while the actual facts/numbers/labels only ever
+// appeared in "vars" - a viewer with sound off gets nothing, a viewer with
+// sound on hears a voice that never pays off, and a viewer using both
+// notices the mismatch. Root cause traced to THESE examples: they are the
+// model's only concrete pattern to imitate, and most of them modeled
+// exactly this disconnect (e.g. counter's old example narrated "The number
+// speaks." next to a real value of 45355 - it never said the number or the
+// caption). Only connectorList/typewriterLink/dotConstellation's old
+// examples actually restated their own content; every other one has been
+// rewritten here to do the same - same "mechanical enforcement/example
+// beats prompt guidance alone" lesson this file already leans on elsewhere.
 const COMPACT_TEMPLATE_INFO = {
   nodeCluster: {
     description: 'Icons drift in and orbit, then one gets chosen/highlighted, optionally naming it underneath.',
     fields: 'icons(3-8), chosenIndex(0-based), introText(opt<=5w), label(opt,1-3w, appears under the chosen icon once it settles)',
-    example: { template: 'nodeCluster', narration: 'Which one actually works?', vars: { icons: ['mdi:water', 'mdi:run', 'mdi:book'], chosenIndex: 1, label: 'The Winner' }, accentColor: '#8B5CF6' },
+    example: { template: 'nodeCluster', narration: 'Out of drinking water, running, and reading, running is the real winner.', vars: { icons: ['mdi:water', 'mdi:run', 'mdi:book'], chosenIndex: 1, label: 'The Winner' }, accentColor: '#8B5CF6' },
   },
   connectorList: {
     description: 'A short list of exactly 3 icon+label items drops in one by one along a curved line.',
     fields: 'items(EXACTLY 3 {icon,label*1-2w}), outroText(opt<=6w)',
-    example: { template: 'connectorList', narration: 'Sleep, protein, routine.', vars: { items: [{ icon: 'mdi:sleep', label: 'Sleep' }, { icon: 'mdi:food-drumstick', label: 'Protein' }, { icon: 'mdi:run', label: 'Routine' }] }, accentColor: '#8B5CF6' },
+    example: { template: 'connectorList', narration: 'It comes down to three things: sleep, protein, and routine.', vars: { items: [{ icon: 'mdi:sleep', label: 'Sleep' }, { icon: 'mdi:food-drumstick', label: 'Protein' }, { icon: 'mdi:run', label: 'Routine' }] }, accentColor: '#8B5CF6' },
   },
   phoneSwap: {
     description: 'A phone mockup on screen with a headline/icon swapped in.',
     fields: 'text*(2-4w phone headline), icon',
-    example: { template: 'phoneSwap', narration: 'Watch what happens next.', vars: { text: '7 Day Streak', icon: 'mdi:fire' }, accentColor: '#8B5CF6' },
+    example: { template: 'phoneSwap', narration: "Look at that, a seven day streak going strong.", vars: { text: '7 Day Streak', icon: 'mdi:fire' }, accentColor: '#8B5CF6' },
   },
   splitConverge: {
     description: 'Content splits apart then converges back into one focal icon.',
     fields: 'icon, label(opt,1-3w)',
-    example: { template: 'splitConverge', narration: 'This is what matters.', vars: { icon: 'mdi:lightbulb-on', label: 'The Big Idea' }, accentColor: '#8B5CF6' },
+    example: { template: 'splitConverge', narration: 'Everything here really comes back to one big idea.', vars: { icon: 'mdi:lightbulb-on', label: 'The Big Idea' }, accentColor: '#8B5CF6' },
   },
   mergeCluster: {
     description: 'Several icons fly in and merge into one resulting icon.',
     fields: 'icons(2-5), resultIcon, label(opt,1-3w)',
-    example: { template: 'mergeCluster', narration: 'They come together as one.', vars: { icons: ['mdi:microphone', 'mdi:video'], resultIcon: 'mdi:movie-open', label: 'Content Creation' }, accentColor: '#8B5CF6' },
+    example: { template: 'mergeCluster', narration: 'Recording and filming combine into one thing: content creation.', vars: { icons: ['mdi:microphone', 'mdi:video'], resultIcon: 'mdi:movie-open', label: 'Content Creation' }, accentColor: '#8B5CF6' },
   },
   nodeClusterExtended: {
     description: 'Icons cluster, one is chosen, then merges into a new labeled result.',
     fields: 'icons(3-8), chosenIndex, mergeText*, newIcon*, newLabel(opt,1-3w)',
-    example: { template: 'nodeClusterExtended', narration: 'They become one.', vars: { icons: ['mdi:microphone', 'mdi:video', 'mdi:cloud'], chosenIndex: 0, mergeText: 'Content Strategy', newIcon: 'mdi:forum', newLabel: 'Plan' }, accentColor: '#8B5CF6' },
+    example: { template: 'nodeClusterExtended', narration: 'It all merges into a single content strategy plan.', vars: { icons: ['mdi:microphone', 'mdi:video', 'mdi:cloud'], chosenIndex: 0, mergeText: 'Content Strategy', newIcon: 'mdi:forum', newLabel: 'Plan' }, accentColor: '#8B5CF6' },
   },
   textPopOut: {
     description: 'A short punchy statement builds word by word then pops away.',
     fields: 'text*(3-6w punchy statement)',
-    example: { template: 'textPopOut', narration: 'Small wins add up fast.', vars: { text: 'Progress beats perfection' } },
+    example: { template: 'textPopOut', narration: 'Remember this: progress beats perfection.', vars: { text: 'Progress beats perfection' } },
   },
   squareSpin: {
     description: 'A couple of icon squares spin and land, revealing short text.',
     fields: 'text*(2-5w, in shapes), icon1, icon2',
-    example: { template: 'squareSpin', narration: 'Two go-to tools.', vars: { text: 'Pro Tips', icon1: 'mdi:video', icon2: 'mdi:microphone' }, accentColor: '#8B5CF6' },
+    example: { template: 'squareSpin', narration: 'Here are the two pro tips: camera, and mic.', vars: { text: 'Pro Tips', icon1: 'mdi:video', icon2: 'mdi:microphone' }, accentColor: '#8B5CF6' },
   },
   tripleStack: {
     description: 'Exactly 3 icon+text items stack and settle in sequence.',
     fields: 'items(EXACTLY 3 {icon,text*1-3w}); narration=on-screen caption, keep short',
-    example: { template: 'tripleStack', narration: "Here's what you get.", vars: { items: [{ icon: 'mdi:image', text: 'PNG Docs' }, { icon: 'mdi:account-group', text: 'Icon Icons' }, { icon: 'mdi:comment-quote', text: 'Quotes' }] }, accentColor: '#8B5CF6' },
+    example: { template: 'tripleStack', narration: 'You get PNG docs, icon packs, and ready quotes.', vars: { items: [{ icon: 'mdi:image', text: 'PNG Docs' }, { icon: 'mdi:account-group', text: 'Icon Icons' }, { icon: 'mdi:comment-quote', text: 'Quotes' }] }, accentColor: '#8B5CF6' },
   },
   nodeAbsorb: {
     description: 'A header absorbs a list of exactly 4 icon+text benefit items.',
     fields: 'headerIcon, headerText*, items(EXACTLY 4 {icon,text*2-4w}) - things you get, not names/scores',
-    example: { template: 'nodeAbsorb', narration: 'What you get.', vars: { headerIcon: 'mdi:gift', headerText: 'What You Get', items: [{ icon: 'mdi:truck-fast', text: 'Free Shipping' }, { icon: 'mdi:shield-check', text: 'Warranty' }, { icon: 'mdi:refresh', text: 'Free Returns' }, { icon: 'mdi:headset', text: '24/7 Support' }] }, accentColor: '#8B5CF6' },
+    example: { template: 'nodeAbsorb', narration: "Here's what you get: free shipping, a warranty, free returns, and 24/7 support.", vars: { headerIcon: 'mdi:gift', headerText: 'What You Get', items: [{ icon: 'mdi:truck-fast', text: 'Free Shipping' }, { icon: 'mdi:shield-check', text: 'Warranty' }, { icon: 'mdi:refresh', text: 'Free Returns' }, { icon: 'mdi:headset', text: '24/7 Support' }] }, accentColor: '#8B5CF6' },
   },
   textTiers: {
     description: 'A plain statement builds word by word across 3 auto-split lines.',
     fields: 'text*(5-10w plain statement, auto-split into 3 lines)',
-    example: { template: 'textTiers', narration: "Here's an honest take.", vars: { text: 'The last one might be the best' }, accentColor: '#8B5CF6' },
+    example: { template: 'textTiers', narration: 'Here\'s an honest take: the last one might be the best.', vars: { text: 'The last one might be the best' }, accentColor: '#8B5CF6' },
   },
   blueprintText: {
     description: 'Two short sentences appear inside animated blueprint-style dashed boxes.',
     fields: 'sentence1*, sentence2*(2 short phrases, 3-6w each)',
-    example: { template: 'blueprintText', narration: 'Every detail matters here.', vars: { sentence1: 'Precision in every curve', sentence2: 'Power in every detail' }, accentColor: '#8B5CF6' },
+    example: { template: 'blueprintText', narration: "It's precision in every curve, and power in every detail.", vars: { sentence1: 'Precision in every curve', sentence2: 'Power in every detail' }, accentColor: '#8B5CF6' },
   },
   yearScroller: {
     description: 'A vertical year-picker scrolls and lands on a year, then reveals a headline.',
     fields: 'year*(a real year 1870-2040), text*(1-4w headline revealed after)',
-    example: { template: 'yearScroller', narration: 'It all started here.', vars: { year: 1969, text: 'Where it began' }, accentColor: '#8B5CF6' },
+    example: { template: 'yearScroller', narration: 'It all began back in 1969.', vars: { year: 1969, text: 'Where it began' }, accentColor: '#8B5CF6' },
   },
   counter: {
     description: 'A number counts up to a target value with an optional icon and caption.',
@@ -1880,13 +1896,22 @@ const COMPACT_TEMPLATE_INFO = {
     // Naming a target one word above the actual hard floor absorbs that
     // exact undershoot for free - if it undershoots "5" by one, it still
     // clears the real floor of 4, instead of failing it.
-    fields: 'value*(count to), text*(5-8 words, NEVER fewer than 5), icon(opt), iconPosition(opt before|after)',
-    example: { template: 'counter', narration: 'The number speaks.', vars: { value: 45355, text: 'People who changed their mind completely' } },
+    //
+    // "value" honesty rule added 2026-09-18 (real-video QA finding): 3 of
+    // 3 real generated videos that included a counter beat fabricated a
+    // suspiciously round, ungrounded number ("100 Days without hitting
+    // snooze", "365 Days of self-awareness growth") and rendered it with
+    // the exact same glowing/authoritative visual treatment as a genuine
+    // fact - a real credibility risk for a "facts" product, not just a
+    // style nitpick. Nothing downstream can fact-check a number, so this
+    // has to be caught here, at the source.
+    fields: 'value*(count to - ONLY a real, well-known statistic you are genuinely confident about for this exact topic; NEVER invent a plausible-sounding round number just to fill the field), text*(5-8 words, NEVER fewer than 5, must make clear what the number actually measures), icon(opt), iconPosition(opt before|after)',
+    example: { template: 'counter', narration: 'Over forty five thousand people changed their mind completely.', vars: { value: 45355, text: 'People who changed their mind completely' } },
   },
   lineReveal: {
     description: 'A line grows and moves to reveal a bold headline plus a secondary line.',
     fields: 'text1*(2-4w bold headline), text2*(2-5w secondary line)',
-    example: { template: 'lineReveal', narration: "Here's the real difference.", vars: { text1: 'Think Different', text2: 'Build what matters' }, accentColor: '#8B5CF6' },
+    example: { template: 'lineReveal', narration: 'Think different, and build what actually matters.', vars: { text1: 'Think Different', text2: 'Build what matters' }, accentColor: '#8B5CF6' },
   },
   typewriterLink: {
     description: 'Three short lines build in typewriter style, linked by a connector word.',
@@ -1901,13 +1926,13 @@ const COMPACT_TEMPLATE_INFO = {
   buttonDraw: {
     description: 'A dot draws a pill-shaped button outline as its label reveals inside.',
     fields: 'text*(1-3w button label)',
-    example: { template: 'buttonDraw', narration: "You're all set.", vars: { text: 'Get Started' } },
+    example: { template: 'buttonDraw', narration: "All that's left to do now is get started.", vars: { text: 'Get Started' } },
   },
   mouseWordDrag: {
     description: 'A sentence builds, then a mouse drags in and inserts a missing key phrase.',
     fields: 'before*(1-3w),chip*(1-2w, the missing main point),after*(1-3w)',
     example: {
-      template: 'mouseWordDrag', narration: 'This is how you get ahead.', vars: { before: 'Work Smarter', chip: 'With AI', after: 'Every Day' },
+      template: 'mouseWordDrag', narration: 'Work smarter with AI, every single day.', vars: { before: 'Work Smarter', chip: 'With AI', after: 'Every Day' },
     },
   },
 };
@@ -1979,12 +2004,25 @@ function pickRandomTemplates(rand = Math.random) {
   return pool.slice(0, count);
 }
 
-function buildCompactGenerationSystemPrompt(chosenTemplates) {
+// explicitItemCount: {count, noun} | null - detected by extractExplicitItemCount
+// (sceneGenClient.js) from the user's own raw prompt (e.g. "3 money habits",
+// "5 facts"). Added 2026-09-18 (real-video QA finding): a real generated
+// video for the prompt "3 money habits that are secretly keeping you poor"
+// never named, counted, or enumerated a single habit anywhere - narration
+// was pure generic filler with zero connection to the "3 X" structure the
+// user explicitly asked for. Template COUNT/selection stays fully random
+// (pickRandomTemplates' own doc comment - that guarantee doesn't change),
+// this only tells the model its NARRATION must still explicitly enumerate
+// the requested number of concrete items across however many beats it has.
+function buildCompactGenerationSystemPrompt(chosenTemplates, explicitItemCount = null) {
   const fieldLines = chosenTemplates.map((t) => `${t}: ${COMPACT_TEMPLATE_INFO[t].fields}`).join('\n');
   const exampleLines = chosenTemplates.map((t) => JSON.stringify(COMPACT_TEMPLATE_INFO[t].example)).join('\n');
   const nameList = chosenTemplates.join(', ');
   const needsOwnText = chosenTemplates.filter((t) => ['phoneSwap', 'textPopOut', 'squareSpin'].includes(t));
   const n = chosenTemplates.length;
+  const enumerationRule = explicitItemCount
+    ? `\n- The user's request explicitly names ${explicitItemCount.count} ${explicitItemCount.noun} - your beats' combined narration MUST clearly name/describe ${explicitItemCount.count} distinct, concrete ${explicitItemCount.noun} (e.g. "First, ... Second, ... Third, ..." spread across beats, or one clearly-numbered item per beat) - never a vague summary that skips naming them individually. If you have more beats than ${explicitItemCount.count}, use the extra ones for a hook/setup/conclusion; never pad by repeating the same item.`
+    : '';
   return `You write one short-form video beat per template below, for a topic. Respond with ONLY one valid JSON object - no markdown fences, no commentary.
 
 YOUR ${n} TEMPLATES FOR THIS VIDEO (already chosen, fixed - write EXACTLY one beat for EACH, no substitutes, no repeats, no skipping any): ${nameList}
@@ -2006,6 +2044,8 @@ For any OTHER concept not listed above, only use a "mdi:" name you are genuinely
 RULES:
 - "beats" MUST have EXACTLY ${n} entries, one for EACH template listed above - not a subset, no extras, no repeats.
 - Every beat needs "narration": ONE full, flowing SPOKEN sentence (not a short fragment, not multiple short sentences stitched together) that says what's on screen in natural spoken language, up to 25 words.${needsOwnText.length ? `\n- ${needsOwnText.join('/')} ALSO need${needsOwnText.length === 1 ? 's' : ''} their own "text" in "vars" - a SEPARATE on-screen string, even if it overlaps with narration. Never skip it.` : ''}
+- "narration" MUST literally state the SAME specific content (the actual number, name, label, or claim) that this beat's own "vars" show on screen - never a generic sentence that could be pasted onto a video about any other topic. Confirmed real failures to NEVER imitate: "You might be surprised at the sheer scale of this phenomenon", "This is how you break free", "Let's dive in!", "Here's the truth about...", "It all starts now", "Imagine if you could...", "Which one's holding you back?", "Financial freedom is within reach" - every one of these says literally nothing a viewer could learn, because it never mentions the beat's actual content. Every example below states its own vars out loud - match that pattern exactly, with YOUR topic's real content instead.
+- NEVER invent a statistic, date, or specific-sounding number that you are not genuinely confident is real - a made-up number presented as fact is worse than a vaguer true statement. This applies everywhere a number appears, not just "counter".${enumerationRule}
 - FIRST beat's narration must contain "you"/"your", end "?"/"!", or start Stop/Imagine/Picture/Wait/Guess/"What if"/Never - never a flat statement of fact.
 - "accentColor" is optional per beat, a hex string like "#8B5CF6" - omit it to auto-pick one.
 

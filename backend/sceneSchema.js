@@ -4891,8 +4891,18 @@ function buildNodeClusterLayers({
   icons, chosenIndex, accentColor, introText, label,
 }) {
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
-  const RING_RADIUS = 150;
-  const NODE_SIZE = 70;
+  // 150/70 -> 195/92 (2026-09-18, real-video QA finding): a live rendered
+  // beat showed 3 icons clustered inside roughly the top 40% of the frame
+  // with the entire bottom half of the 9:16 canvas empty background - a
+  // vertical-video composition problem, not an animation one. Scaling the
+  // ring radius and node size up ~30% (still comfortably inside
+  // CANVAS_WIDTH=540 at 8 icons, the max count) makes the cluster itself
+  // read as the frame's actual subject instead of a small huddle floating
+  // in empty space, without touching any position/easing/timing logic
+  // below (every other size in this function is already derived from
+  // NODE_SIZE, so this one constant change scales the whole composition).
+  const RING_RADIUS = 195;
+  const NODE_SIZE = 92;
   const layers = [];
   icons.forEach((icon, i) => {
     const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
@@ -5445,8 +5455,11 @@ function buildNodeClusterExtendedLayers({
   icons, chosenIndex, accentColor, introText, mergeText, newIcon, newLabel, shrinkSlot,
 }) {
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
-  const RING_RADIUS = 150;
-  const NODE_SIZE = 70;
+  // Same dead-space fix as buildNodeClusterLayers just above (150/70 ->
+  // 195/92) - this template shares the identical ring-of-icons
+  // composition and the same real-video QA finding applies here too.
+  const RING_RADIUS = 195;
+  const NODE_SIZE = 92;
   const layers = [];
   icons.forEach((icon, i) => {
     const angle = (i / icons.length) * Math.PI * 2 - Math.PI / 2;
@@ -6769,7 +6782,13 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
 // pass, matching how connectorList's own equally large spec was scoped.
 function buildSplitConvergeLayers({ icon, accentColor, label }) {
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
-  const ICON_SIZE = 170;
+  // 170 -> 220 (2026-09-18, real-video QA finding): a live rendered beat
+  // showed a single small icon sitting in a sea of empty background for
+  // its whole ~2.5s duration - this template only ever has ONE focal
+  // element on screen, so it needs to read as substantial rather than
+  // small and lonely. Every other measurement in this function already
+  // derives from ICON_SIZE, so this one constant scales the whole beat.
+  const ICON_SIZE = 220;
   const START_OFFSET = CANVAS_WIDTH * 0.75 + ICON_SIZE;
   const ARRIVE_TIME = 0.9;
   const SETTLE_TIME = ARRIVE_TIME + 0.32;
@@ -16878,6 +16897,47 @@ function validateSceneJSON(sceneJSON) {
       }
     }
   }
+
+  // Real-video QA finding (2026-09-18): generating and reviewing 4 real
+  // videos found EVERY beat's narration (not just the opening hook checked
+  // above) was routinely content-free filler that never stated the beat's
+  // own on-screen fact/number/label - a viewer with sound off or sound on
+  // learns nothing either way. This is a mechanical safety net alongside
+  // the much stronger fix (buildCompactGenerationSystemPrompt's examples
+  // now all restate their own vars, plus an explicit anti-filler rule) -
+  // same "mechanical enforcement beats prompt guidance alone" lesson the
+  // cliché-opener check above already leans on. Denylist is the exact real
+  // phrases confirmed (via actual rendered output, not guessed) to
+  // reproduce this failure across 3 separate real generations - not
+  // exhaustive, but a real, checkable floor rather than nothing.
+  const GENERIC_FILLER_NARRATION_PATTERNS = [
+    /you might be surprised/i,
+    /this is how you (break free|get ahead|do it)/i,
+    /let'?s dive in/i,
+    /here'?s the truth about/i,
+    /it all starts now/i,
+    /the more you practice/i,
+    /when you combine .* you get/i,
+    /imagine if you could/i,
+    /here'?s how you can (boost|improve)/i,
+    /which one'?s holding you back/i,
+    /what you'?re (losing out on|missing out on)/i,
+    /financial freedom is within reach/i,
+    /small wins add up fast/i,
+    /is the key to unlocking/i,
+    /the (magic|power) of .* (is|lies)/i,
+    /you'?re about to become/i,
+  ];
+  sceneJSON.scenes.forEach((beat, i) => {
+    if (!isPlainObject(beat) || !isPlainObject(beat.params)) return;
+    if (isPlainObject(beat.mograph) && beat.mograph.type === 'ctaOutro') return;
+    const narration = typeof beat.params.narration === 'string' ? beat.params.narration.trim() : '';
+    if (!narration) return;
+    const hit = GENERIC_FILLER_NARRATION_PATTERNS.find((p) => p.test(narration));
+    if (hit) {
+      errors.push(`scenes[${i}].params.narration: "${narration}" is generic, content-free filler that never states this beat's actual on-screen fact/number/label - it could be pasted onto a video about any topic and nobody would notice. Rewrite it to literally say the specific thing THIS beat shows (the real number, name, label, or claim from its "vars") in natural spoken language.`);
+    }
+  });
 
   ensureCumulativeListBeats(sceneJSON);
   stripSecondaryTextLayers(sceneJSON);

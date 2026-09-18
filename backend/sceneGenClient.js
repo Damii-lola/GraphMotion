@@ -549,7 +549,7 @@ const COMPACT_RETRY_BUDGET = 18;
  * path paid for every retry.
  */
 async function generateCompactBeatSpec(userPrompt, {
-  retriesLeft = COMPACT_RETRY_BUDGET, priorErrors = null, chosenTemplates = null, topic = null, styleNotes = '',
+  retriesLeft = COMPACT_RETRY_BUDGET, priorErrors = null, chosenTemplates = null, topic = null, styleNotes = '', explicitItemCount = null,
 } = {}) {
   // Picked ONCE per generation, not re-rolled per retry - a real,
   // direct user requirement: "make them randomize but make it that if
@@ -562,7 +562,7 @@ async function generateCompactBeatSpec(userPrompt, {
   // pickRandomTemplates here only covers a caller that skips that (a
   // direct unit test, etc.) and never passes chosenTemplates at all.
   const templates = chosenTemplates || pickRandomTemplates();
-  const systemPrompt = buildCompactGenerationSystemPrompt(templates);
+  const systemPrompt = buildCompactGenerationSystemPrompt(templates, explicitItemCount);
   // `topic` defaults to the raw prompt for any caller that skips the
   // new split step (direct unit tests, etc.) - see splitPromptIntoTopic
   // AndStyle's own doc comment for why this is a SEPARATE small call
@@ -601,7 +601,7 @@ async function generateCompactBeatSpec(userPrompt, {
     // JSON shape from the SAME call already gets retried below.
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] Cloudflare call failed (${err.message}), retrying (${retriesLeft - 1} left)...`);
-      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors, chosenTemplates: templates, topic, styleNotes });
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors, chosenTemplates: templates, topic, styleNotes, explicitItemCount });
     }
     throw err;
   }
@@ -611,7 +611,7 @@ async function generateCompactBeatSpec(userPrompt, {
   } catch (err) {
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] compact spec JSON parse failed (${err.message}), retrying (${retriesLeft - 1} left)...`);
-      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [`Your last response was not valid JSON: ${err.message}`], chosenTemplates: templates, topic, styleNotes });
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [`Your last response was not valid JSON: ${err.message}`], chosenTemplates: templates, topic, styleNotes, explicitItemCount });
     }
     throw err;
   }
@@ -622,7 +622,7 @@ async function generateCompactBeatSpec(userPrompt, {
   } catch (err) {
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] compact spec shape invalid (${err.message}), retrying (${retriesLeft - 1} left)...`);
-      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [err.message], chosenTemplates: templates, topic, styleNotes });
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: [err.message], chosenTemplates: templates, topic, styleNotes, explicitItemCount });
     }
     throw err;
   }
@@ -632,7 +632,7 @@ async function generateCompactBeatSpec(userPrompt, {
   if (!valid) {
     if (retriesLeft > 0) {
       console.warn(`[sceneGenClient] compiled scene JSON failed validation (${errors.length} error(s)), retrying (${retriesLeft - 1} left): ${errors.slice(0, 3).join('; ')}`);
-      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: errors, chosenTemplates: templates, topic, styleNotes });
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: errors, chosenTemplates: templates, topic, styleNotes, explicitItemCount });
     }
     throw new Error(`Generated scene JSON failed schema validation after retries: ${errors.join('; ')}`);
   }
@@ -647,6 +647,7 @@ async function generateCompactBeatSpec(userPrompt, {
         chosenTemplates: templates,
         topic,
         styleNotes,
+        explicitItemCount,
       });
     }
     console.warn(`[sceneGenClient] ${notFoundIcons.length} icon(s) don't exist after exhausting retries (${notFoundIcons.join(', ')}) - shipping anyway, render-time fallback will drop them`);
@@ -673,6 +674,8 @@ const PROMPT_SPLIT_SYSTEM_PROMPT = `You split a short-form video request into tw
 
 The user's own text may mix a SUBJECT (what the video is about) with STYLE/TONE/FORMAT instructions (e.g. "funny", "casual", "for teenagers", "focus on X", "keep it serious", "target beginners") all in one string.
 
+The text may also be garbled - a UI text field accidentally merged two unrelated requests into one broken string (real confirmed example: "3 money habits that are sechow to actually wake up early without hating your liferetly keeping you poor" - two separate requests fused mid-word). If the text looks like this - abrupt topic shifts, words fused/split mid-way, fragments that don't form one coherent sentence - extract and use ONLY the single clearest, most complete, most coherent subject you can find in it. NEVER invent a causal link between unrelated fragments (e.g. never conclude "waking up early makes you rich" just because both ideas appeared in the same broken string) - pick the one real subject and ignore the rest.
+
 Output ONLY: {"topic": "the core subject, as a short phrase", "styleNotes": "any style/tone/audience/format instructions given, or an empty string if none were given"}`;
 
 async function splitPromptIntoTopicAndStyle(userPrompt) {
@@ -686,6 +689,32 @@ async function splitPromptIntoTopicAndStyle(userPrompt) {
     console.warn(`[sceneGenClient] prompt split failed (${err.message}), using the raw prompt as the topic with no style notes`);
     return { topic: userPrompt, styleNotes: '' };
   }
+}
+
+// Detects "N things" style requests ("3 money habits", "5 facts", "top 10
+// reasons") straight off the user's own raw prompt - pure regex, no AI
+// call. Real-video QA finding (2026-09-18): a video generated for "3 money
+// habits that are secretly keeping you poor" never named, counted, or
+// enumerated a single habit - the explicit "3 X" structure the user asked
+// for was completely ignored. This is deliberately a best-effort heuristic,
+// not a parser: it scans for a small number (2-15) followed within a few
+// words by something that looks like a plural noun. False positives (e.g.
+// "spent 3 hours doing yoga") just add a harmless "make sure you name 3
+// distinct hours" nudge to the prompt rather than breaking anything, so
+// erring toward matching is the safe direction here.
+function extractExplicitItemCount(userPrompt) {
+  const words = String(userPrompt || '').trim().split(/\s+/);
+  for (let i = 0; i < words.length; i += 1) {
+    const numMatch = words[i].match(/^([2-9]|1[0-5])$/);
+    if (!numMatch) continue;
+    for (let j = i + 1; j <= Math.min(i + 3, words.length - 1); j += 1) {
+      const noun = words[j].toLowerCase().replace(/[^a-z]/g, '');
+      if (noun.length >= 4 && noun.endsWith('s') && !noun.endsWith('ss')) {
+        return { count: parseInt(numMatch[1], 10), noun };
+      }
+    }
+  }
+  return null;
 }
 
 /** Plain Fisher-Yates, same real algorithm scenePrompts.js's own pickRandomTemplates uses (not the "sort by random comparator" non-uniform trick) - reused here to randomize the ORDER of whichever 6 templates pickRandomTemplates just picked, a deliberately separate concern from the picking itself. */
@@ -745,7 +774,15 @@ async function generateSceneJSON(userPrompt, targetDurationSeconds = 12) {
   // which 6), same split as before.
   const chosenTemplates = shuffleArray(pickRandomTemplates());
 
-  const sceneJSON = await generateCompactBeatSpec(userPrompt, { chosenTemplates, topic, styleNotes });
+  // Detected off the user's own RAW prompt, not the (AI-reworded) `topic`
+  // above - real-video QA finding (2026-09-18): "3 money habits that are
+  // secretly keeping you poor" produced a video that never named, counted,
+  // or enumerated a single habit anywhere. Pure regex, no extra AI call.
+  const explicitItemCount = extractExplicitItemCount(userPrompt);
+
+  const sceneJSON = await generateCompactBeatSpec(userPrompt, {
+    chosenTemplates, topic, styleNotes, explicitItemCount,
+  });
 
   // Guaranteed brand close on every fresh generation (direct user
   // requirement) - appended AFTER the AI's own beats are already fully
