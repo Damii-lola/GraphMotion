@@ -2404,7 +2404,7 @@ function attachLineRevealSparks(beat) {
   // other two mograph types too: neither nodeCluster nor phoneSwap ever
   // produces a shape layer matching this function's own customPath+trim+
   // stroke+no-fill signature, so it naturally no-ops on them already.
-  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  if (isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   const additions = [];
   layers.forEach((layer, i) => {
@@ -17359,7 +17359,21 @@ function ensureEmphasisWordScale(sceneJSON) {
     // additive (adds a scale animator to the dominant text layer if none
     // exists yet), so enabling it here can't break a template's own
     // layout, only add emphasis on top of it.
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    //
+    // mograph guard RE-ADDED 2026-09-18, SAME DAY, hours later (real
+    // production memory incident): a full local stress test against a
+    // realistic 7-beat icon-heavy video measured RSS climbing well past
+    // this project's documented ~170-210MB budget with the whole
+    // "richer visuals" decorator batch enabled together. Reverting ALL
+    // of today's newly-enabled decorators as one conservative, immediate
+    // safety rollback rather than cherry-picking under time pressure -
+    // this specific function (a scale ANIMATOR only, no new layer, no
+    // effects buffer) is almost certainly cheap and a good candidate to
+    // re-enable on its own once the actual heavy contributor(s) are
+    // isolated with a clean, controlled test, but "probably fine" isn't
+    // good enough justification to leave anything enabled during a live
+    // incident.
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
@@ -17446,7 +17460,7 @@ function ensureHighlightChip(sceneJSON) {
   scenes.forEach((beat, beatIndex) => {
     // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
     // matching comment just above for the full "why".
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
@@ -17899,9 +17913,26 @@ function ensureBackgroundSwoosh(beat, beatIndex) {
   // already far cheaper (the smaller buffer/radius below), EVERY beat
   // gets one again - 5 cheap instances cost meaningfully less than the
   // 2-3 expensive ones this was working around before.
-  // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
-  // matching comment for the full "why".
-  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  // mograph guard RE-ADDED 2026-09-18 (real production incident, hours
+  // after removing it): a local stress test against a realistic 7-beat
+  // icon-heavy video (matching real generated content) measured RSS
+  // plateauing at 250-265MB with this + ensureCurvedAccentLine +
+  // ensureDropShadowOnDominant all enabled - well above this project's
+  // documented ~170-210MB/video budget, and enough to plausibly exceed a
+  // shared host's real memory ceiling once 2 concurrent render-worker
+  // processes are both anywhere near that level (2x260MB=520MB). This
+  // function's OWN doc comment above already flags real per-frame blur
+  // cost history ("it's sooo slow") from when it was raw-layer-only - now
+  // that enabling it made it fire on EVERY beat of EVERY real video
+  // (mograph is the only real path), that same cost is no longer
+  // occasional, it's guaranteed, every video, every beat. Reverting this
+  // one and ensureCurvedAccentLine/ensureDropShadowOnDominant (the other
+  // two ALWAYS-ON, effects-buffer-heavy additions) rather than the
+  // probabilistic ones (glow/sparkle/grid/ripple, each only 25-33% of
+  // videos) or the cheap ones (emphasis scale, highlight chip, ambient
+  // wiggle - no blur buffer at all) - this is where the guaranteed,
+  // project-wide cost actually came from.
+  if (isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   const alreadyHasSwoosh = layers.some((l) => isPlainObject(l) && l.id === '__bg_swoosh__');
   if (alreadyHasSwoosh) return;
@@ -18017,9 +18048,11 @@ function ensureBackgroundSwoosh(beat, beatIndex) {
  * per-video choice, not from inconsistency within one video.
  */
 function ensureCurvedAccentLine(beat, beatIndex) {
-  // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
-  // matching comment for the full "why".
-  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  // mograph guard RE-ADDED 2026-09-18 - see ensureBackgroundSwoosh's own
+  // matching comment (real production memory incident) for the full
+  // "why" - this is the curved-line alternative to that same always-on
+  // background accent, same effects-buffer cost, same fix.
+  if (isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   const alreadyHas = layers.some((l) => isPlainObject(l) && l.id === '__bg_curve__');
   if (alreadyHas) return;
@@ -18277,9 +18310,14 @@ function ensureDropShadowOnDominant(sceneJSON) {
   const scenes = sceneJSON.scenes;
   if (!Array.isArray(scenes)) return;
   scenes.forEach((beat) => {
-    // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
-    // matching comment for the full "why".
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    // mograph guard RE-ADDED 2026-09-18 - see ensureBackgroundSwoosh's own
+    // matching comment (real production memory incident) for the full
+    // "why" - dropShadow goes through the same expensive effects-buffer/
+    // supersampling machinery, and this one ran on the dominant text
+    // layer of EVERY beat unconditionally (no probability gate at all),
+    // making it the single largest guaranteed per-video cost of the
+    // three reverted here.
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
@@ -18316,7 +18354,7 @@ function ensureNeonGlowText(sceneJSON) {
   sceneJSON.scenes.forEach((beat, beatIndex) => {
     // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
     // matching comment for the full "why".
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
@@ -18359,7 +18397,7 @@ function ensureSparkleAccents(sceneJSON) {
   sceneJSON.scenes.forEach((beat, beatIndex) => {
     // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
     // matching comment for the full "why".
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const layers = beat.visual.layers;
     if (layers.some((l) => isPlainObject(l) && typeof l.id === 'string' && l.id.startsWith('__sparkle_'))) return;
 
@@ -18426,7 +18464,7 @@ function ensureGridTexture(sceneJSON) {
   sceneJSON.scenes.forEach((beat) => {
     // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
     // matching comment for the full "why".
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const layers = beat.visual.layers;
     if (layers.some((l) => isPlainObject(l) && l.id === '__bg_grid__')) return;
     layers.unshift({
@@ -18469,7 +18507,7 @@ function ensureRippleHook(sceneJSON) {
   const beat = sceneJSON.scenes[0];
   // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
   // matching comment for the full "why".
-  if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   if (layers.some((l) => isPlainObject(l) && typeof l.id === 'string' && l.id.startsWith('__ripple_'))) return;
 
@@ -18773,7 +18811,7 @@ function ensureSustainedAmbientMotion(sceneJSON) {
     // position as the wiggle expression's own `base` rather than
     // overwriting it, so this is safe even on a beat whose dominant text
     // already has its own rotation/position track from its template.
-    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const layers = beat.visual.layers;
 
     const textLayers = layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
