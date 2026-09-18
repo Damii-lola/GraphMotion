@@ -2030,16 +2030,17 @@ YOUR ${n} TEMPLATES FOR THIS VIDEO (already chosen, fixed - write EXACTLY one be
 TEMPLATES (name: fields; * = required, never leave blank):
 ${fieldLines}
 
-Icons must be REAL Iconify names, format "prefix:name" - "mdi:concept-name" for general ideas, "simple-icons:brandname" for real brand logos (lowercase product name, e.g. simple-icons:youtube). NEVER invent a plausible-sounding name - a name that "sounds right" but doesn't exist on Iconify (confirmed real, live-failing examples: mdi:chart-trend, mdi:money-check, mdi:money-bank, mdi:money-bill - none of these are real) fails validation and forces a retry. When your concept matches one below, use that EXACT name - these are all confirmed real:
-money/finance: mdi:cash, mdi:cash-multiple, mdi:currency-usd, mdi:credit-card, mdi:bank, mdi:wallet, mdi:piggy-bank
-growth/charts: mdi:chart-line, mdi:chart-bar, mdi:trending-up, mdi:trending-down, mdi:finance
-time: mdi:clock-outline, mdi:calendar-check, mdi:timer-outline, mdi:history
-people: mdi:account, mdi:account-group, mdi:account-multiple, mdi:handshake
-communication: mdi:message-text, mdi:bullhorn, mdi:forum, mdi:email
-achievement: mdi:trophy, mdi:star, mdi:medal, mdi:check-circle
-health/food: mdi:heart-pulse, mdi:run, mdi:food-apple, mdi:water
-tech: mdi:rocket-launch, mdi:lightbulb-on, mdi:cog, mdi:cloud-upload
-For any OTHER concept not listed above, only use a "mdi:" name you are genuinely confident is a real, common Material Design Icon - if unsure, fall back to the closest concept above instead of guessing at a more specific one.
+Icons must be REAL Iconify names, format "prefix:name" - "simple-icons:brandname" for real brand logos (lowercase product name, e.g. simple-icons:youtube). NEVER invent a plausible-sounding name - a name that "sounds right" but doesn't exist on Iconify fails validation and forces a retry.
+For general concepts, use the "solar" icon set's bold style ("solar:concept-name-bold") - direct user complaint (2026-09-18): "the icons we use are too simple, too basic." Iconify's own "mdi" (Material Design Icons) set is thin-line/flat and reads as generic; "solar"'s bold style is visually chunkier and more detailed, a real, confirmed-live upgrade (verified against Iconify's own API before this was written, not guessed). When your concept matches one below, use that EXACT name - these are all confirmed real:
+money/finance: solar:dollar-bold, solar:banknote-2-bold, solar:money-bag-bold, solar:card-bold, solar:buildings-2-bold, solar:wallet-bold, solar:safe-2-bold
+growth/charts: solar:chart-bold, solar:graph-up-bold, solar:course-up-bold, solar:course-down-bold
+time: solar:clock-circle-bold, solar:calendar-bold, solar:hourglass-bold, solar:history-bold
+people: solar:user-bold, solar:users-group-rounded-bold, solar:hand-shake-bold
+communication: solar:chat-round-bold, solar:speaker-bold, solar:letter-bold, solar:bell-bold
+achievement: solar:cup-star-bold, solar:medal-star-bold, solar:check-circle-bold, solar:crown-bold
+health/food: solar:heart-pulse-bold, solar:running-round-bold, solar:waterdrop-bold
+tech: solar:rocket-bold, solar:lightbulb-bold, solar:settings-minimalistic-bold, solar:cloud-upload-bold
+For any OTHER concept not listed above: only use a "solar:" name in the "-bold" style you are genuinely confident is real, or fall back to "mdi:concept-name" (Material Design Icons - much larger total catalog, so a better bet for an unusual/specific concept than guessing at a less-common "solar" name) - never guess at a more specific "solar" name than you're sure exists.
 
 RULES:
 - "beats" MUST have EXACTLY ${n} entries, one for EACH template listed above - not a subset, no extras, no repeats.

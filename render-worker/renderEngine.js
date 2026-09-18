@@ -366,13 +366,32 @@ function contrastRatio(hexA, hexB) {
 // otherwise make every white-text layer unreadable; that pass darkens
 // text/icon colors at render time whenever the picked background turns
 // out light, exactly the case these new entries introduce.
+// Real reference-video comparison (2026-09-18, direct user request: "the
+// videos... feel like an unlit match... missing the pop"). Measured the
+// OLD palette's actual HSL values to find the real culprit rather than
+// guessing: the 6 "dark jewel tones" and 3 "light/cream" entries were
+// already reasonably vivid (S 40-85%), but the 3 "muted pastel" entries
+// measured S 14-30% - genuinely washed-out, confirmed as the literal
+// "muddy khaki" look flagged in QA. Fixed two ways: (1) those 3 replaced
+// with equally-light but real-saturation alternatives (same role - a
+// light, clean background - actual color presence instead of gray-tan
+// mush), (2) 7 new near-black-but-tinted entries added, matching the
+// reference videos' single most consistent trait (a3c88584/ed314575:
+// near-black canvas + one vivid neon accent) - "tinted" rather than true
+// neutral black is deliberate: hexToHsl needs a real hue to build the
+// per-zone accent palette from (buildHarmoniousAccentPalette below reads
+// the background's own hue as its starting point), so a truly neutral
+// black would leave that system nothing to harmonize against.
 const BOARD_BACKGROUND_HUES = [
-  // dark jewel tones (original palette)
+  // near-black, tinted - the genuine "neon pop on dark" canvas the
+  // reference videos lean on hardest.
+  '#0D2818', '#0E1B33', '#210F35', '#2E0E18', '#0D2626', '#2E1608', '#14101F',
+  // dark jewel tones (original palette - already vivid, kept as-is)
   '#13529A', '#50198F', '#9C165E', '#158450', '#B35B0F', '#177875',
-  // light / cream
+  // light / cream (kept - reads as clean paper-white, not muddy)
   '#EDE4D3', '#F2ECE1', '#E8DCC8',
-  // muted pastel
-  '#D9C7B8', '#C9D6D3', '#D6C9E0',
+  // light-but-vivid (replaces the old washed-out "muted pastel" trio)
+  '#FFCBA4', '#9FE8CE', '#E0C3FF',
 ];
 
 // Real tester feedback (2026-09-18, live product testing session): "the

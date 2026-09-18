@@ -7031,10 +7031,15 @@ function buildMergeClusterLayers({
   icons, resultIcon, accentColor, label,
 }) {
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42];
-  const NODE_SIZE = 64;
+  // 64 -> 84 (2026-09-18, "richer visuals" QA pass - same dead-space
+  // finding as nodeCluster/splitConverge's own fix): small icons in a lot
+  // of empty frame. RESULT_SIZE below scaled the same ~30%.
+  const NODE_SIZE = 84;
   // Real, direct user spec (2026-09-08): "shift them all a bit closer to
-  // the middle, rn they are far out." Was 190.
-  const START_RADIUS = 130;
+  // the middle, rn they are far out." Was 190. 130 -> 165 alongside the
+  // NODE_SIZE bump above so the larger icons still have breathing room
+  // between their start ring and the center.
+  const START_RADIUS = 165;
   // Real, direct user spec (2026-09-08): "they need to appear one at a
   // time in a clockwise formation... then they will now combine in the
   // middle." The clockwise placement already existed (angle starts at
@@ -7138,7 +7143,8 @@ function buildMergeClusterLayers({
     });
   });
 
-  const RESULT_SIZE = 150;
+  // 150 -> 195, same "richer visuals" dead-space pass as NODE_SIZE above.
+  const RESULT_SIZE = 195;
   // Real, direct user report against a real generated video: "after the
   // popup into multiple bubbles, the icon still remains?? The icon isn't
   // meant to remain." Confirmed as a real gap, not a misreading: this
@@ -13279,7 +13285,10 @@ const DC_DOT_COUNT = 5;
 // alive instead of identical" - a fixed, deterministic variation (not
 // Math.random(), same "reproducible render" reasoning as everywhere else
 // in this file) rather than a uniform size.
-const DC_DOT_SIZE_VARIANTS = [14, 18, 15, 19, 16];
+// Bumped ~35% (2026-09-18, "richer visuals" QA pass) - at 14-19px these
+// read as barely-visible specks on a 540-wide canvas; still varied, just
+// no longer tiny.
+const DC_DOT_SIZE_VARIANTS = [19, 24, 20, 26, 22];
 const DC_DOT_GLOW_VARIANTS = [0.55, 0.75, 0.6, 0.8, 0.65];
 // Bright core (unchanged) + a wider, low-opacity bloom - the same "tight
 // core + soft falloff" 2-layer glow already established for typewriterLink
@@ -17341,7 +17350,16 @@ function ensureEmphasisWordScale(sceneJSON) {
   if (!Array.isArray(scenes)) return;
   const EMPHASIS_SCALE = 1.22;
   scenes.forEach((beat, beatIndex) => {
-    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    // mograph guard removed 2026-09-18 (direct user request: "richer
+    // visuals" - reference-video comparison found mixed-weight/scale
+    // typographic emphasis on real references, e.g. "but IF you KEEP
+    // MAKING"). Every real generated video is a mograph beat now (the
+    // compact-only pipeline), so this whole "auto-decorate" family was
+    // 100% dormant despite being fully built/tested - this is purely
+    // additive (adds a scale animator to the dominant text layer if none
+    // exists yet), so enabling it here can't break a template's own
+    // layout, only add emphasis on top of it.
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
@@ -17426,7 +17444,9 @@ function ensureHighlightChip(sceneJSON) {
   const scenes = sceneJSON.scenes;
   if (!Array.isArray(scenes)) return;
   scenes.forEach((beat, beatIndex) => {
-    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
+    // matching comment just above for the full "why".
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
@@ -17879,7 +17899,9 @@ function ensureBackgroundSwoosh(beat, beatIndex) {
   // already far cheaper (the smaller buffer/radius below), EVERY beat
   // gets one again - 5 cheap instances cost meaningfully less than the
   // 2-3 expensive ones this was working around before.
-  if (isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
+  // matching comment for the full "why".
+  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   const alreadyHasSwoosh = layers.some((l) => isPlainObject(l) && l.id === '__bg_swoosh__');
   if (alreadyHasSwoosh) return;
@@ -17995,7 +18017,9 @@ function ensureBackgroundSwoosh(beat, beatIndex) {
  * per-video choice, not from inconsistency within one video.
  */
 function ensureCurvedAccentLine(beat, beatIndex) {
-  if (isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
+  // matching comment for the full "why".
+  if (!isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   const alreadyHas = layers.some((l) => isPlainObject(l) && l.id === '__bg_curve__');
   if (alreadyHas) return;
@@ -18253,7 +18277,9 @@ function ensureDropShadowOnDominant(sceneJSON) {
   const scenes = sceneJSON.scenes;
   if (!Array.isArray(scenes)) return;
   scenes.forEach((beat) => {
-    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
+    // matching comment for the full "why".
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
@@ -18288,7 +18314,9 @@ function ensureNeonGlowText(sceneJSON) {
   if (!useGlow) return;
 
   sceneJSON.scenes.forEach((beat, beatIndex) => {
-    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
+    // matching comment for the full "why".
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const textLayers = beat.visual.layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
     if (textLayers.length === 0) return;
     const dominant = textLayers.reduce((a, b) => (b.fontSize > a.fontSize ? b : a));
@@ -18329,7 +18357,9 @@ function ensureSparkleAccents(sceneJSON) {
   if (!useSparkles) return;
 
   sceneJSON.scenes.forEach((beat, beatIndex) => {
-    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
+    // matching comment for the full "why".
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const layers = beat.visual.layers;
     if (layers.some((l) => isPlainObject(l) && typeof l.id === 'string' && l.id.startsWith('__sparkle_'))) return;
 
@@ -18394,7 +18424,9 @@ function ensureGridTexture(sceneJSON) {
   if (!useGrid) return;
 
   sceneJSON.scenes.forEach((beat) => {
-    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
+    // matching comment for the full "why".
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const layers = beat.visual.layers;
     if (layers.some((l) => isPlainObject(l) && l.id === '__bg_grid__')) return;
     layers.unshift({
@@ -18435,7 +18467,9 @@ function ensureRippleHook(sceneJSON) {
   if (!useRipple) return;
 
   const beat = sceneJSON.scenes[0];
-  if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+  // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
+  // matching comment for the full "why".
+  if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
   const layers = beat.visual.layers;
   if (layers.some((l) => isPlainObject(l) && typeof l.id === 'string' && l.id.startsWith('__ripple_'))) return;
 
@@ -18734,7 +18768,12 @@ function ensureSustainedAmbientMotion(sceneJSON) {
   const scenes = sceneJSON.scenes;
   if (!Array.isArray(scenes)) return;
   scenes.forEach((beat) => {
-    if (!isPlainObject(beat) || isPlainObject(beat.mograph) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
+    // mograph guard removed 2026-09-18 - see ensureEmphasisWordScale's own
+    // matching comment for the full "why". Wraps EXISTING rotation/
+    // position as the wiggle expression's own `base` rather than
+    // overwriting it, so this is safe even on a beat whose dominant text
+    // already has its own rotation/position track from its template.
+    if (!isPlainObject(beat) || !isPlainObject(beat.visual) || !Array.isArray(beat.visual.layers)) return;
     const layers = beat.visual.layers;
 
     const textLayers = layers.filter((l) => isPlainObject(l) && l.type === 'text' && !l.parent && typeof l.fontSize === 'number' && typeof l.text === 'string');
