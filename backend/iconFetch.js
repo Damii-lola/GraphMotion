@@ -63,6 +63,73 @@ function getMaxScaleFactor(layer) {
   return 1;
 }
 
+// Real, direct user requirement: "the icons we use are too simple, too
+// basic... check other icon apis, not just iconify, to find the best
+// richer one." The actual fix landed in scenePrompts.js (a curated table
+// steering the model toward "solar:*-bold" names, a visually bolder/
+// richer set than plain mdi) - but round-3 live-video QA found real
+// adoption was inconsistent (~1/3 of generated icons), because that
+// table only covers 8 broad concept categories and the model is
+// explicitly (and correctly) told to fall back to "mdi:" for anything
+// else, rather than guess at a "solar:" name it isn't sure exists (a
+// wrong guess renders as a blank icon - a real, worse failure this
+// caution exists to prevent). Guessing better prompt wording keeps
+// hitting the same ceiling: a small/compact model just can't reliably
+// know solar's full icon catalog by name.
+//
+// Fixed here instead, deterministically, in code rather than by
+// prompting harder (same "don't trust a small model with a fragile
+// rule, enforce it structurally" precedent as template selection and
+// enumeration elsewhere in this codebase): whenever the model DOES fall
+// back to "mdi:", ask Iconify's own real search index - not the model's
+// memory - whether a solar-bold equivalent actually exists for that
+// same concept, and swap to it only when the API itself confirms a real
+// match. A brand/logo icon (mdi:facebook, mdi:github) has no solar
+// equivalent by design (solar is a generic UI set, not a logo set) - the
+// search simply returns nothing for those, so they correctly stay on
+// mdi, exactly as they should.
+const iconifySearchCache = new Map();
+async function findSolarEquivalent(mdiIconName) {
+  if (iconifySearchCache.has(mdiIconName)) return iconifySearchCache.get(mdiIconName);
+  const promise = (async () => {
+    const name = mdiIconName.slice('mdi:'.length);
+    const query = name.replace(/[-_]+/g, ' ').trim();
+    if (!query) return null;
+    const url = `https://api.iconify.design/search?query=${encodeURIComponent(query)}&prefixes=solar&limit=12`;
+    try {
+      const response = await fetch(url, { timeout: 6000 });
+      if (!response.ok) return null;
+      const data = await response.json();
+      const icons = Array.isArray(data && data.icons) ? data.icons : [];
+      if (icons.length === 0) return null;
+      // Prefer a "-bold" variant (the exact visual weight the rest of
+      // this file's own icon guidance already standardizes on) - fall
+      // back to whatever solar's own search ranked first otherwise.
+      return icons.find((id) => id.endsWith('-bold')) || icons[0];
+    } catch {
+      return null; // network hiccup or bad response - safe to just keep the original mdi icon, same as any other icon-fetch failure in this file
+    }
+  })();
+  iconifySearchCache.set(mdiIconName, promise);
+  return promise;
+}
+
+/** Mutates eligible layers' own `icon` field in place, upgrading any plain "mdi:" icon to a real, Iconify-search-confirmed "solar:" equivalent where one genuinely exists. Never touches non-mdi icons (the model's own deliberate, confident solar/other picks are left alone). */
+async function upgradeMdiIconsToSolar(iconLayers) {
+  const distinctMdiNames = [...new Set(iconLayers.map((l) => l.icon).filter((icon) => typeof icon === 'string' && icon.startsWith('mdi:')))];
+  if (distinctMdiNames.length === 0) return;
+  const results = await Promise.allSettled(distinctMdiNames.map(async (name) => [name, await findSolarEquivalent(name)]));
+  const upgrades = new Map();
+  for (const result of results) {
+    if (result.status === 'fulfilled' && result.value[1]) upgrades.set(result.value[0], result.value[1]);
+  }
+  if (process.env.ICON_UPGRADE_DEBUG) console.log('[iconFetch] solar upgrades:', Object.fromEntries(upgrades));
+  if (upgrades.size === 0) return;
+  for (const layer of iconLayers) {
+    if (typeof layer.icon === 'string' && upgrades.has(layer.icon)) layer.icon = upgrades.get(layer.icon);
+  }
+}
+
 /** Recursively collects every layer (including inside precomps) still needing a real Iconify fetch. */
 function collectIconLayers(layers, out) {
   if (!Array.isArray(layers)) return;
@@ -151,6 +218,7 @@ async function embedIconDataInScene(sceneJSON) {
   const renderScenes = sceneJSON.scenes.map((scene) => JSON.parse(JSON.stringify(scene)));
   renderScenes.forEach((scene) => collectIconLayers(scene.visual?.layers, iconLayers));
   if (iconLayers.length === 0) return { ...sceneJSON, scenes: renderScenes };
+  await upgradeMdiIconsToSolar(iconLayers);
 
   const groups = new Map();
   for (const layer of iconLayers) {
@@ -198,6 +266,7 @@ async function prefetchIcons(sceneJSON, jobId) {
   });
 
   if (embeddedLayers.length === 0 && iconLayers.length === 0) return { ...sceneJSON, scenes: renderScenes };
+  await upgradeMdiIconsToSolar(iconLayers);
 
   const dir = iconsDirFor(jobId);
   fs.mkdirSync(dir, { recursive: true });
