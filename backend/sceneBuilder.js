@@ -851,7 +851,22 @@ function auditLineRevealSparkSync(layers) {
     if (!trimItem || !isPlainObjectLocal(trimItem.end) || !Array.isArray(trimItem.end.keyframes) || !pathItem) return;
     const trimKfs = trimItem.end.keyframes;
     if (trimKfs.length < 2) return;
-    const trimStart = trimKfs[0].time;
+    // Real false positive found running this audit against a genuine
+    // render (2026-09-18, buttonDraw's own "__bd_outline__"): a trim
+    // track can legitimately have a leading HOLD segment at its starting
+    // value before the real reveal ramp begins (e.g. "stay at 0% from
+    // t=0 until drawStart, THEN ramp to 100%") - the spark is correctly
+    // baked to start at drawStart, not at the trim's own first keyframe
+    // (t=0), since there's nothing to travel toward before the line
+    // actually starts drawing. Using trimKfs[0].time here flagged that
+    // completely correct construction as a "mismatch". Walk past any
+    // leading keyframes that still hold the SAME value as the first one -
+    // the real active-ramp start is the last one of those, not index 0.
+    let activeStartIdx = 0;
+    while (activeStartIdx < trimKfs.length - 1 && trimKfs[activeStartIdx + 1].value === trimKfs[0].value) {
+      activeStartIdx += 1;
+    }
+    const trimStart = trimKfs[activeStartIdx].time;
     const trimEnd = trimKfs[trimKfs.length - 1].time;
 
     const sparkKfs = layer.position && Array.isArray(layer.position.keyframes) ? layer.position.keyframes : null;

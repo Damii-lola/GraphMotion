@@ -4817,11 +4817,18 @@ function deriveSoundCuesFromLayers(layers) {
 // at t=0 exactly as before.
 const INTRO_TEXT_DURATION = 1.0;
 function buildIntroTextLayers(introText, accentColor) {
+  // Mandatory text-fit policy (see wrapAndFitText's own doc comment) -
+  // this phase owns the whole screen by itself before the icon cluster
+  // even appears, so it has generous room to wrap before ever needing to
+  // shrink.
+  const fit = wrapAndFitText(introText, {
+    fontFamily: 'Poppins Bold', fontWeight: '700', fontSize: 46, maxWidth: CANVAS_WIDTH - 80, maxLines: 3,
+  });
   return [{
     id: '__node_intro_text__',
     type: 'text',
-    text: introText,
-    fontSize: 46,
+    text: fit.text,
+    fontSize: fit.fontSize,
     maxWidth: CANVAS_WIDTH - 80,
     position: [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42],
     fillStyle: '#FFFFFF',
@@ -5381,13 +5388,19 @@ function buildNodeClusterLayers({
   // explosive settle (HERO_SETTLE_TIME) rather than fighting it for
   // attention mid-explosion.
   if (typeof label === 'string' && label.trim()) {
+    // Mandatory text-fit policy (wrapAndFitText) - real room below the
+    // hero cluster (down to the canvas edge, nothing else competes there)
+    // easily covers 2 lines before shrinking is ever needed.
+    const labelFit = wrapAndFitText(label, {
+      fontFamily: 'Poppins Black', fontWeight: '900', fontSize: 30, maxWidth: CANVAS_WIDTH - 100, maxLines: 2,
+    });
     layers.push({
       id: '__node_hero_label__',
       type: 'text',
-      text: label,
+      text: labelFit.text,
       fontFamily: 'Poppins Black',
       fontWeight: '900',
-      fontSize: 30,
+      fontSize: labelFit.fontSize,
       fillStyle: '#FFFFFF',
       textAlign: 'center',
       maxWidth: CANVAS_WIDTH - 100,
@@ -6172,11 +6185,18 @@ const OUTRO_TEXT_DURATION = 1.6;
 // introText rather than anchored to any per-item position, since by the
 // time this is visible nothing else is on screen to sit relative to.
 function buildOutroTextLayer(outroText, accentColor, appearAt) {
+  // Mandatory text-fit policy (see wrapAndFitText's own doc comment) -
+  // this layer owns the entire screen alone whenever it appears (every
+  // call site fades everything else out first), so there's real generous
+  // room to wrap into extra lines before font-shrinking is ever needed.
+  const fit = wrapAndFitText(outroText, {
+    fontFamily: 'Poppins Bold', fontWeight: '700', fontSize: 40, maxWidth: CANVAS_WIDTH - 80, maxLines: 3,
+  });
   return {
     id: '__connector_outro_text__',
     type: 'text',
-    text: outroText,
-    fontSize: 40,
+    text: fit.text,
+    fontSize: fit.fontSize,
     maxWidth: CANVAS_WIDTH - 80,
     position: [CANVAS_WIDTH / 2, CANVAS_HEIGHT * 0.42],
     fillStyle: '#FFFFFF',
@@ -6315,13 +6335,19 @@ function buildConnectorListLayers({ items, accentColor, outroText }) {
       scale: cloneTrack(nodeKf),
       opacity: cloneTrack(opacityKf),
     });
+    // Mandatory text-fit policy (wrapAndFitText) - each node has real
+    // vertical clearance to its neighbors (see computeZigzagPositions),
+    // enough for the label to wrap to 2 lines before shrinking.
+    const labelFit = wrapAndFitText(item.label, {
+      fontFamily: 'Poppins Bold', fontWeight: '700', fontSize: 20, maxWidth: 180, maxLines: 2,
+    });
     layers.push({
       id: `__list_label_${i}__`,
       type: 'text',
-      text: item.label,
+      text: labelFit.text,
       fontFamily: 'Poppins Bold',
       fontWeight: '700',
-      fontSize: 20,
+      fontSize: labelFit.fontSize,
       fillStyle: '#FFFFFF',
       textAlign: 'center',
       maxWidth: 180,
@@ -6370,6 +6396,13 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
   const PHONE_WIDTH = 260;
   const PHONE_HEIGHT = 520;
   const CENTER = [CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2];
+  // Mandatory text-fit policy (wrapAndFitText) - the phone's own screen
+  // text sits alone in the phone body before the icon crossfades in, real
+  // room for several lines before shrinking is ever needed.
+  const phoneTextFitRaw = wrapAndFitText(text, {
+    fontFamily: 'Poppins Black', fontWeight: '900', fontSize: 30, maxWidth: PHONE_WIDTH - 40, maxLines: 3,
+  });
+  const phoneTextFit = { text: phoneTextFitRaw.text, fontSize: phoneTextFitRaw.fontSize };
   // Real, direct reference-comparison complaint: "THE PHONE SCENE IS
   // BLANDDD." Every layer here used to go completely motionless the
   // instant its own entrance keyframes finished (~1.85s in), then just
@@ -6477,10 +6510,9 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
     {
       id: '__phone_text__',
       type: 'text',
-      text,
+      ...phoneTextFit,
       fontFamily: 'Poppins Black',
       fontWeight: '900',
-      fontSize: 30,
       fillStyle: accentColor,
       textAlign: 'center',
       maxWidth: PHONE_WIDTH - 40,
@@ -7160,13 +7192,18 @@ function buildMergeClusterLayers({
   // has no good short name for its result can omit it), settles in
   // just after the result circle's own arrival bounce.
   if (typeof label === 'string' && label.trim()) {
+    // Mandatory text-fit policy (wrapAndFitText) - real room below the
+    // result circle, nothing else competes there.
+    const labelFit = wrapAndFitText(label, {
+      fontFamily: 'Poppins Black', fontWeight: '900', fontSize: 30, maxWidth: CANVAS_WIDTH - 100, maxLines: 2,
+    });
     layers.push({
       id: '__merge_result_label__',
       type: 'text',
-      text: label,
+      text: labelFit.text,
       fontFamily: 'Poppins Black',
       fontWeight: '900',
-      fontSize: 30,
+      fontSize: labelFit.fontSize,
       fillStyle: '#FFFFFF',
       textAlign: 'center',
       maxWidth: CANVAS_WIDTH - 100,
@@ -7371,13 +7408,18 @@ function buildSquareSpinLayers({
   // as the spin catches itself for one continuous, uninterrupted beat
   // of motion rather than a dead pause between the spin and the text.
   const TEXT_APPEAR = SETTLE_TIME - 0.1;
+  // Mandatory text-fit policy (wrapAndFitText) - centered alone inside
+  // the inner square with nothing else sharing that space.
+  const spinTextFit = wrapAndFitText(text, {
+    fontFamily: 'Playfair Display Bold', fontWeight: '700', fontSize: 34, maxWidth: SIZES.inner - 36, maxLines: 3,
+  });
   layers.push({
     id: '__spin_text__',
     type: 'text',
-    text,
+    text: spinTextFit.text,
     fontFamily: 'Playfair Display Bold',
     fontWeight: '700',
-    fontSize: 34,
+    fontSize: spinTextFit.fontSize,
     fillStyle: '#FFFFFF',
     textAlign: 'center',
     maxWidth: SIZES.inner - 36,
@@ -7748,14 +7790,22 @@ function buildTripleStackLayers({ items, accentColor, narrationText }) {
       position: [iconLocalX, 0],
       effects: [{ type: 'gaussianBlur', params: { radius: scaledBlur(blurTrack(), 13) } }],
     });
+    // Mandatory text-fit policy (wrapAndFitText) - this row has a FIXED
+    // height (TRIPLE_STACK_NODE_HEIGHT) with another stacked row directly
+    // below it, no real room to wrap without colliding - maxLines:1 means
+    // this only ever shrinks the font, never wraps, matching the "if
+    // there's no space, shrink" half of the policy.
+    const stackTextFit = wrapAndFitText(item.text, {
+      fontFamily: 'Poppins Bold', fontWeight: '700', fontSize: 19, maxWidth: textBoxWidth, maxLines: 1,
+    });
     layers.push({
       id: `__stack_text_${i}__`,
       type: 'text',
       parent: groupId,
-      text: item.text,
+      text: stackTextFit.text,
       fontFamily: 'Poppins Bold',
       fontWeight: '700',
-      fontSize: 19,
+      fontSize: stackTextFit.fontSize,
       fillStyle: ICON_BRIGHT_TINT,
       textAlign: 'left',
       maxWidth: textBoxWidth,
@@ -7910,42 +7960,16 @@ function nodeAbsorbPillEffects(color, glow = 1) {
 // headerText fits as-is, and only truncates (at a word boundary, with an
 // ellipsis) in the rare case it genuinely can't even at this template's
 // intended font size.
+// Mandatory text-fit policy (wrapAndFitText) - this header pill has real
+// room for 2 lines (its own established box height) but NOT unlimited
+// lines, so wrapping alone can't always be the answer; this used to drop
+// trailing words and append "..." past that point, which is exactly the
+// class of real, confirmed-live mid-sentence cutoff the policy bans.
+// Shrinking the font instead keeps the full header readable in the box.
 function fitNodeAbsorbHeaderText(text, boxWidth) {
-  const FONT_FAMILY = 'Poppins Bold';
-  const FONT_WEIGHT = '700';
-  const FONT_SIZE = 28;
-  const MAX_LINES = 2;
-  const measureCtx = createCanvas(10, 10).getContext('2d');
-  measureCtx.font = `${FONT_WEIGHT} ${FONT_SIZE}px ${FONT_FAMILY}`;
-
-  function wrapLineCount(words) {
-    let lines = 1;
-    let lineWidth = 0;
-    words.forEach((w, i) => {
-      const wWidth = measureCtx.measureText(w).width;
-      const spaceWidth = i > 0 ? measureCtx.measureText(' ').width : 0;
-      if (lineWidth > 0 && lineWidth + spaceWidth + wWidth > boxWidth) {
-        lines += 1;
-        lineWidth = wWidth;
-      } else {
-        lineWidth += spaceWidth + wWidth;
-      }
-    });
-    return lines;
-  }
-
-  const words = text.split(/\s+/).filter(Boolean);
-  if (wrapLineCount(words) <= MAX_LINES) return text;
-
-  // Doesn't fit even at 2 lines - drop trailing words (word boundary,
-  // never mid-word) until what's left does, same "never overflow the
-  // box" guarantee the old char-count cap was aiming for, just driven by
-  // the box's own real measured width instead of an arbitrary count.
-  let fitCount = words.length - 1;
-  while (fitCount > 1 && wrapLineCount(words.slice(0, fitCount)) > MAX_LINES) {
-    fitCount -= 1;
-  }
-  return `${words.slice(0, fitCount).join(' ')}...`;
+  return wrapAndFitText(text, {
+    fontFamily: 'Poppins Bold', fontWeight: '700', fontSize: 28, maxWidth: boxWidth, maxLines: 2,
+  });
 }
 
 function buildNodeAbsorbLayers({
@@ -8271,10 +8295,10 @@ function buildNodeAbsorbLayers({
     id: '__absorb_header_text__',
     type: 'text',
     parent: '__absorb_header__',
-    text: fittedHeaderText,
+    text: fittedHeaderText.text,
     fontFamily: 'Poppins Bold',
     fontWeight: '700',
-    fontSize: 28,
+    fontSize: fittedHeaderText.fontSize,
     fillStyle: ICON_BRIGHT_TINT,
     textAlign: 'left',
     maxWidth: headerTextBoxWidth,
@@ -8410,13 +8434,20 @@ function buildNodeAbsorbLayers({
     // its removal instead of sharing the row with it.
     const nameLocalX = badgeLocalX + NODE_ABSORB_ROW_BADGE_SIZE / 2 + 16;
     const rowTextMaxWidth = NODE_ABSORB_ROW_WIDTH / 2 - 20 - nameLocalX;
+    // Mandatory text-fit policy (wrapAndFitText) - this is a fixed-height
+    // row (NODE_ABSORB_ROW_HEIGHT) with other rows stacked above/below,
+    // no real room to wrap without colliding - maxLines:1 shrinks the
+    // font instead, matching the "if there's no space" half of the policy.
+    const rowTextFit = wrapAndFitText(item.text, {
+      fontFamily: 'Poppins Bold', fontWeight: '700', fontSize: 18, maxWidth: rowTextMaxWidth, maxLines: 1,
+    });
     layers.push({
       id: `__absorb_row_text_${i}__`,
       type: 'text',
-      text: item.text,
+      text: rowTextFit.text,
       fontFamily: 'Poppins Bold',
       fontWeight: '700',
-      fontSize: 18,
+      fontSize: rowTextFit.fontSize,
       fillStyle: ICON_BRIGHT_TINT,
       textAlign: 'left',
       maxWidth: rowTextMaxWidth,
@@ -10150,11 +10181,20 @@ function buildYearScrollerRing(id, x, y, color, time) {
  * already established), rather than one hardcoded typeface.
  */
 function buildYearScrollerRevealText({
-  text, startTime, accentColor, centerX, centerY, maxWidth, fontSize, exitStart, exitDuration,
+  text, startTime, accentColor, centerX, centerY, maxWidth, fontSize: authoredFontSize, exitStart, exitDuration,
 }) {
   const pairing = FONT_PAIRINGS[hashString(text) % FONT_PAIRINGS.length];
   const fontFamily = pairing.serif.heavy;
-  const words = text.trim().split(/\s+/).filter((w) => w.length > 0);
+  // Mandatory text-fit policy (wrapAndFitText) - this layer already had a
+  // generous height budget (fontSize*4, ~3 real lines) for natural
+  // multi-line wrap; maxLines:3 uses that same budget, shrinking only if
+  // a sentence genuinely needs more room than that.
+  const textFit = wrapAndFitText(text, {
+    fontFamily, fontWeight: '400', fontSize: authoredFontSize, maxWidth, maxLines: 3,
+  });
+  const fittedText = textFit.text;
+  const fontSize = textFit.fontSize;
+  const words = fittedText.trim().split(/\s+/).filter((w) => w.length > 0);
   const wordCount = Math.max(1, words.length);
   const revealKfs = startTime > 0 ? [{ time: 0, value: 0, interpolation: 'hold' }] : [];
   const popStartKfs = startTime > 0 ? [{ time: 0, value: -1000, interpolation: 'hold' }] : [];
@@ -10173,7 +10213,7 @@ function buildYearScrollerRevealText({
   return {
     id: '__yearscroller_text__',
     type: 'text',
-    text: text.toUpperCase(),
+    text: fittedText.toUpperCase(),
     fontFamily,
     fontWeight: '400',
     fontSize,
@@ -10770,9 +10810,11 @@ function counterMinDuration(value, text) {
  * before (1-2 lines, unchanged).
  */
 const COUNTER_CAPTION_MAX_LINES = 3;
-function splitCounterCaptionLines(text, fontSize, fontFamily, maxWidth) {
+const COUNTER_CAPTION_MIN_FONT_RATIO = 0.62;
+const COUNTER_CAPTION_SHRINK_STEP = 0.94;
+function splitCounterCaptionLines(text, initialFontSize, fontFamily, maxWidth) {
   const words = text.trim().split(/\s+/).filter((w) => w.length > 0);
-  if (words.length <= 1) return [words];
+  if (words.length <= 1) return { lines: [words], fontSize: initialFontSize };
   const measureCtx = createCanvas(10, 10).getContext('2d');
   // Real, confirmed-live bug found via an actual render (not just the
   // JSON data - that looked fine): buildCounterCaptionLineLayer's own
@@ -10785,8 +10827,6 @@ function splitCounterCaptionLines(text, fontSize, fontFamily, maxWidth) {
   // per-line Y position never accounted for - three overlapping, doubled-
   // up rows instead of three clean ones. Must match the real render
   // spec exactly, not an approximation of it.
-  measureCtx.font = `400 ${fontSize}px ${fontFamily}`;
-  const gap = measureCtx.measureText(' ').width;
   // Real, confirmed-live residual gap found via an actual render even
   // AFTER matching case/weight exactly: this Node measurement context
   // and the real render engine's own font loading still don't measure
@@ -10810,14 +10850,15 @@ function splitCounterCaptionLines(text, fontSize, fontFamily, maxWidth) {
   // every single line this produces is guaranteed to actually fit,
   // full stop), and only AFTER that's done, checks whether the result
   // still needs trimming down to COUNTER_CAPTION_MAX_LINES.
-  function wrapAll(ws) {
+  function wrapAll(ws, sizeCtx) {
     const result = [];
     let current = [];
     let currentWidth = 0;
+    const spaceWidth = sizeCtx.measureText(' ').width;
     ws.forEach((wRaw) => {
       const w = wRaw.toUpperCase();
-      const wWidth = measureCtx.measureText(w).width;
-      const addWidth = wWidth + (current.length > 0 ? gap : 0);
+      const wWidth = sizeCtx.measureText(w).width;
+      const addWidth = wWidth + (current.length > 0 ? spaceWidth : 0);
       if (currentWidth + addWidth > effectiveMaxWidth && current.length > 0) {
         result.push(current);
         current = [w];
@@ -10831,18 +10872,26 @@ function splitCounterCaptionLines(text, fontSize, fontFamily, maxWidth) {
     return result;
   }
 
-  let lines = wrapAll(words);
-  // Genuinely doesn't fit in COUNTER_CAPTION_MAX_LINES real lines even at
-  // this width (should be rare - the caller's own character cap already
-  // keeps content reasonably bounded) - drop trailing WORDS (never a
-  // partial word) and re-wrap, same "cut at a word boundary, never mid-
-  // word" principle every other truncation in this file already follows,
-  // until what's left genuinely fits in the line budget.
-  while (lines.length > COUNTER_CAPTION_MAX_LINES && words.length > 1) {
-    words.pop();
-    lines = wrapAll(words);
+  // Mandatory text-fit policy (see wrapAndFitText's own doc comment,
+  // used generically elsewhere in this file - kept as a separate,
+  // parallel implementation HERE specifically because this function's
+  // own SAFETY_MARGIN/case+weight-matching fixes above are load-bearing
+  // real fixes for THIS template's specific font-measurement gap, which
+  // the generic helper doesn't carry). Genuinely doesn't fit in
+  // COUNTER_CAPTION_MAX_LINES real lines even at the authored font size
+  // (should be rare - the caller's own character cap already keeps
+  // content reasonably bounded) - SHRINK the font and re-wrap instead of
+  // dropping real words, until it fits or the readability floor is hit.
+  let fontSize = initialFontSize;
+  const minFontSize = initialFontSize * COUNTER_CAPTION_MIN_FONT_RATIO;
+  measureCtx.font = `400 ${fontSize}px ${fontFamily}`;
+  let lines = wrapAll(words, measureCtx);
+  while (lines.length > COUNTER_CAPTION_MAX_LINES && fontSize > minFontSize) {
+    fontSize = Math.max(minFontSize, fontSize * COUNTER_CAPTION_SHRINK_STEP);
+    measureCtx.font = `400 ${fontSize}px ${fontFamily}`;
+    lines = wrapAll(words, measureCtx);
   }
-  return lines;
+  return { lines, fontSize };
 }
 
 /**
@@ -10949,7 +10998,10 @@ function buildCounterCaptionLayers({
 }) {
   const pairing = FONT_PAIRINGS[hashString(text) % FONT_PAIRINGS.length];
   const fontFamily = pairing.serif.heavy;
-  const lineWords = splitCounterCaptionLines(text, COUNTER_CAPTION_FONT_SIZE, fontFamily, COUNTER_CAPTION_MAX_WIDTH);
+  // Mandatory text-fit policy: splitCounterCaptionLines now shrinks the
+  // font (never drops words) when even COUNTER_CAPTION_MAX_LINES isn't
+  // enough room at the authored size.
+  const { lines: lineWords, fontSize: captionFontSize } = splitCounterCaptionLines(text, COUNTER_CAPTION_FONT_SIZE, fontFamily, COUNTER_CAPTION_MAX_WIDTH);
   const layers = [];
   // Evenly spaced around the shared center, same GAP as the original
   // fixed 2-line layout - a 1-line caption sits dead on center, 2 lines
@@ -10969,7 +11021,7 @@ function buildCounterCaptionLayers({
       centerX: COUNTER_CENTER_X,
       centerY,
       maxWidth: COUNTER_CAPTION_MAX_WIDTH,
-      fontSize: COUNTER_CAPTION_FONT_SIZE,
+      fontSize: captionFontSize,
       fontFamily,
       exitStart,
       exitDuration,
@@ -11547,55 +11599,50 @@ function buildCounterLayers({
 
 const MOGRAPH_ICON_RE = /^[a-z0-9-]+:[a-z0-9-]+$/i;
 
-/**
- * Real, confirmed-live bug found via a direct visual render inspection
- * (2026-09-05, cross-provider evaluation): phoneSwap's "text" and
- * connectorList's "label" were both capped with a blind `.slice(0, N)`
- * - safe against a wildly long string in the abstract, but a real
- * generation (Gemini, in this case - wrote "Your brain is actually
- * glitching", 5 words against the "2-4 words" guidance) got sliced mid-
- * WORD ("...ACTUALLY GLI"), rendering as a visibly broken, half-cut-off
- * fragment instead of either the full word or a clean omission. Any
- * provider that occasionally runs long (not just the one caught here)
- * hits the exact same bug. Truncates at the last real word boundary
- * within the limit instead - if the text is already short enough, this
- * is a no-op; only kicks in for the genuinely-too-long case a length
- * cap is meant to catch anyway.
- */
-function truncateAtWordBoundary(text, maxChars) {
-  if (text.length <= maxChars) return text;
-  const cut = text.slice(0, maxChars);
-  const lastSpace = cut.lastIndexOf(' ');
-  return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trim();
-}
-
-// Used after a raw word-count slice (see blueprintText's dispatch branch
-// below) to keep the truncated result from visibly dangling on a
-// low-content word - a real, confirmed-live example: "...one's a status
-// symbol, the" (cut exactly at word 8, landing on "the"). Deliberately
-// small/conservative (articles, a handful of prepositions/conjunctions)
-// rather than a full stopword list - this only needs to catch the
-// specific "ends mid-clause" cases that read as visibly broken, not
-// aggressively re-edit otherwise-fine short phrases.
-const TRAILING_STOPWORDS = new Set(['a', 'an', 'the', 'of', 'in', 'on', 'to', 'and', 'or', 'is', 'was', 'are', 'that', 'this', 'with', 'for', 'at', 'by', 'as']);
-function trimTrailingStopword(text) {
-  const words = text.split(/\s+/).filter((w) => w.length > 0);
-  while (words.length > 2 && TRAILING_STOPWORDS.has(words[words.length - 1].toLowerCase().replace(/[.,!?;:]+$/, ''))) {
-    words.pop();
+// Mandatory, universal text-fit policy (direct, forceful user requirement,
+// 2026-09-18). Supersedes this file's earlier truncateAtWordBoundary/
+// trimTrailingStopword/clampToOneLine functions (removed - every call
+// site below now uses this instead), which all shared the same root
+// mistake: capping text by a guessed character/word count and DROPPING
+// whatever didn't fit, sometimes word-boundary-safe, sometimes not, but
+// always real content loss. Multiple templates hit real, confirmed-live
+// mid-sentence cutoffs this way (counter, yearScroller, nodeAbsorb,
+// blueprintText, lineReveal all had their own separate incidents) before
+// this policy replaced the whole category of fix at once: "there will be
+// no incomplete
+// sentence... if there is space, the text will wrap until the whole
+// sentence is visible, but if there's no space, it will ALSO shrink in
+// size to fit... MANDATORY FOR ALL SCENE TEMPLATES." No caller of this may
+// drop a single word, ever - the ONLY two things ever asked to give: line
+// count (up to the caller's own real budget) first, then font size.
+//
+// Uses the exact same greedy wrap threshold measureTextWrap already uses
+// (which itself matches textAnimator.js's real renderer-side layoutText,
+// confirmed by direct comparison) - what this predicts is what actually
+// renders, not a separate approximation that could disagree with it.
+const TEXT_FIT_MIN_SIZE_RATIO = 0.62;
+const TEXT_FIT_SHRINK_STEP = 0.94;
+function wrapAndFitText(text, {
+  fontFamily, fontWeight = '400', fontSize, maxWidth, maxLines, upperCase = false,
+}) {
+  const body = (upperCase ? text.toUpperCase() : text).trim();
+  const minSize = fontSize * TEXT_FIT_MIN_SIZE_RATIO;
+  let size = fontSize;
+  let wrap = measureTextWrap(body, {
+    fontFamily, fontWeight, fontSize: size, maxWidth,
+  });
+  // Never drops below minSize even if lineCount is still over budget
+  // there - a slightly-too-tall block that still reads the FULL sentence
+  // is the correct failure mode here, not a cut-off one.
+  while (wrap.lineCount > maxLines && size > minSize) {
+    size = Math.max(minSize, size * TEXT_FIT_SHRINK_STEP);
+    wrap = measureTextWrap(body, {
+      fontFamily, fontWeight, fontSize: size, maxWidth,
+    });
   }
-  // Real, confirmed-live follow-up (found verifying the fix above with a
-  // real render): stripping a trailing stopword can UNCOVER a dangling
-  // comma/semicolon that was only ever meant to lead into the word just
-  // removed ("...status symbol, the" -> stopword-trim -> "...status
-  // symbol," - still visibly mid-clause, just one punctuation mark later
-  // now). A trailing comma/semicolon always signals "there was more after
-  // this," regardless of whether a stopword needed removing, so it's
-  // stripped unconditionally here too.
-  const last = words[words.length - 1];
-  if (last && /[,;]$/.test(last)) {
-    words[words.length - 1] = last.replace(/[,;]+$/, '');
-  }
-  return words.join(' ');
+  return {
+    text: body, fontSize: size, lineCount: wrap.lineCount,
+  };
 }
 
 /**
@@ -12051,31 +12098,35 @@ function buildLineRevealLayers({ text1: rawText1, text2: rawText2, accentColor }
   // whole gap/timing system to be wrap-aware would be a much bigger,
   // riskier change than this template's actual field spec calls for
   // ("2-4w bold headline" - a genuinely short single-line headline was
-  // always the real intent). Fixed at the actual root instead: clamp
-  // each text to however many of its OWN words actually fit on one real
-  // line at this font/width (measureTextWrap - the same real wrap
-  // prediction blueprintText/textTiers already use elsewhere), dropping
-  // trailing words until it does. This keeps the original, already-tuned
-  // single-line matte/spacing formulas valid by construction, rather
-  // than trying to make them handle a multi-line case they were never
-  // designed for.
-  function clampToOneLine(text, fontFamily, fontSize) {
-    let words = text.split(/\s+/).filter((w) => w.length > 0);
-    while (words.length > 1 && measureTextWrap(words.join(' ').toUpperCase(), {
-      fontFamily, fontWeight: '400', fontSize, maxWidth: LINE_REVEAL_MAX_WIDTH,
-    }).lineCount > 1) {
-      words = words.slice(0, -1);
-    }
-    return words.join(' ');
-  }
-  const text1 = clampToOneLine(rawText1, pairing.serif.heavy, LINE_REVEAL_TEXT1_FONT_SIZE);
-  const text2 = clampToOneLine(rawText2, pairing.sans.regular, LINE_REVEAL_TEXT2_FONT_SIZE);
+  // always the real intent).
+  //
+  // Mandatory text-fit policy supersedes this function's own former fix
+  // (2026-09-18): the ORIGINAL version of this clamped each text to
+  // however many of its own words fit on one line, DROPPING trailing
+  // words past that - exactly the class of real, confirmed-live mid-
+  // sentence cutoff the policy now bans outright, everywhere, no
+  // exceptions. There's still genuinely no free vertical space here to
+  // wrap into (the matte/gap system really is tuned for exactly one line
+  // each), so this is the policy's OTHER half: shrink the font
+  // (wrapAndFitText, maxLines:1) until the FULL text fits on that one
+  // line instead of ever cutting it short. The matte boxes below are
+  // already sized off the ORIGINAL (larger) font constants, so a shrunk
+  // font only ever needs LESS of that room, never more.
+  const text1Fit = wrapAndFitText(rawText1, {
+    fontFamily: pairing.serif.heavy, fontWeight: '400', fontSize: LINE_REVEAL_TEXT1_FONT_SIZE, maxWidth: LINE_REVEAL_MAX_WIDTH, maxLines: 1,
+  });
+  const text2Fit = wrapAndFitText(rawText2, {
+    fontFamily: pairing.sans.regular, fontWeight: '400', fontSize: LINE_REVEAL_TEXT2_FONT_SIZE, maxWidth: LINE_REVEAL_MAX_WIDTH, maxLines: 1,
+  });
+  const text1 = text1Fit.text;
+  const text2 = text2Fit.text;
 
   // Generous enough to comfortably cover each font's own ascenders and
   // descenders regardless of the exact glyphs used - these are the REAL
   // edges the crossing-time search below locks the reveal to, not just a
-  // notional shape. Safe to assume exactly one line each again now that
-  // clampToOneLine above guarantees it.
+  // notional shape. Safe to assume exactly one line each - wrapAndFitText
+  // above (maxLines:1) guarantees it, sized off the ORIGINAL (larger)
+  // font constants so a shrunk font only ever needs less of this room.
   const text1MatteHeight = LINE_REVEAL_TEXT1_FONT_SIZE * 2.2;
   const text1MatteTop = LINE_REVEAL_TEXT1_Y - LINE_REVEAL_TEXT1_FONT_SIZE * 0.9;
   const text1MatteBottom = text1MatteTop + text1MatteHeight;
@@ -12122,7 +12173,7 @@ function buildLineRevealLayers({ text1: rawText1, text2: rawText2, accentColor }
     text: text1.toUpperCase(),
     fontFamily: pairing.serif.heavy,
     fontWeight: '400',
-    fontSize: LINE_REVEAL_TEXT1_FONT_SIZE,
+    fontSize: text1Fit.fontSize,
     fillStyle: accentColor,
     textAlign: 'center',
     maxWidth: LINE_REVEAL_MAX_WIDTH,
@@ -12147,7 +12198,7 @@ function buildLineRevealLayers({ text1: rawText1, text2: rawText2, accentColor }
     text: text2.toUpperCase(),
     fontFamily: pairing.sans.regular,
     fontWeight: '400',
-    fontSize: LINE_REVEAL_TEXT2_FONT_SIZE,
+    fontSize: text2Fit.fontSize,
     fillStyle: '#FFFFFF',
     textAlign: 'center',
     maxWidth: LINE_REVEAL_MAX_WIDTH,
@@ -12583,10 +12634,23 @@ function buildTypewriterLinkLayers({
   // isolated-input tolerance.
   if (words1.length < 2) gapLocalX = totalWidth1 / 2;
 
-  const line2Text = truncateAtWordBoundary(line2, 24);
-  const line3Text = truncateAtWordBoundary(line3, TWL_MAX_TEXT_WIDTH / (TWL_FONT_SIZE * 0.55));
+  // Mandatory text-fit policy (wrapAndFitText) - line2/line3 are each a
+  // single fixed-position typed row (like line1 above), no real room to
+  // wrap without colliding with the row above/below - maxLines:1 shrinks
+  // the font instead of dropping words.
+  const line2Fit = wrapAndFitText(line2, {
+    fontFamily, fontWeight: '400', fontSize: TWL_FONT_SIZE, maxWidth: TWL_MAX_TEXT_WIDTH, maxLines: 1,
+  });
+  const line3Fit = wrapAndFitText(line3, {
+    fontFamily, fontWeight: '400', fontSize: TWL_FONT_SIZE, maxWidth: TWL_MAX_TEXT_WIDTH, maxLines: 1,
+  });
+  const line2Text = line2Fit.text;
+  const line3Text = line3Fit.text;
+  measureCtx.font = `400 ${line2Fit.fontSize}px ${fontFamily}`;
   const underlineWidthRaw = measureCtx.measureText(line2Text.toUpperCase()).width;
+  measureCtx.font = `400 ${line3Fit.fontSize}px ${fontFamily}`;
   const totalWidth3 = measureCtx.measureText(line3Text.toUpperCase()).width;
+  measureCtx.font = `400 ${TWL_FONT_SIZE}px ${fontFamily}`;
 
   // The block's own shared left margin is centered on the WIDEST row
   // (not just line1's) so the whole 3-line block reads as centered on
@@ -12891,7 +12955,7 @@ function buildTypewriterLinkLayers({
     text: line2Text.toUpperCase(),
     fontFamily,
     fontWeight: '400',
-    fontSize: TWL_FONT_SIZE,
+    fontSize: line2Fit.fontSize,
     fillStyle: accentColor,
     textAlign: 'left',
     // A real measured width + a real (capped, on-canvas-safe) buffer -
@@ -12975,7 +13039,7 @@ function buildTypewriterLinkLayers({
     text: line3Text.toUpperCase(),
     fontFamily,
     fontWeight: '400',
-    fontSize: TWL_FONT_SIZE,
+    fontSize: line3Fit.fontSize,
     fillStyle: '#FFFFFF',
     textAlign: 'left',
     maxWidth: line3MaxWidth,
@@ -13778,18 +13842,23 @@ function buildDotConstellationLayers({ text, accentColor }) {
   const settleBurst = buildCounterBurstParticles('dc_settle', DC_CX, DC_DOT_Y, '#FFFFFF', t.arcsEnd);
 
   const textFadeStart = t.launchTime[4];
+  // Mandatory text-fit policy (wrapAndFitText) - this caption sits alone
+  // below the constellation with open canvas space under it.
+  const dcTextFit = wrapAndFitText(text, {
+    fontFamily, fontWeight: '400', fontSize: DC_FONT_SIZE, maxWidth: CANVAS_WIDTH - 40, maxLines: 2,
+  });
   const textLayer = {
     id: '__dc_text__',
     type: 'text',
-    text,
+    text: dcTextFit.text,
     fontFamily,
     fontWeight: '400',
-    fontSize: DC_FONT_SIZE,
+    fontSize: dcTextFit.fontSize,
     fillStyle: '#FFFFFF',
     textAlign: 'center',
     maxWidth: CANVAS_WIDTH - 40,
     width: CANVAS_WIDTH,
-    height: DC_FONT_SIZE * 1.8,
+    height: dcTextFit.fontSize * 1.8 * 2,
     position: [DC_CX, DC_TEXT_Y],
     opacity: {
       keyframes: [
@@ -14642,14 +14711,20 @@ function buildButtonDrawLayers({ text, accentColor }) {
   // not word-by-word (it's a short button label, same "reference's real
   // mechanic wins over the literal per-word default" call already made
   // for lineReveal's mask-wipe and dotConstellation's own caption).
+  // Mandatory text-fit policy (wrapAndFitText) - a button label has to
+  // fit inside the button's own fixed pill height, no room to wrap -
+  // maxLines:1 shrinks the font instead of dropping words.
+  const bdTextFit = wrapAndFitText(text, {
+    fontFamily, fontWeight: '400', fontSize: BD_FONT_SIZE, maxWidth: BD_BUTTON_WIDTH - 60, maxLines: 1,
+  });
   const textLayer = {
     id: '__bd_text__',
     type: 'text',
     parent: '__bd_group__',
-    text,
+    text: bdTextFit.text,
     fontFamily,
     fontWeight: '400',
-    fontSize: BD_FONT_SIZE,
+    fontSize: bdTextFit.fontSize,
     fillStyle: '#FFFFFF',
     textAlign: 'center',
     maxWidth: BD_BUTTON_WIDTH - 60,
@@ -16297,8 +16372,11 @@ function buildMographBeatVisual(beat) {
     const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 8);
     if (icons.length >= 3) {
       const chosenIndex = Number.isInteger(spec.chosenIndex) && spec.chosenIndex >= 0 && spec.chosenIndex < icons.length ? spec.chosenIndex : 0;
-      const introText = typeof spec.introText === 'string' && spec.introText.trim() ? truncateAtWordBoundary(spec.introText.trim(), 40) : null;
-      const label = typeof spec.label === 'string' && spec.label.trim() ? truncateAtWordBoundary(spec.label.trim().toUpperCase(), 24) : null;
+      // Mandatory text-fit policy (wrapAndFitText) - buildIntroTextLayers
+      // wraps/shrinks introText itself; nodeCluster's own "label" is fit
+      // below, inside buildNodeClusterLayers.
+      const introText = typeof spec.introText === 'string' && spec.introText.trim() ? spec.introText.trim() : null;
+      const label = typeof spec.label === 'string' && spec.label.trim() ? spec.label.trim().toUpperCase() : null;
       layers = buildNodeClusterLayers({
         icons, chosenIndex, accentColor, introText, label,
       });
@@ -16329,9 +16407,12 @@ function buildMographBeatVisual(beat) {
     const items = spec.items
       .filter((it) => isPlainObject(it) && typeof it.icon === 'string' && MOGRAPH_ICON_RE.test(it.icon) && typeof it.label === 'string' && it.label.trim())
       .slice(0, 3)
-      .map((it) => ({ icon: it.icon, label: truncateAtWordBoundary(it.label.trim().toUpperCase(), 18) }));
+      // buildConnectorListLayers wraps/shrinks each item's label itself
+      // (wrapAndFitText).
+      .map((it) => ({ icon: it.icon, label: it.label.trim().toUpperCase() }));
     if (items.length === 3) {
-      const outroText = typeof spec.outroText === 'string' && spec.outroText.trim() ? truncateAtWordBoundary(spec.outroText.trim(), 40) : null;
+      // buildOutroTextLayer wraps/shrinks outroText itself (wrapAndFitText).
+      const outroText = typeof spec.outroText === 'string' && spec.outroText.trim() ? spec.outroText.trim() : null;
       layers = buildConnectorListLayers({ items, accentColor, outroText });
       // Same reasoning as nodeCluster's own introText auto-extend above -
       // the outro is real extra screen time tacked onto the end of the
@@ -16358,14 +16439,16 @@ function buildMographBeatVisual(beat) {
       clampMographDuration(beat, completeTime);
     }
   } else if (spec.type === 'phoneSwap' && typeof spec.text === 'string' && spec.text.trim() && typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon)) {
-    layers = buildPhoneSwapLayers({ text: truncateAtWordBoundary(spec.text.trim().toUpperCase(), 26), icon: spec.icon, accentColor });
+    // buildPhoneSwapLayers wraps/shrinks text itself (wrapAndFitText).
+    layers = buildPhoneSwapLayers({ text: spec.text.trim().toUpperCase(), icon: spec.icon, accentColor });
     // Mirrors buildPhoneSwapLayers' own SWAP_TIME(1.4) + light-sweep
     // window (SWEEP_START=SWAP_TIME+0.6, SWEEP_DURATION=0.55) - the
     // sweep is the actual LAST scripted motion in that template, not
     // the swap itself.
     clampMographDuration(beat, 2.55);
   } else if (spec.type === 'splitConverge' && typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon)) {
-    const label = typeof spec.label === 'string' && spec.label.trim() ? truncateAtWordBoundary(spec.label.trim().toUpperCase(), 24) : null;
+    // buildOutroTextLayer wraps/shrinks label itself (wrapAndFitText).
+    const label = typeof spec.label === 'string' && spec.label.trim() ? spec.label.trim().toUpperCase() : null;
     layers = buildSplitConvergeLayers({ icon: spec.icon, accentColor, label });
     // Mirrors buildSplitConvergeLayers' own ARRIVE_TIME(0.9)/
     // SETTLE_TIME(1.22) and, when a label is present, its own
@@ -16373,7 +16456,8 @@ function buildMographBeatVisual(beat) {
     clampMographDuration(beat, label ? 1.97 : 1.42);
   } else if (spec.type === 'mergeCluster' && Array.isArray(spec.icons) && typeof spec.resultIcon === 'string' && MOGRAPH_ICON_RE.test(spec.resultIcon)) {
     const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 5);
-    const label = typeof spec.label === 'string' && spec.label.trim() ? truncateAtWordBoundary(spec.label.trim().toUpperCase(), 24) : null;
+    // buildMergeClusterLayers wraps/shrinks label itself (wrapAndFitText).
+    const label = typeof spec.label === 'string' && spec.label.trim() ? spec.label.trim().toUpperCase() : null;
     if (icons.length >= 2) {
       layers = buildMergeClusterLayers({ icons, resultIcon: spec.resultIcon, accentColor, label });
       // Mirrors buildMergeClusterLayers' own CAMERA_SETTLE_DELAY(0.75)/
@@ -16387,14 +16471,17 @@ function buildMographBeatVisual(beat) {
       clampMographDuration(beat, convergeTime + 0.45);
     }
   } else if (spec.type === 'squareSpin' && typeof spec.text === 'string' && spec.text.trim() && typeof spec.icon1 === 'string' && MOGRAPH_ICON_RE.test(spec.icon1) && typeof spec.icon2 === 'string' && MOGRAPH_ICON_RE.test(spec.icon2)) {
-    const text = truncateAtWordBoundary(spec.text.trim(), 40);
+    // buildSquareSpinLayers wraps/shrinks text itself (wrapAndFitText).
+    const text = spec.text.trim();
     layers = buildSquareSpinLayers({ text, icon1: spec.icon1, icon2: spec.icon2, accentColor });
     clampMographDuration(beat, SQUARE_SPIN_COMPLETE_TIME);
   } else if (spec.type === 'tripleStack' && Array.isArray(spec.items)) {
     const items = spec.items
       .filter((it) => isPlainObject(it) && typeof it.icon === 'string' && MOGRAPH_ICON_RE.test(it.icon) && typeof it.text === 'string' && it.text.trim())
       .slice(0, 3)
-      .map((it) => ({ icon: it.icon, text: truncateAtWordBoundary(it.text.trim().toUpperCase(), 20) }));
+      // buildTripleStackLayers wraps/shrinks each item's text itself
+      // (wrapAndFitText).
+      .map((it) => ({ icon: it.icon, text: it.text.trim().toUpperCase() }));
     if (items.length === 3) {
       const narrationText = isPlainObject(beat.params) && typeof beat.params.narration === 'string' ? beat.params.narration : '';
       layers = buildTripleStackLayers({ items, accentColor, narrationText });
@@ -16410,20 +16497,15 @@ function buildMographBeatVisual(beat) {
     const items = spec.items
       .filter((it) => isPlainObject(it) && typeof it.icon === 'string' && MOGRAPH_ICON_RE.test(it.icon) && typeof it.text === 'string' && it.text.trim())
       .slice(0, 4)
-      .map((it) => ({ icon: it.icon, text: truncateAtWordBoundary(it.text.trim(), 20) }));
+      // buildNodeAbsorbLayers wraps/shrinks each row's text itself
+      // (wrapAndFitText).
+      .map((it) => ({ icon: it.icon, text: it.text.trim() }));
     if (items.length === 4) {
-      // Real, confirmed-live bug (2026-09-17, direct user report against
-      // a real generated video: header read "What Rich and", a mid-
-      // sentence fragment): this used to hard-truncate to 16 CHARACTERS
-      // before the text layer ever saw it - nowhere near what the
-      // header's own real text box can hold (measured, see
-      // buildNodeAbsorbLayers' own fitHeaderText below), so a normal
-      // phrase like "What Rich People Have" got chopped mid-thought for
-      // no visual reason. Only a generous safety backstop against a
-      // truly pathological AI-authored wall of text stays here now -
-      // buildNodeAbsorbLayers does the REAL fit against its own actual
-      // measured box width.
-      const headerText = truncateAtWordBoundary(spec.headerText.trim(), 80);
+      // Mandatory text-fit policy: buildNodeAbsorbLayers' own
+      // fitNodeAbsorbHeaderText does the REAL fit (wrap then shrink)
+      // against its actual measured box width - no truncation needed
+      // here at all anymore.
+      const headerText = spec.headerText.trim();
       const result = buildNodeAbsorbLayers({
         headerIcon: spec.headerIcon, headerText, items, accentColor,
       });
@@ -16434,9 +16516,11 @@ function buildMographBeatVisual(beat) {
     const icons = spec.icons.filter((v) => typeof v === 'string' && MOGRAPH_ICON_RE.test(v)).slice(0, 8);
     if (icons.length >= 3) {
       const chosenIndex = Number.isInteger(spec.chosenIndex) && spec.chosenIndex >= 0 && spec.chosenIndex < icons.length ? spec.chosenIndex : 0;
-      const introText = typeof spec.introText === 'string' && spec.introText.trim() ? truncateAtWordBoundary(spec.introText.trim(), 40) : null;
-      const mergeText = typeof spec.mergeText === 'string' && spec.mergeText.trim() ? truncateAtWordBoundary(spec.mergeText.trim(), 40) : null;
-      const newLabel = typeof spec.newLabel === 'string' && spec.newLabel.trim() ? truncateAtWordBoundary(spec.newLabel.trim().toUpperCase(), 24) : null;
+      // buildIntroTextLayers/buildOutroTextLayer wrap/shrink these
+      // themselves (wrapAndFitText).
+      const introText = typeof spec.introText === 'string' && spec.introText.trim() ? spec.introText.trim() : null;
+      const mergeText = typeof spec.mergeText === 'string' && spec.mergeText.trim() ? spec.mergeText.trim() : null;
+      const newLabel = typeof spec.newLabel === 'string' && spec.newLabel.trim() ? spec.newLabel.trim().toUpperCase() : null;
       const shrinkSlot = Number.isInteger(spec.shrinkSlot) ? spec.shrinkSlot : undefined;
       if (mergeText) {
         layers = buildNodeClusterExtendedLayers({
@@ -16453,7 +16537,9 @@ function buildMographBeatVisual(beat) {
       }
     }
   } else if (spec.type === 'textPopOut' && typeof spec.text === 'string' && spec.text.trim()) {
-    const text = truncateAtWordBoundary(spec.text.trim(), 60);
+    // buildTextPopOutLayers already wraps then shrinks (never truncates)
+    // this text itself - see its own doc comment.
+    const text = spec.text.trim();
     // The build+exit sequence needs real time proportional to word count
     // - floored (not just extended) since a very short authored duration
     // would otherwise cut the exit off before it lands. Resolved to the
@@ -16500,22 +16586,17 @@ function buildMographBeatVisual(beat) {
       layers = buildTextTiersLayers({ text, accentColor, duration });
     }
   } else if (spec.type === 'blueprintText' && typeof spec.sentence1 === 'string' && spec.sentence1.trim() && typeof spec.sentence2 === 'string' && spec.sentence2.trim()) {
-    // Same "no redundant upper-bound reject" lesson textTiers' own
-    // retry-exhaustion bug just taught - truncate gracefully here
-    // instead of hard-rejecting an over-length sentence.
-    //
-    // Preventive fix, 2026-09-17: applied here alongside lineReveal's own
-    // copy of this same fix (see that branch's doc comment for the real,
-    // confirmed-live example this was found from - "...one's a status
-    // symbol, the", a dangling article from THAT template's own
-    // truncation). A raw .slice(0,8) has the identical blind-truncation
-    // shape - zero awareness of WHERE it lands - so it carries the same
-    // real risk even without its own confirmed incident yet.
-    // trimTrailingStopword walks backward off the truncated end, dropping
-    // any trailing low-content word so the result never visibly ends
-    // mid-clause on a word like "the"/"of"/"and" - no extra retry cost.
-    const sentence1 = trimTrailingStopword(spec.sentence1.trim().split(/\s+/).filter((w) => w.length > 0).slice(0, 8).join(' '));
-    const sentence2 = trimTrailingStopword(spec.sentence2.trim().split(/\s+/).filter((w) => w.length > 0).slice(0, 8).join(' '));
+    // Mandatory text-fit policy: computeBlueprintTiming already measures
+    // each sentence's REAL wrap (measureTextWrapAndBreaks) and times extra
+    // lines via BLUEPRINT_HEIGHT_STEP_DURATION - this template already
+    // genuinely supports however many lines a sentence needs, so the old
+    // blind `.slice(0,8)` word-drop (the same shape as the confirmed-live
+    // lineReveal truncation bug, just without its own incident yet) was
+    // purely destructive: it never gave the real wrap system a chance to
+    // do its job. No word-count cap at all now - only real punctuation/
+    // whitespace cleanup.
+    const sentence1 = spec.sentence1.trim().split(/\s+/).filter((w) => w.length > 0).join(' ');
+    const sentence2 = spec.sentence2.trim().split(/\s+/).filter((w) => w.length > 0).join(' ');
     if (sentence1.split(' ').length >= 2 && sentence2.split(' ').length >= 2) {
       // Unlike textTiers/textPopOut, this builder's own exit timing is
       // NOT anchored to the beat's authored duration (both sentences'
@@ -16528,18 +16609,10 @@ function buildMographBeatVisual(beat) {
     }
   } else if (spec.type === 'yearScroller' && Number.isFinite(spec.year) && typeof spec.text === 'string' && spec.text.trim()) {
     const year = Math.round(Math.max(YEAR_SCROLLER_MIN_YEAR, Math.min(YEAR_SCROLLER_MAX_YEAR, spec.year)));
-    // 30 -> 55 (2026-09-18, direct user report against a real generated
-    // video: "WHEN AI SYSTEMS STARTED TO" - a real complete sentence cut
-    // off mid-thought by this cap, well before the actual thought
-    // finished). This field's own spec asks for a short "1-4w headline",
-    // but real generations routinely run longer - this reveal text
-    // already had generous height budgeted (buildYearScrollerRevealText's
-    // own height: fontSize*4) and wraps naturally via maxWidth, so a
-    // longer phrase just flows onto more lines instead of needing to be
-    // destroyed. Direct user instruction: "if the text is long, you
-    // shouldn't cut it off, wrap it into 3 lines" - this is now generous
-    // enough that a real 6-8 word sentence fits without truncation.
-    const text = truncateAtWordBoundary(spec.text.trim(), 55);
+    // Mandatory text-fit policy: buildYearScrollerRevealText now does the
+    // real wrap-then-shrink fit itself (wrapAndFitText) - no truncation
+    // needed here at all.
+    const text = spec.text.trim();
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
       beat.params.duration = yearScrollerMinDuration(year, text);
     }
@@ -16547,21 +16620,10 @@ function buildMographBeatVisual(beat) {
   } else if (spec.type === 'counter' && Number.isFinite(spec.value) && typeof spec.text === 'string' && spec.text.trim()) {
     const value = Math.round(Math.max(COUNTER_MIN_VALUE, Math.min(COUNTER_MAX_VALUE, spec.value)));
     // 24 -> 48 (2026-09-18, direct user report against a real generated
-    // video: "AI SYSTEM FAILURES HAVE" - a real complete sentence cut off
-    // mid-thought). This field's own spec explicitly asks for 5-8 words,
-    // never fewer than 5 - 24 characters isn't even enough room for a
-    // legitimate 5-word sentence half the time, let alone 8. Raised
-    // alongside splitCounterCaptionLines' own new real measured wrap
-    // (now flows to a 3rd line when genuinely needed, instead of always
-    // assuming exactly 2) - direct user instruction: "if the text is
-    // long, you shouldn't cut it off, wrap it into 3 lines." 48, not a
-    // more generous number, because that IS this template's own real,
-    // measured 3-line capacity at its actual caption font/width/safety-
-    // margin (splitCounterCaptionLines' own SAFETY_MARGIN) - going higher
-    // just means MORE captions would need that function's own word-drop
-    // fallback (still word-boundary-safe, never mid-sentence garbage, but
-    // real content loss all the same), not less.
-    const text = truncateAtWordBoundary(spec.text.trim(), 48);
+    // Mandatory text-fit policy: splitCounterCaptionLines now shrinks the
+    // font instead of dropping words once it exceeds 3 real lines - no
+    // truncation needed here at all anymore.
+    const text = spec.text.trim();
     const icon = typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon) ? spec.icon : null;
     const iconPosition = spec.iconPosition === 'after' ? 'after' : 'before';
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
@@ -16571,17 +16633,12 @@ function buildMographBeatVisual(beat) {
       value, text, icon, iconPosition, accentColor,
     });
   } else if (spec.type === 'lineReveal' && typeof spec.text1 === 'string' && spec.text1.trim() && typeof spec.text2 === 'string' && spec.text2.trim()) {
-    // Real, confirmed-live bug (2026-09-17, direct user report against a
-    // real generated video: "RICH VS WEALTHY" / "ONE'S A STATUS SYMBOL,
-    // THE" - a real delivered example ending on a dangling article).
-    // truncateAtWordBoundary is already word-boundary-safe (never cuts
-    // mid-WORD), but has no idea whether the word it lands ON reads as a
-    // complete thought - trimTrailingStopword (see blueprintText's own
-    // copy of this exact fix, same underlying pathology, different
-    // truncation function) catches the specific "ends mid-clause on a/
-    // an/the/of/etc" cases that read as visibly broken.
-    const text1 = trimTrailingStopword(truncateAtWordBoundary(spec.text1.trim(), 26));
-    const text2 = trimTrailingStopword(truncateAtWordBoundary(spec.text2.trim(), 32));
+    // Mandatory text-fit policy: buildLineRevealLayers now shrinks each
+    // text to fit its one real line (wrapAndFitText) instead of dropping
+    // words - no truncation, and so no dangling trailing word/article to
+    // guard against either, needed here at all anymore.
+    const text1 = spec.text1.trim();
+    const text2 = spec.text2.trim();
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
       beat.params.duration = lineRevealMinDuration();
     }
@@ -16602,8 +16659,10 @@ function buildMographBeatVisual(beat) {
     // handles a 1-word line1 correctly; this gate was blocking that
     // already-built, already-safe path from ever being reached.
     const line1 = line1Words.join(' ');
-    const line2 = truncateAtWordBoundary(spec.line2.trim(), 20);
-    const line3 = truncateAtWordBoundary(spec.line3.trim(), 26);
+    // buildTypewriterLinkLayers wraps/shrinks line2/line3 itself
+    // (wrapAndFitText).
+    const line2 = spec.line2.trim();
+    const line3 = spec.line3.trim();
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
       beat.params.duration = typewriterLinkMinDuration(line1Words.length);
     }
@@ -16611,22 +16670,26 @@ function buildMographBeatVisual(beat) {
       line1, line2, line3, accentColor,
     });
   } else if (spec.type === 'dotConstellation' && typeof spec.text === 'string' && spec.text.trim()) {
-    const text = truncateAtWordBoundary(spec.text.trim(), 24);
+    // buildDotConstellationLayers wraps/shrinks text itself (wrapAndFitText).
+    const text = spec.text.trim();
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
       beat.params.duration = dotConstellationMinDuration();
     }
     layers = buildDotConstellationLayers({ text, accentColor });
   } else if (spec.type === 'buttonDraw' && typeof spec.text === 'string' && spec.text.trim()) {
-    const text = truncateAtWordBoundary(spec.text.trim(), 16);
+    // buildButtonDrawLayers wraps/shrinks text itself (wrapAndFitText).
+    const text = spec.text.trim();
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
       beat.params.duration = buttonDrawMinDuration();
     }
     layers = buildButtonDrawLayers({ text, accentColor });
   } else if (spec.type === 'mouseWordDrag' && typeof spec.before === 'string' && spec.before.trim()
     && typeof spec.chip === 'string' && spec.chip.trim() && typeof spec.after === 'string' && spec.after.trim()) {
-    const before = truncateAtWordBoundary(spec.before.trim(), 24);
-    const chip = truncateAtWordBoundary(spec.chip.trim(), 18);
-    const after = truncateAtWordBoundary(spec.after.trim(), 24);
+    // buildMouseWordDragLayers already shrinks (never drops words) its
+    // own single-row layout to fit (real measured fit, floor 22px).
+    const before = spec.before.trim();
+    const chip = spec.chip.trim();
+    const after = spec.after.trim();
     const beforeCount = before.split(' ').filter((w) => w.length > 0).length;
     const afterCount = after.split(' ').filter((w) => w.length > 0).length;
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
