@@ -1905,7 +1905,22 @@ const COMPACT_TEMPLATE_INFO = {
     // fact - a real credibility risk for a "facts" product, not just a
     // style nitpick. Nothing downstream can fact-check a number, so this
     // has to be caught here, at the source.
-    fields: 'value*(count to - ONLY a real, well-known statistic you are genuinely confident about for this exact topic; NEVER invent a plausible-sounding round number just to fill the field), text*(5-8 words, NEVER fewer than 5, must make clear what the number actually measures), icon(opt), iconPosition(opt before|after)',
+    //
+    // "if nothing fits" escape hatch added 2026-09-18 (round-3 QA
+    // finding): the honesty rule above fixed fabrication but created a
+    // NEW failure - template selection is random per beat, independent
+    // of content, so counter sometimes lands on a beat about a concept
+    // with no natural world-fact number at all (a real generated video:
+    // "3 red flags in a job interview" assigned counter to "interviewers
+    // who show up late" and the model, correctly refusing to fabricate,
+    // animated a giant glowing counter up to a meaningless "1" - a
+    // technically-honest but content-free, broken-looking beat). Giving
+    // an explicit list of OTHER genuinely real number types to reach for
+    // first (a percentage, a time span, or - cleanest of all when this
+    // video has an explicit item count - that exact count) means the
+    // model has a real, honest number to fall back to instead of being
+    // stuck between "fabricate" and "count to 1."
+    fields: 'value*(count to - ONLY a real, well-known statistic you are genuinely confident about for this exact topic; NEVER invent a plausible-sounding round number just to fill the field. If nothing like that fits this specific beat, use a DIFFERENT real number instead: a genuine percentage, a real time span (seconds/minutes/days), or - if this video is about an explicit list of N things - the number N itself. NEVER force a technically-true but meaningless tiny count like 1 just because nothing bigger comes to mind), text*(5-8 words, NEVER fewer than 5, must make clear what the number actually measures), icon(opt), iconPosition(opt before|after)',
     example: { template: 'counter', narration: 'Over forty five thousand people changed their mind completely.', vars: { value: 45355, text: 'People who changed their mind completely' } },
   },
   lineReveal: {

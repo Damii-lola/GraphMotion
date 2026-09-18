@@ -376,6 +376,19 @@ function validateCompactBeatVars(template, vars) {
       // No upper-bound reject on "value" - sceneSchema.js's own dispatch
       // branch already clamps to [1, 999999999] and rounds.
       if (!Number.isFinite(vars.value)) return 'needs "value": a real number to count up to (e.g. 45355)';
+      // Real, confirmed-live failure (round-3 QA, 2026-09-18): a real
+      // generated video's counter beat animated a giant glowing "counts
+      // up from 0" effect all the way up to a meaningless "1" ("1
+      // interviewer who shows up late") - technically honest (not a
+      // fabrication) but a broken-looking beat: there's nothing to
+      // meaningfully "count up" to from 0 for a value this small, and it
+      // wastes this template's whole big-number visual treatment on
+      // nothing. scenePrompts.js's own field guidance now offers real
+      // fallback number types (a percentage, a time span, the video's
+      // own item count) for exactly this situation - this is the
+      // matching hard floor that actually forces the retry when the
+      // model reaches for a degenerate value anyway.
+      if (vars.value < 2) return `"value" is ${vars.value} - too small for a meaningful "counts up" animation. Use a different real number type instead: a genuine percentage, a real time span, or (if this video covers an explicit list of things) that list's own count - never a trivial value like 0 or 1.`;
       // Real lower-bound floor: splitCounterCaptionLines (sceneSchema.js)
       // needs enough words for a real 2-line split where line 2 has
       // more words than line 1 - a 1-2 word caption degenerates to a
