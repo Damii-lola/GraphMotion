@@ -637,6 +637,15 @@ async function generateCompactBeatSpec(userPrompt, {
     throw new Error(`Generated scene JSON failed schema validation after retries: ${errors.join('; ')}`);
   }
 
+  const enumerationCheck = checkEnumerationCompliance(sceneJSON, explicitItemCount);
+  if (!enumerationCheck.valid) {
+    if (retriesLeft > 0) {
+      console.warn(`[sceneGenClient] enumeration overrun (${enumerationCheck.errors[0]}), retrying (${retriesLeft - 1} left)...`);
+      return generateCompactBeatSpec(userPrompt, { retriesLeft: retriesLeft - 1, priorErrors: enumerationCheck.errors, chosenTemplates: templates, topic, styleNotes, explicitItemCount });
+    }
+    throw new Error(`Generated scene JSON failed enumeration check after retries: ${enumerationCheck.errors.join('; ')}`);
+  }
+
   const notFoundIcons = await findNonexistentIcons(collectIconNamesFromScenes(sceneJSON.scenes));
   if (notFoundIcons.length > 0) {
     if (retriesLeft > 0) {
@@ -715,6 +724,51 @@ function extractExplicitItemCount(userPrompt) {
     }
   }
   return null;
+}
+
+// Real, confirmed-live bug (round-3 QA, 2026-09-18): the enumerationRule
+// prompt instruction ("if you have more beats than N, use the extras for
+// hook/setup/conclusion; never pad by repeating the same item") is a
+// nuanced instruction a small 8B model doesn't reliably follow - two
+// distinct real failures found on real generated videos: (1) "3 red
+// flags to watch for in a job interview" landed on 6 content beats and
+// narrated "First... Second... Third... Fourth... And finally" - 5
+// sequentially numbered items for a video that asked for exactly 3; (2)
+// "3 habits that are quietly ruining your sleep" never over-numbered but
+// still introduced 4 EXTRA unnumbered habits across other beats beyond
+// the 3 the recap beat officially named. (1) is mechanically detectable
+// (count the highest ordinal actually used in the narration); (2) is not
+// (telling "a new distinct item" from "more color on an already-named
+// one" needs real language understanding, not regex) - so this only
+// catches (1), same "enforce what can actually be enforced in code,
+// strengthen the prompt for the rest" split this codebase already uses
+// elsewhere (see GENERIC_FILLER_NARRATION_PATTERNS in sceneSchema.js).
+const ORDINAL_WORDS = ['zeroth', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth'];
+function findHighestOrdinalUsed(text) {
+  let highest = 0;
+  const lower = String(text || '').toLowerCase();
+  ORDINAL_WORDS.forEach((word, value) => {
+    if (value === 0) return;
+    if (new RegExp(`\\b${word}\\b`).test(lower)) highest = Math.max(highest, value);
+  });
+  const numeric = lower.match(/\b(\d{1,2})(?:st|nd|rd|th)\b/g) || [];
+  for (const m of numeric) {
+    const value = parseInt(m, 10);
+    if (value > highest) highest = value;
+  }
+  return highest;
+}
+function checkEnumerationCompliance(sceneJSON, explicitItemCount) {
+  if (!explicitItemCount) return { valid: true, errors: [] };
+  const combinedNarration = (sceneJSON.scenes || []).map((s) => s.params?.narration || '').join(' ');
+  const highest = findHighestOrdinalUsed(combinedNarration);
+  if (highest > explicitItemCount.count) {
+    return {
+      valid: false,
+      errors: [`Your narration sequentially numbers up to at least "${ORDINAL_WORDS[highest] || `${highest}th`}" (${highest} distinct items), but the user asked for exactly ${explicitItemCount.count} ${explicitItemCount.noun}. Only number up to "${ORDINAL_WORDS[explicitItemCount.count]}" - use any remaining beats for a hook, extra context on the SAME ${explicitItemCount.count} items, or a conclusion, never a newly-numbered ${explicitItemCount.count + 1}th item.`],
+    };
+  }
+  return { valid: true, errors: [] };
 }
 
 /** Plain Fisher-Yates, same real algorithm scenePrompts.js's own pickRandomTemplates uses (not the "sort by random comparator" non-uniform trick) - reused here to randomize the ORDER of whichever 6 templates pickRandomTemplates just picked, a deliberately separate concern from the picking itself. */
