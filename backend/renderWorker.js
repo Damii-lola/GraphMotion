@@ -138,7 +138,7 @@ process.on('message', async ({ jobId, prompt, targetDurationSeconds, parentScene
     // match how long the audio actually takes to say, which the world
     // timeline (and therefore image prefetch, which is keyed by beat
     // index rather than timing) needs to already reflect.
-    const { sceneJSON: narratedSceneJSON, audioFiles } = await prefetchNarration(sceneJSON, jobId);
+    const { sceneJSON: narratedSceneJSON, narration } = await prefetchNarration(sceneJSON, jobId);
     console.log(`[renderWorker] job ${jobId} narration prefetched, rss=${rssMB()}MB`);
 
     // Try handing the memory-heavy part (image/icon prefetch + Skia
@@ -150,7 +150,7 @@ process.on('message', async ({ jobId, prompt, targetDurationSeconds, parentScene
     // soft: dispatchToWorker only ever returns {dispatched:false} (never
     // throws) on any problem, so falling through to the local render
     // path below is always safe.
-    const dispatch = await dispatchToWorker(jobId, narratedSceneJSON, audioFiles);
+    const dispatch = await dispatchToWorker(jobId, narratedSceneJSON, narration);
     if (dispatch.dispatched) {
       console.log(`[renderWorker] job ${jobId} handed off to a render worker, rss=${rssMB()}MB`);
       // workerUrl travels back to server.js so a later cancel request
@@ -183,7 +183,7 @@ process.on('message', async ({ jobId, prompt, targetDurationSeconds, parentScene
     });
     console.log(`[renderWorker] job ${jobId} render done, rss=${rssMB()}MB`);
 
-    const localFilePath = await muxNarrationOntoVideo(renderedPath, renderSceneJSON, audioFiles, jobId, path.join(os.tmpdir(), 'shortform-renders'));
+    const localFilePath = await muxNarrationOntoVideo(renderedPath, renderSceneJSON, narration, jobId, path.join(os.tmpdir(), 'shortform-renders'));
     console.log(`[renderWorker] job ${jobId} mux done, rss=${rssMB()}MB`);
 
     await sendAndFlush({ type: 'render_complete', jobId, localFilePath });

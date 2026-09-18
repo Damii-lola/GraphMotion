@@ -135,22 +135,19 @@ function getDurationSeconds(filePath) {
 }
 
 /**
- * Assembles per-beat narration clips + silence gaps into ONE continuous
- * audio track spanning the whole video, then muxes it onto the
- * finished render. Uses buildTimeline() - the SAME function
- * renderEngine.js used to lay out beats for the actual frames - so the
- * audio track is built against the exact same start/end times the
- * video was rendered with; two separately-produced things (frames,
- * audio) that can never drift out of sync as a result, rather than
- * two independent duration calculations that happen to usually agree.
- *
- * Re-encodes every segment (not `-c copy`) before concatenating -
- * msedge-tts's mp3 output and ffmpeg's anullsrc-generated silence
- * aren't guaranteed to share one exact stream format, which the concat
- * demuxer's stream-copy mode requires; re-encoding sidesteps that.
+ * Muxes the ONE continuous narration track (the whole video's spoken
+ * audio, generated as a single TTS call - see ../backend's
+ * narrationPrefetch.js) onto the finished render. Replaces the old
+ * per-beat concat+silence-pad assembly entirely - direct, explicit user
+ * requirement (2026-09-18): "ONLYYY THIS TTS AUDIO WILL BE THERE...
+ * NO BEAT TAGGED AUDIO OR TEXT" - each beat's own visual `duration` is
+ * now already sized to exactly its own real slice of this one track (see
+ * narrationPrefetch.js), so there is nothing left to concatenate or pad
+ * between beats; `narration.path` IS the whole video's narration, used
+ * directly.
  */
-async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, workDir) {
-  if (!audioFiles || audioFiles.size === 0) return videoPath;
+async function muxNarrationOntoVideo(videoPath, sceneJSON, narration, jobId, workDir) {
+  if (!narration || !narration.path) return videoPath;
 
   // Confirmed the hard way: ffmpeg's concat demuxer resolves relative
   // paths INSIDE the list file relative to the list file's own
@@ -171,48 +168,31 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
   // every consumer, and this file's destructuring of a since-renamed
   // field silently produced `undefined`, throwing on the very next
   // `.length` access. Per-beat shape (`duration`, `end`) is unchanged
-  // and still exactly what this function needs.
+  // and still exactly what mixSoundDesign below needs for its own SFX
+  // cue timing.
   const { beatRanges: beats } = buildTimeline(sceneJSON);
-  const listPath = path.join(workDir, `${jobId}-audio-concat.txt`);
-  const segmentPaths = [];
-  const cleanupPaths = [];
 
-  for (let i = 0; i < beats.length; i++) {
-    const beat = beats[i];
-    const audio = audioFiles.get(i);
-    if (audio) {
-      segmentPaths.push(audio.path);
-      const remaining = beat.duration - audio.duration;
-      if (remaining > 0.05) {
-        const silencePath = path.join(workDir, `${jobId}-silence-${i}.mp3`);
-        await generateSilence(silencePath, remaining);
-        segmentPaths.push(silencePath);
-        cleanupPaths.push(silencePath);
-      }
-    } else {
-      const silencePath = path.join(workDir, `${jobId}-silence-${i}.mp3`);
-      await generateSilence(silencePath, beat.duration);
-      segmentPaths.push(silencePath);
-      cleanupPaths.push(silencePath);
-    }
-  }
-
-  fs.writeFileSync(listPath, segmentPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'));
-
+  // Copied into a work-local file up front (never operate on the
+  // caller's own original narration.path beyond this point) - this
+  // function unconditionally unlinks `assembledPath` once it's done with
+  // it further down, and narration.path is owned by whatever wrote it
+  // (narrationPrefetch.js's own cleanup, or render-worker/server.js's
+  // writeNarrationClip - see its own finally block), not by this
+  // function.
   let assembledPath = path.join(workDir, `${jobId}-assembled-narration.mp3`);
-  await run(['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c:a', 'libmp3lame', '-q:a', '4', assembledPath]);
+  await run(['-y', '-i', path.resolve(narration.path), '-c:a', 'libmp3lame', '-q:a', '4', assembledPath]);
 
-  // Hard safety net, not a nice-to-have: confirmed directly that this
-  // concat step can silently produce an audio track SHORTER than the
-  // sum of its own inputs under some not-yet-root-caused condition
-  // (reproduced twice, including once running two renders concurrently).
-  // `-shortest` on the final mux below would then silently truncate the
-  // VIDEO to match - i.e. real rendered content quietly deleted, which
-  // is a far worse failure than an extra second of trailing silence.
-  // So: verify the assembled length against what the video actually is,
-  // and pad with silence if short, unconditionally, regardless of why
-  // it came up short. This makes video length authoritative no matter
-  // what goes wrong in audio assembly.
+  // Hard safety net, not a nice-to-have: the real spoken track can
+  // legitimately come up short of the real rendered video (a beat's own
+  // template needed slightly more time than its real speech slice gave
+  // it - see narrationPrefetch.js's own doc comment on that trade-off).
+  // `-shortest` on the final mux below would otherwise silently truncate
+  // the VIDEO to match - i.e. real rendered content quietly deleted,
+  // which is a far worse failure than an extra beat or two of trailing
+  // silence. So: verify the assembled length against what the video
+  // actually is, and pad with silence if short, unconditionally. This
+  // makes video length authoritative no matter what goes wrong in audio
+  // assembly.
   const expectedTotal = beats.length > 0 ? beats[beats.length - 1].end : 0;
   const actualAssembled = await getDurationSeconds(assembledPath).catch(() => 0);
   if (actualAssembled + 0.15 < expectedTotal) {
@@ -275,10 +255,8 @@ async function muxNarrationOntoVideo(videoPath, sceneJSON, audioFiles, jobId, wo
   const outputPath = videoPath.replace(/\.mp4$/, '-narrated.mp4');
   await run(['-y', '-i', videoPath, '-i', finalAudioPath, '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-shortest', outputPath]);
 
-  fs.unlink(listPath, () => {});
   fs.unlink(assembledPath, () => {});
   if (finalAudioPath !== assembledPath) fs.unlink(finalAudioPath, () => {});
-  cleanupPaths.forEach((p) => fs.unlink(p, () => {}));
 
   return outputPath;
 }
@@ -295,11 +273,10 @@ const SFX_VOLUME = 0.55;
 // Background: incompetech.com, "Deliberate Thought" by Kevin MacLeod -
 // CC-BY (attribution required, unlike the CC0 SFX above). Kept quiet and
 // constant rather than sidechain-ducked under narration - simpler to
-// implement correctly and reason about than real ducking, and this
-// project's own narration already has real silence gaps between beats
-// (audioDrivenDuration's own +0.5s buffer, narrationPrefetch.js) where a
-// low constant bed reads as natural background presence rather than
-// needing to duck around anything.
+// implement correctly and reason about than real ducking; narration is
+// now one continuous track with no silence gaps between beats at all
+// (direct user requirement, narrationPrefetch.js), so a low constant bed
+// just sits under it evenly rather than needing to duck around anything.
 const MUSIC_VOLUME = 0.1;
 
 /**

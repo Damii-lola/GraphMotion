@@ -619,28 +619,27 @@ async function renderWithPossibleHelp(jobId, sceneJSON, onProgress, isCancelled)
 }
 
 /**
- * Writes the base64 narration clips the coordinator sent into local
- * files and reconstructs the same Map<beatIndex, {path, duration}>
- * shape muxNarrationOntoVideo already expects (see ../backend's
- * narrationPrefetch.js - this mirrors its audioFiles output exactly).
- * `duration` is passed through as-received rather than re-measured -
- * the coordinator already measured it once via ffmpeg during
- * narration; no reason to redo that work here.
+ * Writes the base64 narration clip the coordinator sent into a local
+ * file and reconstructs the same {path, duration} shape
+ * muxNarrationOntoVideo now expects (see ../backend's
+ * narrationPrefetch.js - narration switched from N per-beat clips to
+ * ONE continuous track for the whole video, so this now writes exactly
+ * one file instead of reconstructing a per-beat Map). `duration` is
+ * passed through as-received rather than re-measured - the coordinator
+ * already measured it once via ffmpeg during narration; no reason to
+ * redo that work here.
  */
-function writeNarrationClips(jobId, narrationAudio) {
+function writeNarrationClip(jobId, narrationAudio) {
   const dir = narrationDirFor(jobId);
   fs.mkdirSync(dir, { recursive: true });
-  const audioFiles = new Map();
-  for (const clip of narrationAudio || []) {
-    const filePath = path.join(dir, `${clip.index}.mp3`);
-    fs.writeFileSync(filePath, Buffer.from(clip.base64, 'base64'));
-    audioFiles.set(clip.index, { path: filePath, duration: clip.duration });
-  }
-  return { dir, audioFiles };
+  if (!narrationAudio) return { dir, narration: null };
+  const filePath = path.join(dir, 'combined.mp3');
+  fs.writeFileSync(filePath, Buffer.from(narrationAudio.base64, 'base64'));
+  return { dir, narration: { path: filePath, duration: narrationAudio.duration } };
 }
 
 async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
-  const { dir: narrationDir, audioFiles } = writeNarrationClips(jobId, narrationAudio);
+  const { dir: narrationDir, narration } = writeNarrationClip(jobId, narrationAudio);
 
   // Same throttle as ../backend/server.js's own progress handling -
   // progress ticks arrive roughly 6x/second per chunk with no
@@ -700,7 +699,7 @@ async function handleRenderJob(jobId, sceneJSON, narrationAudio) {
     // fields at all (only narration/duration timing), so this
     // icon-embedded-but-not-yet-locally-decoded version is exactly as
     // good here as any worker's own fully-resolved copy would be.
-    const muxedPath = await muxNarrationOntoVideo(renderedPath, imageResolvedSceneJSON, audioFiles, jobId, os.tmpdir());
+    const muxedPath = await muxNarrationOntoVideo(renderedPath, imageResolvedSceneJSON, narration, jobId, os.tmpdir());
 
     // Direct user request: speed up the finished video (video + audio
     // together, staying in sync) before it's ever uploaded or shown to

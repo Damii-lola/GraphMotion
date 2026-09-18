@@ -32,6 +32,17 @@ function narrationDirFor(jobId) {
   return path.join(os.tmpdir(), 'shortform-renders', `${jobId}-narration`);
 }
 
+/** Generic ffmpeg run, same pattern audioMux.js already uses - needed here now that capToMaxDuration has to physically re-trim the shared narration clip (a real ffmpeg pass), not just filter a per-beat map. */
+function run(args) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(ffmpegPath, args);
+    let err = '';
+    p.stderr.on('data', (d) => { err += d.toString(); });
+    p.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}: ${err.slice(-500)}`))));
+    p.on('error', reject);
+  });
+}
+
 // Explicit product decision: no video may exceed 45s, period, regardless
 // of the user's prompt. targetDurationSeconds already asks Mistral for
 // <=45s (server.js), but that's a request, not a guarantee - narration
@@ -42,12 +53,19 @@ function narrationDirFor(jobId) {
 const MAX_TOTAL_DURATION_SECONDS = 45;
 
 /**
- * Drops trailing beats (and their audio) once the running total would
- * exceed the cap - always keeps at least the first beat, even in the
- * pathological case where one beat alone is longer than the cap, so a
- * video is never reduced to nothing.
+ * Drops trailing beats (and the now-excess tail of the one shared
+ * narration clip) once the running total would exceed the cap - always
+ * keeps at least the first beat, even in the pathological case where one
+ * beat alone is longer than the cap, so a video is never reduced to
+ * nothing. `narration` is the single {path, duration} object the whole
+ * video's audio now lives in (see prefetchNarration's own doc comment) -
+ * when beats get cut, the audio has to be physically trimmed to match,
+ * not just left to run past the now-shorter video: the final mux's own
+ * `-shortest` flag would otherwise chop it off mid-word at whatever
+ * instant the video happens to end, instead of this doing it cleanly at
+ * the real beat boundary.
  */
-function capToMaxDuration(sceneJSON, audioFiles) {
+async function capToMaxDuration(sceneJSON, narration) {
   let total = 0;
   let cutIndex = sceneJSON.scenes.length;
   for (let i = 0; i < sceneJSON.scenes.length; i++) {
@@ -58,17 +76,25 @@ function capToMaxDuration(sceneJSON, audioFiles) {
     }
     total += beatDuration;
   }
-  if (cutIndex >= sceneJSON.scenes.length) return { sceneJSON, audioFiles };
+  if (cutIndex >= sceneJSON.scenes.length) return { sceneJSON, narration };
 
   console.warn(`[narrationPrefetch] generated video ran long - trimming to ${cutIndex} of ${sceneJSON.scenes.length} beats (~${total.toFixed(1)}s) to stay under the ${MAX_TOTAL_DURATION_SECONDS}s MVP cap`);
 
-  const trimmedAudioFiles = new Map();
-  for (const [index, entry] of audioFiles) {
-    if (index < cutIndex) trimmedAudioFiles.set(index, entry);
+  let trimmedNarration = narration;
+  if (narration && narration.path && narration.duration > total + 0.05) {
+    const dir = path.dirname(narration.path);
+    const trimmedPath = path.join(dir, 'combined-capped.mp3');
+    try {
+      await run(['-y', '-i', narration.path, '-t', String(total), '-c:a', 'libmp3lame', '-q:a', '4', trimmedPath]);
+      trimmedNarration = { path: trimmedPath, duration: total };
+    } catch (err) {
+      console.warn(`[narrationPrefetch] failed to trim shared narration clip to the cap, leaving it untrimmed (the final mux's own -shortest will still clip it to the video): ${err.message}`);
+    }
   }
+
   return {
     sceneJSON: { ...sceneJSON, scenes: sceneJSON.scenes.slice(0, cutIndex) },
-    audioFiles: trimmedAudioFiles,
+    narration: trimmedNarration,
   };
 }
 
@@ -458,182 +484,160 @@ async function synthesizeBeatClip(taggedText, dir, index, attempt) {
 }
 
 /**
- * Generates narration audio for every beat that has one, IN PARALLEL
- * across beats (like imagePrefetch.js) - was sequential when the only
- * engine was msedge-tts's single-connection-per-call websocket, but
- * Deepgram (the primary engine now, see generateSpeech above) is a
- * stateless REST API with no such constraint - staggered below (see
- * TTS_REQUEST_STAGGER_MS) rather than fully sequential, since "no shared
- * code state between beats" was never the same thing as "the real
- * external provider has no concurrency limit of its own." Narration
- * verification
- * has a real history here worth knowing if this ever needs revisiting:
- * first a judge call with up to 5 retries, then a single judge call
- * with no retry (real API-call-volume consequences from the retry
- * version - see git history), then removed entirely (direct user
- * request once production logs showed rendering, not narration, was the
- * actual dominant cost of a generation), then reinstated as a Gemini
- * transcribe-and-diff check, then REMOVED again, direct user instruction
- * (2026-09-05): "DONT FUCKING CARE ABT AUDIO... NOOOO GEMINIIII" - this
- * file makes no AI calls of its own at all now. trimTrailingArtifact
- * (below) still runs unconditionally as the mechanical (no AI call)
- * safety net. Beats still run in parallel since there's no reason not
- * to. Each beat only ever touches its OWN index in
- * `renderScenes`/`audioFiles`, so there's no shared-state conflict
- * between beats running concurrently.
- * For each beat with narration, measures the real spoken duration and
- * OVERRIDES that beat's `duration` param to match (+ a small buffer) -
- * visual pacing follows how long the narration actually takes to say,
- * not an arbitrary authored guess.
+ * Generates ONE continuous narration clip for the WHOLE video - direct,
+ * explicit user requirement (2026-09-18): "I WANT ONE SINGLAR LONGG
+ * AUDIO, THAT ISNT PER BEAT... ONLYYY THIS TTS AUDIO WILL BE THERE,
+ * THERE WILL BE NO OTHER TTS AUDIO, NO BEAT TAGGED AUDIO OR TEXT."
+ * Replaces the old per-beat pipeline (generate N separate clips, tag
+ * each independently, concatenate with a silence pad between every one -
+ * see git history) entirely: that per-beat padding (both the deliberate
+ * +0.5s buffer and any extra silence to fill a beat's own visual
+ * duration) is exactly what produced the audible per-beat pauses this
+ * was a direct complaint about, even though each individual piece of
+ * that old design had its own real reasoning at the time.
+ *
+ * New shape: every beat's own PLAIN narration is joined into ONE
+ * continuous script (in beat order), tagged as ONE piece (so
+ * narrationTagging.js's pause punctuation only lands at genuine sentence
+ * boundaries within the combined text - still real pauses where a
+ * sentence actually ends, just not an EXTRA artificial gap stitched
+ * between every beat on top of that), and sent through exactly one TTS
+ * call. Real per-word timing for the whole thing (one Deepgram STT call,
+ * not one per beat) is then sliced back into per-beat ranges using each
+ * beat's own already-known word count, in order - which is also what
+ * sets each beat's real VISUAL duration: exactly its own slice of the
+ * one continuous track, cumulative beat durations therefore staying
+ * perfectly aligned with the single real audio timeline by construction,
+ * with nothing to pad.
+ *
+ * Real, direct trade-off worth knowing about: this no longer takes
+ * Math.max(authored/template-minimum duration, audio duration) the way
+ * the old per-beat version did (see git history for that fix's own
+ * reasoning - "the audio should be the one to fit the scene, not the
+ * other way around") - doing that here would mean padding a beat's
+ * OWN slice of the shared track with silence whenever its template
+ * needed more time than its natural speech did, exactly the kind of
+ * per-beat pause this change exists to remove. A beat whose template
+ * genuinely needs more time than its own real speech slice gives will
+ * now just run for exactly that slice - very rarely tight in practice
+ * (real spoken sentences of typical narration length already tend to
+ * run longer than a template's own minimum completion time), but a real
+ * theoretical trade-off, not a lucky freebie.
  *
  * Returns a NEW sceneJSON-shaped object (render-only, same pattern as
- * imagePrefetch.js - the original passed in is never mutated, so
- * whatever gets persisted/reused for edits keeps its author-intended
- * durations) plus a Map of beatIndex -> {path, duration} for
- * audioMux.js to assemble into the final narration track.
+ * imagePrefetch.js - the original passed in is never mutated) plus the
+ * single narration `{path, duration} | null` audioMux.js now lays under
+ * the whole video directly.
  */
 async function prefetchNarration(sceneJSON, jobId) {
   const renderScenes = sceneJSON.scenes.map((scene) => ({ ...scene, params: { ...scene.params } }));
 
-  // TTS/audio generation RE-ENABLED (2026-09-15, direct user request:
-  // "Uncomment the tts, integrate it into the vids") - was disabled
-  // 2026-09-07 ("comment out the tts, dont remove it... Rn we are trying
-  // to get the motion graphics in place, that's the priority") purely so
-  // template work could proceed without audio as a variable. That work is
-  // done; this restores the real 3-tier synth (Deepgram -> Fish Audio ->
-  // free keyless msedge-tts) + duration/word-timing sync below exactly as
-  // it was written, unchanged.
   const beatsWithNarration = renderScenes
     .map((scene, index) => ({ scene, index }))
     .filter(({ scene }) => typeof scene.params?.narration === 'string' && scene.params.narration.trim().length > 0);
 
-  const audioFiles = new Map();
   if (beatsWithNarration.length === 0) {
-    return capToMaxDuration({ ...sceneJSON, scenes: renderScenes }, audioFiles);
+    return capToMaxDuration({ ...sceneJSON, scenes: renderScenes }, null);
   }
 
   const dir = narrationDirFor(jobId);
   fs.mkdirSync(dir, { recursive: true });
 
-  // Real, likely-live bug (2026-09-17, direct user report against a real
-  // generated video: narration says one line then goes silent for the
-  // rest of a 30s video, several beats later in the video with no
-  // audio). Every beat's own TTS request fires in the EXACT same instant
-  // via this Promise.all - fine from THIS codebase's own perspective
-  // (each beat only touches its own index, no shared state, per this
-  // function's own doc comment above), but that doc comment never
-  // considered the actual TTS PROVIDERS' side: Deepgram/Fish Audio/
-  // msedge-tts are 3 real external services, none of this file's own
-  // code, and a synchronized burst of 6-7 simultaneous requests hitting
-  // a real per-account concurrency/rate limit is a well-known TTS
-  // integration failure mode - generateSpeech's own single, IMMEDIATE
-  // (no backoff) retry wouldn't help against a genuine rate limit either,
-  // since it re-hits the identical limit a few ms later. A beat that
-  // fails all 3 tiers falls through to prefetchNarration's own catch
-  // below, silently keeping its authored duration with NO audio -
-  // exactly the "some beats have narration, the rest are silent"
-  // symptom reported, and worse for a video with MORE beats (more
-  // simultaneous requests, more likely to trip a real limit) - matching
-  // the "should be talking throughout" expectation failing specifically
-  // on longer videos. Staggering each beat's own request start (not
-  // making them fully sequential - beats still overlap/pipeline, this
-  // only avoids every request landing in the identical instant) is a
-  // standard, low-risk mitigation for exactly this failure class,
-  // regardless of which specific provider's limit was actually tripped.
-  const TTS_REQUEST_STAGGER_MS = 400;
+  let narration = null;
+  try {
+    // Scene generation writes PLAIN narration on purpose (see
+    // scenePrompts.js) - tag annotation is this deliberately separate
+    // second pass (narrationTagging.js). Joined with a single space, in
+    // beat order, into ONE script and tagged as one continuous piece -
+    // not tagged per-beat then joined, which would bake in an extra
+    // "..." right at every beat boundary on top of whatever the
+    // sentence's own real ending already gets.
+    const plainTexts = beatsWithNarration.map(({ scene }) => scene.params.narration.trim());
+    const combinedPlainText = plainTexts.join(' ');
+    const taggedText = await annotateNarrationTags(combinedPlainText);
+    console.log(`[narrationPrefetch] combined tagged script (${beatsWithNarration.length} beats): ${taggedText}`);
 
-  await Promise.all(beatsWithNarration.map(async ({ scene, index }, position) => {
-    if (position > 0) {
-      await new Promise((resolve) => setTimeout(resolve, position * TTS_REQUEST_STAGGER_MS));
-    }
+    // Gemini-based audio verification REMOVED, direct user instruction
+    // (2026-09-05): "DONT FUCKING CARE ABT AUDIO... NOOOO GEMINIIII" -
+    // trimTrailingArtifact (inside synthesizeBeatClip) stays as the
+    // mechanical, no-AI-call safety net; this file makes no AI calls of
+    // its own. synthesizeBeatClip's own per-clip pipeline (TTS -> trim
+    // leading/trailing silence -> trim any hallucinated tail artifact)
+    // is unchanged - it was always written to take one script and
+    // produce one clip, "index" was never anything but a filename
+    // component, so passing 'combined' here needs no changes to it at
+    // all.
+    const clipPath = await synthesizeBeatClip(taggedText, dir, 'combined', 1);
+    const filePath = path.join(dir, 'combined.mp3');
     try {
-      // Scene generation writes PLAIN narration on purpose (see
-      // scenePrompts.js) - tag annotation is this deliberately separate
-      // second pass (narrationTagging.js), which also guarantees the
-      // mandatory sentence-ending "..." pause placement mechanically,
-      // regardless of what the tagging model itself did or missed.
-      const plainText = scene.params.narration.trim();
-      const taggedText = await annotateNarrationTags(plainText);
-      console.log(`[narrationPrefetch] beat ${index} tagged text: ${taggedText}`);
-
-      // Gemini-based audio verification (transcribe + compare against
-      // script, one re-synth attempt on a mismatch) REMOVED, direct user
-      // instruction (2026-09-05): "DONT FUCKING CARE ABT AUDIO... NOOOO
-      // GEMINIIII" - trimTrailingArtifact above stays as the mechanical,
-      // no-AI-call safety net; this file no longer calls Gemini at all.
-      const clipPath = await synthesizeBeatClip(taggedText, dir, index, 1);
-      // Mastering (highpass/compressor/loudnorm/alimiter) REMOVED per
-      // direct user request after switching to Deepgram's Aura-2 -
-      // that whole chain was tuned entirely around Fish Audio's very
-      // quiet (-23.9 LUFS), noisy raw output. Deepgram's raw output
-      // needs none of that, and the chain was a real, confirmed
-      // contributor to a "sounds like an auditorium" complaint: a
-      // spectrogram comparison showed raw Deepgram audio has genuine
-      // energy up to its own true ~11-12kHz ceiling, while the final
-      // processed render only had real content up to ~8.8kHz - each
-      // extra lossy mp3 re-encode pass this file went through (this
-      // mastering step included) compounds quality loss. Deepgram's
-      // own output is used PLAIN now - just the trim/tail-artifact
-      // safety steps, no gain/EQ/dynamics processing on top.
-      const filePath = path.join(dir, `${index}.mp3`);
-      try {
-        fs.renameSync(clipPath, filePath);
-      } catch (renameErr) {
-        console.warn(`[narrationPrefetch] beat ${index} final rename failed: ${renameErr.message}`);
-      }
-
-      const duration = await getAudioDurationSeconds(filePath);
-      audioFiles.set(index, { path: filePath, duration });
-
-      // Real, audio-measured per-word timing (start/end seconds within
-      // THIS clip) - see wordTiming.js's own doc comment. Read back off
-      // disk rather than reusing `buf` above since `buf` is the PRE-trim
-      // TTS output; this needs to match the exact audio that ships.
-      const wordTimings = await getWordTimings(fs.readFileSync(filePath));
-      if (wordTimings) {
-        renderScenes[index].params.wordTimings = wordTimings;
-        applyRealWordTimingToText(renderScenes[index], wordTimings);
-      }
-      // Buffer so the visual doesn't cut away the instant speech ends -
-      // a beat that's ONLY as long as the narration reads as clipped,
-      // not intentional. This gap is also the actual audible pause
-      // between one beat's last word and the next beat's first one
-      // (muxNarrationOntoVideo inserts real silence to fill exactly this
-      // remainder - see its own beat.duration - audio.duration math).
-      // Direct user request, based on a real staged A/B listening test:
-      // 1.5s read as having a "very slight, barely noticeable" but real
-      // difference from raw - pulled back to 0.5s. SPEED_FACTOR in
-      // audioMux.js is also being set to 1.0 (no speed-up) per the same
-      // test, so this value IS the real perceived pause length directly -
-      // no multiply-by-speed-factor derivation needed while that stays
-      // at 1.0 (see audioMux.js's own comment if that ever changes).
-      //
-      // Real, confirmed-live bug fixed here (2026-09-16, direct user
-      // report against a real generated video: scenes visibly cutting
-      // before their own animation finished, "the scene speed shouldnt
-      // be dependent on the audio... the audio should be the one to fit
-      // with the scene"): this used to be a blind overwrite
-      // (`= duration + 0.5`), unconditionally REPLACING the beat's own
-      // already-computed duration - the one buildMographBeatVisual's own
-      // clampMographDuration (sceneSchema.js) carefully derived from that
-      // SPECIFIC template's real animation completion time (hero settle,
-      // line-draw finish, etc.). If the TTS clip happened to be SHORTER
-      // than the template's own true minimum, the visual got cut off
-      // mid-animation to match the shorter audio - exactly backwards from
-      // what was asked. Now takes the MAX of the two: the beat only ever
-      // EXTENDS to make room for narration that runs long (unavoidable -
-      // audio can never be cut mid-word), never shrinks below what the
-      // template's own choreography actually needs to finish naturally.
-      const audioDrivenDuration = duration + 0.5;
-      const finalDuration = Math.max(renderScenes[index].params.duration || 0, audioDrivenDuration);
-      renderScenes[index].params.duration = finalDuration;
-      extendPrematureLayerFadeOuts(renderScenes[index], finalDuration);
-    } catch (err) {
-      console.warn(`[narrationPrefetch] beat ${index} narration failed, keeping authored duration: ${err.message}`);
+      fs.renameSync(clipPath, filePath);
+    } catch (renameErr) {
+      console.warn(`[narrationPrefetch] combined clip final rename failed: ${renameErr.message}`);
     }
-  }));
 
-  return capToMaxDuration({ ...sceneJSON, scenes: renderScenes }, audioFiles);
+    const totalDuration = await getAudioDurationSeconds(filePath);
+    narration = { path: filePath, duration: totalDuration };
+
+    // Real, audio-measured per-word timing for the WHOLE combined clip -
+    // see wordTiming.js's own doc comment. One Deepgram STT call instead
+    // of one per beat.
+    const wordTimings = await getWordTimings(fs.readFileSync(filePath));
+
+    const beatWordCounts = plainTexts.map((t) => t.split(/\s+/).filter(Boolean).length);
+    const totalWordsExpected = beatWordCounts.reduce((a, b) => a + b, 0);
+    // Tolerates a small mismatch between the expected word count (from
+    // splitting the plain script on whitespace) and what Deepgram's STT
+    // actually detected (an occasional merge/split of one word) - beyond
+    // a small tolerance, the per-beat mapping can't be trusted at all, so
+    // every beat falls back together to an even, word-count-proportional
+    // split of the one real total duration instead of individually-wrong
+    // slices.
+    const sliceOk = Array.isArray(wordTimings) && wordTimings.length > 0;
+    const countMismatch = sliceOk ? Math.abs(wordTimings.length - totalWordsExpected) : Infinity;
+    const useRealPerBeatTiming = sliceOk && countMismatch <= Math.max(2, Math.round(totalWordsExpected * 0.05));
+
+    let cursor = 0;
+    let prevEnd = 0;
+    beatsWithNarration.forEach(({ index }, i) => {
+      const wordCount = beatWordCounts[i];
+      const isLast = i === beatsWithNarration.length - 1;
+      let beatEnd;
+      if (useRealPerBeatTiming) {
+        const remaining = wordTimings.length - cursor;
+        const take = Math.max(0, Math.min(wordCount, remaining));
+        const slice = wordTimings.slice(cursor, cursor + take);
+        cursor += take;
+        beatEnd = slice.length > 0 ? (isLast ? totalDuration : slice[slice.length - 1].end) : prevEnd;
+        if (slice.length > 0) {
+          // Translated to beat-LOCAL time (subtract this beat's own
+          // start in the shared track) - applyRealWordTimingToText
+          // builds keyframes against the beat's own composition, which
+          // always starts at 0 regardless of where its slice of the
+          // shared audio actually sits.
+          const localTimings = slice.map((w) => ({
+            ...w, start: Math.max(0, w.start - prevEnd), end: Math.max(0, w.end - prevEnd),
+          }));
+          renderScenes[index].params.wordTimings = localTimings;
+          applyRealWordTimingToText(renderScenes[index], localTimings);
+        }
+      } else {
+        // Fallback: proportional split of the one real total duration by
+        // this beat's own share of the total word count - still driven
+        // by the real measured audio length, just without per-word sync.
+        const share = totalWordsExpected > 0 ? wordCount / totalWordsExpected : 1 / beatsWithNarration.length;
+        beatEnd = isLast ? totalDuration : prevEnd + share * totalDuration;
+      }
+      const audioDrivenDuration = Math.max(0, beatEnd - prevEnd);
+      prevEnd = beatEnd;
+      renderScenes[index].params.duration = audioDrivenDuration;
+      extendPrematureLayerFadeOuts(renderScenes[index], audioDrivenDuration);
+    });
+  } catch (err) {
+    console.warn(`[narrationPrefetch] combined narration failed, all beats keep their authored durations: ${err.message}`);
+    narration = null;
+  }
+
+  return capToMaxDuration({ ...sceneJSON, scenes: renderScenes }, narration);
 }
 
 function cleanupNarration(jobId) {

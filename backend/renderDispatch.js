@@ -95,14 +95,11 @@ async function selectWorker() {
   return null;
 }
 
-/** Reads each beat's narration clip off disk and base64-encodes it for the JSON payload - these files are small (a few hundred KB for a whole video), so inlining them avoids a separate upload/download round trip through Supabase just to hand them to a worker. */
-function encodeNarrationAudio(audioFiles) {
-  const clips = [];
-  for (const [index, { path: filePath, duration }] of audioFiles.entries()) {
-    const base64 = fs.readFileSync(filePath).toString('base64');
-    clips.push({ index, duration, base64 });
-  }
-  return clips;
+/** Reads the whole video's one narration clip off disk and base64-encodes it for the JSON payload - a single ~25s clip is small (well under a meg), so inlining it avoids a separate upload/download round trip through Supabase just to hand it to a worker. Narration switched from N per-beat clips to ONE continuous track for the whole video (see narrationPrefetch.js's own doc comment), so this now sends exactly one blob instead of an array. */
+function encodeNarrationAudio(narration) {
+  if (!narration || !narration.path) return null;
+  const base64 = fs.readFileSync(narration.path).toString('base64');
+  return { duration: narration.duration, base64 };
 }
 
 /**
@@ -117,12 +114,12 @@ function encodeNarrationAudio(audioFiles) {
  * server.js via IPC) can remember which worker owns this job, which
  * cancelJobOnWorker below needs to actually cancel it later.
  */
-async function dispatchToWorker(jobId, sceneJSON, audioFiles) {
+async function dispatchToWorker(jobId, sceneJSON, narration) {
   const workerUrl = await selectWorker();
   if (!workerUrl) return { dispatched: false };
 
   try {
-    const narrationAudio = encodeNarrationAudio(audioFiles);
+    const narrationAudio = encodeNarrationAudio(narration);
     const res = await fetchWithTimeout(`${workerUrl}/render`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
