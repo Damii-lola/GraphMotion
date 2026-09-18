@@ -6453,6 +6453,22 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
   // instead of the old plain opacity crossfade with nothing else reacting.
   const SWAP_TIME = 1.4;
 
+  // Real, confirmed-live bug (2026-09-18, frame-accurate extraction across
+  // 3 consecutive frames spanning a full second): the outgoing text and
+  // the incoming icon both sat at the exact same CENTER position - during
+  // their crossfade window (and, on at least one real render, for what
+  // looked like the beat's entire remaining duration) they fully
+  // overlapped into illegible mush. A same-position crossfade only reads
+  // cleanly when both halves are near-instant; anything slower (or a beat
+  // whose real narration-driven duration stretches this window) makes the
+  // overlap visible and ugly. Fixed by giving the text and the icon their
+  // OWN vertical slots inside the phone screen - text sits slightly above
+  // center, the icon (plus everything that visually belongs to its
+  // arrival: the swap ring and particle burst) sits slightly below - so
+  // even mid-crossfade they never occupy the same pixels.
+  const TEXT_CENTER = [CENTER[0], CENTER[1] - 92];
+  const ICON_CENTER = [CENTER[0], CENTER[1] + 72];
+
   const bodyScale = { keyframes: [{ time: 0, value: [0.8, 0.8], interpolation: 'easing', easing: 'easeOutCubic' }, { time: 0.4, value: [1, 1] }] };
 
   const layers = [
@@ -6529,7 +6545,7 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
       fillStyle: accentColor,
       textAlign: 'center',
       maxWidth: PHONE_WIDTH - 40,
-      position: [...CENTER],
+      position: [...TEXT_CENTER],
       rotation: cloneTrack(idleRotation),
       // Gentle scale-breathe while it's on screen, plus its own tighter
       // 2-layer glow instead of the flat auto-attached one - 'multiply'
@@ -6589,7 +6605,7 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
     type: 'shape',
     width: RING_SIZE,
     height: RING_SIZE,
-    position: [...CENTER],
+    position: [...ICON_CENTER],
     scale: { keyframes: [
       { time: 0, value: [0.5, 0.5] },
       { time: SWAP_TIME, value: [0.5, 0.5], interpolation: 'easing', easing: 'easeOutCubic' },
@@ -6609,7 +6625,7 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
 
   // Real spec: "brief particle burst that emit from the icon." Reuses
   // nodeCluster/splitConverge's own proven burst-particle builder.
-  layers.push(...buildIconBurstParticles(0, CENTER[0], CENTER[1], accentColor, SWAP_TIME));
+  layers.push(...buildIconBurstParticles(0, ICON_CENTER[0], ICON_CENTER[1], accentColor, SWAP_TIME));
 
   // Icon rebuilt with real presence: bigger, a proper multi-layer glow
   // matching the phone's own, a soft drop shadow + inner highlight so it
@@ -6623,7 +6639,7 @@ function buildPhoneSwapLayers({ text, icon, accentColor }) {
     iconColor: accentColor,
     width: ICON_SIZE,
     height: ICON_SIZE,
-    position: [...CENTER],
+    position: [...ICON_CENTER],
     rotation: cloneTrack(idleRotation),
     scale: { expression: breatheExpr, base: { keyframes: [
       { time: SWAP_TIME, value: [0.4, 0.4], interpolation: 'easing', easing: 'easeOutCubic' },
@@ -16381,6 +16397,26 @@ const MOGRAPH_MAX_HOLD_AFTER_SETTLE = 1.5;
 // its own direct "hold 1s longer" request specified) - this only lowers
 // the DEFAULT floor every other template falls back to.
 function clampMographDuration(beat, completeTime, minHold = 0.25) {
+  // Real, confirmed-live bug (2026-09-18, direct user report: "the vid
+  // stays on a scene for a while even after the scene has finished"):
+  // this clamp only ever constrains the duration the AI itself authored
+  // at generation time - narrationPrefetch.js later OVERWRITES
+  // beat.params.duration wholesale with the real measured TTS audio
+  // length for that beat (so the audio and the visual world-timeline
+  // stay in sync), which routinely exceeds completeTime+
+  // MOGRAPH_MAX_HOLD_AFTER_SETTLE by several seconds on an ordinary beat
+  // (a typical beat speaks ~15-20 words, ~6-8s at natural TTS pacing,
+  // while most of this file's own template completeTime values are only
+  // 1.4-4s) - there is no way to shrink real spoken audio to fit, so the
+  // render engine needs to know each beat's OWN real finish point even
+  // after its authored duration is discarded. Stashed here (the one
+  // place completeTime is actually computed, for every template) onto
+  // the beat's own mograph object - never stripped before storage/
+  // dispatch, so it survives all the way to renderEngine.js's frame
+  // loop, which uses it to apply gentle continuous idle motion only
+  // during the excess "held" tail, instead of a dead static frame - see
+  // withSettleBreathe in renderEngine.js.
+  if (isPlainObject(beat.mograph)) beat.mograph.__settleAt = completeTime;
   if (!isPlainObject(beat.params) || typeof beat.params.duration !== 'number') return;
   const lo = completeTime + minHold;
   const hi = completeTime + MOGRAPH_MAX_HOLD_AFTER_SETTLE;

@@ -1720,6 +1720,42 @@ function withBeatZoom(drawFn, beatDuration, width, height) {
   };
 }
 
+// Real, confirmed-live bug (2026-09-18, direct user report: "the vid
+// stays on a scene for a while even after the scene has finished"):
+// a mograph beat's own hand-tuned animation genuinely finishes
+// (sceneSchema.js's clampMographDuration computes exactly when, per
+// template) well before the beat's REAL on-screen duration ends,
+// because that duration is set from the actual spoken narration length
+// (narrationPrefetch.js), not from what the visual needs - an ordinary
+// beat speaks ~15-20 words (~6-8s) while most templates finish their
+// whole choreography in 1.4-4s. withBeatZoom's own slow Ken Burns zoom
+// runs the whole beat regardless, so it's never a literally dead frame,
+// but a slow zoom on an already-finished composition still reads as
+// "why is this still here" once the zoom itself is the only thing
+// moving. Adds a second, gentle continuous breathing scale pulse that
+// only ever activates PAST settleAt (the beat's own real finish point,
+// stashed by clampMographDuration onto beat.mograph.__settleAt) - zero
+// effect during the actual choreographed animation, so no tuned
+// per-template timing is touched, but the excess "held" tail now stays
+// visibly alive instead of static.
+const SETTLE_BREATHE_AMOUNT = 0.022;
+const SETTLE_BREATHE_PERIOD = 2.6;
+function withSettleBreathe(drawFn, settleAt) {
+  if (typeof settleAt !== 'number' || !(settleAt >= 0)) return drawFn;
+  return (ctx, t) => {
+    const past = t - settleAt;
+    if (past <= 0) { drawFn(ctx, t); return; }
+    const wobble = Math.sin((past / SETTLE_BREATHE_PERIOD) * Math.PI * 2) * SETTLE_BREATHE_AMOUNT;
+    const scale = 1 + wobble;
+    ctx.save();
+    ctx.translate(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2);
+    ctx.scale(scale, scale);
+    ctx.translate(-LOGICAL_WIDTH / 2, -LOGICAL_HEIGHT / 2);
+    drawFn(ctx, t);
+    ctx.restore();
+  };
+}
+
 /**
  * Builds the real, already-tested Node/Composition or Layer3D/Camera/
  * Light scene for ONE beat via sceneBuilder.js's buildBeatVisual - once
@@ -2031,6 +2067,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       // never partway (or, for a fast template like squareSpin,
       // entirely) burned before it's even visible.
       const beatLocalT = Math.max(0, localT - panDuration);
+      const settleAt = sceneJSON.scenes[beatIndex]?.mograph?.__settleAt;
 
       // Impacts only apply once a beat is actually parked and playing
       // its own content, not mid pan-transition (a shake/flash during
@@ -2160,7 +2197,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
           frozenFrameCache.set(beatIndex - 1, prevCanvas);
         }
         transitionCurrCtx.clearRect(0, 0, WIDTH, HEIGHT);
-        renderWithMotionBlur(transitionCurrCtx, WIDTH, HEIGHT, beatLocalT, FRAME_DURATION, withLogicalScale(withBeatZoom((c, st) => visualObj.render(c, st), range.contentDuration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
+        renderWithMotionBlur(transitionCurrCtx, WIDTH, HEIGHT, beatLocalT, FRAME_DURATION, withLogicalScale(withBeatZoom(withSettleBreathe((c, st) => visualObj.render(c, st), settleAt), range.contentDuration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
 
         // Drawing each beat's canvas at (itsBoardPos - camera) is what
         // actually produces the pan: at progress 0 the previous beat's
@@ -2212,7 +2249,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         drawZoomed(prevCanvas, prevPos.x - camX, prevPos.y - camY, outScale, 1 - panProgress);
         drawZoomed(transitionCurrCanvas, currPos.x - camX, currPos.y - camY, inScale, panProgress);
       } else {
-        renderWithMotionBlur(ctx, WIDTH, HEIGHT, beatLocalT, FRAME_DURATION, withLogicalScale(withBeatZoom((c, st) => visualObj.render(c, st), range.contentDuration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
+        renderWithMotionBlur(ctx, WIDTH, HEIGHT, beatLocalT, FRAME_DURATION, withLogicalScale(withBeatZoom(withSettleBreathe((c, st) => visualObj.render(c, st), settleAt), range.contentDuration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
       }
 
       // Undoes the impact-shake translate above - the flash right below
