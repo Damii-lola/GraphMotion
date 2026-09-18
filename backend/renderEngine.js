@@ -375,28 +375,98 @@ const BOARD_BACKGROUND_HUES = [
   '#D9C7B8', '#C9D6D3', '#D6C9E0',
 ];
 
+// Real tester feedback (2026-09-18, live product testing session): "the
+// last video is just using one background... at least it's supposed to
+// change." Confirmed directly against two separate real renders - a whole
+// video sitting on one solid hue (tan, then green) start to finish, zero
+// scene/color change across 6-7 beats. Traced to this function's own OLD
+// single-hue design: one startColor/endColor/poolColor/edgeColor set for
+// the ENTIRE board, sampled at whatever point the camera happens to be -
+// but the pan distance (1600-2600px) is small relative to the gradient's
+// own huge radius (the full board's centroid-to-corner distance, easily
+// 5000px+ on a multi-beat board), so two adjacent beats sample two points
+// so close together on that one smooth ramp that the perceived color
+// barely shifts. A previous investigation into this exact symptom (see
+// the frame loop's own "RADIAL_BG_RADIUS" doc comment below) correctly
+// diagnosed the fix as needing the gradient's hot zone to track the
+// camera - and explicitly declined to build it as "a materially different
+// design than one fixed background" outside its own scope. This is that
+// design, now in scope: ONE zone color PER BEAT (not one for the whole
+// board) - a real, distinct hue rotation - and the frame loop blends
+// smoothly between a beat's own zone and its neighbor's while panning, so
+// the board genuinely changes color as the camera travels, while still
+// never showing a gap (every world position always resolves to SOME
+// valid interpolated zone).
+function pickBoardZoneColors(rand, count) {
+  // Shuffled once per video (Fisher-Yates, not the biased "sort by random
+  // comparator" trick) so a single pass through the palette never repeats
+  // a hue - only wraps back to the start if a video has more beats than
+  // BOARD_BACKGROUND_HUES has entries, which is rare (max ~8 beats
+  // including the CTA vs. 12 hues here).
+  const hues = [...BOARD_BACKGROUND_HUES];
+  for (let i = hues.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [hues[i], hues[j]] = [hues[j], hues[i]];
+  }
+  const zones = [];
+  for (let i = 0; i < count; i++) {
+    const baseColor = hues[i % hues.length];
+    const lighten = rand() < 0.5;
+    const otherColor = adjustLightness(baseColor, (lighten ? 1 : -1) * (0.28 + rand() * 0.14));
+    const [startColor, endColor] = lighten ? [otherColor, baseColor] : [baseColor, otherColor];
+    // Same pooling/edge derivation the old single-zone version used (see
+    // its own removed doc comment history) - center always brightest,
+    // edge always darkest, saturation floors raised so it reads as a
+    // vivid pop of color rather than a washed-out pastel glow.
+    const [baseHue, baseSat, baseLight] = hexToHsl(baseColor);
+    const poolColor = hslToHex(baseHue, Math.min(1, baseSat * 0.7 + 0.55), Math.min(0.76, baseLight + 0.32));
+    const edgeColor = hslToHex(baseHue, Math.min(1, baseSat * 0.85 + 0.25), Math.max(0.05, baseLight * 0.22));
+    zones.push({
+      startColor, endColor, poolColor, edgeColor,
+    });
+  }
+  return zones;
+}
+
+// Blends two zones' colors in plain RGB space by t in [0,1] - used by the
+// frame loop to cross-fade the board's color smoothly while the camera
+// pans from one beat's zone to the next, rather than an abrupt cut.
+function lerpBoardZones(a, b, t) {
+  const lerpHex = (h1, h2) => {
+    const c1 = hexToRgbLocal(h1);
+    const c2 = hexToRgbLocal(h2);
+    return rgbToHexLocal([
+      c1[0] + (c2[0] - c1[0]) * t,
+      c1[1] + (c2[1] - c1[1]) * t,
+      c1[2] + (c2[2] - c1[2]) * t,
+    ]);
+  };
+  return {
+    startColor: lerpHex(a.startColor, b.startColor),
+    endColor: lerpHex(a.endColor, b.endColor),
+    poolColor: lerpHex(a.poolColor, b.poolColor),
+    edgeColor: lerpHex(a.edgeColor, b.edgeColor),
+  };
+}
+
 /**
- * Explicit product direction: ONE continuous background for the whole
- * video, not a separate one per beat - the camera pans across DIFFERENT
- * REGIONS of that SAME background as it moves between beats, rather
- * than introducing a new one each time. Replaces the earlier per-beat-
- * gradient version of this board (each beat used to bring its own
- * "visual.background"): now the render engine owns the ONE shared
- * background outright, sized to the full bounding box every beat's
- * position spans (computed by the caller, once positions are known),
- * and beats render with a transparent backdrop so this shows through
- * everywhere there's no text.
+ * Board LAYOUT is unchanged (one continuous pannable world, no gaps -
+ * still exactly the architecture the doc comment above explains the
+ * benefit of). What changed is the background: instead of one flat
+ * background def for the whole board, this returns one zone PER BEAT
+ * POSITION (see pickBoardZoneColors above) plus a single shared `shape`
+ * (radial/linear stays a video-wide choice - varying gradient SHAPE per
+ * zone would need much more complex per-zone geometry for little added
+ * benefit over just varying hue).
  *
- * Both the board layout AND the background's color/shape draw from the
- * SAME seeded rand() stream, in a fixed order - this is what keeps a
- * long video's chunked rendering consistent: every chunk is a
- * SEPARATELY FORKED process (longVideoOrchestrator.js) that only
- * shares the sceneJSON itself, so any call to plain Math.random() here
- * would make each chunk pick a DIFFERENT background/layout and the
- * final video would visibly jump at every chunk boundary. Deterministic
- * per-video, verified identical across separate real process
- * invocations before this was trusted (see the original board-layout
- * commit's own verification for the methodology, unchanged here).
+ * Both the board layout AND the background zones draw from the SAME
+ * seeded rand() stream, in a fixed order - this is what keeps a long
+ * video's chunked rendering consistent: every chunk is a SEPARATELY
+ * FORKED process (longVideoOrchestrator.js) that only shares the
+ * sceneJSON itself, so any call to plain Math.random() here would make
+ * each chunk pick DIFFERENT zones and the final video would visibly jump
+ * at every chunk boundary. Deterministic per-video, same guarantee the
+ * original single-zone version already relied on.
  */
 function buildBoardLayoutAndBackground(sceneJSON, beatRanges) {
   const rand = mulberry32(hashSceneJSONToSeed(sceneJSON));
@@ -426,56 +496,26 @@ function buildBoardLayoutAndBackground(sceneJSON, beatRanges) {
     });
   }
 
-  const baseColor = BOARD_BACKGROUND_HUES[Math.floor(rand() * BOARD_BACKGROUND_HUES.length)];
-  const lighten = rand() < 0.5;
-  const otherColor = adjustLightness(baseColor, (lighten ? 1 : -1) * (0.28 + rand() * 0.14));
-  const [startColor, endColor] = lighten ? [otherColor, baseColor] : [baseColor, otherColor];
   // Biased toward radial (was an even 50/50 coin flip) - real,
   // confirmed-live reference comparison showed radial's own bright-
   // center-fading-to-edges vignette is consistently what the reference
   // material uses and a real part of why it reads as "designed" rather
   // than flat; linear still gets picked sometimes for real variety
-  // across a batch of videos, just less often now.
+  // across a batch of videos, just less often now. Kept as ONE video-wide
+  // choice (see this function's own doc comment for why shape doesn't
+  // vary per zone).
   const shape = rand() < 0.25 ? 'linear' : 'radial';
 
-  // Direct user spec (2026-09-05): "deep, multi-layered atmospheric
-  // field... dark navy-to-indigo radial gradient with subtle cyan/
-  // electric blue light pooling in the center" - a genuine THIRD stop
-  // (see gradientRamp's own colorStops support), not just the existing
-  // 2-tone ramp. poolColor/edgeColor are ADDITIONAL fields, independent
-  // of startColor/endColor - every existing consumer of this object
-  // (ensureHarmoniousColors, adaptGlowForBackground, text-contrast)
-  // keeps reading startColor/endColor exactly as before, unaffected by
-  // this. Center is always the BRIGHTEST point and the edge always the
-  // DARKEST, monotonically - regardless of the lighten coin flip above,
-  // since a "pooling" look specifically wants the eye pulled to the
-  // middle, not whichever of start/end happened to land lighter today.
-  // Only meaningful for 'radial' shape (a linear ramp has no center to
-  // pool at) - render loop below falls back to the plain 2-stop ramp
-  // for 'linear'.
-  // Saturation floors raised (2026-09-17, direct user report: "the
-  // visuals feel a bit plain... not getting that jolt of adrenaline") -
-  // the OLD formula's center (poolColor) leaned on a high lightness cap
-  // (+0.32, up to 0.82) with only a moderate saturation floor, which
-  // reads as a pale, washed-out pastel glow rather than a vivid pop of
-  // color - confirmed against real rendered frames from a reported
-  // video. Saturation floors raised on both stops (center AND edge) for
-  // genuinely richer color throughout; the lightness cap on the center
-  // is also trimmed slightly (0.82 -> 0.76) so "bright" doesn't mean
-  // "pale." The monotonic center-brightest/edge-darkest "pooling" shape
-  // itself (and every downstream WCAG contrast check, which computes
-  // real luminance from whatever these end up being rather than
-  // assuming a fixed range) is untouched.
-  const [baseHue, baseSat, baseLight] = hexToHsl(baseColor);
-  const poolColor = hslToHex(baseHue, Math.min(1, baseSat * 0.7 + 0.55), Math.min(0.76, baseLight + 0.32));
-  const edgeColor = hslToHex(baseHue, Math.min(1, baseSat * 0.85 + 0.25), Math.max(0.05, baseLight * 0.22));
+  // One zone per beat position now (pickBoardZoneColors' own doc comment
+  // has the full "why" - this is the actual fix for "one background the
+  // whole video"). Saturation floors / pooling derivation per zone match
+  // what the old single-zone version already used (2026-09-17 direct user
+  // report: "the visuals feel a bit plain... not getting that jolt of
+  // adrenaline") - center always brightest, edge always darkest,
+  // genuinely vivid rather than washed-out pastel.
+  const zones = pickBoardZoneColors(rand, beatRanges.length);
 
-  return {
-    positions,
-    background: {
-      startColor, endColor, shape, poolColor, edgeColor,
-    },
-  };
+  return { positions, zones, shape };
 }
 
 // Perceptual luma (ITU-R BT.601 weights) - standard "how bright does
@@ -506,80 +546,22 @@ const LIGHT_BACKGROUND_LUMA_THRESHOLD = 150; // out of 255
 // are similar but not the same" framing. Accent colors should track that
 // same per-scene reality, not one single video-wide average.
 //
-// These three helpers replicate gradientRamp's OWN exact per-pixel math
-// (engine/generateEffects.js) and renderEngine's own board-geometry setup
-// (the real frame loop's own boardCenterX/boardCenterY/RADIAL_BG_RADIUS/
-// boardBgStartPoint/boardBgEndPoint computation, a few hundred lines
-// below) so "the color at this scene's own position" here is the SAME
-// real color that scene's own viewport actually renders, not an
-// approximation - deliberately duplicated math (not extracted into one
-// shared function both places call) since the frame loop's own version
-// works in canvas-pixel space across a WIDTHxHEIGHT viewport while this
-// runs once per scene at generation-adjacent time, long before any
-// canvas exists.
-function computeBoardPositionsForColors(sceneJSON) {
-  const { beatRanges } = buildTimeline(sceneJSON);
-  return buildBoardLayoutAndBackground(sceneJSON, beatRanges).positions;
-}
-function computeBoardGeometryForColors(boardPositions, boardBackgroundDef) {
-  const boardMinX = Math.min(...boardPositions.map((p) => p.x));
-  const boardMinY = Math.min(...boardPositions.map((p) => p.y));
-  const boardMaxX = Math.max(...boardPositions.map((p) => p.x)) + WIDTH;
-  const boardMaxY = Math.max(...boardPositions.map((p) => p.y)) + HEIGHT;
-  const boardW = boardMaxX - boardMinX;
-  const boardH = boardMaxY - boardMinY;
-  const boardCenterX = boardMinX + boardW / 2;
-  const boardCenterY = boardMinY + boardH / 2;
-  const radius = Math.hypot(boardW / 2, boardH / 2);
-  const bgStartPoint = boardBackgroundDef.shape === 'radial' ? [boardCenterX, boardCenterY] : [boardMinX, boardMinY];
-  const bgEndPoint = boardBackgroundDef.shape === 'radial' ? [boardCenterX + radius, boardCenterY] : [boardMinX, boardMinY + boardH];
-  return { bgStartPoint, bgEndPoint };
-}
-function sampleBoardBackgroundColor(boardBackgroundDef, geometry, worldX, worldY) {
-  const { bgStartPoint, bgEndPoint } = geometry;
-  const dx = bgEndPoint[0] - bgStartPoint[0];
-  const dy = bgEndPoint[1] - bgStartPoint[1];
-  const lenSq = dx * dx + dy * dy || 1;
-  const radius = Math.hypot(dx, dy) || 1;
-  let t;
-  if (boardBackgroundDef.shape === 'radial') {
-    t = Math.hypot(worldX - bgStartPoint[0], worldY - bgStartPoint[1]) / radius;
-  } else {
-    const px = worldX - bgStartPoint[0];
-    const py = worldY - bgStartPoint[1];
-    t = (px * dx + py * dy) / lenSq;
-  }
-  t = Math.min(1, Math.max(0, t));
-  const stops = boardBackgroundDef.shape === 'radial'
-    ? [
-      { offset: 0, rgb: hexToRgbLocal(boardBackgroundDef.poolColor) },
-      { offset: 0.45, rgb: hexToRgbLocal(boardBackgroundDef.startColor) },
-      { offset: 1, rgb: hexToRgbLocal(boardBackgroundDef.edgeColor) },
-    ]
-    : [
-      { offset: 0, rgb: hexToRgbLocal(boardBackgroundDef.startColor) },
-      { offset: 1, rgb: hexToRgbLocal(boardBackgroundDef.endColor) },
-    ];
-  let a = stops[0]; let b = stops[stops.length - 1];
-  for (let s = 0; s < stops.length - 1; s++) {
-    if (t >= stops[s].offset && t <= stops[s + 1].offset) { a = stops[s]; b = stops[s + 1]; break; }
-  }
-  const span = b.offset - a.offset;
-  const segT = span > 0 ? (t - a.offset) / span : 0;
-  return rgbToHexLocal([
-    a.rgb[0] + (b.rgb[0] - a.rgb[0]) * segT,
-    a.rgb[1] + (b.rgb[1] - a.rgb[1]) * segT,
-    a.rgb[2] + (b.rgb[2] - a.rgb[2]) * segT,
-  ]);
-}
-// boardPositions[i] is a beat's own viewport TOP-LEFT world corner (see
-// the real frame loop's own `boardMaxX = max(positions.x) + WIDTH`, which
-// only makes sense if positions.x is an origin, not a center) - sampling
-// at its own viewport CENTER (+WIDTH/2,+HEIGHT/2) reflects what's actually
-// behind on-screen content, not an unrepresentative corner.
-function getSceneLocalBgColor(boardBackgroundDef, geometry, boardPositions, sceneIndex) {
-  const pos = boardPositions[Math.min(sceneIndex, boardPositions.length - 1)] || { x: 0, y: 0 };
-  return sampleBoardBackgroundColor(boardBackgroundDef, geometry, pos.x + WIDTH / 2, pos.y + HEIGHT / 2);
+// Each beat now owns its OWN real zone (buildBoardLayoutAndBackground's
+// own doc comment has the full "why") - a scene's local background
+// reference is simply that beat's own zone color, no geometric sampling
+// needed any more (the old version of this function, plus
+// computeBoardPositionsForColors/computeBoardGeometryForColors/
+// sampleBoardBackgroundColor it depended on, replicated gradientRamp's
+// per-pixel math just to answer "which point of the one shared gradient
+// does this beat sit near" - moot now that each beat has its own zone
+// outright, so those three helpers were removed rather than kept as dead
+// code). poolColor (the gradient's own brightest point, where on-screen
+// content actually sits for the large majority of beats - see
+// ensureHarmoniousColors' own doc comment below) is preferred over
+// startColor, same preference the old sampling-based version already had.
+function getSceneLocalBgColor(zones, sceneIndex) {
+  const zone = zones[Math.min(sceneIndex, zones.length - 1)] || zones[0];
+  return zone.poolColor || zone.startColor;
 }
 
 /**
@@ -603,7 +585,7 @@ function getSceneLocalBgColor(boardBackgroundDef, geometry, boardPositions, scen
  * handled below by ensureHarmoniousColors - this only exists to keep
  * the readable-text safety net that predates it.
  */
-function ensureTextContrastAgainstBackground(sceneJSON, boardBackgroundDef) {
+function ensureTextContrastAgainstBackground(sceneJSON, zones) {
   // Real, confirmed-live bug (2026-09-16, a full 19-template x 5-background
   // contrast audit), TWO separate real problems in the old check here,
   // found by comparing this function's own decision against a REAL WCAG
@@ -652,17 +634,15 @@ function ensureTextContrastAgainstBackground(sceneJSON, boardBackgroundDef) {
 
   // Real, direct user requirement (2026-09-16): each scene's own text
   // should be checked against THAT scene's own real local background
-  // color (see computeBoardGeometryForColors' own doc comment above for
-  // why - the shared board is one continuous gradient, and different
-  // beats sit on genuinely different points along it), not one single
-  // bgRefColor for the whole video.
-  const boardPositions = computeBoardPositionsForColors(sceneJSON);
-  const geometry = computeBoardGeometryForColors(boardPositions, boardBackgroundDef);
+  // color - now literally that beat's own zone (see
+  // buildBoardLayoutAndBackground's own doc comment), not a sampled point
+  // on a shared gradient - so different beats naturally get different
+  // bgRefColor values instead of one shared value for the whole video.
   const scenes = sceneJSON.scenes || [];
   scenes.forEach((scene, sceneIndex) => {
     const layers = scene?.visual?.layers;
     if (!Array.isArray(layers)) return;
-    const bgRefColor = getSceneLocalBgColor(boardBackgroundDef, geometry, boardPositions, sceneIndex);
+    const bgRefColor = getSceneLocalBgColor(zones, sceneIndex);
     for (const layer of layers) {
       if (!layer || typeof layer !== 'object') continue;
       if (typeof layer.fillStyle !== 'string') continue;
@@ -946,24 +926,22 @@ function buildRingAccentPair(backgroundHex, rand) {
   return { outer, inner };
 }
 
-function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
+function ensureHarmoniousColors(sceneJSON, zones) {
   // Real, direct user requirement (2026-09-16): "ensure the color the
   // nodes now use is a nice similar but visible color of THAT SPECIFIC
   // SCENE BG... no two scenes should have the exact same node's color" -
   // on top of the same-session contrast-reference fix below. Moved the
   // ENTIRE palette/remap/ring-accent construction from ONE shared
   // instance for the whole video to a fresh one PER SCENE, each seeded
-  // off that scene's own real local background color (see
-  // computeBoardGeometryForColors/getSceneLocalBgColor above) rather than
-  // one video-wide bgRefColor - two scenes on genuinely different points
-  // of the shared gradient now get genuinely different (but still
-  // harmonious, still contrast-safe) accent shades, matching how their
-  // own backgrounds already differ. The rand seed is also salted with the
-  // scene's own index so even two scenes that happen to land on the same
-  // local color still draw independently, rather than producing an
-  // identical accent by coincidence.
-  const boardPositions = computeBoardPositionsForColors(sceneJSON);
-  const geometry = computeBoardGeometryForColors(boardPositions, boardBackgroundDef);
+  // off that scene's own real local background color (now literally that
+  // beat's own zone - see buildBoardLayoutAndBackground's own doc
+  // comment) rather than one video-wide bgRefColor - two scenes now get
+  // genuinely different (but still harmonious, still contrast-safe)
+  // accent shades, matching how their own backgrounds already differ. The
+  // rand seed is also salted with the scene's own index so even two
+  // scenes that happen to land on the same local color still draw
+  // independently, rather than producing an identical accent by
+  // coincidence.
   const scenes = sceneJSON.scenes || [];
 
   scenes.forEach((scene, sceneIndex) => {
@@ -981,11 +959,9 @@ function ensureHarmoniousColors(sceneJSON, boardBackgroundDef) {
     // a color the content was never actually rendered on top of. Directly
     // reproduced: a real icon tint (#F5F3FF) measured a passing 4.96:1
     // against a test startColor but only 3.48:1 against that same
-    // background's own real poolColor. Now goes one step further than just
-    // preferring poolColor globally: samples THIS scene's own real local
-    // point on the shared gradient (see the doc comment on
-    // computeBoardGeometryForColors above).
-    const bgRefColor = getSceneLocalBgColor(boardBackgroundDef, geometry, boardPositions, sceneIndex);
+    // background's own real poolColor. getSceneLocalBgColor already
+    // prefers poolColor - see its own doc comment.
+    const bgRefColor = getSceneLocalBgColor(zones, sceneIndex);
     const rand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x9E3779B1 ^ (sceneIndex * 0x1000193));
     const palette = buildHarmoniousAccentPalette(bgRefColor, rand);
     const remap = new Map();
@@ -1330,10 +1306,10 @@ function ensureIconContrastForScene(scene, bgRefColor, harmonize) {
  */
 function harmonizeSceneColors(sceneJSON) {
   const { beatRanges } = buildTimeline(sceneJSON);
-  const { background } = buildBoardLayoutAndBackground(sceneJSON, beatRanges);
-  ensureTextContrastAgainstBackground(sceneJSON, background);
-  ensureHarmoniousColors(sceneJSON, background);
-  return background;
+  const { zones } = buildBoardLayoutAndBackground(sceneJSON, beatRanges);
+  ensureTextContrastAgainstBackground(sceneJSON, zones);
+  ensureHarmoniousColors(sceneJSON, zones);
+  return zones;
 }
 
 /** Standard ease-in-out-cubic - explicitly requested ("MAKE SURE THE MOVEMENT IS CUBIC") for the camera pan, smooth acceleration then deceleration rather than a linear/robotic glide. */
@@ -1354,7 +1330,7 @@ function harmonizeSceneColors(sceneJSON) {
  * so, like the gradient itself, this only ever gets (re)computed when
  * the camera position actually changes, not on every single frame.
  */
-function generateAmbientOrbs(sceneJSON, boardPositions, backgroundDef) {
+function generateAmbientOrbs(sceneJSON, boardPositions, zones) {
   // Independent stream from both the board-layout rand() (positions/
   // background hue, seeded plain) and ensureHarmoniousColors' own
   // ^0x9E3779B1 stream - this one must never perturb either of those
@@ -1362,9 +1338,15 @@ function generateAmbientOrbs(sceneJSON, boardPositions, backgroundDef) {
   // constant (a standard MurmurHash3 fmix constant, unrelated to the
   // golden-ratio one already in use elsewhere in this file).
   const rand = mulberry32(hashSceneJSONToSeed(sceneJSON) ^ 0x85ebca6b);
-  const [bgH] = hexToHsl(backgroundDef.startColor);
-  const isLight = relativeLuma(hexToRgbLocal(backgroundDef.startColor)) > LIGHT_BACKGROUND_LUMA_THRESHOLD;
-  const makeOrb = (x, y) => {
+  // Takes the zone nearest whatever position this orb is anchored to
+  // (2026-09-18: each beat now has its own zone - see
+  // buildBoardLayoutAndBackground's own doc comment) instead of one
+  // global hue for every orb on the board, so the ambient atmosphere
+  // shifts along with the background instead of clashing with it once
+  // the camera moves to a differently-hued beat.
+  const makeOrb = (x, y, zone) => {
+    const [bgH] = hexToHsl(zone.startColor);
+    const isLight = relativeLuma(hexToRgbLocal(zone.startColor)) > LIGHT_BACKGROUND_LUMA_THRESHOLD;
     const hue = bgH + (rand() * 50 - 25); // analogous - same harmony rule ensureHarmoniousColors already uses
     const sat = 0.35 + rand() * 0.25; // soft, not a vivid accent - this is atmosphere, not a focal element
     const light = isLight ? 0.5 + rand() * 0.18 : 0.62 + rand() * 0.2;
@@ -1388,16 +1370,18 @@ function generateAmbientOrbs(sceneJSON, boardPositions, backgroundDef) {
   // in bbox regions the camera never crops into.
   const SPREAD = Math.max(WIDTH, HEIGHT) * 0.85;
   const orbs = [];
-  for (const pos of boardPositions) {
-    for (let i = 0; i < 6; i++) {
-      orbs.push(makeOrb(pos.x + (rand() * 2 - 1) * SPREAD, pos.y + (rand() * 2 - 1) * SPREAD));
+  boardPositions.forEach((pos, i) => {
+    const zone = zones[Math.min(i, zones.length - 1)];
+    for (let k = 0; k < 6; k++) {
+      orbs.push(makeOrb(pos.x + (rand() * 2 - 1) * SPREAD, pos.y + (rand() * 2 - 1) * SPREAD, zone));
     }
-  }
+  });
   for (let i = 1; i < boardPositions.length; i++) {
     const midX = (boardPositions[i - 1].x + boardPositions[i].x) / 2;
     const midY = (boardPositions[i - 1].y + boardPositions[i].y) / 2;
-    orbs.push(makeOrb(midX + (rand() * 2 - 1) * SPREAD * 0.5, midY + (rand() * 2 - 1) * SPREAD * 0.5));
-    orbs.push(makeOrb(midX + (rand() * 2 - 1) * SPREAD * 0.5, midY + (rand() * 2 - 1) * SPREAD * 0.5));
+    const zone = zones[Math.min(i, zones.length - 1)];
+    orbs.push(makeOrb(midX + (rand() * 2 - 1) * SPREAD * 0.5, midY + (rand() * 2 - 1) * SPREAD * 0.5, zone));
+    orbs.push(makeOrb(midX + (rand() * 2 - 1) * SPREAD * 0.5, midY + (rand() * 2 - 1) * SPREAD * 0.5, zone));
   }
   return orbs;
 }
@@ -1834,9 +1818,9 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   fs.mkdirSync(framesDir, { recursive: true });
 
   const { beatRanges } = buildTimeline(sceneJSON);
-  const { positions: boardPositions, background: boardBackgroundDef } = buildBoardLayoutAndBackground(sceneJSON, beatRanges);
-  ensureTextContrastAgainstBackground(sceneJSON, boardBackgroundDef);
-  ensureHarmoniousColors(sceneJSON, boardBackgroundDef);
+  const { positions: boardPositions, zones: boardZones, shape: boardShape } = buildBoardLayoutAndBackground(sceneJSON, beatRanges);
+  ensureTextContrastAgainstBackground(sceneJSON, boardZones);
+  ensureHarmoniousColors(sceneJSON, boardZones);
 
   // The ONE shared background, logically covering every position the
   // camera can ever be parked at (each beat's own WIDTHxHEIGHT
@@ -1886,18 +1870,27 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   // the board's far corner) is the best available balance point - a
   // meaningfully large fraction of beats show real, visible internal
   // falloff, though not the dramatic center-to-edge contrast reference
-  // material shows within a single frame. Getting genuinely reference-
-  // grade vignette on every beat would need the gradient's own hot
-  // center to track near wherever the camera currently is, which is a
-  // materially different design than "one fixed background the camera
-  // pans across" - a real product decision, not a bug, so left alone
-  // here rather than silently overridden.
+  // material shows within a single frame.
+  //
+  // UPDATE (2026-09-18, real tester feedback: "it's just using one
+  // background... at least it's supposed to change"): the "materially
+  // different design" this comment used to decline is now exactly what
+  // buildBoardLayoutAndBackground implements - one zone PER BEAT instead
+  // of one for the whole board (see its own doc comment). The gradient
+  // AXIS/geometry below is still one fixed pair of world-space anchor
+  // points for the whole board (unaffected - varying axis geometry per
+  // zone would need much more invasive changes for no real benefit over
+  // varying hue), but the COLORS sampled onto that axis each frame now
+  // come from whichever beat(s) the camera is actually near (see
+  // `effectiveBg` in the frame loop below), so the vignette's hot center
+  // now effectively tracks the camera the way this comment used to say
+  // would require a different design.
   const boardCenterX = boardMinX + boardW / 2;
   const boardCenterY = boardMinY + boardH / 2;
   const RADIAL_BG_RADIUS = Math.hypot(boardW / 2, boardH / 2);
-  const boardBgStartPoint = boardBackgroundDef.shape === 'radial'
+  const boardBgStartPoint = boardShape === 'radial'
     ? [boardCenterX, boardCenterY] : [boardMinX, boardMinY];
-  const boardBgEndPoint = boardBackgroundDef.shape === 'radial'
+  const boardBgEndPoint = boardShape === 'radial'
     ? [boardCenterX + RADIAL_BG_RADIUS, boardCenterY] : [boardMinX, boardMinY + boardH];
 
   // Every beat overlapping this chunk's own [timeStart,timeEnd) range
@@ -1957,7 +1950,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   let cachedBgCanvas = null;
   let cachedBgCamX = null;
   let cachedBgCamY = null;
-  const ambientOrbs = generateAmbientOrbs(sceneJSON, boardPositions, boardBackgroundDef);
+  const ambientOrbs = generateAmbientOrbs(sceneJSON, boardPositions, boardZones);
   // Direct user spec: fog/motes/grain/pulse - unlike the gradient and
   // static orbs/rings above, these genuinely animate over TIME (drift,
   // scroll, pulse), not just camera position, so they can't live in the
@@ -1967,7 +1960,12 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
   // small circle fills, not per-pixel loops like gradientRamp) since
   // "every frame, no caching possible" is exactly the cost profile the
   // cache above was built to avoid paying for the background itself.
-  const atmosphere = generateAtmosphereField(sceneJSON, boardBackgroundDef);
+  // Viewport-space ambient field (fog/motes/grain), computed once - see
+  // generateAtmosphereField's own doc comment for why it's not tied to a
+  // specific world position the way the gradient/orbs are, so a single
+  // representative zone (the first beat's) is a fine, low-risk baseline
+  // rather than needing the same per-frame per-zone treatment.
+  const atmosphere = generateAtmosphereField(sceneJSON, { ...boardZones[0], shape: boardShape });
   const grainTexture = buildGrainTexture(hashSceneJSONToSeed(sceneJSON) ^ 0x27d4eb2f);
 
   const canvas = createCanvas(WIDTH, HEIGHT);
@@ -2031,6 +2029,41 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         impactShakeY = (pseudoRandom01(seed + 91.7) * 2 - 1) * IMPACT_SHAKE_MAGNITUDE * decay;
       }
 
+      // Camera position, in BOARD space, is a cubic-eased interpolation
+      // from the previous beat's own spot to this beat's WHILE panning,
+      // or simply parked exactly on the current beat's spot otherwise -
+      // computed ONCE and reused for both the shared background draw
+      // and the beat canvas(es) below, so they always agree on exactly
+      // what the viewport is looking at. Moved above the impact-shake
+      // block (was below it) so effectiveBg, just below, is available
+      // for the shake's own pre-fill color too.
+      let camX, camY, panProgress;
+      if (inPan) {
+        panProgress = easeInOutCubic(Math.min(1, Math.max(0, localT / panDuration)));
+        const prevPos = boardPositions[beatIndex - 1];
+        const currPos = boardPositions[beatIndex];
+        camX = prevPos.x + (currPos.x - prevPos.x) * panProgress;
+        camY = prevPos.y + (currPos.y - prevPos.y) * panProgress;
+      } else {
+        camX = boardPositions[beatIndex].x;
+        camY = boardPositions[beatIndex].y;
+      }
+
+      // Real tester feedback (2026-09-18): "it's just using one
+      // background... at least it's supposed to change." The board's
+      // color now genuinely depends on which beat the camera is actually
+      // at/traveling between - parked exactly on a beat uses that beat's
+      // own zone outright; mid-pan cross-fades smoothly from the outgoing
+      // beat's zone to the incoming one using the SAME panProgress the
+      // camera position itself already eases on, so the color arrives
+      // exactly when the camera does. Cheap (a handful of RGB lerps, not
+      // a per-pixel loop) so it's fine to compute fresh every frame
+      // regardless of the gradientRamp cache below.
+      const zoneA = boardZones[Math.min(beatIndex, boardZones.length - 1)];
+      const effectiveBg = inPan
+        ? lerpBoardZones(boardZones[Math.min(beatIndex - 1, boardZones.length - 1)], zoneA, panProgress)
+        : zoneA;
+
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
       // Real bug caught on the first test render: translating the WHOLE
       // frame (background included) for the shake below exposes a thin
@@ -2043,29 +2076,11 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       // paid on actual impact frames, never on the vast majority with no
       // shake at all.
       if (impactShakeX !== 0 || impactShakeY !== 0) {
-        ctx.fillStyle = boardBackgroundDef.poolColor || boardBackgroundDef.startColor;
+        ctx.fillStyle = effectiveBg.poolColor || effectiveBg.startColor;
         ctx.fillRect(0, 0, WIDTH, HEIGHT);
       }
       ctx.save();
       ctx.translate(impactShakeX, impactShakeY);
-
-      // Camera position, in BOARD space, is a cubic-eased interpolation
-      // from the previous beat's own spot to this beat's WHILE panning,
-      // or simply parked exactly on the current beat's spot otherwise -
-      // computed ONCE and reused for both the shared background draw
-      // and the beat canvas(es) below, so they always agree on exactly
-      // what the viewport is looking at.
-      let camX, camY, panProgress;
-      if (inPan) {
-        panProgress = easeInOutCubic(Math.min(1, Math.max(0, localT / panDuration)));
-        const prevPos = boardPositions[beatIndex - 1];
-        const currPos = boardPositions[beatIndex];
-        camX = prevPos.x + (currPos.x - prevPos.x) * panProgress;
-        camY = prevPos.y + (currPos.y - prevPos.y) * panProgress;
-      } else {
-        camX = boardPositions[beatIndex].x;
-        camY = boardPositions[beatIndex].y;
-      }
 
       // The ONE shared background, panned under everything else - beats
       // themselves render with a transparent backdrop now (no more
@@ -2088,22 +2103,22 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         viewportBg = gradientRamp(WIDTH, HEIGHT, {
           startPoint: [boardBgStartPoint[0] - camX, boardBgStartPoint[1] - camY],
           endPoint: [boardBgEndPoint[0] - camX, boardBgEndPoint[1] - camY],
-          startColor: boardBackgroundDef.startColor,
-          endColor: boardBackgroundDef.endColor,
+          startColor: effectiveBg.startColor,
+          endColor: effectiveBg.endColor,
           // Radial only - see buildBoardLayoutAndBackground's own doc
           // comment for poolColor/edgeColor. A linear ramp has no real
           // "center" for a light pool to make sense at, so it keeps the
           // plain 2-stop startColor/endColor ramp untouched.
-          colorStops: boardBackgroundDef.shape === 'radial' ? [
-            { offset: 0, color: boardBackgroundDef.poolColor },
-            { offset: 0.45, color: boardBackgroundDef.startColor },
-            { offset: 1, color: boardBackgroundDef.edgeColor },
+          colorStops: boardShape === 'radial' ? [
+            { offset: 0, color: effectiveBg.poolColor },
+            { offset: 0.45, color: effectiveBg.startColor },
+            { offset: 1, color: effectiveBg.edgeColor },
           ] : undefined,
-          shape: boardBackgroundDef.shape,
+          shape: boardShape,
           dither: false,
         });
-        drawWorldGrid(viewportBg.getContext('2d'), boardBackgroundDef, camX, camY, WIDTH, HEIGHT);
-        drawStaticEnergyRings(viewportBg.getContext('2d'), boardPositions, boardBackgroundDef, camX, camY, WIDTH, HEIGHT);
+        drawWorldGrid(viewportBg.getContext('2d'), effectiveBg, camX, camY, WIDTH, HEIGHT);
+        drawStaticEnergyRings(viewportBg.getContext('2d'), boardPositions, effectiveBg, camX, camY, WIDTH, HEIGHT);
         drawAmbientOrbs(viewportBg.getContext('2d'), ambientOrbs, camX, camY, WIDTH, HEIGHT);
         cachedBgCanvas = viewportBg;
         cachedBgCamX = camX;
