@@ -392,7 +392,7 @@ const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 // split thinner. Real per-frame cost is CPU-bound (confirmed via actual
 // profiling, not assumed - see the same memory file), which is exactly
 // what sibling pooling multiplies, unlike same-worker concurrency.
-const MAX_WORKERS_PER_JOB = 5;
+const MAX_WORKERS_PER_JOB = 7;
 
 // 2026-09-16: "limit it to one render worker, dont split it into 2" -
 // cross-worker chunk pooling (recruiting SIBLING workers to render some
