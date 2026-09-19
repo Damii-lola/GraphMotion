@@ -86,8 +86,8 @@ require('./engine/fonts');
 // production timeouts, from the LAST time this pipeline ran at a
 // bigger-than-delivered internal resolution for a completely different
 // reason - supersampled anti-aliasing, since reverted).
-const LOGICAL_WIDTH = 540;
-const LOGICAL_HEIGHT = 960;
+const LOGICAL_WIDTH = 480;
+const LOGICAL_HEIGHT = 854;
 // WIDTH/HEIGHT: the actually DELIVERED output resolution - direct user
 // request (2026-09-05) to raise it from the original 540x960. Raised
 // ONLY here, not LOGICAL_WIDTH/HEIGHT above - every beat's own content
@@ -111,8 +111,8 @@ const LOGICAL_HEIGHT = 960;
 // The withLogicalScale architecture above works in either direction
 // regardless - beat content still builds at the cheap LOGICAL_WIDTH/
 // HEIGHT and gets scaled to whatever WIDTH/HEIGHT ends up being.
-const WIDTH = 760;
-const HEIGHT = 1352;
+const WIDTH = 540;
+const HEIGHT = 960;
 const CONTENT_SCALE_X = WIDTH / LOGICAL_WIDTH;
 const CONTENT_SCALE_Y = HEIGHT / LOGICAL_HEIGHT;
 
