@@ -1177,6 +1177,22 @@ function pickContrastSafeTint(behindHex, baseAccentHex) {
 // no container shape at all).
 function resolveIconBackdropRule(layerId) {
   if (layerId === '__phone_icon__' || layerId === '__phone_text__') return { fixed: '#F5F3FF' };
+  // Real, confirmed-live contrast bug (2026-09-22): this text sits well
+  // off the canvas's true center (YEAR_SCROLLER_TEXT_CENTER_X=370 vs
+  // center 270), where the board's own single per-scene contrast
+  // reference (that zone's poolColor, its gradient's own BRIGHTEST
+  // point) can diverge sharply from the gradient's real, much-darker
+  // color at this specific off-center position - sceneSchema.js's own
+  // buildYearScrollerLayers fix for this gives the text a fixed color
+  // PLUS a guaranteed dark scrim behind it, so the scene-wide guess this
+  // function's caller would otherwise apply needs to stay out of the way
+  // entirely rather than override that deliberate, already-safe choice.
+  if (layerId === '__yearscroller_text__') return { fixed: '#F5F3FF' };
+  // Same off-center reference-mismatch as the text above - '#F5F3FF' here
+  // mirrors sceneSchema.js's own ICON_BRIGHT_TINT constant exactly (kept
+  // as a literal, not imported, matching this file's existing dependency-
+  // free convention from sceneSchema.js).
+  if (/^__yearscroller_row_\d+__$/.test(layerId)) return { fixed: '#F5F3FF' };
   if (/^__spin_badge\d+_icon__$/.test(layerId)) return { fixed: '#18140F' };
   if (/^__node_icon_\d+__selected$/.test(layerId)) return { fill: '__node_hero_fill__' };
   if (layerId === '__nce_result_icon__') return { fill: '__nce_result_bg__' };
