@@ -10363,6 +10363,39 @@ function buildYearScrollerLayers({ year, text, accentColor }) {
     },
   });
 
+  // Real, confirmed-live complaint (round-3 QA, 2026-09-18): "yearScroller
+  // crams countdown into left third (right 60% empty)" - true only during
+  // the scroll phase itself, before the zoom+text reveal (which already
+  // balances the frame with YEAR_SCROLLER_TEXT_CENTER_X=370, well to the
+  // right). Same cheap, stroke-only-ellipse fix as counter/
+  // dotConstellation's own matching complaints - centered between the
+  // list and the empty right side to visually bridge them. Pushed here,
+  // right after the group/before the oval+rows, so it renders BEHIND the
+  // scrolling digits rather than drawing its stroke line over them.
+  // Unparented (not attached to __yearscroller_group__) so it stays put
+  // and simply fades out before the zoom drags the group away, rather
+  // than zooming/panning along with it.
+  layers.push({
+    id: '__yearscroller_orbit_ring__',
+    type: 'shape',
+    width: 480,
+    height: 560,
+    position: [YEAR_SCROLLER_CENTER_X + 90, YEAR_SCROLLER_CENTER_Y],
+    rotation: { expression: 'time * -7', base: 0 },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: 0.5, value: 0.13, interpolation: 'easing', easing: 'easeInCubic' },
+        { time: timing.zoomStart - 0.3, value: 0.13 },
+        { time: timing.zoomStart, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: 480, height: 560 } } },
+      { type: 'stroke', color: accentColor, width: 2 },
+    ],
+  });
+
   // Direct spec: "remove that line, instead make the oval visible with
   // the color the line had" - a stroked (not filled) outline of the
   // exact ellipse the rows travel along: width/height = 2*ARC_RADIUS.
@@ -11378,6 +11411,48 @@ function buildCounterLayers({
     ],
   });
 
+  // Real, confirmed-live complaint (round-3 QA, 2026-09-18): "counter
+  // beat especially - 70%+ empty vertical frame around a small centered
+  // digit." COUNTER_BG_GLOW_SIZE is deliberately small (260px, see its
+  // own doc comment - a real 227MB memory-budget overage previously
+  // forced it down from 320) so simply enlarging that glow risks
+  // reopening the exact memory regression this codebase already paid to
+  // fix once. Filling the frame here instead with plain STROKE-only
+  // ellipses - no fill, no blur/glow effect, so no offscreen raster
+  // buffer gets allocated at all (the actual cost driver behind the
+  // glow's own size cap) - slowly counter-rotating for the same
+  // "nothing should go dead-still" reasoning this file's other templates
+  // already use, at real memory cost roughly equivalent to one more
+  // stroked shape (negligible next to a blurred fill).
+  const COUNTER_ORBIT_CENTER_Y = (COUNTER_CENTER_Y + COUNTER_CAPTION_CENTER_Y) / 2;
+  [
+    {
+      id: '__counter_orbit_outer__', width: 340, height: 560, opacity: 0.16, rotSpeed: 9,
+    },
+  ].forEach(({
+    id, width, height, opacity, rotSpeed,
+  }) => {
+    layers.push({
+      id,
+      type: 'shape',
+      width,
+      height,
+      position: [numberCenterX, COUNTER_ORBIT_CENTER_Y],
+      rotation: { expression: `time * ${rotSpeed}`, base: 0 },
+      opacity: {
+        keyframes: [
+          { time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+          { time: COUNTER_POP_DURATION + 0.2, value: opacity, interpolation: 'easing', easing: 'easeInCubic' },
+          { time: timing.exitStart, value: opacity },
+          { time: timing.exitEnd, value: 0 },
+        ],
+      },
+      contents: [
+        { type: 'path', shape: { kind: 'ellipse', params: { width, height } } },
+        { type: 'stroke', color: accentColor, width: 2 },
+      ],
+    });
+  });
 
   // Direct spec: "avoid smooth linear counting - short, aggressive
   // bursts with strong ease-out on each major jump." 4 discrete jumps
@@ -13943,7 +14018,39 @@ function buildDotConstellationLayers({ text, accentColor }) {
     ],
   };
 
+  // Real, confirmed-live complaint (round-3 QA, 2026-09-18):
+  // "dotConstellation wave sits in vertical middle third, top/bottom
+  // thirds empty" - the dot row (DC_DOT_Y=460) and caption (DC_TEXT_Y=
+  // 560) together only span roughly Y 400-620 on a 960-tall canvas.
+  // Same fix as counter's own matching complaint: a plain STROKE-only
+  // ellipse (no fill, no blur/glow effect) behind everything, cheap
+  // enough to not risk the memory budget a filled/blurred shape this
+  // size would - see buildCounterLayers' own doc comment for the full
+  // "why not just make the glow bigger" reasoning, identical here.
+  const dcOrbitCenterY = (DC_DOT_Y + DC_TEXT_Y) / 2;
+  const dcOrbitRing = {
+    id: '__dc_orbit_ring__',
+    type: 'shape',
+    width: 460,
+    height: 680,
+    position: [DC_CX, dcOrbitCenterY],
+    rotation: { expression: 'time * 8', base: 0 },
+    opacity: {
+      keyframes: [
+        { time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
+        { time: t.travelEnd + 0.2, value: 0.14, interpolation: 'easing', easing: 'easeInCubic' },
+        { time: t.outroStart, value: 0.14 },
+        { time: t.outroStart + 0.3, value: 0 },
+      ],
+    },
+    contents: [
+      { type: 'path', shape: { kind: 'ellipse', params: { width: 460, height: 680 } } },
+      { type: 'stroke', color: accentColor, width: 2 },
+    ],
+  };
+
   return [
+    dcOrbitRing,
     ...trails,
     ...dots,
     ...arcs,
