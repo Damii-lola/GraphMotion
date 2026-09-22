@@ -586,13 +586,18 @@ async function generateCompactBeatSpec(userPrompt, {
   userMessage += `\n\nCreative angle for this generation: ${pickRandomCreativeAngle()}`;
   if (priorErrors) userMessage += `\n\nYour previous attempt was invalid:\n${priorErrors.join('\n')}\n\nFix these specific problems and output the complete, corrected JSON.`;
 
-  // 1500 -> 3000 -> 4096 (2026-09-09): a real local test hit finish_reason:
-  // "length" at 1500, then AGAIN at 3000, once the model tried to write
-  // out 6+ full beats worth of JSON (icons arrays, labels, a retry's own
-  // echoed prior-error text, etc.) - Cloudflare's free tier has no
-  // per-token cost the way the earlier paid MiniMax path did, so there's
-  // no real downside to generous headroom here; calls stay in the
-  // single-digit seconds regardless.
+  // 1500 -> 3000 -> 4096 -> 8192 (2026-09-22): real production logs showed
+  // repeated `response was truncated (hit max_tokens=4096)` failures,
+  // several jobs burning through most of their retry budget on this
+  // alone - the system prompt has grown substantially since the 4096
+  // figure was set (enumeration rule, coherence rule, counter honesty
+  // rule, the full solar icon table, the filler-narration denylist, all
+  // added this same session), and a 6-beat response with icons/labels
+  // plus a retry's own echoed prior-error text routinely needs more room
+  // now. Verified directly against the real API before raising this:
+  // a live call with max_tokens=8192 returned 200 with a clean response,
+  // so this is comfortably under whatever Cloudflare's own ceiling is.
+  // Free tier, no per-token cost - no real downside to the headroom.
   let raw;
   try {
     // 0.8 -> 0.5 (2026-09-09): real local testing found this small 8B
@@ -602,7 +607,7 @@ async function generateCompactBeatSpec(userPrompt, {
     // well-established lever for exactly that failure mode on a small
     // model, at the cost of somewhat less varied phrasing, which matters
     // far less here than actually landing a valid spec.
-    raw = await callCloudflareRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 4096, temperature: 0.5 });
+    raw = await callCloudflareRaw(systemPrompt, userMessage, { jsonMode: true, maxTokens: 8192, temperature: 0.5 });
   } catch (err) {
     // Real, confirmed-live bug (2026-09-09): this call was never wrapped
     // in the retry loop at all - a transport failure (truncation, a
