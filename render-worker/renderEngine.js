@@ -1789,6 +1789,57 @@ function remapForExitHold(t, exitStart, exitEnd, contentDuration) {
   return exitStart + (t - holdUntil);
 }
 
+// Real, direct user complaint (2026-09-22, extremely emphatic - "for a
+// MAJORITY of allll scenes, after the scene ends... it HOLDS at the
+// end... it's not even a good end scene, it's the scene when either
+// all the nodes have disappeared or the nodes have shrunk down"):
+// the settle-breathe wobble above stops a beat's own final composition
+// from looking literally frozen, but it does nothing about the
+// composition ITSELF being sparse - a real, structural fact for most
+// of this file's "many things become one" templates (nodeCluster's own
+// non-chosen icons "dissolve" once one is picked, mergeCluster/
+// splitConverge/nodeClusterExtended converge several icons down to a
+// single result, tripleStack settles smaller) - once real narration
+// duration runs well past that natural conclusion, the beat spends its
+// remaining real time sitting on the SPARSEST frame of its own
+// timeline, gently breathing or not. Rather than hand-editing each of
+// those templates' own "what's left after the collapse" moment
+// individually (real risk of disturbing hard-tuned timing across many
+// templates for a render-level pacing problem), this draws a plain,
+// cheap, template-agnostic decorative backdrop - two faint counter-
+// rotating rings, same stroke-only/no-fill/no-blur real-memory-cost
+// discipline as this file's own counter/dotConstellation/yearScroller
+// fixes - centered on this file's own conventional "hero content"
+// point (CANVAS_WIDTH/2, CANVAS_HEIGHT*0.42, the same center every one
+// of the affected templates already builds around) so ANY beat's
+// extended hold reads as "something is still visually happening here"
+// regardless of which of the 19 templates it is, without touching a
+// single template's own timing.
+const SETTLE_RING_CENTER_X = LOGICAL_WIDTH / 2;
+const SETTLE_RING_CENTER_Y = LOGICAL_HEIGHT * 0.42;
+function drawSettleRings(ctx, past) {
+  const fadeIn = Math.min(1, past / 0.6);
+  const rings = [
+    { w: 420, h: 420, speed: 7, opacity: 0.1 },
+    { w: 330, h: 330, speed: -10, opacity: 0.08 },
+  ];
+  ctx.save();
+  ctx.translate(SETTLE_RING_CENTER_X, SETTLE_RING_CENTER_Y);
+  rings.forEach(({
+    w, h, speed, opacity,
+  }) => {
+    ctx.save();
+    ctx.rotate((past * speed * Math.PI) / 180);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, w / 2, h / 2, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(255,255,255,${opacity * fadeIn})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
 function withSettleBreathe(drawFn, settleAt) {
   if (typeof settleAt !== 'number' || !(settleAt >= 0)) return drawFn;
   return (ctx, t) => {
@@ -1796,6 +1847,7 @@ function withSettleBreathe(drawFn, settleAt) {
     if (past <= 0) { drawFn(ctx, t); return; }
     const wobble = Math.sin((past / SETTLE_BREATHE_PERIOD) * Math.PI * 2) * SETTLE_BREATHE_AMOUNT;
     const scale = 1 + wobble;
+    drawSettleRings(ctx, past);
     ctx.save();
     ctx.translate(LOGICAL_WIDTH / 2, LOGICAL_HEIGHT / 2);
     ctx.scale(scale, scale);
