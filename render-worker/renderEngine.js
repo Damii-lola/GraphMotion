@@ -86,8 +86,8 @@ require('./engine/fonts');
 // production timeouts, from the LAST time this pipeline ran at a
 // bigger-than-delivered internal resolution for a completely different
 // reason - supersampled anti-aliasing, since reverted).
-const LOGICAL_WIDTH = 480;
-const LOGICAL_HEIGHT = 854;
+const LOGICAL_WIDTH = 540;
+const LOGICAL_HEIGHT = 960;
 // WIDTH/HEIGHT: the actually DELIVERED output resolution - direct user
 // request (2026-09-05) to raise it from the original 540x960. Raised
 // ONLY here, not LOGICAL_WIDTH/HEIGHT above - every beat's own content
@@ -111,6 +111,22 @@ const LOGICAL_HEIGHT = 854;
 // The withLogicalScale architecture above works in either direction
 // regardless - beat content still builds at the cheap LOGICAL_WIDTH/
 // HEIGHT and gets scaled to whatever WIDTH/HEIGHT ends up being.
+// 760x1352 -> 540x960 (2026-09-19, direct manual edit): delivered
+// resolution lowered again for memory/speed - a real, reasonable choice
+// on its own, but LOGICAL_WIDTH/HEIGHT above got changed ALONGSIDE it
+// (to 480x854) rather than left alone, which is what actually broke:
+// every beat's own content is built against sceneSchema.js's
+// CANVAS_WIDTH/CANVAS_HEIGHT (540x960, hardcoded there, never imported
+// from here) - LOGICAL_WIDTH/HEIGHT MUST always equal those exactly,
+// regardless of what WIDTH/HEIGHT delivers at, or content authored for
+// a 540x960 canvas gets scaled by the wrong factor and both clips off
+// the right/bottom edge and drifts off-center (confirmed via a real
+// render: a dotConstellation beat's 5th dot and part of its own
+// decorative ring rendered cut off past the right edge, with the whole
+// composition shifted left of true center). Restored to 540x960 here -
+// with WIDTH/HEIGHT now ALSO 540x960, CONTENT_SCALE_X/Y below are
+// exactly 1 (no upscale step at all), which is actually a further,
+// free speed/memory win on top of the delivered-resolution drop itself.
 const WIDTH = 540;
 const HEIGHT = 960;
 const CONTENT_SCALE_X = WIDTH / LOGICAL_WIDTH;
