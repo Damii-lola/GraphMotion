@@ -1756,6 +1756,39 @@ function withBeatZoom(drawFn, beatDuration, width, height) {
 // visibly alive instead of static.
 const SETTLE_BREATHE_AMOUNT = 0.022;
 const SETTLE_BREATHE_PERIOD = 2.6;
+// Real, confirmed-live bug found investigating the complaint above more
+// deeply (2026-09-22, direct frame-accurate inspection of a real
+// generated video): withSettleBreathe alone isn't enough for every
+// template - several (buttonDraw, counter, yearScroller,
+// dotConstellation, and likely others) don't just HOLD their final
+// state past their own natural finish, they have a hard, designed EXIT
+// (a button sliding off-canvas, digits/caption fading to nothing, dots
+// launching away) timed at a FIXED offset from their own start,
+// completely independent of the beat's real duration. When real
+// narration stretches a beat well past that fixed exit point, the
+// content doesn't go stale-but-visible - it goes COMPLETELY BLANK for
+// however much real time remains, which no amount of breathing motion
+// on an empty canvas can fix (confirmed directly: a buttonDraw beat's
+// own exit fired at ~3.2s, then rendered a bare background for a real
+// 3+ seconds in a live video before the beat ended). Fixed with a time
+// remap on the CONTENT clock itself: once elapsed time passes
+// exitStart (the last fully-visible instant, stashed onto
+// beat.mograph.__exitStart alongside __settleAt), FREEZE the clock
+// there - extending the hold indefinitely - and only let it resume
+// (so the exit plays out normally) once the real remaining time
+// exactly matches how long the exit itself takes, so it always
+// finishes right as the beat ends instead of firing early. A template
+// with no __exitStart (the hold-style templates withSettleBreathe
+// already handled fine) is untouched - this returns `t` unchanged.
+function remapForExitHold(t, exitStart, exitEnd, contentDuration) {
+  if (typeof exitStart !== 'number' || typeof exitEnd !== 'number' || !(contentDuration > 0)) return t;
+  if (t <= exitStart) return t;
+  const exitDur = Math.max(0, exitEnd - exitStart);
+  const holdUntil = Math.max(exitStart, contentDuration - exitDur);
+  if (t < holdUntil) return exitStart;
+  return exitStart + (t - holdUntil);
+}
+
 function withSettleBreathe(drawFn, settleAt) {
   if (typeof settleAt !== 'number' || !(settleAt >= 0)) return drawFn;
   return (ctx, t) => {
@@ -2083,7 +2116,9 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
       // never partway (or, for a fast template like squareSpin,
       // entirely) burned before it's even visible.
       const beatLocalT = Math.max(0, localT - panDuration);
-      const settleAt = sceneJSON.scenes[beatIndex]?.mograph?.__settleAt;
+      const beatMograph = sceneJSON.scenes[beatIndex]?.mograph;
+      const settleAt = beatMograph?.__settleAt;
+      const exitStart = beatMograph?.__exitStart;
 
       // Impacts only apply once a beat is actually parked and playing
       // its own content, not mid pan-transition (a shake/flash during
@@ -2213,7 +2248,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
           frozenFrameCache.set(beatIndex - 1, prevCanvas);
         }
         transitionCurrCtx.clearRect(0, 0, WIDTH, HEIGHT);
-        renderWithMotionBlur(transitionCurrCtx, WIDTH, HEIGHT, beatLocalT, FRAME_DURATION, withLogicalScale(withBeatZoom(withSettleBreathe((c, st) => visualObj.render(c, st), settleAt), range.contentDuration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
+        renderWithMotionBlur(transitionCurrCtx, WIDTH, HEIGHT, beatLocalT, FRAME_DURATION, withLogicalScale(withBeatZoom(withSettleBreathe((c, st) => visualObj.render(c, remapForExitHold(st, exitStart, settleAt, range.contentDuration)), settleAt), range.contentDuration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
 
         // Drawing each beat's canvas at (itsBoardPos - camera) is what
         // actually produces the pan: at progress 0 the previous beat's
@@ -2265,7 +2300,7 @@ async function renderTimelineRange(sceneJSON, timeStart, timeEnd, outputPath, on
         drawZoomed(prevCanvas, prevPos.x - camX, prevPos.y - camY, outScale, 1 - panProgress);
         drawZoomed(transitionCurrCanvas, currPos.x - camX, currPos.y - camY, inScale, panProgress);
       } else {
-        renderWithMotionBlur(ctx, WIDTH, HEIGHT, beatLocalT, FRAME_DURATION, withLogicalScale(withBeatZoom(withSettleBreathe((c, st) => visualObj.render(c, st), settleAt), range.contentDuration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
+        renderWithMotionBlur(ctx, WIDTH, HEIGHT, beatLocalT, FRAME_DURATION, withLogicalScale(withBeatZoom(withSettleBreathe((c, st) => visualObj.render(c, remapForExitHold(st, exitStart, settleAt, range.contentDuration)), settleAt), range.contentDuration, LOGICAL_WIDTH, LOGICAL_HEIGHT)), MOTION_BLUR_CONFIG);
       }
 
       // Undoes the impact-shake translate above - the flash right below

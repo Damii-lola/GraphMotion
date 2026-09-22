@@ -16530,6 +16530,39 @@ function clampMographDuration(beat, completeTime, minHold = 0.25) {
   beat.params.duration = Math.min(Math.max(beat.params.duration, lo), hi);
 }
 
+// Same __settleAt stashing as clampMographDuration above (see its own
+// doc comment for the full "why"), for the OTHER half of this file's
+// templates: textPopOut/textTiers/blueprintText/yearScroller/counter/
+// lineReveal/typewriterLink/dotConstellation/buttonDraw/mouseWordDrag
+// don't clamp an AI-authored duration against a completeTime - they set
+// beat.params.duration directly to their own exact "just enough time"
+// XMinDuration() value (that value already IS this template's own real
+// completeTime, no separate arithmetic needed). Confirmed missing this
+// mattered via a real live video (2026-09-22): a buttonDraw beat's own
+// button fully exits (its own designed slide-off-canvas outro) then
+// leaves a genuinely BLANK frame - not just a stale hold, nothing at
+// all - for 3 real seconds once real narration duration ran well past
+// buttonDrawMinDuration(), because this half of the dispatcher never
+// recorded where "done" actually was for the render loop to react to.
+// exitStart (optional): for templates with a hard, designed EXIT (a
+// button sliding away, digits fading to nothing, dots launching off)
+// timed at a fixed offset from their own start rather than from the
+// beat's real duration - the last instant the content is still fully
+// visible, i.e. render-worker/backend renderEngine.js's own
+// remapForExitHold's hold point (see that function's own doc comment
+// for the full "why": without this, a beat whose real narration-driven
+// duration runs well past minDuration doesn't just go stale, it goes
+// completely BLANK once the exit fires early). Omit for templates that
+// simply hold their landed state indefinitely (no hard exit to worry
+// about) - withSettleBreathe alone already covers those correctly.
+function setMographMinDuration(beat, minDuration, exitStart = null) {
+  if (isPlainObject(beat.mograph)) {
+    beat.mograph.__settleAt = minDuration;
+    if (typeof exitStart === 'number') beat.mograph.__exitStart = exitStart;
+  }
+  if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') beat.params.duration = minDuration;
+}
+
 function buildMographBeatVisual(beat) {
   if (!isPlainObject(beat) || !isPlainObject(beat.mograph)) return;
   if (isPlainObject(beat.visual) && Array.isArray(beat.visual.layers) && beat.visual.layers.length > 0) return;
@@ -16701,9 +16734,11 @@ function buildMographBeatVisual(beat) {
         // constant's own doc comment) - same introText auto-extend as
         // plain nodeCluster, PLUS a floor under the total so Phase 2
         // never gets cut off by a short authored duration.
+        const nceCompleteTime = NODE_CLUSTER_EXTENDED_MIN_DURATION + (introText ? INTRO_TEXT_DURATION : 0);
+        if (isPlainObject(beat.mograph)) beat.mograph.__settleAt = nceCompleteTime;
         if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
           if (introText) beat.params.duration += INTRO_TEXT_DURATION;
-          beat.params.duration = Math.max(beat.params.duration, NODE_CLUSTER_EXTENDED_MIN_DURATION + (introText ? INTRO_TEXT_DURATION : 0));
+          beat.params.duration = Math.max(beat.params.duration, nceCompleteTime);
         }
       }
     }
@@ -16735,7 +16770,7 @@ function buildMographBeatVisual(beat) {
       // this template's own complete, correct "just enough time"
       // formula (build + a real hold + exit + a small buffer) - using
       // it directly removes the padding instead of only capping it.
-      beat.params.duration = textPopOutMinDuration(wordCount);
+      setMographMinDuration(beat, textPopOutMinDuration(wordCount));
     }
     const duration = isPlainObject(beat.params) && typeof beat.params.duration === 'number'
       ? beat.params.duration
@@ -16749,7 +16784,7 @@ function buildMographBeatVisual(beat) {
       // build against exactly that" pattern textPopOut already proved -
       // see its own doc comment for the dead-air bug this avoids.
       if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-        beat.params.duration = textTiersMinDuration(words.length);
+        setMographMinDuration(beat, textTiersMinDuration(words.length));
       }
       const duration = isPlainObject(beat.params) && typeof beat.params.duration === 'number'
         ? beat.params.duration
@@ -16774,7 +16809,7 @@ function buildMographBeatVisual(beat) {
       // own build+hold+exit are fully self-timed) - duration is set
       // directly to exactly what it needs, nothing is read back.
       if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-        beat.params.duration = blueprintTextMinDuration(sentence1, sentence2);
+        setMographMinDuration(beat, blueprintTextMinDuration(sentence1, sentence2));
       }
       layers = buildBlueprintTextLayers({ sentence1, sentence2, accentColor });
     }
@@ -16785,7 +16820,8 @@ function buildMographBeatVisual(beat) {
     // needed here at all.
     const text = spec.text.trim();
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-      beat.params.duration = yearScrollerMinDuration(year, text);
+      const ysTiming = computeYearScrollerTiming(year, text);
+      setMographMinDuration(beat, ysTiming.exitEnd + YEAR_SCROLLER_END_BUFFER, ysTiming.exitStart);
     }
     layers = buildYearScrollerLayers({ year, text, accentColor });
   } else if (spec.type === 'counter' && Number.isFinite(spec.value) && typeof spec.text === 'string' && spec.text.trim()) {
@@ -16798,7 +16834,8 @@ function buildMographBeatVisual(beat) {
     const icon = typeof spec.icon === 'string' && MOGRAPH_ICON_RE.test(spec.icon) ? spec.icon : null;
     const iconPosition = spec.iconPosition === 'after' ? 'after' : 'before';
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-      beat.params.duration = counterMinDuration(value, text);
+      const counterTiming = computeCounterTiming(value, text);
+      setMographMinDuration(beat, counterTiming.exitEnd + COUNTER_END_BUFFER, counterTiming.exitStart);
     }
     layers = buildCounterLayers({
       value, text, icon, iconPosition, accentColor,
@@ -16811,7 +16848,7 @@ function buildMographBeatVisual(beat) {
     const text1 = spec.text1.trim();
     const text2 = spec.text2.trim();
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-      beat.params.duration = lineRevealMinDuration();
+      setMographMinDuration(beat, lineRevealMinDuration());
     }
     layers = buildLineRevealLayers({ text1, text2, accentColor });
   } else if (spec.type === 'typewriterLink' && typeof spec.line1 === 'string' && spec.line1.trim() && typeof spec.line2 === 'string' && spec.line2.trim() && typeof spec.line3 === 'string' && spec.line3.trim()) {
@@ -16835,7 +16872,7 @@ function buildMographBeatVisual(beat) {
     const line2 = spec.line2.trim();
     const line3 = spec.line3.trim();
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-      beat.params.duration = typewriterLinkMinDuration(line1Words.length);
+      setMographMinDuration(beat, typewriterLinkMinDuration(line1Words.length));
     }
     layers = buildTypewriterLinkLayers({
       line1, line2, line3, accentColor,
@@ -16844,14 +16881,16 @@ function buildMographBeatVisual(beat) {
     // buildDotConstellationLayers wraps/shrinks text itself (wrapAndFitText).
     const text = spec.text.trim();
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-      beat.params.duration = dotConstellationMinDuration();
+      const dcTiming = computeDotConstellationTiming();
+      setMographMinDuration(beat, dcTiming.outroEnd + DC_END_BUFFER, dcTiming.outroStart);
     }
     layers = buildDotConstellationLayers({ text, accentColor });
   } else if (spec.type === 'buttonDraw' && typeof spec.text === 'string' && spec.text.trim()) {
     // buildButtonDrawLayers wraps/shrinks text itself (wrapAndFitText).
     const text = spec.text.trim();
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-      beat.params.duration = buttonDrawMinDuration();
+      const bdTiming = computeButtonDrawTiming();
+      setMographMinDuration(beat, bdTiming.outroEnd + BD_END_BUFFER, bdTiming.outroStart);
     }
     layers = buildButtonDrawLayers({ text, accentColor });
   } else if (spec.type === 'mouseWordDrag' && typeof spec.before === 'string' && spec.before.trim()
@@ -16864,7 +16903,7 @@ function buildMographBeatVisual(beat) {
     const beforeCount = before.split(' ').filter((w) => w.length > 0).length;
     const afterCount = after.split(' ').filter((w) => w.length > 0).length;
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-      beat.params.duration = mouseWordDragMinDuration(beforeCount, afterCount);
+      setMographMinDuration(beat, mouseWordDragMinDuration(beforeCount, afterCount));
     }
     layers = buildMouseWordDragLayers({
       before, chip, after, accentColor,
