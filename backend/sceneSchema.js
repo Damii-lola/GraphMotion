@@ -7161,26 +7161,23 @@ function buildMergeClusterLayers({
 
   // 150 -> 195, same "richer visuals" dead-space pass as NODE_SIZE above.
   const RESULT_SIZE = 195;
-  // Real, direct user report against a real generated video: "after the
-  // popup into multiple bubbles, the icon still remains?? The icon isn't
-  // meant to remain." Confirmed as a real gap, not a misreading: this
-  // result circle+icon used to only ever fade IN (two keyframes, landing
-  // at opacity 1 with nothing after) - once a `label` names what was
-  // built, this function's OWN doc comment below already frames that as
-  // the actual payoff ("naming what was just built, not just showing an
-  // icon and moving on"), but nothing ever made the icon/circle GIVE WAY
-  // to that payoff - they just sat there at full opacity for the rest of
-  // the beat regardless, competing with the label instead of yielding to
-  // it. Only fades when a label actually exists (`hasLabel` computed
-  // once below, needed here since the label layer itself is built AFTER
-  // this) - with no label, the icon IS the payoff (this function's own
-  // doc comment: "a beat that genuinely has no good short name for its
-  // result can omit it"), so it should keep holding exactly as before.
-  const hasLabel = typeof label === 'string' && label.trim().length > 0;
-  const resultFadeOutKfs = hasLabel ? [
-    { time: CONVERGE_TIME + 0.1, value: 1, interpolation: 'easing', easing: 'easeInCubic' },
-    { time: CONVERGE_TIME + 1.5, value: 0 },
-  ] : [];
+  // Real, confirmed-live regression (2026-09-22, direct user report: "u
+  // know i made all the scenes... that aint how i designed them"): a
+  // prior fix here (see this file's own git history) made the result
+  // circle+icon fade to fully invisible once a label exists, reasoning
+  // that the label should be "the payoff" the icon yields to - but the
+  // label is positioned directly BELOW the result circle (see
+  // __merge_result_label__'s own position, RESULT_SIZE/2+46 below
+  // CENTER), never overlapping it, exactly matching this function's own
+  // ORIGINAL reference-video spec a few lines below ("lands with a real
+  // text label directly under the result circle... naming what was just
+  // built") - the icon was never supposed to disappear, the label was
+  // always meant to sit ALONGSIDE it, not replace it. Fading the icon
+  // out contradicted that original design and looked exactly like a
+  // real bug in practice (a live render: the icon visibly vanishes,
+  // leaving the label seemingly floating alone). Restored to the
+  // original, correct behavior: fade in once, then hold indefinitely,
+  // regardless of whether a label is present.
   layers.push({
     id: '__merge_result_bg__',
     type: 'shape',
@@ -7194,7 +7191,7 @@ function buildMergeClusterLayers({
     ] },
     opacity: { keyframes: [
       { time: CONVERGE_TIME - 0.05, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-      ...resultFadeOutKfs,
+      { time: CONVERGE_TIME + 0.1, value: 1 },
     ] },
     contents: [
       { type: 'path', shape: { kind: 'ellipse', params: { width: RESULT_SIZE, height: RESULT_SIZE } } },
@@ -7221,7 +7218,7 @@ function buildMergeClusterLayers({
     ] },
     opacity: { keyframes: [
       { time: CONVERGE_TIME - 0.05, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-      ...resultFadeOutKfs,
+      { time: CONVERGE_TIME + 0.1, value: 1 },
     ] },
   });
 
