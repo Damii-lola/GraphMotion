@@ -10258,13 +10258,7 @@ function buildYearScrollerRevealText({
     fontFamily,
     fontWeight: '400',
     fontSize,
-    // Fixed, not accentColor (2026-09-22 contrast fix - see the scrim
-    // layer's own doc comment above this function's call site): this
-    // text now always sits on a known, fixed dark scrim, so a fixed
-    // near-white fill is guaranteed-legible regardless of the board
-    // gradient's real color at this off-center position, instead of
-    // depending on the scene-wide harmonize pass guessing correctly.
-    fillStyle: '#F5F3FF',
+    fillStyle: accentColor,
     textAlign: 'center',
     maxWidth,
     width: maxWidth + 40,
@@ -10381,38 +10375,6 @@ function buildYearScrollerLayers({ year, text, accentColor }) {
   // Unparented (not attached to __yearscroller_group__) so it stays put
   // and simply fades out before the zoom drags the group away, rather
   // than zooming/panning along with it.
-  // Real, confirmed-live contrast bug (2026-09-22): a real render still
-  // showed the scrolling digits reading as flat, low-contrast gray even
-  // after giving them a fixed near-white fill + drop shadow - a soft
-  // shadow alone isn't enough edge-contrast against a genuinely bright
-  // background region (see this beat's own text-scrim doc comment above
-  // for the full "off-center reference mismatch" root cause). Same fix
-  // as the reveal text: a discrete dark scrim behind the whole column
-  // instead of trying to guess a shadow strong enough for any background.
-  // The group only stays put at [CENTER_X,CENTER_Y] for the WHOLE scroll+
-  // hold phase (its own position keyframes above don't move until
-  // zoomStart) - unparented here for that exact reason, so a single
-  // static scrim at that same fixed point tracks the visible column
-  // perfectly without needing to follow the group's own later zoom.
-  layers.push({
-    id: '__yearscroller_list_scrim__',
-    type: 'shape',
-    width: 260,
-    height: 900,
-    position: [YEAR_SCROLLER_CENTER_X, YEAR_SCROLLER_CENTER_Y],
-    opacity: {
-      keyframes: [
-        { time: 0, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: 0.3, value: 0.32, interpolation: 'hold' },
-        { time: timing.zoomStart, value: 0.32, interpolation: 'easing', easing: 'easeInCubic' },
-        { time: timing.zoomStart + 0.25, value: 0 },
-      ],
-    },
-    contents: [
-      { type: 'path', shape: { kind: 'rectangle', params: { width: 260, height: 900, roundness: 40 } } },
-      { type: 'fill', color: '#000000' },
-    ],
-  });
   layers.push({
     id: '__yearscroller_orbit_ring__',
     type: 'shape',
@@ -10497,21 +10459,8 @@ function buildYearScrollerLayers({ year, text, accentColor }) {
       position: { keyframes: tracks.position },
       opacity: { keyframes: tracks.opacity },
       rotation: { keyframes: tracks.rotation },
-      // Real, confirmed-live contrast bug (2026-09-22): this whole
-      // scrolling column sits at YEAR_SCROLLER_CENTER_X=160, ~110px left
-      // of the canvas's true center - same off-center reference-mismatch
-      // as the reveal text (see resolveIconBackdropRule's own doc comment
-      // for this same beat's text layer), just harder to fix with a
-      // scrim since this is a tall, continuously-moving list rather than
-      // one static caption. A strong, near-opaque dark drop shadow gives
-      // every digit its own guaranteed local edge-contrast instead,
-      // regardless of the real gradient color at its own position -
-      // confirmed via a real render that fixed the exact live case (a
-      // real generated video's own digits reading as flat gray-on-purple,
-      // barely legible).
       effects: [
         { type: 'gaussianBlur', params: { radius: { keyframes: tracks.blur } } },
-        { type: 'dropShadow', params: { color: '#000000', opacity: 0.55, blur: 6, offsetX: 0, offsetY: 2 } },
       ],
     };
     // Direct spec: "make only the number right next to the arrow be at
@@ -10678,51 +10627,6 @@ function buildYearScrollerLayers({ year, text, accentColor }) {
     ],
   });
 
-  // Real, confirmed-live bug (2026-09-22, direct frame inspection of a
-  // real generated video): the reveal text sits at YEAR_SCROLLER_TEXT_
-  // CENTER_X=370, ~100px right of the canvas's own true center (270) -
-  // and the scrolling list sits at YEAR_SCROLLER_CENTER_X=160, ~110px
-  // LEFT of it. ensureTextContrastAgainstBackground/ensureHarmoniousColors
-  // (renderEngine.js) only ever check ONE flat reference color per scene
-  // (that beat's own zone poolColor, its gradient's own BRIGHTEST point) -
-  // correct for content sitting near true center, but this beat's own
-  // real content sits meaningfully off it, on a radial gradient whose
-  // edgeColor (same zone, same hue) can be dramatically darker than its
-  // poolColor. A text fill chosen safe against the bright reference can
-  // land on the gradient's actual much-darker real region here and read
-  // as low-contrast/muddy - confirmed live: a headline rendered as a dark
-  // muddy tone against a background that, at ITS OWN real screen position,
-  // was also dark. Modeling the gradient's real per-position brightness
-  // here would need geometry this file deliberately doesn't have (see
-  // getSceneLocalBgColor's own doc comment for why per-pixel sampling was
-  // removed in favor of one zone reference) - fixed instead with a
-  // guaranteed-legible technique that doesn't depend on knowing the exact
-  // background shade at all: a soft dark scrim behind the text, same
-  // "caption on a translucent plate" pattern real short-form captions
-  // already use. The text's own fillStyle still gets harmonized normally
-  // (usually light against this dark plate) - this only adds a safety
-  // net for whichever specific point the gradient really lands on.
-  const YS_TEXT_SCRIM_WIDTH = YEAR_SCROLLER_TEXT_MAX_WIDTH + 60;
-  const YS_TEXT_SCRIM_HEIGHT = YEAR_SCROLLER_TEXT_FONT_SIZE * 3.6;
-  layers.push({
-    id: '__yearscroller_text_scrim__',
-    type: 'shape',
-    width: YS_TEXT_SCRIM_WIDTH,
-    height: YS_TEXT_SCRIM_HEIGHT,
-    position: [YEAR_SCROLLER_TEXT_CENTER_X, YEAR_SCROLLER_TEXT_CENTER_Y],
-    opacity: {
-      keyframes: [
-        { time: timing.textStart, value: 0, interpolation: 'easing', easing: 'easeOutCubic' },
-        { time: timing.textStart + 0.3, value: 0.4 },
-        { time: timing.exitStart, value: 0.4, interpolation: 'easing', easing: 'easeInCubic' },
-        { time: timing.exitStart + YEAR_SCROLLER_EXIT_DURATION, value: 0 },
-      ],
-    },
-    contents: [
-      { type: 'path', shape: { kind: 'rectangle', params: { width: YS_TEXT_SCRIM_WIDTH, height: YS_TEXT_SCRIM_HEIGHT, roundness: 24 } } },
-      { type: 'fill', color: '#000000' },
-    ],
-  });
   layers.push(buildYearScrollerRevealText({
     text,
     startTime: timing.textStart,
