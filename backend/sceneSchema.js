@@ -16770,7 +16770,12 @@ function buildMographBeatVisual(beat) {
       // this template's own complete, correct "just enough time"
       // formula (build + a real hold + exit + a small buffer) - using
       // it directly removes the padding instead of only capping it.
-      setMographMinDuration(beat, textPopOutMinDuration(wordCount));
+      // exitStart reverse-engineered from textPopOutMinDuration's own
+      // formula (minDuration = minExitEnd + END_BUFFER, exitStart =
+      // minExitEnd - EXIT_DURATION) rather than duplicated, so it can
+      // never drift out of sync with that function's own real math.
+      const tpoMinDuration = textPopOutMinDuration(wordCount);
+      setMographMinDuration(beat, tpoMinDuration, tpoMinDuration - TEXT_POP_OUT_END_BUFFER - TEXT_POP_OUT_EXIT_DURATION);
     }
     const duration = isPlainObject(beat.params) && typeof beat.params.duration === 'number'
       ? beat.params.duration
@@ -16784,7 +16789,8 @@ function buildMographBeatVisual(beat) {
       // build against exactly that" pattern textPopOut already proved -
       // see its own doc comment for the dead-air bug this avoids.
       if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-        setMographMinDuration(beat, textTiersMinDuration(words.length));
+        const ttMinDuration = textTiersMinDuration(words.length);
+        setMographMinDuration(beat, ttMinDuration, ttMinDuration - TEXT_TIERS_END_BUFFER - TEXT_TIERS_EXIT_DURATION);
       }
       const duration = isPlainObject(beat.params) && typeof beat.params.duration === 'number'
         ? beat.params.duration
@@ -16809,7 +16815,16 @@ function buildMographBeatVisual(beat) {
       // own build+hold+exit are fully self-timed) - duration is set
       // directly to exactly what it needs, nothing is read back.
       if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-        setMographMinDuration(beat, blueprintTextMinDuration(sentence1, sentence2));
+        const bpTiming = computeBlueprintTiming(sentence1, sentence2);
+        // Real, confirmed-live finding (2026-09-22, direct frame inspection
+        // of an artificially-extended render): freezing exactly AT
+        // EXIT_START_2 caught the per-word erase animator (each word's own
+        // hide keyframe starts at `exitStart + rank*STAGGER` - rank 0 has
+        // ZERO offset) already one frame into hiding sentence 2's own last
+        // word, so it vanished for the whole extended hold while the rest
+        // of the box stayed visible. A small safety margin keeps the
+        // frozen instant strictly BEFORE any per-word erase keyframe fires.
+        setMographMinDuration(beat, bpTiming.gearPopOutEnd + BLUEPRINT_END_BUFFER, bpTiming.EXIT_START_2 - 0.2);
       }
       layers = buildBlueprintTextLayers({ sentence1, sentence2, accentColor });
     }
@@ -16848,7 +16863,8 @@ function buildMographBeatVisual(beat) {
     const text1 = spec.text1.trim();
     const text2 = spec.text2.trim();
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-      setMographMinDuration(beat, lineRevealMinDuration());
+      const lrTiming = computeLineRevealTiming();
+      setMographMinDuration(beat, lrTiming.popOutVanishTime + LINE_REVEAL_END_BUFFER, lrTiming.holdEnd);
     }
     layers = buildLineRevealLayers({ text1, text2, accentColor });
   } else if (spec.type === 'typewriterLink' && typeof spec.line1 === 'string' && spec.line1.trim() && typeof spec.line2 === 'string' && spec.line2.trim() && typeof spec.line3 === 'string' && spec.line3.trim()) {
@@ -16872,7 +16888,8 @@ function buildMographBeatVisual(beat) {
     const line2 = spec.line2.trim();
     const line3 = spec.line3.trim();
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-      setMographMinDuration(beat, typewriterLinkMinDuration(line1Words.length));
+      const twlTiming = computeTypewriterLinkTiming(line1Words.length);
+      setMographMinDuration(beat, twlTiming.contractEnd + TWL_END_BUFFER, twlTiming.holdEnd);
     }
     layers = buildTypewriterLinkLayers({
       line1, line2, line3, accentColor,
@@ -16903,7 +16920,8 @@ function buildMographBeatVisual(beat) {
     const beforeCount = before.split(' ').filter((w) => w.length > 0).length;
     const afterCount = after.split(' ').filter((w) => w.length > 0).length;
     if (isPlainObject(beat.params) && typeof beat.params.duration === 'number') {
-      setMographMinDuration(beat, mouseWordDragMinDuration(beforeCount, afterCount));
+      const mwTiming = computeMouseWordDragTiming(beforeCount, afterCount);
+      setMographMinDuration(beat, mwTiming.exitEnd + MW_END_BUFFER, mwTiming.exitStart);
     }
     layers = buildMouseWordDragLayers({
       before, chip, after, accentColor,
