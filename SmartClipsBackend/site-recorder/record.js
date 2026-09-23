@@ -102,7 +102,9 @@ const ease = {
   sine: (x) => 0.5 - 0.5 * Math.cos(Math.PI * x),
 };
 
-async function record(o) {
+async function record(o, onProgress) {
+  const emit = (e) => { if (onProgress) try { onProgress(e); } catch (_) { /* ignore UI errors */ } };
+  emit({ stage: "loading" });
   const [W, H] = (PRESETS[o.preset] || o.size || "1080x1920").split("x").map(Number);
   const fps = +o.fps || 30;
   const vw = +o["viewport-width"] || 540;
@@ -188,18 +190,20 @@ async function record(o) {
     ff.stdin.on("error", () => {});
 
     const client = await page.createCDPSession();
-    const started = Date.now();
+    const started = Date.now(); emit({ stage: "recording", frame: 0, total: totalFrames, eta: null });
     for (let f = 0; f < totalFrames; f++) {
       await apply(plan(f));
       await page.evaluate((ms) => window.__advance(ms), 1000 / fps);
       const { data } = await client.send("Page.captureScreenshot", { format: "jpeg", quality, optimizeForSpeed: true });
       if (!ff.stdin.write(Buffer.from(data, "base64"))) await new Promise((r) => ff.stdin.once("drain", r));
-      if (f % 15 === 0 || f === totalFrames - 1) {
+      if (f % 5 === 0) emit({ stage: "recording", frame: f + 1, total: totalFrames, eta: ((Date.now() - started) / 1000 / (f + 1)) * (totalFrames - f - 1) });
+      if (!onProgress && (f % 15 === 0 || f === totalFrames - 1)) {
         const el = (Date.now() - started) / 1000, eta = (el / (f + 1)) * (totalFrames - f - 1);
         process.stdout.write(`\rframe ${f + 1}/${totalFrames}  ${((f + 1) / totalFrames * 100).toFixed(0)}%  ${((f + 1) / el).toFixed(1)} fps  eta ${eta.toFixed(0)}s   `);
       }
     }
     process.stdout.write("\n");
+    emit({ stage: "encoding" });
     ff.stdin.end();
     await ffDone;
     const mb = (fs.statSync(out).size / 1048576).toFixed(1);
