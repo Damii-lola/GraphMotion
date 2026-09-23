@@ -37,7 +37,7 @@ function register(app, hooks = {}) {
   function view(j) {
     return {
       id: j.id, status: j.status, progress: +j.progress.toFixed(3), eta: j.eta == null ? null : Math.round(j.eta),
-      error: j.error || null, position: j.status === 'queued' ? queue.indexOf(j) + 1 : 0,
+      error: j.error || null, note: j.note || null, position: j.status === 'queued' ? queue.indexOf(j) + 1 : 0,
       videoUrl: j.status === 'done' ? (j.publicUrl || `/api/site-video/${j.id}/file`) : null,
       downloadUrl: j.status === 'done' ? `/api/site-video/${j.id}/file?download=1` : null,
     };
@@ -66,7 +66,7 @@ function register(app, hooks = {}) {
       if (!m || m.jobId !== job.id) return;
       if (m.type === 'progress') {
         job.status = m.stage === 'encoding' ? 'encoding' : m.stage === 'recording' ? 'recording' : 'loading';
-        job.progress = Math.max(job.progress, m.progress); job.eta = m.eta;
+        job.progress = Math.max(job.progress, m.progress); job.eta = m.eta; if (m.note) job.note = m.note;
       } else if (m.type === 'done') finish('done', { publicUrl: m.publicUrl || null });
       else if (m.type === 'error') finish('error', { error: m.error });
     });

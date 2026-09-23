@@ -12,7 +12,7 @@ process.once('message', async ({ jobId, url, out, opts }) => {
       const now = Date.now();
       if (e.stage === 'done' || now - lastSent < 700) return; // 'done' is reported by the message below, after the upload
       lastSent = now;
-      send({ type: 'progress', stage: e.stage, progress: e.progress, eta: e.eta });
+      send({ type: 'progress', stage: e.stage, progress: e.progress, eta: e.eta, note: e.note });
     });
     let publicUrl = null;
     try { // durable copy so the link survives a server restart; failure is fine, the local file is still served

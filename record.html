@@ -103,6 +103,7 @@
     <div class="job" id="job">
       <div class="bar"><i id="fill"></i></div>
       <div class="jobline"><b id="stage">Starting…</b><span id="eta"></span></div>
+      <div class="jobline" id="note" style="display:none"></div>
       <div class="err" id="err"></div>
     </div>
 
@@ -174,7 +175,8 @@
         const j = await (await fetch(API + "/api/site-video/" + id, { cache: "no-store" })).json();
         $("fill").style.width = Math.max(2, Math.round(j.progress * 100)) + "%";
         $("stage").textContent = j.status === "queued" && j.position ? "Waiting in line (" + j.position + ")…" : STAGES[j.status] || j.status;
-        $("eta").textContent = j.eta != null && j.status === "recording" ? "about " + (j.eta >= 60 ? Math.ceil(j.eta / 60) + " min" : j.eta + " s") + " left" : "";
+        $("note").style.display = j.note ? "flex" : "none"; $("note").textContent = j.note || "";
+        $("eta").textContent = j.eta != null && (j.status === "recording" || j.status === "encoding") ? "about " + (j.eta >= 60 ? Math.ceil(j.eta / 60) + " min" : j.eta + " s") + " left" : "";
         if (j.status === "error") return fail(j.error || "The recording failed.");
         if (j.status === "done") {
           clearInterval(timer); busy = false; $("go").disabled = false; $("fill").style.width = "100%"; $("eta").textContent = "";

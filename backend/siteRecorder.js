@@ -128,7 +128,7 @@ const EASE = { linear: (x) => x, smooth: (x) => x * x * (3 - 2 * x), sine: (x) =
  * onProgress({ stage: 'loading'|'recording'|'encoding', progress: 0..1, eta: seconds|null })
  */
 async function record(o, onProgress) {
-  const emit = (stage, progress, eta = null) => { if (onProgress) try { onProgress({ stage, progress, eta }); } catch (_) { /* UI errors never break a render */ } };
+  const emit = (stage, progress, eta = null, note = null) => { if (onProgress) try { onProgress({ stage, progress, eta, note }); } catch (_) { /* UI errors never break a render */ } };
   emit('loading', 0.01);
   const [W, H] = (PRESETS[o.preset] || o.size || '1080x1920').split('x').map(Number);
   const fps = Math.max(12, Math.min(30, +o.fps || 30));
@@ -150,7 +150,7 @@ async function record(o, onProgress) {
     srv = await serveDir(dir); url = srv.url;
   }
 
-  let totalFrames = 0;
+  let totalFrames = 0, encFps = fps;
   const browser = await launchChrome();
   try {
     const page = await browser.newPage();
@@ -194,19 +194,44 @@ async function record(o, onProgress) {
       ? (p) => page.evaluate((x) => window.__jumpToProgress(x), p)
       : (p) => page.evaluate((y) => window.scrollTo(0, y), Math.round(p * info.maxScroll));
 
-    // ---- phase 1: frames -> jpeg files
+    // ---- phase 1: frames -> jpeg files, inside a TIME BUDGET.
+    // Software-rendered WebGL is slow on small servers, so we measure how long a
+    // frame really takes here and, if the full 30 fps timeline would blow the
+    // budget, capture every Nth frame (the video keeps its full length, it just
+    // has fewer distinct frames). Fast machine = full smoothness; slow machine =
+    // it still finishes in minutes instead of hours.
     const client = await page.createCDPSession();
+    const shot = (q) => client.send('Page.captureScreenshot', { format: 'jpeg', quality: q, optimizeForSpeed: true });
+    for (let k = 0; k < 3; k++) { // warm-up: the first frames pay for shader compilation; not counted
+      await apply(0); await page.evaluate((ms) => window.__advance(ms), 16); await shot(40);
+      emit('loading', 0.02 + 0.01 * k);
+    }
+    const budgetMs = (+o.captureBudgetSeconds || +process.env.SITE_VIDEO_CAPTURE_BUDGET_S || 150) * 1000;
+    const CALIB = 6, MAX_STRIDE = 12;
+    let stride = 1, n = 0, f = 0, note = null, ema = null;
     const started = Date.now();
-    for (let f = 0; f < totalFrames; f++) {
+    while (f < totalFrames) {
+      const t1 = Date.now();
       await apply(plan(f));
-      await page.evaluate((ms) => window.__advance(ms), 1000 / fps);
-      const { data } = await client.send('Page.captureScreenshot', { format: 'jpeg', quality, optimizeForSpeed: true });
-      await fs.promises.writeFile(path.join(work, `f${String(f).padStart(5, '0')}.jpg`), Buffer.from(data, 'base64'));
-      if (f % 4 === 0) {
-        const per = (Date.now() - started) / 1000 / (f + 1);
-        emit('recording', 0.03 + 0.72 * ((f + 1) / totalFrames), per * (totalFrames - f - 1) + totalFrames * 0.02);
+      await page.evaluate((ms) => window.__advance(ms), (1000 / fps) * (n < CALIB ? 1 : stride));
+      const { data } = await shot(quality);
+      await fs.promises.writeFile(path.join(work, `f${String(n).padStart(5, '0')}.jpg`), Buffer.from(data, 'base64'));
+      n++;
+      const dtFrame = Date.now() - t1;
+      ema = ema == null ? dtFrame : ema * 0.8 + dtFrame * 0.2;
+      if (n === CALIB) {
+        const avg = (Date.now() - started) / CALIB, framesLeft = totalFrames - f - 1;
+        const affordable = Math.max(1, Math.floor((budgetMs * 0.8) / avg)); // 20% margin
+        stride = Math.min(MAX_STRIDE, Math.max(1, Math.ceil(framesLeft / affordable)));
+        if (stride > 1) note = `This server is slow, so the video uses about ${Math.max(2, Math.round(fps / stride))} distinct frames per second to finish in time.`;
+      }
+      f += n < CALIB ? 1 : stride;
+      if (n % 3 === 0) {
+        const left = Math.ceil(Math.max(0, totalFrames - f) / stride);
+        emit('recording', 0.03 + 0.72 * Math.min(1, f / totalFrames), left * ema / 1000 + (stride > 1 ? 40 : totalFrames * 0.02), note);
       }
     }
+    encFps = fps / stride;
   } finally {
     await browser.close().catch(() => {});
     if (srv) srv.server.close();
@@ -215,9 +240,9 @@ async function record(o, onProgress) {
   // ---- phase 2: encode (Chrome is gone by now)
   try {
     emit('encoding', 0.76, null);
-    const args = ['-y', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', '-framerate', String(fps), '-i', path.join(work, 'f%05d.jpg')];
+    const args = ['-y', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', '-framerate', String(encFps), '-i', path.join(work, 'f%05d.jpg')];
     if (o.audio) args.push('-i', path.resolve(o.audio));
-    args.push('-vf', `scale=${W}:${H}:flags=lanczos,setsar=1,format=yuv420p`, '-c:v', 'libx264', '-preset', o.encode || 'veryfast', '-crf', String(o.crf || 20),
+    args.push('-vf', `scale=${W}:${H}:flags=lanczos,setsar=1,format=yuv420p`, '-c:v', 'libx264', '-preset', o.encode || (encFps < fps ? 'ultrafast' : 'veryfast'), '-crf', String(o.crf || 20),
       '-threads', String(o.threads || 2), '-x264-params', 'rc-lookahead=10:ref=2', '-profile:v', 'high', '-level', '4.2', '-r', String(fps), '-g', String(fps * 2), '-movflags', '+faststart');
     if (o.audio) args.push('-c:a', 'aac', '-b:a', '192k', '-af', `afade=t=out:st=${Math.max(0, totalFrames / fps - 1.5)}:d=1.5`, '-shortest');
     args.push(out);
