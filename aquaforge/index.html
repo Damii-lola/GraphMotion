@@ -359,7 +359,7 @@
   // own scrollTop() reading is the ground truth here instead.
   let totalStart = 0, span = 1;
   const smoother = ScrollSmoother.create({
-    wrapper: "#smooth-wrapper", content: "#smooth-content", smooth: 1.3,
+    wrapper: "#smooth-wrapper", content: "#smooth-content", smooth: 0.9,
     onUpdate: (self) => {
       const p = Math.max(0, Math.min(1, (self.scrollTop() - totalStart) / span));
       gsap.set("#progress", { width: (p * 100) + "%" });
@@ -376,7 +376,7 @@
     .to(heroSplit.lines, { yPercent: 0, opacity: 1, duration: 1.1, stagger: 0.12, ease: "power4.out" })
     .to("#hero [data-reveal]", { opacity: 1, duration: 0.8, stagger: 0.1, ease: "power2.out" }, "-=0.5");
 
-  const PIN_DIST = "+=100%";
+  const PIN_DIST = "+=57%"; // ~4/7 of the original scroll length per scene
   const heroTl = gsap.timeline({ scrollTrigger: { trigger: "#hero", start: "top top", end: PIN_DIST, scrub: 0.5, pin: true, pinSpacing: true } })
     .to("#hero .beat-inner, #hero .scroll-cue", { opacity: 0, y: -40, duration: 0.4 }, 0.62);
 
@@ -396,7 +396,7 @@
     const isLast = sectionEl === document.querySelector("section.beat.center");
     gsap.set(reveals, { opacity: 0, y: 34 });
     const tl = gsap.timeline({
-      scrollTrigger: { trigger: sectionEl, start: "top top", end: isLast ? "+=70%" : PIN_DIST, scrub: 0.5, pin: true, pinSpacing: true },
+      scrollTrigger: { trigger: sectionEl, start: "top top", end: isLast ? "+=40%" : PIN_DIST, scrub: 0.5, pin: true, pinSpacing: true },
     });
     tl.to(reveals, { opacity: 1, y: 0, duration: 0.3, stagger: 0.07, ease: "power2.out" }, 0);
     if (!isLast) {
@@ -641,14 +641,14 @@ const bgMat = new THREE.ShaderMaterial({
   uniforms: {
     uA: { value: blank }, uB: { value: blank }, uRes: { value: new THREE.Vector2(1, 1) }, uTime: { value: 0 }, uE: { value: 0 }, uType: { value: 0 },
     uAsp: { value: new THREE.Vector2(1.5, 1.5) }, uZoom: { value: new THREE.Vector2(1.1, 1.1) }, uDrift: { value: new THREE.Vector4() },
-    uFxA: { value: new THREE.Vector4() }, uFxB: { value: new THREE.Vector4() }, uLight: { value: new THREE.Vector2() }, uPortal: { value: new THREE.Vector2(0.75, 0.5) },
+    uFxA: { value: new THREE.Vector4() }, uFxB: { value: new THREE.Vector4() }, uLight: { value: new THREE.Vector2() }, uPortal: { value: new THREE.Vector2(0.75, 0.5) }, uSeed: { value: new THREE.Vector2(1, 2) },
   },
   vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
   fragmentShader: `
     precision highp float;
     uniform sampler2D uA; uniform sampler2D uB;
     uniform vec2 uRes; uniform float uTime, uE, uType;
-    uniform vec2 uAsp, uZoom, uLight, uPortal; uniform vec4 uDrift, uFxA, uFxB;
+    uniform vec2 uAsp, uZoom, uLight, uPortal, uSeed; uniform vec4 uDrift, uFxA, uFxB;
     varying vec2 vUv;
     float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
     float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -685,7 +685,7 @@ const bgMat = new THREE.ShaderMaterial({
     void main(){
       vec2 uv = vUv; float asp = uRes.x / uRes.y; float e = uE; vec3 col; float m = 0.0;
       if (e <= 0.001){
-        col = base(uA, uv, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, 1.0); col = overlay(col, uv, uFxA, 1.0, uLight.x);
+        col = base(uA, uv, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); col = overlay(col, uv, uFxA, uSeed.x, uLight.x);
       } else {
         vec3 cA, cB, add = vec3(0.0); vec2 uvA = uv, uvB = uv; float bpK = 1.0; float PI = 3.14159265;
         if (uType < 0.5){                                   // 0: iris dive out of the can
@@ -693,20 +693,20 @@ const bgMat = new THREE.ShaderMaterial({
           float n = fbm(uv * 3.5 + vec2(uTime * 0.2, 0.0)) - 0.5; float r = e * far * 1.1; float dist = length(d) + n * 0.16 * sin(PI * e);
           m = smoothstep(r, r - 0.05, dist); add = smoothstep(0.06, 0.0, abs(dist - r)) * sin(PI * e) * vec3(0.45, 1.0, 1.0) * 0.9;
           uvA = c + (uv - c) / (1.0 + 1.4 * e * e); uvB = c + (uv - c) / (0.55 + 0.45 * e);
-          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, 1.0); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, 2.0);
+          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y);
         } else if (uType < 1.5){                            // 1: liquid rises and refracts
           float wav = sin(uv.x * 7.0 + uTime * 1.6) * 0.018 + sin(uv.x * 17.0 - uTime * 2.3) * 0.008 + (fbm(vec2(uv.x * 3.0, uTime * 0.2)) - 0.5) * 0.07;
           float surf = e * 1.3 - 0.1 + wav; m = smoothstep(surf + 0.012, surf - 0.012, uv.y);
           float depth = clamp(surf - uv.y, 0.0, 1.0);
-          uvB = uv + vec2(sin(uv.y * 30.0 + uTime * 2.0), cos(uv.x * 25.0 + uTime * 1.6)) * 0.006 * (1.0 - e * 0.6) * (0.4 + depth);
+          uvB = uv + vec2(sin(uv.y * 30.0 + uTime * 2.0), cos(uv.x * 25.0 + uTime * 1.6)) * 0.006 * (1.0 - e) * (0.4 + depth);
           uvA = uv + vec2(0.0, (1.0 - m) * e * 0.07);
-          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, 1.0); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, 2.0);
+          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y);
           cB *= 1.0 + smoothstep(0.18, 0.0, depth) * 0.3; add = smoothstep(0.035, 0.0, abs(uv.y - surf)) * vec3(0.85, 0.95, 1.0) * 0.55 * sin(PI * e); bpK = 0.7;
         } else if (uType < 2.5){                            // 2: sun burst
           vec2 s = vec2(0.53, 0.5); vec2 d = (uv - s) * vec2(asp, 1.0); float dist = length(d);
           float n = fbm(uv * 3.0 + vec2(0.0, uTime * 0.2)) - 0.5; float r = e * 1.7; m = smoothstep(r, r - 0.14, dist + n * 0.22);
           uvB = s + (uv - s) / (1.0 + 0.6 * (1.0 - e)); uvA = s + (uv - s) / (1.0 + 0.25 * e);
-          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, 1.0); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, 2.0);
+          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y);
           add = vec3(1.0, 0.78, 0.5) * exp(-dist * 2.6) * sin(PI * e) * 1.25 + smoothstep(0.08, 0.0, abs(dist + n * 0.22 - r)) * vec3(1.0, 0.85, 0.6) * 0.5 * sin(PI * e);
         } else if (uType < 3.5){                            // 3: streak pan
           float edge = 1.06 - e * 1.4 + (fbm(vec2(uv.y * 3.0, uTime * 0.3)) - 0.5) * 0.14; float sh = sin(PI * e);
@@ -714,21 +714,21 @@ const bgMat = new THREE.ShaderMaterial({
           cA = vec3(0.0); cB = vec3(0.0);
           float jit = hash(gl_FragCoord.xy) / 12.0;
           for (int k = 0; k < 12; k++){ float o = ((float(k) / 12.0 + jit) - 0.5) * 0.16 * sh;
-            cA += base(uA, uv + vec2(e * 0.35 + o, 0.0), uAsp.x, uZoom.x, uDrift.xy, uFxA.x, 1.0);
-            cB += base(uB, uv + vec2(-(1.0 - e) * 0.35 + o, 0.0), uAsp.y, uZoom.y, uDrift.zw, uFxB.x, 2.0); }
+            cA += base(uA, uv + vec2(e * 0.35 + o, 0.0), uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x);
+            cB += base(uB, uv + vec2(-(1.0 - e) * 0.35 + o, 0.0), uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y); }
           cA /= 12.0; cB /= 12.0; add = smoothstep(0.2, 0.0, abs(uv.x - edge)) * (0.4 + fbm(uv * 4.0 + uTime * 0.1)) * sh * vec3(0.9, 0.95, 1.0) * 0.32; bpK = 0.0;
         } else {                                            // 4: ink bleed
           float nn = fbm(uv * 2.2 + vec2(uTime * 0.05, 0.0)) * 0.8 + fbm(uv * 5.0 + 3.0) * 0.2; float th = e * 1.45 - 0.2;
           m = 1.0 - smoothstep(th - 0.08, th + 0.08, nn);
           vec2 g = vec2(fbm(uv * 3.0 + 1.0), fbm(uv * 3.0 + 7.0)) - 0.5;
           uvA = (uv - 0.5) / (1.0 + 0.3 * e) + 0.5 + g * 0.15 * e; uvB = (uv - 0.5) / (1.0 + 0.25 * (1.0 - e)) + 0.5 - g * 0.15 * (1.0 - e);
-          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, 1.0); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, 2.0);
+          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y);
           add = smoothstep(0.1, 0.0, abs(nn - th)) * sin(PI * e) * vec3(0.3, 0.95, 0.95) * 0.7;
         }
         float bp = (1.0 - smoothstep(0.45, 1.0, e)) * 0.85 * bpK;
         cB = blueprint(cB, uv, bp, uLight.y);
         col = mix(cA, cB, m) + add;
-        col = overlay(col, uv, mix(uFxA, uFxB, m), 1.5, mix(uLight.x, uLight.y, m));
+        col = overlay(col, uv, mix(uFxA, uFxB, m), mix(uSeed.x, uSeed.y, m), mix(uLight.x, uLight.y, m));
       }
       float lt = mix(uLight.x, uLight.y, m);
       col *= 1.0 - mix(0.42, 0.08, lt) * pow(length((uv - 0.5) * vec2(1.0, 0.9)) * 1.35, 2.0);
@@ -764,6 +764,7 @@ function bgFrame(now) {
   bgU.uE.value = e; bgU.uType.value = TYPES[i];
   bgU.uA.value = bgTex[i]; bgU.uB.value = bgTex[nxt];
   bgU.uAsp.value.set(bgAsp[i], bgAsp[nxt]);
+  bgU.uSeed.value.set(i * 3.7 + 1.0, nxt * 3.7 + 1.0); // per-SCENE seed: the incoming photo must look identical at e=1 and at the next scene's e=0, or the background snaps
   bgU.uZoom.value.set(dolly(t), dolly(0));
   bgU.uDrift.value.set(BG_DRIFT[i][0] * t, BG_DRIFT[i][1] * t, 0, 0);
   bgU.uFxA.value.set(...BG_FX[i]); bgU.uFxB.value.set(...BG_FX[nxt]);
