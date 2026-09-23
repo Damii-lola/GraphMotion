@@ -376,7 +376,7 @@
     .to(heroSplit.lines, { yPercent: 0, opacity: 1, duration: 1.1, stagger: 0.12, ease: "power4.out" })
     .to("#hero [data-reveal]", { opacity: 1, duration: 0.8, stagger: 0.1, ease: "power2.out" }, "-=0.5");
 
-  const PIN_DIST = "+=57%"; // ~4/7 of the original scroll length per scene
+  const PIN_DIST = "+=100%";
   const heroTl = gsap.timeline({ scrollTrigger: { trigger: "#hero", start: "top top", end: PIN_DIST, scrub: 0.5, pin: true, pinSpacing: true } })
     .to("#hero .beat-inner, #hero .scroll-cue", { opacity: 0, y: -40, duration: 0.4 }, 0.62);
 
@@ -396,7 +396,7 @@
     const isLast = sectionEl === document.querySelector("section.beat.center");
     gsap.set(reveals, { opacity: 0, y: 34 });
     const tl = gsap.timeline({
-      scrollTrigger: { trigger: sectionEl, start: "top top", end: isLast ? "+=40%" : PIN_DIST, scrub: 0.5, pin: true, pinSpacing: true },
+      scrollTrigger: { trigger: sectionEl, start: "top top", end: isLast ? "+=70%" : PIN_DIST, scrub: 0.5, pin: true, pinSpacing: true },
     });
     tl.to(reveals, { opacity: 1, y: 0, duration: 0.3, stagger: 0.07, ease: "power2.out" }, 0);
     if (!isLast) {
