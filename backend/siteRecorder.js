@@ -96,14 +96,13 @@ async function launchChrome() {
     '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--mute-audio', '--js-flags=--max-old-space-size=128'];
   if (process.platform === 'linux') {
     // Serverless-style Chromium build: no system libraries needed, ships its own SwiftShader for WebGL.
-    let chromium = null;
-    try { chromium = require('@sparticuz/chromium'); } catch (_) { /* fall back to a system chrome below */ }
-    if (chromium) {
-      return puppeteer.launch({
-        args: [...new Set([...chromium.args, ...lean, '--no-sandbox', '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader'])],
-        executablePath: await chromium.executablePath(), headless: 'shell',
-      });
+    let chromium = null, loadErr = null;
+    try { const mod = require('@sparticuz/chromium'); chromium = mod.default || mod; } catch (e) { loadErr = e; } // ESM package: the real object is .default under require()
+    if (chromium && Array.isArray(chromium.args)) {
+      const args = await puppeteer.defaultArgs({ args: [...new Set([...chromium.args, ...lean, '--no-sandbox', '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader'])], headless: 'shell' });
+      return puppeteer.launch({ args, executablePath: await chromium.executablePath(), headless: 'shell' });
     }
+    if (loadErr) throw new Error('Chrome package failed to load: ' + loadErr.message);
   }
   const cands = [process.env.CHROME_PATH, 'C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
     'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
