@@ -619,12 +619,13 @@ const BG_FILES = ["hero", "lab", "core", "charge", "recover", "store"];
 const bgTex = [], bgAsp = [1.5, 1.5, 1.5, 1.5, 1.5, 1.5];
 const blank = new THREE.DataTexture(new Uint8Array([11, 28, 45, 255]), 1, 1); blank.needsUpdate = true;
 BG_FILES.forEach((n, k) => { bgTex[k] = blank; });
-let bgHeroReady = false;
+let bgHeroReady = false, bgLoaded = 0;
+window.__assetsReady = () => bgLoaded >= BG_FILES.length && !!window.__sceneReady; // lets the video recorder wait for every photo
 BG_FILES.forEach((n, k) => {
   new THREE.TextureLoader().load("images/" + n + ".webp", (t) => {
     t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = 4;
     bgTex[k] = t; bgAsp[k] = t.image.width / t.image.height;
-    if (k === 0) bgHeroReady = true;
+    bgLoaded++; if (k === 0) bgHeroReady = true;
   });
 });
 const BG_FX = [ // ripple, mist, rays, motes

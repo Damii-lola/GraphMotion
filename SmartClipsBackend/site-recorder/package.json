@@ -1,0 +1,15 @@
+{
+  "name": "smartclips-site-recorder",
+  "version": "1.0.0",
+  "description": "Records a scroll-driven website in a phone viewport, frame by frame with a virtual clock, and encodes a TikTok/Reels/Shorts-ready 1080x1920 MP4.",
+  "main": "record.js",
+  "bin": { "record-site": "record.js" },
+  "scripts": {
+    "record": "node record.js",
+    "aquaforge": "node record.js --dir ../../aquaforge --out ../out/aquaforge.mp4"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "puppeteer-core": "^24.0.0"
+  }
+}
