@@ -17,14 +17,12 @@
     --recover-sage: #7BA05B;
   }
   * { box-sizing: border-box; }
-  html { scroll-behavior: auto; }
+  html, body { margin: 0; overflow-x: hidden; }
   body {
-    margin: 0;
     background: var(--forge-deep);
     color: var(--clean-white);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
-    overflow-x: hidden;
   }
   .display { font-family: "Bricolage Grotesque", -apple-system, sans-serif; font-weight: 700; }
 
@@ -36,47 +34,86 @@
   }
   nav.top .logo { font-family: "Bricolage Grotesque", sans-serif; font-weight: 700; font-size: 16px; letter-spacing: 0.02em; color: #fff; }
   nav.top .tag { font-size: 11px; color: rgba(255,255,255,0.7); letter-spacing: 0.12em; text-transform: uppercase; }
+  #progress { position: fixed; top: 0; left: 0; height: 2px; width: 0%; background: var(--aqua-core); z-index: 100; }
 
-  #progress {
-    position: fixed; top: 0; left: 0; height: 2px; width: 0%;
-    background: var(--aqua-core); z-index: 100;
+  /* ---------- The stage: ONE fixed full-viewport layer of real photographs
+     that crossfade into each other, driven purely by scroll PROGRESS, not
+     by scroll POSITION - the viewport itself never moves. This is the
+     actual mechanism behind "feels like a video playing, not a page being
+     scrolled": nothing here ever translates vertically; only opacity,
+     filter and scale change. Each photo also enters through a "blueprint"
+     state (desaturated, cyan-shifted, faint schematic grid) that resolves
+     into full colour as it becomes dominant - a real construction reveal,
+     not just a plain crossfade. */
+  #stage { position: fixed; inset: 0; z-index: 0; overflow: hidden; }
+  .layer { position: absolute; inset: 0; opacity: 0; }
+  .layer-img {
+    position: absolute; inset: -6%;
+    background-size: cover; background-position: 50% 45%;
+    animation: slowZoom 22s ease-in-out infinite alternate;
+  }
+  .layer[data-img="core"] .layer-img { background-image: url('images/core.png'); animation-delay: -4s; }
+  .layer[data-img="charge"] .layer-img { background-image: url('images/charge.png'); background-position: 50% 30%; animation-delay: -9s; }
+  .layer[data-img="recover"] .layer-img { background-image: url('images/recover.png'); animation-delay: -14s; }
+  .layer[data-img="hero"] .layer-img { background-image: url('images/hero.png'); }
+  @keyframes slowZoom { from { transform: scale(1.0); } to { transform: scale(1.09); } }
+  /* Bug found via self-check: grayscale+sepia+hue-rotate composed on the
+     photo itself rendered a murky green instead of a technical cyan -
+     filter functions don't combine predictably. A flat cyan wash with
+     mix-blend-mode:color gives direct, reliable control over the hue
+     regardless of the source photo, independent of the desaturation
+     (done on the image itself) and the grid lines (drawn on top of both). */
+  .layer-tint {
+    position: absolute; inset: 0; opacity: 0;
+    background: rgb(70, 205, 205);
+    mix-blend-mode: color;
+  }
+  .layer-grid {
+    position: absolute; inset: 0; opacity: 0;
+    background-image:
+      repeating-linear-gradient(0deg, rgba(180,240,240,0.4) 0px, rgba(180,240,240,0.4) 1px, transparent 1px, transparent 48px),
+      repeating-linear-gradient(90deg, rgba(180,240,240,0.4) 0px, rgba(180,240,240,0.4) 1px, transparent 1px, transparent 48px);
+    mix-blend-mode: screen;
+  }
+  .stage-scrim {
+    position: absolute; inset: 0; z-index: 1;
+    background: linear-gradient(180deg, rgba(6,14,22,0.22) 0%, rgba(6,14,22,0.24) 45%, rgba(6,14,22,0.94) 100%);
   }
 
-  #smooth-wrapper { position: relative; overflow: hidden; }
-
-  /* ---------- Hero: real photograph, not a hand-drawn landscape ---------- */
-  section.hero {
-    position: relative;
-    min-height: 100vh;
+  #smooth-wrapper { position: relative; z-index: 2; overflow: hidden; }
+  section.beat {
+    position: relative; min-height: 100vh;
     display: flex; align-items: flex-end;
-    overflow: hidden;
+    padding: 0 clamp(24px, 6vw, 72px) 9vh;
   }
-  .hero-media {
-    position: absolute; inset: -6% -6% -6% -6%;
-    background-image: url('images/hero.png');
-    background-size: cover; background-position: 50% 40%;
-    will-change: transform;
-  }
-  .hero-scrim {
-    position: absolute; inset: 0;
-    background: linear-gradient(180deg, rgba(6,14,22,0.15) 0%, rgba(6,14,22,0.15) 40%, rgba(6,14,22,0.88) 100%);
-  }
-  .hero-content { position: relative; z-index: 2; padding: 0 clamp(24px, 6vw, 72px) 9vh; max-width: 900px; }
-  .eyebrow {
+  /* Bug found via self-check: each pinned section's own 100vh flow height
+     stacks ON TOP OF its pin-spacer's scroll distance (measured live:
+     mission's pin started at 1800px, not the expected 900px), so scrolling
+     between beats included a real, visible "sliding past a viewport of
+     empty space" phase - precisely the "feels like scrolling" problem
+     this whole rebuild is meant to remove. Pulling every section but the
+     first up by one viewport height cancels that duplicated space, so a
+     section's pin engages the instant the previous one's hold ends, with
+     nothing in between. */
+  section.beat:not(#hero) { margin-top: -100vh; }
+  .beat-inner { max-width: 720px; }
+  .eyebrow, .beat-kicker {
     display: inline-flex; align-items: center; gap: 8px;
     font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase;
-    color: rgba(255,255,255,0.75); margin-bottom: 18px; opacity: 0;
+    color: rgba(255,255,255,0.78); margin-bottom: 18px; opacity: 0;
   }
   .eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--aqua-core); }
-  h1.hero-title {
-    font-size: clamp(40px, 7.4vw, 92px); line-height: 0.98; letter-spacing: -0.02em; margin: 0;
-    color: #fff;
-  }
+  #hero .beat-kicker[data-line="core"], .beat-kicker[data-line="core"] { color: #7FE3E0; }
+  .beat-kicker[data-line="charge"] { color: #FFB088; }
+  .beat-kicker[data-line="recover"] { color: #B7D89A; }
+
+  h1.hero-title { font-size: clamp(40px, 7.4vw, 92px); line-height: 0.98; letter-spacing: -0.02em; margin: 0; color: #fff; }
   h1.hero-title .word { display: inline-block; overflow: hidden; padding-bottom: 0.08em; margin-bottom: -0.08em; }
-  p.hero-sub {
-    max-width: 520px; margin: 22px 0 0; font-size: clamp(15px, 1.7vw, 18px);
-    color: rgba(255,255,255,0.82); line-height: 1.55; opacity: 0;
-  }
+  h2.beat-title { font-size: clamp(28px, 5vw, 58px); line-height: 1.04; color: #fff; margin: 0; opacity: 0; max-width: 680px; }
+  p.beat-body { max-width: 500px; margin: 20px 0 0; font-size: clamp(15px, 1.65vw, 17px); line-height: 1.6; color: rgba(255,255,255,0.85); opacity: 0; }
+  .beat-stats { display: flex; gap: clamp(18px, 4vw, 38px); margin-top: 28px; opacity: 0; flex-wrap: wrap; }
+  .beat-stats .stat .num { font-family: "Bricolage Grotesque", sans-serif; font-size: clamp(19px, 2.4vw, 25px); font-weight: 700; color: #fff; }
+  .beat-stats .stat .lbl { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255,255,255,0.62); margin-top: 3px; }
   .scroll-cue {
     position: absolute; right: clamp(24px, 6vw, 72px); bottom: 40px; z-index: 2;
     font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.6);
@@ -84,71 +121,13 @@
   }
   .scroll-cue .line { width: 34px; height: 1px; background: rgba(255,255,255,0.5); }
 
-  /* ---------- Mission: no image - restrained, text-only beat ---------- */
-  section.mission {
-    min-height: 78vh; display: flex; align-items: center; justify-content: center;
-    padding: 10vh clamp(24px, 6vw, 72px); text-align: center; background: var(--forge-deep);
-  }
-  .mission-inner { max-width: 720px; }
-  .mission-kicker {
-    font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--aqua-core);
-    margin-bottom: 22px; opacity: 0;
-  }
-  h2.mission-title {
-    font-size: clamp(26px, 4vw, 42px); line-height: 1.2; margin: 0; color: #fff; font-weight: 500;
-    opacity: 0;
-  }
-  h2.mission-title em { font-style: normal; color: var(--aqua-core); }
-  p.mission-body {
-    margin: 28px auto 0; max-width: 560px; font-size: 16px; line-height: 1.7;
-    color: rgba(248,250,251,0.65); opacity: 0;
-  }
-
-  /* ---------- Product-line acts: real photograph, restrained text block ---------- */
-  section.act {
-    position: relative; min-height: 100vh; display: flex; align-items: flex-end; overflow: hidden;
-  }
-  .act-media {
-    position: absolute; inset: -6%;
-    background-size: cover; background-position: 50% 50%;
-    will-change: transform;
-  }
-  .act[data-line="core"] .act-media { background-image: url('images/core.png'); }
-  .act[data-line="charge"] .act-media { background-image: url('images/charge.png'); }
-  .act[data-line="recover"] .act-media { background-image: url('images/recover.png'); }
-  .act-scrim {
-    position: absolute; inset: 0;
-    background: linear-gradient(180deg, rgba(6,14,22,0.1) 0%, rgba(6,14,22,0.15) 45%, rgba(6,14,22,0.9) 100%);
-  }
-  .act-content { position: relative; z-index: 2; padding: 0 clamp(24px, 6vw, 72px) 8vh; max-width: 680px; }
-  .act-kicker {
-    font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; margin-bottom: 16px; opacity: 0;
-    display: flex; align-items: center; gap: 10px;
-  }
-  .act[data-line="core"] .act-kicker { color: #7FE3E0; }
-  .act[data-line="charge"] .act-kicker { color: #FFB088; }
-  .act[data-line="recover"] .act-kicker { color: #B7D89A; }
-  h2.act-title { font-size: clamp(30px, 5vw, 56px); line-height: 1.02; color: #fff; margin: 0; opacity: 0; }
-  p.act-body {
-    margin: 20px 0 0; max-width: 480px; font-size: clamp(15px, 1.6vw, 17px); line-height: 1.6;
-    color: rgba(255,255,255,0.82); opacity: 0;
-  }
-  .act-stats { display: flex; gap: clamp(20px, 4vw, 40px); margin-top: 30px; opacity: 0; flex-wrap: wrap; }
-  .act-stats .stat .num { font-family: "Bricolage Grotesque", sans-serif; font-size: clamp(20px, 2.6vw, 26px); font-weight: 700; color: #fff; }
-  .act-stats .stat .lbl { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255,255,255,0.6); margin-top: 3px; }
-
-  /* ---------- CTA ---------- */
-  section.cta {
-    min-height: 82vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
-    text-align: center; padding: 10vh clamp(24px, 6vw, 72px); background: var(--forge-deep);
-  }
-  .cta-kicker { font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--aqua-core); margin-bottom: 20px; opacity: 0; }
-  h2.cta-title { font-size: clamp(30px, 5vw, 54px); line-height: 1.08; color: #fff; margin: 0; max-width: 680px; opacity: 0; }
+  section.beat.center { align-items: center; justify-content: center; text-align: center; padding-bottom: 0; }
+  section.beat.center .beat-inner { max-width: 640px; }
   .cta-btn {
-    margin-top: 34px; padding: 15px 34px; border-radius: 999px; background: var(--aqua-core);
-    color: #04252A; font-weight: 700; font-size: 15px; text-decoration: none; opacity: 0;
+    display: inline-block; margin-top: 32px; padding: 15px 34px; border-radius: 999px;
+    background: var(--aqua-core); color: #04252A; font-weight: 700; font-size: 15px; text-decoration: none; opacity: 0;
   }
-  footer.foot { text-align: center; padding: 36px 24px 56px; color: rgba(248,250,251,0.4); font-size: 12px; background: var(--forge-deep); }
+  footer.foot { position: relative; z-index: 2; text-align: center; padding: 36px 24px 56px; color: rgba(248,250,251,0.4); font-size: 12px; background: var(--forge-deep); }
 </style>
 </head>
 <body>
@@ -159,36 +138,40 @@
   <div class="tag">Forge Your Flow</div>
 </nav>
 
+<div id="stage">
+  <div class="layer" data-img="hero"><div class="layer-img"></div><div class="layer-tint"></div><div class="layer-grid"></div></div>
+  <div class="layer" data-img="core"><div class="layer-img"></div><div class="layer-tint"></div><div class="layer-grid"></div></div>
+  <div class="layer" data-img="charge"><div class="layer-img"></div><div class="layer-tint"></div><div class="layer-grid"></div></div>
+  <div class="layer" data-img="recover"><div class="layer-img"></div><div class="layer-tint"></div><div class="layer-grid"></div></div>
+  <div class="stage-scrim"></div>
+</div>
+
 <div id="smooth-wrapper">
 <div id="smooth-content">
 
-  <section class="hero">
-    <div class="hero-media" id="heroMedia"></div>
-    <div class="hero-scrim"></div>
-    <div class="hero-content">
+  <section class="beat" id="hero" data-beat>
+    <div class="beat-inner">
       <span class="eyebrow" data-reveal><span class="dot"></span>AquaForge Beverages</span>
       <h1 class="hero-title display" id="heroTitle"><span class="word">Forge Your</span><br><span class="word">Flow</span></h1>
-      <p class="hero-sub" data-reveal>Clean, science-backed hydration and energy — born in the Rocky Mountain foothills. Zero artificial anything. Zero compromise.</p>
+      <p class="beat-body" data-reveal>Clean, science-backed hydration and energy — born in the Rocky Mountain foothills. Zero artificial anything. Zero compromise.</p>
     </div>
     <div class="scroll-cue" data-reveal><span class="line"></span>Scroll</div>
   </section>
 
-  <section class="mission">
-    <div class="mission-inner">
-      <div class="mission-kicker" data-reveal>Why AquaForge</div>
-      <h2 class="mission-title display" data-reveal>We publish our lab results. <em>Most brands hope you never ask.</em></h2>
-      <p class="mission-body" data-reveal>Founded in 2018 by Maya Chen and Jordan Hale — a product lead and a food scientist who got tired of the industry's ingredient theater. AquaForge exists to make performance beverages that are exactly what the label says, and nothing else.</p>
+  <section class="beat" id="mission" data-beat>
+    <div class="beat-inner">
+      <span class="beat-kicker" data-reveal>Why AquaForge</span>
+      <h2 class="beat-title display" data-reveal>We publish our lab results. Most brands hope you never ask.</h2>
+      <p class="beat-body" data-reveal>Founded in 2018 by Maya Chen and Jordan Hale — a product lead and a food scientist who got tired of the industry's ingredient theater.</p>
     </div>
   </section>
 
-  <section class="act" data-line="core">
-    <div class="act-media"></div>
-    <div class="act-scrim"></div>
-    <div class="act-content">
-      <span class="act-kicker" data-reveal>AquaForge Core — Everyday Hydration</span>
-      <h2 class="act-title display" data-reveal>Water, upgraded.<br>Not reinvented.</h2>
-      <p class="act-body" data-reveal>Still and lightly sparkling, enhanced with electrolytes and trace minerals. Citrus Grove, Cucumber Mint, Wild Berry, or Unflavored.</p>
-      <div class="act-stats" data-reveal>
+  <section class="beat" data-beat data-line="core">
+    <div class="beat-inner">
+      <span class="beat-kicker" data-line="core" data-reveal>AquaForge Core — Everyday Hydration</span>
+      <h2 class="beat-title display" data-reveal>Water, upgraded.<br>Not reinvented.</h2>
+      <p class="beat-body" data-reveal>Still and lightly sparkling, enhanced with electrolytes and trace minerals. Citrus Grove, Cucumber Mint, Wild Berry, or Unflavored.</p>
+      <div class="beat-stats" data-reveal>
         <div class="stat"><div class="num">0g</div><div class="lbl">Sugar</div></div>
         <div class="stat"><div class="num">10–20</div><div class="lbl">Calories</div></div>
         <div class="stat"><div class="num">4</div><div class="lbl">Flavors</div></div>
@@ -196,14 +179,12 @@
     </div>
   </section>
 
-  <section class="act" data-line="charge">
-    <div class="act-media"></div>
-    <div class="act-scrim"></div>
-    <div class="act-content">
-      <span class="act-kicker" data-reveal>AquaForge Charge — Functional Energy</span>
-      <h2 class="act-title display" data-reveal>Real caffeine.<br>No crash theater.</h2>
-      <p class="act-body" data-reveal>Green tea and guarana caffeine, rhodiola and ashwagandha, B-vitamins. Built for people who train, not people who need a slogan.</p>
-      <div class="act-stats" data-reveal>
+  <section class="beat" data-beat data-line="charge">
+    <div class="beat-inner">
+      <span class="beat-kicker" data-line="charge" data-reveal>AquaForge Charge — Functional Energy</span>
+      <h2 class="beat-title display" data-reveal>Real caffeine.<br>No crash theater.</h2>
+      <p class="beat-body" data-reveal>Green tea and guarana caffeine, rhodiola and ashwagandha, B-vitamins. Built for people who train, not people who need a slogan.</p>
+      <div class="beat-stats" data-reveal>
         <div class="stat"><div class="num">80–120mg</div><div class="lbl">Natural Caffeine</div></div>
         <div class="stat"><div class="num">3</div><div class="lbl">Adaptogens</div></div>
         <div class="stat"><div class="num">0</div><div class="lbl">Artificial Anything</div></div>
@@ -211,14 +192,12 @@
     </div>
   </section>
 
-  <section class="act" data-line="recover">
-    <div class="act-media"></div>
-    <div class="act-scrim"></div>
-    <div class="act-content">
-      <span class="act-kicker" data-reveal>AquaForge Recover — Post-Activity</span>
-      <h2 class="act-title display" data-reveal>Plant protein that<br>doesn't taste like one.</h2>
-      <p class="act-body" data-reveal>Electrolytes and plant-based protein isolate, for after the workout or after the day. Chocolate Sea Salt, Vanilla Chai, Strawberry Basil.</p>
-      <div class="act-stats" data-reveal>
+  <section class="beat" data-beat data-line="recover">
+    <div class="beat-inner">
+      <span class="beat-kicker" data-line="recover" data-reveal>AquaForge Recover — Post-Activity</span>
+      <h2 class="beat-title display" data-reveal>Plant protein that<br>doesn't taste like one.</h2>
+      <p class="beat-body" data-reveal>Electrolytes and plant-based protein isolate, for after the workout or after the day. Chocolate Sea Salt, Vanilla Chai, Strawberry Basil.</p>
+      <div class="beat-stats" data-reveal>
         <div class="stat"><div class="num">Plant</div><div class="lbl">Protein Isolate</div></div>
         <div class="stat"><div class="num">100%</div><div class="lbl">Recyclable Can</div></div>
         <div class="stat"><div class="num">Vegan</div><div class="lbl">Every Can</div></div>
@@ -226,10 +205,12 @@
     </div>
   </section>
 
-  <section class="cta">
-    <div class="cta-kicker" data-reveal>Join the Forge</div>
-    <h2 class="cta-title display" data-reveal>4,200 stores already carry it.<br>Your fridge is next.</h2>
-    <a href="#" class="cta-btn" data-reveal>Shop AquaForge</a>
+  <section class="beat center" data-beat>
+    <div class="beat-inner">
+      <span class="beat-kicker" data-reveal>Join the Forge</span>
+      <h2 class="beat-title display" data-reveal>4,200 stores already carry it.<br>Your fridge is next.</h2>
+      <a href="#" class="cta-btn" data-reveal>Shop AquaForge</a>
+    </div>
   </section>
 
   <footer class="foot">AquaForge Beverages — internal design exploration.</footer>
@@ -246,42 +227,151 @@
   "use strict";
   gsap.registerPlugin(ScrollTrigger, ScrollSmoother, SplitText);
 
-  const smoother = ScrollSmoother.create({ wrapper: "#smooth-wrapper", content: "#smooth-content", smooth: 1.2, effects: true });
-  const master = ScrollTrigger.create({
-    trigger: "#smooth-content", start: "top top", end: "bottom bottom",
-    onUpdate: (self) => gsap.set("#progress", { width: (self.progress * 100) + "%" }),
+  // ---------- The crossfade/blueprint-resolve engine. Pure function of
+  // overall scroll PROGRESS (never position) - this is what makes the
+  // photos morph into each other instead of sliding, and what makes the
+  // viewport read as static while a "film" plays behind it. Declared
+  // BEFORE ScrollSmoother.create() below: a real bug found live was that
+  // ScrollSmoother fires onUpdate synchronously during its own creation,
+  // and that callback calls updateStage() - if updateStage (or the `let
+  // STOPS` it reads) were declared afterward, that first call threw
+  // "Cannot access before initialization" and silently aborted the rest
+  // of this whole script, including the window.__jumpToProgress
+  // assignment at the very end.
+  const SEQUENCE = ["hero", "core", "charge", "recover", "hero"];
+  let STOPS = [0, 0.335, 0.50, 0.665, 1.0]; // placeholder - replaced below with REAL measured section boundaries once the pins exist; guessed fractions here caused a dead zone with no text (mission's text never lined up with the image transition it was guessed against)
+  const TRANSITION_START = 0.72; // hold steady for most of a segment, then morph into the next photo in the last ~28%
+  const layers = {};
+  document.querySelectorAll(".layer").forEach((el) => {
+    layers[el.dataset.img] = { el, img: el.querySelector(".layer-img"), tint: el.querySelector(".layer-tint"), grid: el.querySelector(".layer-grid") };
   });
-  window.__jumpToProgress = (frac) => { smoother.scrollTop(master.start + (master.end - master.start) * frac); ScrollTrigger.update(); };
+  function smoothstep01(t) { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); }
+  // Interpolate every filter parameter by hand (rather than snapping
+  // between two filter strings) so the blueprint really RESOLVES into the
+  // photo over the transition instead of popping between two states.
+  function blueprintFilter(resolveAmount) {
+    if (resolveAmount >= 1) return "none";
+    const g = 1 - resolveAmount;
+    // Desaturate + harden only; the cyan itself comes from .layer-tint.
+    return `grayscale(${g}) brightness(${1 + 0.12 * g}) contrast(${1 + 0.4 * g})`;
+  }
 
-  // Subtle parallax on every full-bleed photo - real depth, not a static image.
-  gsap.utils.toArray(".hero-media, .act-media").forEach((el) => {
-    gsap.fromTo(el, { yPercent: -8 }, {
-      yPercent: 8, ease: "none",
-      scrollTrigger: { trigger: el.closest("section"), start: "top bottom", end: "bottom top", scrub: true },
+  function updateStage(progress) {
+    let segIdx = STOPS.length - 2;
+    for (let i = 0; i < STOPS.length - 1; i++) { if (progress <= STOPS[i + 1]) { segIdx = i; break; } }
+    const segLocal = smoothstep01((progress - STOPS[segIdx]) / (STOPS[segIdx + 1] - STOPS[segIdx]));
+    const crossfade = smoothstep01((segLocal - TRANSITION_START) / (1 - TRANSITION_START));
+    const fromKey = SEQUENCE[segIdx], toKey = SEQUENCE[segIdx + 1];
+
+    Object.entries(layers).forEach(([key, layer]) => {
+      let weight = 0;
+      if (key === fromKey) weight = Math.max(weight, 1 - crossfade);
+      if (key === toKey) weight = Math.max(weight, crossfade);
+      layer.el.style.opacity = weight;
+      if (key === toKey) {
+        // Entering photo resolves from a blueprint/schematic state into
+        // full colour as the crossfade completes - a real construction
+        // reveal, not a plain dissolve.
+        layer.img.style.filter = blueprintFilter(crossfade);
+        layer.tint.style.opacity = Math.max(0, 1 - crossfade * 1.25);
+        layer.grid.style.opacity = Math.max(0, 1 - crossfade * 1.4) * 0.6;
+      } else {
+        layer.img.style.filter = "none";
+        layer.tint.style.opacity = 0;
+        layer.grid.style.opacity = 0;
+      }
     });
+  }
+
+  // totalStart/span are placeholders, replaced further down once all
+  // pinned sections exist and the document's real length is known -
+  // ScrollSmoother's own onUpdate is used to drive progress rather than a
+  // second ScrollTrigger with numeric start/end, which was found live to
+  // NOT behave as an absolute pixel range (it recomputed its own "end" to
+  // 1008px regardless of the explicit value passed in) - ScrollSmoother's
+  // own scrollTop() reading is the ground truth here instead.
+  let totalStart = 0, span = 1;
+  const smoother = ScrollSmoother.create({
+    wrapper: "#smooth-wrapper", content: "#smooth-content", smooth: 1.3,
+    onUpdate: (self) => {
+      const p = Math.max(0, Math.min(1, (self.scrollTop() - totalStart) / span));
+      gsap.set("#progress", { width: (p * 100) + "%" });
+      updateStage(p);
+    },
   });
 
-  // Hero entrance on load.
+  // ---------- Pinned beats: each section locks in place for a scroll span
+  // and its OWN copy dissolves in/holds/dissolves out via a scrubbed
+  // timeline - the section itself never slides, matching the photo stage.
   const heroSplit = new SplitText("#heroTitle .word", { type: "lines" });
   gsap.set(heroSplit.lines, { yPercent: 110, opacity: 0 });
   gsap.timeline({ delay: 0.3 })
     .to(heroSplit.lines, { yPercent: 0, opacity: 1, duration: 1.1, stagger: 0.12, ease: "power4.out" })
-    .to("section.hero [data-reveal]", { opacity: 1, duration: 0.8, stagger: 0.1, ease: "power2.out" }, "-=0.5");
+    .to("#hero [data-reveal]", { opacity: 1, duration: 0.8, stagger: 0.1, ease: "power2.out" }, "-=0.5");
 
-  // Every later section reveals on enter, and dismisses cleanly both ways
-  // (onEnter/onEnterBack to show, onLeave/onLeaveBack to hide) so nothing
-  // lingers into the next section's frame.
-  document.querySelectorAll("section.mission, section.act, section.cta").forEach((sectionEl) => {
+  const PIN_DIST = "+=100%";
+  const heroTl = gsap.timeline({ scrollTrigger: { trigger: "#hero", start: "top top", end: PIN_DIST, scrub: 0.5, pin: true, pinSpacing: true } })
+    .to("#hero .beat-inner, #hero .scroll-cue", { opacity: 0, y: -40, filter: "blur(10px)", duration: 1 }, 0.6);
+
+  // Real boundaries, keyed by which photo should be fully resolved by the
+  // time that section's pin begins (mission has no image of its own - it
+  // shares hero's hold, so it isn't a key here). Storing the live
+  // ScrollTrigger objects themselves, not their .start/.end read right
+  // now - a real bug found live: reading .start/.end THIS early (before
+  // ScrollTrigger.refresh() below) captured stale pre-refresh numbers,
+  // which silently desynced totalStart/span from the real, final layout
+  // and made every pinned section's own scrub timeline stop tracking the
+  // (correct) scroll position __jumpToProgress was actually setting.
+  const sectionTriggers = {};
+  document.querySelectorAll("section.beat[data-beat]").forEach((sectionEl) => {
+    if (sectionEl.id === "hero") return;
     const reveals = sectionEl.querySelectorAll("[data-reveal]");
-    gsap.set(reveals, { opacity: 0, y: 28 });
-    const showIn = () => gsap.to(reveals, { opacity: 1, y: 0, duration: 0.9, stagger: 0.08, ease: "power3.out" });
-    const hideOut = (dir) => gsap.to(reveals, { opacity: 0, y: dir * 28, duration: 0.5, ease: "power2.in" });
-    ScrollTrigger.create({
-      trigger: sectionEl, start: "top 68%", end: "bottom 32%",
-      onEnter: showIn, onEnterBack: showIn,
-      onLeave: () => hideOut(-1), onLeaveBack: () => hideOut(1),
+    const isLast = sectionEl === document.querySelector("section.beat.center");
+    gsap.set(reveals, { opacity: 0, y: 34, filter: "blur(8px)" });
+    const tl = gsap.timeline({
+      scrollTrigger: { trigger: sectionEl, start: "top top", end: isLast ? "+=70%" : PIN_DIST, scrub: 0.5, pin: true, pinSpacing: true },
     });
+    tl.to(reveals, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.3, stagger: 0.07, ease: "power2.out" }, 0);
+    if (!isLast) {
+      tl.to(reveals, { opacity: 1, duration: 0.34 }, 0.3)
+        .to(reveals, { opacity: 0, y: -34, filter: "blur(8px)", duration: 0.3, stagger: 0.05, ease: "power2.in" }, 0.66);
+    }
+    const key = sectionEl.dataset.line || (isLast ? "cta" : sectionEl.id);
+    sectionTriggers[key] = tl.scrollTrigger;
   });
+
+  // ---------- Now that every pin exists, measure the REAL document and
+  // derive STOPS from actual section boundaries instead of guessed
+  // fractions - this is what keeps the photo transition lined up with the
+  // text that's supposed to be sitting over the resolved image, instead of
+  // a dead gap with no copy visible (a real bug found via self-check here).
+  // Bug found on the FIRST fix attempt: a trigger on #smooth-content using
+  // "bottom bottom" measured a length (4608px) far shorter than the real
+  // pinned document (9630px) - once children are individually pinned,
+  // that auto-measurement is unreliable. A SECOND attempt using that same
+  // trigger with explicit numeric start/end was also found live to ignore
+  // the numbers given (it recomputed end as 1008px regardless) - so
+  // totalStart/span (declared up top, read by ScrollSmoother's own
+  // onUpdate) are the only source of truth, set here from the real
+  // first/last pinned trigger's own start/end.
+  ScrollTrigger.refresh();
+  totalStart = heroTl.scrollTrigger.start;
+  span = sectionTriggers.cta.end - totalStart;
+  STOPS = [
+    0,
+    (sectionTriggers.core.start - totalStart) / span,
+    (sectionTriggers.charge.start - totalStart) / span,
+    (sectionTriggers.recover.start - totalStart) / span,
+    (sectionTriggers.cta.start - totalStart) / span,
+  ];
+  window.__jumpToProgress = (frac) => {
+    smoother.scrollTop(totalStart + span * frac);
+    const p = Math.max(0, Math.min(1, frac));
+    gsap.set("#progress", { width: (p * 100) + "%" });
+    updateStage(p);
+    ScrollTrigger.update();
+  };
+  updateStage(0);
 })();
 </script>
 
