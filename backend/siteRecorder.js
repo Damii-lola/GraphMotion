@@ -99,8 +99,14 @@ async function launchChrome() {
     let chromium = null, loadErr = null;
     try { const mod = require('@sparticuz/chromium'); chromium = mod.default || mod; } catch (e) { loadErr = e; } // ESM package: the real object is .default under require()
     if (chromium && Array.isArray(chromium.args)) {
-      const args = await puppeteer.defaultArgs({ args: [...new Set([...chromium.args, ...lean, '--no-sandbox', '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader'])], headless: 'shell' });
-      return puppeteer.launch({ args, executablePath: await chromium.executablePath(), headless: 'shell' });
+      // The serverless build runs Chrome as ONE process, which cannot host extra browser contexts / windows (they crash it:
+      // "Target closed"). SITE_VIDEO_MULTIPROCESS=1 strips those flags so parallel capture can be used on a server with the RAM for it.
+      const multi = process.env.SITE_VIDEO_MULTIPROCESS === '1';
+      const base = multi ? chromium.args.filter((a) => a !== '--single-process' && a !== '--no-zygote') : chromium.args;
+      const args = await puppeteer.defaultArgs({ args: [...new Set([...base, ...lean, '--no-sandbox', '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader'])], headless: 'shell' });
+      const br = await puppeteer.launch({ args, executablePath: await chromium.executablePath(), headless: 'shell' });
+      br.__single = !multi;
+      return br;
     }
     if (loadErr) throw new Error('Chrome package failed to load: ' + loadErr.message);
   }
@@ -154,7 +160,7 @@ async function record(o, onProgress) {
   const browser = await launchChrome();
   try {
     const openPage = async () => {
-      const pg = await (await browser.createBrowserContext()).newPage(); // own context = own window, so every tab keeps rendering and can be captured in parallel
+      const pg = browser.__single ? await browser.newPage() : await (await browser.createBrowserContext()).newPage(); // own context = own window, so every tab keeps rendering and can be captured in parallel
       pg.on('pageerror', (e) => console.warn('[site-video page error]', e.message));
       await pg.setViewport({ width: vw, height: vh, deviceScaleFactor: dsf, isMobile: true, hasTouch: true });
       await pg.evaluateOnNewDocument(VIRTUAL_CLOCK);
@@ -246,18 +252,18 @@ async function record(o, onProgress) {
     };
     const STEPS = [[0, 1], [0.5, 1], [1, 1], [2, 1], [3, 1], [5, 1], [5, 2], [5, 3], [6, 4]];
     let idxs = pick(...STEPS[STEPS.length - 1]);
-    const WORKERS = Math.max(1, Math.min(4, Math.round(+o.workers || +process.env.SITE_VIDEO_WORKERS || 2)));
+    const WORKERS = browser.__single ? 1 : Math.max(1, Math.min(4, Math.round(+o.workers || +process.env.SITE_VIDEO_WORKERS || 2)));
     const capacity = (budgetMs * 0.8 * (1 + (WORKERS - 1) * 0.85)) / perFrameMs; // how many frames fit in the budget with WORKERS tabs
     for (const st of STEPS) { const cand = pick(...st); if (cand.length <= capacity) { idxs = cand; break; } }
     const note = idxs.length < totalFrames * 0.6 ? 'This server is slow, so calm parts of the video use fewer frames; transitions keep full smoothness where possible.' : null;
     // ---- capture, in parallel: the frame list is cut into contiguous chunks, one browser tab per chunk. Each tab
     // first jumps its own clock/scroll state to just before its first frame (GSAP's lag-smoothing is switched off
     // for that jump so time-based animations, e.g. the intro, land exactly where a sequential run would have them).
-    await page.close().catch(() => {}); // the calibration tab has been driven to a transition; chunks start from fresh tabs
+    if (WORKERS > 1) await page.close().catch(() => {}); // the calibration tab has been driven to a transition; parallel chunks start from fresh tabs
     const dtMs = 1000 / fps, started = Date.now();
     const chunk = Math.ceil(idxs.length / WORKERS);
     let ema = perFrameMs / WORKERS, doneFrames = 0;
-    const tabs = await Promise.all(Array.from({ length: Math.ceil(idxs.length / chunk) }, () => openPage()));
+    const tabs = WORKERS > 1 ? await Promise.all(Array.from({ length: Math.ceil(idxs.length / chunk) }, () => openPage())) : [page];
     await Promise.all(tabs.map(async (pg, c) => {
       const a = c * chunk, b = Math.min(idxs.length, a + chunk);
       const cl = await pg.createCDPSession();
