@@ -201,7 +201,7 @@ async function record(o, onProgress) {
     // has fewer distinct frames). Fast machine = full smoothness; slow machine =
     // it still finishes in minutes instead of hours.
     const client = await page.createCDPSession();
-    const shot = (q) => client.send('Page.captureScreenshot', { format: 'jpeg', quality: q, optimizeForSpeed: true });
+    const shot = (q) => client.send('Page.captureScreenshot', { format: 'jpeg', quality: q, optimizeForSpeed: true, captureBeyondViewport: false });
     for (let k = 0; k < 3; k++) { // warm-up: the first frames pay for shader compilation; not counted
       await apply(0); await page.evaluate((ms) => window.__advance(ms), 16); await shot(40);
       emit('loading', 0.02 + 0.01 * k);
@@ -242,7 +242,9 @@ async function record(o, onProgress) {
     emit('encoding', 0.76, null);
     const args = ['-y', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', '-framerate', String(encFps), '-i', path.join(work, 'f%05d.jpg')];
     if (o.audio) args.push('-i', path.resolve(o.audio));
-    args.push('-vf', `scale=${W}:${H}:flags=lanczos,setsar=1,format=yuv420p`, '-c:v', 'libx264', '-preset', o.encode || (encFps < fps ? 'ultrafast' : 'veryfast'), '-crf', String(o.crf || 20),
+    // Sparse frames (slow server): blend between neighbours up to the full frame rate instead of holding each one - motion reads as flowing, not a slideshow. scale runs first, on the few real frames only.
+    const smooth = encFps < fps ? `,framerate=fps=${fps}:interp_start=0:interp_end=255:scene=100` : '';
+    args.push('-vf', `scale=${W}:${H}:flags=${smooth ? 'bilinear' : 'lanczos'},setsar=1${smooth},format=yuv420p`, '-c:v', 'libx264', '-preset', o.encode || (encFps < fps ? 'ultrafast' : 'veryfast'), '-crf', String(o.crf || 20),
       '-threads', String(o.threads || 2), '-x264-params', 'rc-lookahead=10:ref=2', '-profile:v', 'high', '-level', '4.2', '-r', String(fps), '-g', String(fps * 2), '-movflags', '+faststart');
     if (o.audio) args.push('-c:a', 'aac', '-b:a', '192k', '-af', `afade=t=out:st=${Math.max(0, totalFrames / fps - 1.5)}:d=1.5`, '-shortest');
     args.push(out);
