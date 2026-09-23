@@ -193,7 +193,7 @@ async function record(o, onProgress) {
       const pc = info.pace || {}, rEnd = pc.revealEnd || 0.3, hEnd = pc.holdEnd || 0.6, F = [0.22, 0.48, 0.30];
       // The calm parts (text reveal + readable hold) play calmSpeed x faster than the base pace; transitions keep their
       // own duration. Everything below is in frames.
-      const cs = +o.calmSpeed || 1.03;
+      const cs = +o.calmSpeed || 1.06;
       const fStart = Math.round(holdStart * fps), fBase = sceneSeconds * fps, fEnd = Math.round(holdEnd * fps);
       const fR = (fBase * F[0]) / cs, fH = (fBase * F[1]) / cs, fT = fBase * F[2];
       const fScene = Math.round(fR + fH + fT);
