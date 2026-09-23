@@ -153,19 +153,23 @@ async function record(o, onProgress) {
   let totalFrames = 0, frameIdxs = [];
   const browser = await launchChrome();
   try {
-    const page = await browser.newPage();
-    page.on('pageerror', (e) => console.warn('[site-video page error]', e.message));
-    await page.setViewport({ width: vw, height: vh, deviceScaleFactor: dsf, isMobile: true, hasTouch: true });
-    await page.evaluateOnNewDocument(VIRTUAL_CLOCK);
-    await page.goto(url, { waitUntil: 'load', timeout: 90000 });
-    const t0 = Date.now();
-    for (;;) {
-      const ok = await page.evaluate(() => (typeof window.__assetsReady === 'function' ? !!window.__assetsReady() : true));
-      if (ok || Date.now() - t0 > 60000) break;
-      await new Promise((r) => setTimeout(r, 120));
-    }
-    await page.evaluate(() => (document.fonts && document.fonts.ready) || null);
-    await page.evaluate(() => { window.__advance(16); window.__advance(16); });
+    const openPage = async () => {
+      const pg = await (await browser.createBrowserContext()).newPage(); // own context = own window, so every tab keeps rendering and can be captured in parallel
+      pg.on('pageerror', (e) => console.warn('[site-video page error]', e.message));
+      await pg.setViewport({ width: vw, height: vh, deviceScaleFactor: dsf, isMobile: true, hasTouch: true });
+      await pg.evaluateOnNewDocument(VIRTUAL_CLOCK);
+      await pg.goto(url, { waitUntil: 'load', timeout: 90000 });
+      const t0 = Date.now();
+      for (;;) {
+        const ok = await pg.evaluate(() => (typeof window.__assetsReady === 'function' ? !!window.__assetsReady() : true));
+        if (ok || Date.now() - t0 > 60000) break;
+        await new Promise((r) => setTimeout(r, 120));
+      }
+      await pg.evaluate(() => (document.fonts && document.fonts.ready) || null);
+      await pg.evaluate(() => { window.__advance(16); window.__advance(16); });
+      return pg;
+    };
+    const page = await openPage();
 
     const info = await page.evaluate(() => ({
       beats: Array.isArray(window.__BEATS) && typeof window.__jumpToProgress === 'function' ? window.__BEATS.slice() : null,
@@ -242,20 +246,42 @@ async function record(o, onProgress) {
     };
     const STEPS = [[0, 1], [0.5, 1], [1, 1], [2, 1], [3, 1], [5, 1], [5, 2], [5, 3], [6, 4]];
     let idxs = pick(...STEPS[STEPS.length - 1]);
-    for (const st of STEPS) { const cand = pick(...st); if (cand.length * perFrameMs <= budgetMs * 0.8) { idxs = cand; break; } }
+    const WORKERS = Math.max(1, Math.min(4, Math.round(+o.workers || +process.env.SITE_VIDEO_WORKERS || 2)));
+    const capacity = (budgetMs * 0.8 * (1 + (WORKERS - 1) * 0.85)) / perFrameMs; // how many frames fit in the budget with WORKERS tabs
+    for (const st of STEPS) { const cand = pick(...st); if (cand.length <= capacity) { idxs = cand; break; } }
     const note = idxs.length < totalFrames * 0.6 ? 'This server is slow, so calm parts of the video use fewer frames; transitions keep full smoothness where possible.' : null;
-    const started = Date.now();
-    let ema = perFrameMs, prev = -1;
-    for (let k = 0; k < idxs.length; k++) {
-      const f = idxs[k], t1 = Date.now();
-      await apply(plan(f));
-      await page.evaluate((ms) => window.__advance(ms), (1000 / fps) * (prev < 0 ? 1 : f - prev));
-      prev = f;
-      const { data } = await shot(quality);
-      await fs.promises.writeFile(path.join(work, `f${String(k).padStart(5, '0')}.jpg`), Buffer.from(data, 'base64'));
-      ema = ema * 0.9 + (Date.now() - t1) * 0.1;
-      if (k % 4 === 0) emit('recording', 0.03 + 0.72 * ((k + 1) / idxs.length), (idxs.length - k - 1) * ema / 1000 + 30, note);
-    }
+    // ---- capture, in parallel: the frame list is cut into contiguous chunks, one browser tab per chunk. Each tab
+    // first jumps its own clock/scroll state to just before its first frame (GSAP's lag-smoothing is switched off
+    // for that jump so time-based animations, e.g. the intro, land exactly where a sequential run would have them).
+    await page.close().catch(() => {}); // the calibration tab has been driven to a transition; chunks start from fresh tabs
+    const dtMs = 1000 / fps, started = Date.now();
+    const chunk = Math.ceil(idxs.length / WORKERS);
+    let ema = perFrameMs / WORKERS, doneFrames = 0;
+    const tabs = await Promise.all(Array.from({ length: Math.ceil(idxs.length / chunk) }, () => openPage()));
+    await Promise.all(tabs.map(async (pg, c) => {
+      const a = c * chunk, b = Math.min(idxs.length, a + chunk);
+      const cl = await pg.createCDPSession();
+      const sh = (q) => cl.send('Page.captureScreenshot', { format: 'jpeg', quality: q, optimizeForSpeed: true, captureBeyondViewport: false });
+      const ap = info.beats ? (p) => pg.evaluate((x) => window.__jumpToProgress(x), p) : (p) => pg.evaluate((y) => window.scrollTo(0, y), Math.round(p * info.maxScroll));
+      let prev = -1;
+      if (a > 0) {
+        const f0 = idxs[a], wStart = Math.max(0, f0 - 90);
+        await pg.evaluate((ms) => { if (window.gsap) window.gsap.ticker.lagSmoothing(0); window.__advance(ms); }, wStart * dtMs);
+        for (let w = wStart; w < f0; w += 3) { await ap(plan(w)); await pg.evaluate((ms) => window.__advance(ms), 3 * dtMs); }
+        prev = f0 - 1;
+      }
+      for (let k = a; k < b; k++) {
+        const f = idxs[k], t1 = Date.now();
+        await ap(plan(f));
+        await pg.evaluate((ms) => window.__advance(ms), dtMs * (prev < 0 ? 1 : f - prev));
+        prev = f;
+        const { data } = await sh(quality);
+        await fs.promises.writeFile(path.join(work, `f${String(k).padStart(5, '0')}.jpg`), Buffer.from(data, 'base64'));
+        doneFrames++;
+        ema = ema * 0.95 + ((Date.now() - t1) / WORKERS) * 0.05;
+        if (doneFrames % 4 === 0) emit('recording', 0.03 + 0.72 * (doneFrames / idxs.length), (idxs.length - doneFrames) * ema / 1000 + 30, note);
+      }
+    }));
     frameIdxs = idxs;
   } finally {
     await browser.close().catch(() => {});
