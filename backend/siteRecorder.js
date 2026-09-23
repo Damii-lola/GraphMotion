@@ -150,7 +150,7 @@ async function record(o, onProgress) {
     srv = await serveDir(dir); url = srv.url;
   }
 
-  let totalFrames = 0, encFps = fps;
+  let totalFrames = 0, frameIdxs = [];
   const browser = await launchChrome();
   try {
     const page = await browser.newPage();
@@ -173,7 +173,7 @@ async function record(o, onProgress) {
       maxScroll: Math.max(0, document.documentElement.scrollHeight - window.innerHeight),
     }));
 
-    let plan;
+    let plan, weight; // plan(f): page position 0..1 at timeline frame f.  weight(f): how many timeline frames ONE captured frame may cover there.
     if (info.beats) {
       const scenes = info.beats.length - 1, endP = 0.975, seg = [];
       for (let i = 0; i < scenes; i++) seg.push([info.beats[i], i === scenes - 1 ? endP : info.beats[i + 1]]);
@@ -191,9 +191,20 @@ async function record(o, onProgress) {
         const i = Math.min(scenes - 1, Math.floor(g / fScene));
         return seg[i][0] + (seg[i][1] - seg[i][0]) * shape(easeFn((g % fScene) / fScene));
       };
+      // Where the picture actually changes fast (transitions) every frame matters; where it barely moves
+      // (readable holds, the final hold) a captured frame can stand in for several. Only used when the
+      // server is too slow to capture every frame.
+      weight = (f) => {
+        if (f < fStart) return 2;
+        const g = f - fStart;
+        if (g >= scenes * fScene) return 6;
+        const x = (g % fScene) / fScene;
+        return x < F[0] ? 3 : x < F[0] + F[1] ? 4 : 1;
+      };
     } else {
       totalFrames = Math.round((+o.duration || 30) * fps);
       plan = (f) => easeFn(Math.min(1, f / Math.max(1, totalFrames - 1)));
+      weight = () => 3;
     }
     if (totalFrames > MAX_FRAMES) throw new Error(`That would be a ${(totalFrames / fps).toFixed(0)}s video - the limit is ${(MAX_FRAMES / fps).toFixed(0)}s. Use fewer seconds per scene.`);
     const apply = info.beats
@@ -201,43 +212,51 @@ async function record(o, onProgress) {
       : (p) => page.evaluate((y) => window.scrollTo(0, y), Math.round(p * info.maxScroll));
 
     // ---- phase 1: frames -> jpeg files, inside a TIME BUDGET.
-    // Software-rendered WebGL is slow on small servers, so we measure how long a
-    // frame really takes here and, if the full 30 fps timeline would blow the
-    // budget, capture every Nth frame (the video keeps its full length, it just
-    // has fewer distinct frames). Fast machine = full smoothness; slow machine =
-    // it still finishes in minutes instead of hours.
+    // Software-rendered WebGL is slow on small servers. We time a transition frame (the most expensive kind) here,
+    // then pick the SMALLEST thinning of the timeline that fits the budget: m = 0 captures every frame (fast
+    // machine = full smoothness); larger m thins the calm parts of the video first while keeping every frame of
+    // the fast-moving transitions.
     const client = await page.createCDPSession();
     const shot = (q) => client.send('Page.captureScreenshot', { format: 'jpeg', quality: q, optimizeForSpeed: true, captureBeyondViewport: false });
+    const heavyP = info.beats ? plan(Math.round(fps * holdStart + sceneSeconds * fps * 0.85)) : 0.5; // mid-transition of the first scene
     for (let k = 0; k < 3; k++) { // warm-up: the first frames pay for shader compilation; not counted
-      await apply(0); await page.evaluate((ms) => window.__advance(ms), 16); await shot(40);
+      await apply(heavyP); await page.evaluate((ms) => window.__advance(ms), 16); await shot(40);
       emit('loading', 0.02 + 0.01 * k);
     }
+    const tc = Date.now();
+    for (let k = 0; k < 4; k++) { await apply(heavyP + k * 1e-4); await page.evaluate((ms) => window.__advance(ms), 16); await shot(quality); }
+    const perFrameMs = (Date.now() - tc) / 4;
     const budgetMs = (+o.captureBudgetSeconds || +process.env.SITE_VIDEO_CAPTURE_BUDGET_S || 300) * 1000;
-    const CALIB = 6, MAX_STRIDE = 12;
-    let stride = 1, n = 0, f = 0, note = null, ema = null;
+    // pick(calm, trans): thin the calm parts by factor `calm` (0 = keep every frame) and capture every
+    // `trans`-th frame of the fast-moving transitions (weight 1). Calm parts are thinned to the limit
+    // BEFORE transitions lose a single frame.
+    const pick = (calm, trans) => {
+      const a = []; let f = 0;
+      while (f < totalFrames) {
+        a.push(f);
+        const w = weight(f);
+        f += w === 1 ? trans : calm === 0 ? 1 : Math.max(1, Math.round(w * calm));
+      }
+      if (a[a.length - 1] !== totalFrames - 1) a.push(totalFrames - 1);
+      return a;
+    };
+    const STEPS = [[0, 1], [0.5, 1], [1, 1], [2, 1], [3, 1], [5, 1], [5, 2], [5, 3], [6, 4]];
+    let idxs = pick(...STEPS[STEPS.length - 1]);
+    for (const st of STEPS) { const cand = pick(...st); if (cand.length * perFrameMs <= budgetMs * 0.8) { idxs = cand; break; } }
+    const note = idxs.length < totalFrames * 0.6 ? 'This server is slow, so calm parts of the video use fewer frames; transitions keep full smoothness where possible.' : null;
     const started = Date.now();
-    while (f < totalFrames) {
-      const t1 = Date.now();
+    let ema = perFrameMs, prev = -1;
+    for (let k = 0; k < idxs.length; k++) {
+      const f = idxs[k], t1 = Date.now();
       await apply(plan(f));
-      await page.evaluate((ms) => window.__advance(ms), (1000 / fps) * (n < CALIB ? 1 : stride));
+      await page.evaluate((ms) => window.__advance(ms), (1000 / fps) * (prev < 0 ? 1 : f - prev));
+      prev = f;
       const { data } = await shot(quality);
-      await fs.promises.writeFile(path.join(work, `f${String(n).padStart(5, '0')}.jpg`), Buffer.from(data, 'base64'));
-      n++;
-      const dtFrame = Date.now() - t1;
-      ema = ema == null ? dtFrame : ema * 0.8 + dtFrame * 0.2;
-      if (n === CALIB) {
-        const avg = (Date.now() - started) / CALIB, framesLeft = totalFrames - f - 1;
-        const affordable = Math.max(1, Math.floor((budgetMs * 0.8) / avg)); // 20% margin
-        stride = Math.min(MAX_STRIDE, Math.max(1, Math.ceil(framesLeft / affordable)));
-        if (stride > 1) note = `This server is slow, so the video uses about ${Math.max(2, Math.round(fps / stride))} distinct frames per second to finish in time.`;
-      }
-      f += n < CALIB ? 1 : stride;
-      if (n % 3 === 0) {
-        const left = Math.ceil(Math.max(0, totalFrames - f) / stride);
-        emit('recording', 0.03 + 0.72 * Math.min(1, f / totalFrames), left * ema / 1000 + (stride > 1 ? 40 : totalFrames * 0.02), note);
-      }
+      await fs.promises.writeFile(path.join(work, `f${String(k).padStart(5, '0')}.jpg`), Buffer.from(data, 'base64'));
+      ema = ema * 0.9 + (Date.now() - t1) * 0.1;
+      if (k % 4 === 0) emit('recording', 0.03 + 0.72 * ((k + 1) / idxs.length), (idxs.length - k - 1) * ema / 1000 + 30, note);
     }
-    encFps = fps / stride;
+    frameIdxs = idxs;
   } finally {
     await browser.close().catch(() => {});
     if (srv) srv.server.close();
@@ -246,11 +265,19 @@ async function record(o, onProgress) {
   // ---- phase 2: encode (Chrome is gone by now)
   try {
     emit('encoding', 0.76, null);
-    const args = ['-y', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', '-framerate', String(encFps), '-i', path.join(work, 'f%05d.jpg')];
+    // Captured frames sit at uneven timeline positions (dense in transitions, sparse in calm holds), so tell ffmpeg
+    // how long each one lasts; the fps filter then fills the gaps by repeating the last frame.
+    const lines = ['ffconcat version 1.0'];
+    for (let k = 0; k < frameIdxs.length; k++) {
+      const dur = ((k + 1 < frameIdxs.length ? frameIdxs[k + 1] : totalFrames) - frameIdxs[k]) / fps;
+      lines.push(`file f${String(k).padStart(5, '0')}.jpg`, `duration ${dur.toFixed(6)}`);
+    }
+    lines.push(`file f${String(frameIdxs.length - 1).padStart(5, '0')}.jpg`);
+    fs.writeFileSync(path.join(work, 'list.txt'), lines.join('\n'));
+    const sparse = frameIdxs.length < totalFrames * 0.6;
+    const args = ['-y', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', '-f', 'concat', '-safe', '0', '-i', path.join(work, 'list.txt')];
     if (o.audio) args.push('-i', path.resolve(o.audio));
-    // Sparse frames (slow server): blend between neighbours up to the full frame rate instead of holding each one - motion reads as flowing, not a slideshow. scale runs first, on the few real frames only.
-    const smooth = encFps < fps ? `,framerate=fps=${fps}:interp_start=0:interp_end=255:scene=100` : '';
-    args.push('-vf', `scale=${W}:${H}:flags=${smooth ? 'bilinear' : 'lanczos'},setsar=1${smooth},format=yuv420p`, '-c:v', 'libx264', '-preset', o.encode || (encFps < fps ? 'ultrafast' : 'veryfast'), '-crf', String(o.crf || 20),
+    args.push('-vf', `scale=${W}:${H}:flags=${sparse ? 'bilinear' : 'lanczos'},setsar=1,fps=${fps},format=yuv420p`, '-c:v', 'libx264', '-preset', o.encode || (sparse ? 'ultrafast' : 'veryfast'), '-crf', String(o.crf || 20),
       '-threads', String(o.threads || 2), '-x264-params', 'rc-lookahead=10:ref=2', '-profile:v', 'high', '-level', '4.2', '-r', String(fps), '-g', String(fps * 2), '-movflags', '+faststart');
     if (o.audio) args.push('-c:a', 'aac', '-b:a', '192k', '-af', `afade=t=out:st=${Math.max(0, totalFrames / fps - 1.5)}:d=1.5`, '-shortest');
     args.push(out);
