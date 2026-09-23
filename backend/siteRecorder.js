@@ -191,15 +191,20 @@ async function record(o, onProgress) {
       // slow drifting. Instead spend the scene's time like an editor would: quick reveal, a readable hold, then a
       // short punchy transition. revealEnd / holdEnd are the scene positions (0..1) where those phases end.
       const pc = info.pace || {}, rEnd = pc.revealEnd || 0.3, hEnd = pc.holdEnd || 0.6, F = [0.22, 0.48, 0.30];
-      const shape = (x) => (x < F[0] ? rEnd * (x / F[0]) : x < F[0] + F[1] ? rEnd + (hEnd - rEnd) * ((x - F[0]) / F[1]) : hEnd + (1 - hEnd) * ((x - F[0] - F[1]) / F[2]));
-      const fStart = Math.round(holdStart * fps), fScene = Math.round(sceneSeconds * fps), fEnd = Math.round(holdEnd * fps);
+      // The calm parts (text reveal + readable hold) play calmSpeed x faster than the base pace; transitions keep their
+      // own duration. Everything below is in frames.
+      const cs = +o.calmSpeed || 1.03;
+      const fStart = Math.round(holdStart * fps), fBase = sceneSeconds * fps, fEnd = Math.round(holdEnd * fps);
+      const fR = (fBase * F[0]) / cs, fH = (fBase * F[1]) / cs, fT = fBase * F[2];
+      const fScene = Math.round(fR + fH + fT);
       totalFrames = fStart + scenes * fScene + fEnd;
       plan = (f) => {
         if (f < fStart) return 0;
         const g = f - fStart;
         if (g >= scenes * fScene) return endP;
-        const i = Math.min(scenes - 1, Math.floor(g / fScene));
-        return seg[i][0] + (seg[i][1] - seg[i][0]) * shape(easeFn((g % fScene) / fScene));
+        const i = Math.min(scenes - 1, Math.floor(g / fScene)), gi = g - i * fScene;
+        const t = gi < fR ? rEnd * (gi / fR) : gi < fR + fH ? rEnd + (hEnd - rEnd) * ((gi - fR) / fH) : hEnd + (1 - hEnd) * Math.min(1, (gi - fR - fH) / fT);
+        return seg[i][0] + (seg[i][1] - seg[i][0]) * t;
       };
       // Where the picture actually changes fast (transitions) every frame matters; where it barely moves
       // (readable holds, the final hold) a captured frame can stand in for several. Only used when the
@@ -208,8 +213,8 @@ async function record(o, onProgress) {
         if (f < fStart) return 2;
         const g = f - fStart;
         if (g >= scenes * fScene) return 6;
-        const x = (g % fScene) / fScene;
-        return x < F[0] ? 3 : x < F[0] + F[1] ? 4 : 1;
+        const gi = g % fScene;
+        return gi < fR ? 3 : gi < fR + fH ? 4 : 1;
       };
     } else {
       totalFrames = Math.round((+o.duration || 30) * fps);
