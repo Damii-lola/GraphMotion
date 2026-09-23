@@ -150,7 +150,9 @@
   section.beat.tone-light p.beat-body { color: #1E3446; }
   section.beat.tone-light .beat-kicker { color: #075E66; }
   section.beat.tone-light .beat-stats .stat .lbl { color: #3C5364; }
-  #gl { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+  #gl { display: none; }
+  .ghost { display: none !important; }
+  #glOld { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
   section.beat.center { align-items: center; justify-content: flex-start; text-align: left; padding-bottom: 0; }
   section.beat.center .beat-inner { max-width: 600px; }
   .cta-btn {
@@ -312,6 +314,7 @@
     const crossfade = smoothstep01((segLocal - TRANSITION_START) / (1 - TRANSITION_START));
     const fromKey = SEQUENCE[segIdx], toKey = SEQUENCE[segIdx + 1];
 
+    if (document.documentElement.classList.contains("glbg")) return;
     Object.entries(layers).forEach(([key, layer]) => {
       let weight = 0;
       if (key === fromKey) weight = Math.max(weight, 1 - crossfade);
@@ -360,7 +363,7 @@
 
   const PIN_DIST = "+=100%";
   const heroTl = gsap.timeline({ scrollTrigger: { trigger: "#hero", start: "top top", end: PIN_DIST, scrub: 0.5, pin: true, pinSpacing: true } })
-    .to("#hero .beat-inner, #hero .scroll-cue", { opacity: 0, y: -40, filter: "blur(10px)", duration: 1 }, 0.6);
+    .to("#hero .beat-inner, #hero .scroll-cue", { opacity: 0, y: -40, duration: 1 }, 0.6);
 
   // Real boundaries, keyed by which photo should be fully resolved by the
   // time that section's pin begins (mission has no image of its own - it
@@ -376,14 +379,14 @@
     if (sectionEl.id === "hero") return;
     const reveals = sectionEl.querySelectorAll("[data-reveal]");
     const isLast = sectionEl === document.querySelector("section.beat.center");
-    gsap.set(reveals, { opacity: 0, y: 34, filter: "blur(8px)" });
+    gsap.set(reveals, { opacity: 0, y: 34 });
     const tl = gsap.timeline({
       scrollTrigger: { trigger: sectionEl, start: "top top", end: isLast ? "+=70%" : PIN_DIST, scrub: 0.5, pin: true, pinSpacing: true },
     });
-    tl.to(reveals, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.3, stagger: 0.07, ease: "power2.out" }, 0);
+    tl.to(reveals, { opacity: 1, y: 0, duration: 0.3, stagger: 0.07, ease: "power2.out" }, 0);
     if (!isLast) {
       tl.to(reveals, { opacity: 1, duration: 0.34 }, 0.3)
-        .to(reveals, { opacity: 0, y: -34, filter: "blur(8px)", duration: 0.3, stagger: 0.05, ease: "power2.in" }, 0.66);
+        .to(reveals, { opacity: 0, y: -34, duration: 0.3, stagger: 0.05, ease: "power2.in" }, 0.66);
     }
     const key = sectionEl.dataset.line || (isLast ? "cta" : sectionEl.id);
     sectionTriggers[key] = tl.scrollTrigger;
@@ -593,7 +596,8 @@ const CYAN = new THREE.Color(0x7ff0f0), INKC = new THREE.Color(0x073c49), INK = 
 // ===================================================================
 const bgCanvas = document.getElementById("bg");
 const bgr = new THREE.WebGLRenderer({ canvas: bgCanvas, antialias: false, alpha: false });
-bgr.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+let bgScale = 0.6, bgSlow = 0, bgLastT = 0;
+bgr.setPixelRatio(bgScale);
 const bgScene = new THREE.Scene();
 const bgCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const BG_FILES = ["hero", "lab", "core", "charge", "recover", "store"];
@@ -609,12 +613,12 @@ BG_FILES.forEach((n, k) => {
   });
 });
 const BG_FX = [ // ripple, mist, rays, motes
-  [0.35, 0.55, 0.0, 0.25], // hero: river shimmer + valley mist
-  [0.05, 0.0, 0.0, 0.30],  // lab: floating dust motes in daylight
-  [1.00, 0.0, 0.0, 0.55],  // core: running water + droplets
-  [0.10, 0.25, 1.0, 0.20], // charge: sun rays
-  [0.15, 0.85, 0.0, 0.20], // recover: rolling mist
-  [0.10, 0.25, 0.0, 0.75], // store: cold-air motes
+  [0.35, 0.55, 0.0, 0.0], // hero: river shimmer + valley mist
+  [0.05, 0.0, 0.0, 0.0],  // lab: floating dust motes in daylight
+  [1.00, 0.0, 0.0, 0.0],  // core: running water + droplets
+  [0.10, 0.25, 1.0, 0.0], // charge: sun rays
+  [0.15, 0.85, 0.0, 0.0], // recover: rolling mist
+  [0.10, 0.25, 0.0, 0.0], // store: cold-air motes
 ];
 const BG_LIGHT = [0, 1, 0, 0, 0, 0];
 const BG_DRIFT = [[0.035, -0.012], [-0.03, 0.01], [0.0, 0.03], [-0.02, -0.03], [0.03, 0.012], [-0.025, 0.02]];
@@ -729,7 +733,14 @@ const bgLightState = { v: 0 };
 let bgShown = false;
 const projV = new THREE.Vector3();
 function bgResize(w, h) { bgr.setSize(w, h, false); bgU.uRes.value.set(bgCanvas.width, bgCanvas.height); }
+function bgAdapt(now) {
+  const dt = now - bgLastT; bgLastT = now;
+  if (dt > 100 || dt <= 0) return;
+  bgSlow += dt > 26 ? 1 : dt < 19 ? -1 : 0; bgSlow = Math.max(-40, Math.min(40, bgSlow));
+  if (bgSlow > 25 && bgScale > 0.34) { bgScale = Math.max(0.34, bgScale - 0.1); bgSlow = 0; bgr.setPixelRatio(bgScale); bgResize(window.innerWidth, window.innerHeight); }
+}
 function bgFrame(now) {
+  bgAdapt(now);
   const i = Math.min(state.i, 5), nxt = Math.min(i + 1, 5), t = state.t;
   const last = i >= 5;
   const e = last ? 0 : sm5((t - 0.6) / 0.4);
@@ -742,8 +753,7 @@ function bgFrame(now) {
   bgU.uDrift.value.set(BG_DRIFT[i][0] * t, BG_DRIFT[i][1] * t, 0, 0);
   bgU.uFxA.value.set(...BG_FX[i]); bgU.uFxB.value.set(...BG_FX[nxt]);
   bgU.uLight.value.set(BG_LIGHT[i], BG_LIGHT[nxt]);
-  projV.set(stand.position.x, stand.position.y + 0.9 * stand.scale.x, 0).project(camera);
-  bgU.uPortal.value.set(projV.x * 0.5 + 0.5, projV.y * 0.5 + 0.5);
+  bgU.uPortal.value.set(0.5, 0.5);
   bgLightState.v = lerp(BG_LIGHT[i], BG_LIGHT[nxt], sm(e * 1.6 - 0.3));
   bgr.render(bgScene, bgCam);
   if (bgHeroReady && !bgShown) { bgShown = true; document.documentElement.classList.add("glbg"); }
@@ -803,7 +813,6 @@ function frame(now) {
   [s1, s2, s3].forEach((s) => s.material.color.setRGB(1 - 0.85 * L, 1 - 0.55 * L, 1 - 0.5 * L));
   grid.material.color.setRGB(1 - 0.8 * L, 1 - 0.55 * L, 1 - 0.5 * L);
   bgFrame(now);
-  renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
 window.__sceneReady = true;
