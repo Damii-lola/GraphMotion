@@ -123,8 +123,17 @@
   }
   .scroll-cue .line { width: 34px; height: 1px; background: rgba(255,255,255,0.5); }
 
-  section.beat.center { align-items: center; justify-content: center; text-align: center; padding-bottom: 0; }
-  section.beat.center .beat-inner { max-width: 640px; }
+  /* Text changes position beat to beat (side + height), and the 3D can on
+     the stage always moves to the opposite side. */
+  section.beat.pos-right { justify-content: flex-end; }
+  section.beat.v-center { align-items: center; padding-bottom: 0; }
+  section.beat.v-top { align-items: flex-start; padding-top: 17vh; padding-bottom: 0; }
+  .side-scrim { position: absolute; inset: 0; z-index: 1; opacity: 0; }
+  .side-scrim.left { background: linear-gradient(90deg, rgba(6,14,22,0.82) 0%, rgba(6,14,22,0.55) 38%, rgba(6,14,22,0) 68%); }
+  .side-scrim.right { background: linear-gradient(270deg, rgba(6,14,22,0.82) 0%, rgba(6,14,22,0.55) 38%, rgba(6,14,22,0) 68%); }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+  section.beat.center { align-items: center; justify-content: flex-start; text-align: left; padding-bottom: 0; }
+  section.beat.center .beat-inner { max-width: 600px; }
   .cta-btn {
     display: inline-block; margin-top: 32px; padding: 15px 34px; border-radius: 999px;
     background: var(--aqua-core); color: #04252A; font-weight: 700; font-size: 15px; text-decoration: none; opacity: 0;
@@ -146,7 +155,11 @@
   <div class="layer" data-img="charge"><div class="layer-img"></div><div class="layer-tint"></div><div class="layer-grid"></div></div>
   <div class="layer" data-img="recover"><div class="layer-img"></div><div class="layer-tint"></div><div class="layer-grid"></div></div>
   <div class="stage-scrim"></div>
+  <div class="side-scrim left"></div>
+  <div class="side-scrim right"></div>
 </div>
+
+<canvas id="gl"></canvas>
 
 <div id="smooth-wrapper">
 <div id="smooth-content">
@@ -160,7 +173,7 @@
     <div class="scroll-cue" data-reveal><span class="line"></span>Scroll</div>
   </section>
 
-  <section class="beat" id="mission" data-beat>
+  <section class="beat pos-right v-center" id="mission" data-beat>
     <div class="beat-inner">
       <span class="beat-kicker" data-reveal>Why AquaForge</span>
       <h2 class="beat-title display" data-reveal>We publish our lab results. Most brands hope you never ask.</h2>
@@ -168,7 +181,7 @@
     </div>
   </section>
 
-  <section class="beat" data-beat data-line="core">
+  <section class="beat v-center" data-beat data-line="core">
     <div class="beat-inner">
       <span class="beat-kicker" data-line="core" data-reveal>AquaForge Core — Everyday Hydration</span>
       <h2 class="beat-title display" data-reveal>Water, upgraded.<br>Not reinvented.</h2>
@@ -181,7 +194,7 @@
     </div>
   </section>
 
-  <section class="beat" data-beat data-line="charge">
+  <section class="beat pos-right" data-beat data-line="charge">
     <div class="beat-inner">
       <span class="beat-kicker" data-line="charge" data-reveal>AquaForge Charge — Functional Energy</span>
       <h2 class="beat-title display" data-reveal>Real caffeine.<br>No crash theater.</h2>
@@ -194,7 +207,7 @@
     </div>
   </section>
 
-  <section class="beat" data-beat data-line="recover">
+  <section class="beat v-top" data-beat data-line="recover">
     <div class="beat-inner">
       <span class="beat-kicker" data-line="recover" data-reveal>AquaForge Recover — Post-Activity</span>
       <h2 class="beat-title display" data-reveal>Plant protein that<br>doesn't taste like one.</h2>
@@ -220,6 +233,7 @@
 </div>
 </div>
 
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"}}</script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/gsap.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/ScrollTrigger.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/ScrollSmoother.min.js"></script>
@@ -258,7 +272,17 @@
     return `grayscale(${g}) brightness(${1 + 0.12 * g}) contrast(${1 + 0.4 * g})`;
   }
 
+  let BEATS = []; // progress fractions at which each beat (hero, mission, core, charge, recover, cta) starts, plus 1 at the end
+  function pushScene(p) {
+    if (BEATS.length < 2 || !window.__sceneUpdate) return;
+    let i = BEATS.length - 2;
+    for (let k = 0; k < BEATS.length - 1; k++) { if (p < BEATS[k + 1]) { i = k; break; } }
+    const t = Math.max(0, Math.min(1, (p - BEATS[i]) / (BEATS[i + 1] - BEATS[i])));
+    window.__sceneUpdate(i, t, p);
+  }
+
   function updateStage(progress) {
+    pushScene(progress);
     let segIdx = STOPS.length - 2;
     for (let i = 0; i < STOPS.length - 1; i++) { if (progress <= STOPS[i + 1]) { segIdx = i; break; } }
     const segLocal = smoothstep01((progress - STOPS[segIdx]) / (STOPS[segIdx + 1] - STOPS[segIdx]));
@@ -366,6 +390,15 @@
     (sectionTriggers.recover.start - totalStart) / span,
     (sectionTriggers.cta.start - totalStart) / span,
   ];
+  BEATS = [
+    0,
+    (sectionTriggers.mission.start - totalStart) / span,
+    (sectionTriggers.core.start - totalStart) / span,
+    (sectionTriggers.charge.start - totalStart) / span,
+    (sectionTriggers.recover.start - totalStart) / span,
+    (sectionTriggers.cta.start - totalStart) / span,
+    1,
+  ];
   window.__jumpToProgress = (frac) => {
     smoother.scrollTop(totalStart + span * frac);
     const p = Math.max(0, Math.min(1, frac));
@@ -376,6 +409,188 @@
   updateStage(0);
   ["core", "charge", "recover"].forEach((n) => { new Image().src = "images/" + n + ".webp"; }); // warm the cache so crossfades never pop in
 })();
+</script>
+
+<script type="module">
+// ---------- 3D blueprint scene: a real AquaForge can built in three.js.
+// Every beat it re-appears as a cyan wireframe blueprint (with dimension
+// callouts + a grid floor) and a scan-line sweeps up it, turning wire into
+// solid metal - so the "blueprint -> real thing" reveal is a live 3D
+// object, not a filter on a photo. It sits on the side opposite the text
+// and swaps sides / poses / labels as the beats change.
+import * as THREE from "three";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+const canvas = document.getElementById("gl");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.localClippingEnabled = true;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+camera.position.set(0, 0.5, 11);
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.2); keyLight.position.set(3, 4, 5); scene.add(keyLight);
+const rimLight = new THREE.DirectionalLight(0x55e6e6, 1.6); rimLight.position.set(-4, 2, -3); scene.add(rimLight);
+
+// ----- can profile (radius, height), rings every 0.3 on the body
+const P = [];
+const add = (r, y) => P.push(new THREE.Vector2(r, y));
+add(0, 0); add(0.45, 0); add(0.5, 0.06); add(0.6, 0.16); add(0.68, 0.3); add(0.72, 0.45);
+for (let y = 0.75; y <= 2.25 + 1e-6; y += 0.3) add(0.72, y);
+add(0.72, 2.4); add(0.7, 2.55); add(0.64, 2.7); add(0.58, 2.8); add(0.56, 2.85); add(0.56, 2.93); add(0.5, 2.97); add(0.44, 2.9); add(0, 2.9);
+const iBody0 = P.findIndex((p) => Math.abs(p.y - 0.45) < 1e-6);
+const iBody1 = P.findIndex((p) => Math.abs(p.y - 2.4) < 1e-6);
+
+const WIRE = 0x7ff0f0;
+const N_UP = new THREE.Vector3(0, 1, 0), N_DOWN = new THREE.Vector3(0, -1, 0);
+
+function makeLabel(bg, big, small) {
+  const c = document.createElement("canvas"); c.width = 1024; c.height = 512;
+  const g = c.getContext("2d");
+  g.fillStyle = bg; g.fillRect(0, 0, 1024, 512);
+  g.fillStyle = "rgba(0,0,0,0.18)"; g.fillRect(0, 0, 1024, 70); g.fillRect(0, 442, 1024, 70);
+  g.fillStyle = "#fff"; g.textAlign = "center";
+  for (const cx of [256, 768]) {
+    g.font = '800 74px "Bricolage Grotesque", Arial, sans-serif'; g.fillText("AQUAFORGE", cx, 230);
+    g.font = '700 54px "Bricolage Grotesque", Arial, sans-serif'; g.fillText(big, cx, 315);
+    g.font = '500 30px Arial, sans-serif'; g.fillText(small, cx, 375);
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+}
+const LABELS = [
+  makeLabel("#0B1C2D", "FORGE YOUR FLOW", "ZERO COMPROMISE"),
+  makeLabel("#00A8A8", "CORE", "EVERYDAY HYDRATION"),
+  makeLabel("#FF6B35", "CHARGE", "FUNCTIONAL ENERGY"),
+  makeLabel("#5F8A3F", "RECOVER", "POST-ACTIVITY"),
+];
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { LABELS.forEach((t) => (t.needsUpdate = true)); });
+
+// Each part gets its OWN pair of clipping planes, defined in the part's own
+// (un-exploded) coordinates, so the wire->metal sweep stays correct while
+// the parts are pulled apart in the exploded view (a shared plane left the
+// displaced base fully solid while everything else was still wire).
+const mkPlanes = () => ({ solid: new THREE.Plane(), wire: new THREE.Plane() });
+const wireMatFor = (pl) => new THREE.LineBasicMaterial({ color: WIRE, transparent: true, opacity: 0.95, clippingPlanes: [pl.wire] });
+const bodyMat = new THREE.MeshStandardMaterial({ map: LABELS[0], metalness: 0.45, roughness: 0.4, side: THREE.DoubleSide });
+const capMatFor = () => new THREE.MeshStandardMaterial({ color: 0xaeb8c0, metalness: 0.8, roughness: 0.42, side: THREE.DoubleSide });
+
+function makePart(pts, mat) {
+  const g = new THREE.Group();
+  g.userData.planes = mkPlanes();
+  mat.clippingPlanes = [g.userData.planes.solid];
+  g.add(new THREE.Mesh(new THREE.LatheGeometry(pts, 64), mat));
+  const seg = [], N = 48, M = 24;
+  for (const p of pts) if (p.x > 1e-4) for (let k = 0; k < N; k++) {
+    const a = (k / N) * Math.PI * 2, b = ((k + 1) / N) * Math.PI * 2;
+    seg.push(Math.sin(a) * p.x, p.y, Math.cos(a) * p.x, Math.sin(b) * p.x, p.y, Math.cos(b) * p.x);
+  }
+  for (let m = 0; m < M; m++) {
+    const a = (m / M) * Math.PI * 2;
+    for (let i = 0; i < pts.length - 1; i++) {
+      seg.push(Math.sin(a) * pts[i].x, pts[i].y, Math.cos(a) * pts[i].x, Math.sin(a) * pts[i + 1].x, pts[i + 1].y, Math.cos(a) * pts[i + 1].x);
+    }
+  }
+  const lg = new THREE.BufferGeometry(); lg.setAttribute("position", new THREE.Float32BufferAttribute(seg, 3));
+  g.add(new THREE.LineSegments(lg, wireMatFor(g.userData.planes)));
+  return g;
+}
+const bottom = makePart(P.slice(0, iBody0 + 1), capMatFor());
+const body = makePart(P.slice(iBody0, iBody1 + 1), bodyMat);
+const top = makePart(P.slice(iBody1), capMatFor());
+const can = new THREE.Group(); can.add(bottom, body, top); can.position.y = -1.5;
+// scan ring that marks where wire turns to metal
+const ringPts = [];
+for (let k = 0; k <= 64; k++) { const a = (k / 64) * Math.PI * 2; ringPts.push(new THREE.Vector3(Math.sin(a) * 0.86, 0, Math.cos(a) * 0.86)); }
+const ringMat = new THREE.LineBasicMaterial({ color: 0xbfffff, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending });
+const scanRing = new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPts), ringMat); can.add(scanRing);
+const spin = new THREE.Group(); spin.add(can);
+const stand = new THREE.Group(); stand.add(spin); scene.add(stand);
+
+// ----- blueprint furniture: dimension lines, callouts, grid floor (not spinning)
+const dimMat = new THREE.LineBasicMaterial({ color: WIRE, transparent: true, opacity: 0.9 });
+const mkLines = (arr) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3)); return new THREE.LineSegments(g, dimMat); };
+const dimV = mkLines([-1.3, -1.5, 0, -1.3, 1.5, 0, -1.42, -1.5, 0, -1.18, -1.5, 0, -1.42, 1.5, 0, -1.18, 1.5, 0]);
+const dimB = mkLines([-0.72, -1.78, 0, 0.72, -1.78, 0, -0.72, -1.9, 0, -0.72, -1.66, 0, 0.72, -1.9, 0, 0.72, -1.66, 0, 0, 1.62, 0, 0, 1.92, 0]);
+stand.add(dimV, dimB);
+function makeSprite(text, w) {
+  const c = document.createElement("canvas"); c.width = 512; c.height = 96;
+  const g = c.getContext("2d"); g.font = '600 46px Consolas, "SFMono-Regular", monospace'; g.fillStyle = "#9ff5f5"; g.textAlign = "center"; g.fillText(text, 256, 62);
+  const m = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false });
+  const s = new THREE.Sprite(m); s.scale.set(w, (w * 96) / 512, 1); return s;
+}
+const s1 = makeSprite("122 MM", 1.15); s1.position.set(-1.95, 0, 0);
+const s2 = makeSprite("Ø 66 MM", 1.15); s2.position.set(0, -2.12, 0);
+const s3 = makeSprite("355 ML · ALUMINUM", 2.2); s3.position.set(0, 2.12, 0);
+stand.add(s1, s2, s3);
+const grid = new THREE.GridHelper(16, 32, 0x55dede, 0x2aa8a8); grid.position.y = -1.7; grid.material.transparent = true; scene.add(grid);
+
+// ----- per-beat poses. side = where the TEXT is (-1 left, 1 right); the can goes opposite.
+const POSES = [
+  { x: 2.45, y: -0.1, s: 1.0, tz: -0.18, tx: 0.12, ex: 0, a: 0, b: 1, lab: 0, side: -1 },   // hero
+  { x: -2.4, y: 0.0, s: 0.95, tz: 0.1, tx: 0.28, ex: 1, a: 0, b: 0, lab: 0, side: 1 },       // mission: exploded blueprint
+  { x: 2.45, y: -0.15, s: 1.0, tz: 0.2, tx: 0.05, ex: 0, a: 0, b: 1, lab: 1, side: -1 },     // core
+  { x: -2.45, y: 0.0, s: 1.0, tz: -0.3, tx: 0.1, ex: 0, a: 0, b: 1, lab: 2, side: 1 },       // charge
+  { x: 2.45, y: -0.3, s: 1.0, tz: 0.12, tx: 0.05, ex: 0, a: 0, b: 1, lab: 3, side: -1 },     // recover
+  { x: 2.35, y: -0.1, s: 1.2, tz: -0.08, tx: 0.1, ex: 0, a: 0, b: 1, lab: 0, side: -1 },   // cta
+];
+const state = { i: 0, t: 0, p: 0 };
+window.__sceneUpdate = (i, t, p) => { state.i = i; state.t = t; state.p = p; };
+const sm = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+const lerp = (a, b, t) => a + (b - a) * t;
+function target() {
+  const at = (i, t) => { const q = POSES[i]; return { ...q, sweep: lerp(q.a, q.b, sm(t / 0.55)) }; };
+  const A = at(state.i, state.t);
+  const m = state.i < POSES.length - 1 ? sm((state.t - 0.7) / 0.3) : 0;
+  if (m <= 0) return A;
+  const B = at(state.i + 1, 0), o = {};
+  for (const k of ["x", "y", "s", "tz", "tx", "ex", "sweep", "side"]) o[k] = lerp(A[k], B[k], m);
+  o.lab = m > 0.85 ? B.lab : A.lab;
+  return o;
+}
+const cur = { x: 2.45, y: -0.1, s: 1, tz: 0, tx: 0.1, ex: 0, sweep: 0, side: -1 };
+const scrimL = document.querySelector(".side-scrim.left"), scrimR = document.querySelector(".side-scrim.right");
+let last = performance.now();
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", resize); resize();
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // rAF timestamps can predate `last` on the first frame: a negative dt made the easing diverge
+  const tg = target(), k = 1 - Math.exp(-dt * 9);
+  for (const key of Object.keys(cur)) cur[key] += (tg[key] - cur[key]) * k;
+  const narrow = camera.aspect < 0.85;
+  stand.position.set(narrow ? 0 : cur.x, narrow ? 1.9 + cur.y : cur.y, 0);
+  const sc = cur.s * (narrow ? 0.62 : 1); stand.scale.setScalar(sc);
+  grid.position.set(narrow ? 0 : cur.x, -1.7 * sc + stand.position.y, 0); grid.scale.setScalar(sc);
+  spin.rotation.set(cur.tx, now * 0.00045 + state.p * 9, cur.tz);
+  bottom.position.y = -0.95 * cur.ex; top.position.y = 0.95 * cur.ex;
+  if (bodyMat.map !== LABELS[tg.lab]) { bodyMat.map = LABELS[tg.lab]; bodyMat.needsUpdate = true; }
+  const level = lerp(-0.06, 3.1, cur.sweep);
+  spin.updateMatrixWorld(true);
+  for (const part of [bottom, body, top]) {
+    part.updateMatrixWorld(true);
+    part.userData.planes.solid.set(N_DOWN, level).applyMatrix4(part.matrixWorld);
+    part.userData.planes.wire.set(N_UP, -level).applyMatrix4(part.matrixWorld);
+  }
+  scanRing.position.y = level; scanRing.visible = cur.sweep > 0.01 && cur.sweep < 0.99;
+  const dsg = cur.side > 0.05 && cur.ex < 0.5 ? -1 : 1; // put the height dimension on the side facing screen centre, away from the text
+  s3.position.y = 2.12 + 0.95 * cur.ex; s2.position.y = -2.12 - 0.95 * cur.ex;
+  dimV.scale.x = dsg; s1.position.x = -1.95 * dsg;
+  const bp = 1 - cur.sweep;
+  dimMat.opacity = 0.15 + 0.8 * bp;
+  [s1, s2, s3].forEach((s) => (s.material.opacity = 0.12 + 0.88 * bp));
+  grid.material.opacity = 0.18 + 0.4 * bp;
+  if (scrimL) scrimL.style.opacity = Math.max(0, -cur.side);
+  if (scrimR) scrimR.style.opacity = Math.max(0, cur.side);
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+window.__sceneReady = true;
 </script>
 
 </body>
