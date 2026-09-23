@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SmartClips — Design Test</title>
+<style>
+  :root {
+    --bg: #07070a;
+    --bg-soft: #0d0d12;
+    --orange: #FF5C1A;
+    --orange-glow: #FF8A4C;
+    --text: #F5F1EA;
+    --muted: #8C8A93;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  /* Fixed WebGL layer sits behind everything and never scrolls itself -
+     ScrollSmoother scrolls #smooth-content on top of it, and we drive the
+     scene's camera/particles off ScrollTrigger progress instead, which is
+     the actual mechanism behind the "scrolling plays a video" look in the
+     reference clips - it's a live 3D scene reacting to scroll, not a video file. */
+  /* Full-screen environment layers sit BEHIND the canvas and crossfade as
+     one unit - the whole shot's lighting/mood changes together (dark intro
+     -> bright cinematic mountain midpoint -> dark finale), not just an
+     accent detail while everything else stays frozen. */
+  .env {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .env-dark {
+    background: radial-gradient(ellipse 90% 70% at 50% 20%, #15141a 0%, #07070a 65%);
+    opacity: 1;
+  }
+  .env-bright {
+    background: linear-gradient(180deg, #FFE7C2 0%, #FFC98A 22%, #FF9E5C 42%, #E8703A 62%, #7A3420 84%, #3B1710 100%);
+  }
+  .env-bright .sun {
+    position: absolute;
+    top: 22%; left: 50%;
+    width: 46vmax; height: 46vmax;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,246,224,0.95) 0%, rgba(255,201,138,0.55) 35%, rgba(255,201,138,0) 70%);
+  }
+  .env-bright .ridge {
+    position: absolute;
+    left: -10%; right: -10%;
+    bottom: 0;
+    height: 46%;
+    clip-path: polygon(0% 100%, 0% 38%, 8% 30%, 18% 44%, 27% 22%, 38% 40%, 47% 18%, 58% 36%, 68% 12%, 79% 34%, 88% 20%, 100% 40%, 100% 100%);
+  }
+  .env-bright .ridge.r1 { height: 40%; background: #C9532A; opacity: 0.55; }
+  .env-bright .ridge.r2 { height: 30%; background: #7A2E17; opacity: 0.75; clip-path: polygon(0% 100%, 0% 55%, 10% 40%, 22% 58%, 33% 32%, 45% 54%, 56% 28%, 67% 50%, 77% 24%, 88% 46%, 100% 30%, 100% 100%); }
+  .env-bright .ridge.r3 { height: 20%; background: #38150C; opacity: 0.9; clip-path: polygon(0% 100%, 0% 70%, 14% 55%, 28% 72%, 42% 48%, 56% 70%, 70% 45%, 84% 68%, 100% 52%, 100% 100%); }
+
+  #gl {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    display: block;
+  }
+  #progress {
+    position: fixed;
+    top: 0; left: 0;
+    height: 3px;
+    width: 0%;
+    background: linear-gradient(90deg, var(--orange), var(--orange-glow));
+    z-index: 100;
+    box-shadow: 0 0 12px rgba(255, 92, 26, 0.6);
+  }
+  nav.top {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 50;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 22px clamp(20px, 5vw, 60px);
+    mix-blend-mode: difference;
+  }
+  nav.top .logo { font-weight: 700; letter-spacing: 0.02em; font-size: 15px; }
+  nav.top .tag { font-size: 12px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+
+  #smooth-wrapper { position: relative; z-index: 1; overflow: hidden; }
+
+  section.chapter {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 24px;
+    position: relative;
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--orange-glow);
+    margin-bottom: 22px;
+    opacity: 0;
+  }
+  .eyebrow .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--orange);
+    box-shadow: 0 0 10px var(--orange);
+  }
+  h1.hero-title {
+    font-size: clamp(42px, 9vw, 118px);
+    line-height: 0.98;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    margin: 0;
+  }
+  h1.hero-title .word { display: inline-block; overflow: hidden; }
+  h1.hero-title .accent { color: var(--orange); }
+  p.hero-sub {
+    max-width: 560px;
+    margin: 26px auto 0;
+    font-size: clamp(15px, 2vw, 19px);
+    color: var(--muted);
+    opacity: 0;
+  }
+  .scroll-hint {
+    position: absolute;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    opacity: 0;
+  }
+  .scroll-hint .line {
+    width: 1px; height: 34px;
+    background: linear-gradient(var(--orange), transparent);
+    animation: hintPulse 1.8s ease-in-out infinite;
+  }
+  @keyframes hintPulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
+
+  .chapter-num {
+    font-size: 13px;
+    color: var(--orange-glow);
+    letter-spacing: 0.1em;
+    margin-bottom: 18px;
+    opacity: 0;
+  }
+  h2.chapter-title {
+    font-size: clamp(32px, 6.5vw, 78px);
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    line-height: 1.02;
+    max-width: 900px;
+    margin: 0;
+  }
+  p.chapter-body {
+    max-width: 520px;
+    margin: 24px auto 0;
+    font-size: clamp(15px, 1.8vw, 18px);
+    color: var(--muted);
+    line-height: 1.6;
+    opacity: 0;
+  }
+  .chapter-tag {
+    position: absolute;
+    top: 50%;
+    font-size: clamp(90px, 16vw, 260px);
+    font-weight: 800;
+    color: rgba(255,255,255,0.03);
+    letter-spacing: -0.04em;
+    transform: translateY(-50%);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  section.cta {
+    min-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 24px;
+  }
+  .cta-btn {
+    margin-top: 36px;
+    padding: 16px 34px;
+    border-radius: 999px;
+    background: var(--orange);
+    color: #fff;
+    font-weight: 700;
+    font-size: 15px;
+    text-decoration: none;
+    letter-spacing: 0.01em;
+    box-shadow: 0 0 40px rgba(255, 92, 26, 0.35);
+    opacity: 0;
+  }
+  footer.foot {
+    text-align: center;
+    padding: 40px 24px 60px;
+    color: var(--muted);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+  }
+</style>
+</head>
+<body>
+
+<div class="env env-dark"></div>
+<div class="env env-bright">
+  <div class="sun"></div>
+  <div class="ridge r1"></div>
+  <div class="ridge r2"></div>
+  <div class="ridge r3"></div>
+</div>
+<canvas id="gl"></canvas>
+<div id="progress"></div>
+
+<nav class="top">
+  <div class="logo">SmartClips</div>
+  <div class="tag">Design Test — /testdesign</div>
+</nav>
+
+<div id="smooth-wrapper">
+<div id="smooth-content">
+
+  <section class="chapter" id="hero">
+    <span class="eyebrow" data-reveal><span class="dot"></span> Coming Soon</span>
+    <h1 class="hero-title" id="hero-title">
+      <span class="word">THE&nbsp;FUTURE</span><br>
+      <span class="word">OF <span class="accent">TIKTOK</span></span><br>
+      <span class="word">AUTOMATION</span>
+    </h1>
+    <p class="hero-sub" data-reveal>
+      Type an idea. SmartClips writes it, animates it, narrates it, and hands you a
+      ready-to-post short-form video — no editing, no timeline, no experience needed.
+    </p>
+    <div class="scroll-hint" data-reveal><span class="line"></span>Scroll</div>
+  </section>
+
+  <section class="chapter" data-chapter="01">
+    <span class="chapter-tag" style="left: -4%;">01</span>
+    <span class="chapter-num" data-reveal>01 — The Idea</span>
+    <h2 class="chapter-title" data-reveal>Type a prompt.<br>That's the whole job.</h2>
+    <p class="chapter-body" data-reveal>
+      No blank timeline, no stock footage search, no editing software to learn.
+      Describe the video you want in a sentence and SmartClips takes it from there.
+    </p>
+  </section>
+
+  <section class="chapter" data-chapter="02">
+    <span class="chapter-tag" style="right: -4%;">02</span>
+    <span class="chapter-num" data-reveal>02 — The Build</span>
+    <h2 class="chapter-title" data-reveal>AI builds the scene,<br>beat by beat.</h2>
+    <p class="chapter-body" data-reveal>
+      Every shot is generated, animated, and narrated automatically — scored to
+      pacing that's built for short-form, not repurposed from something longer.
+    </p>
+  </section>
+
+  <section class="chapter" data-chapter="03">
+    <span class="chapter-tag" style="left: -4%;">03</span>
+    <span class="chapter-num" data-reveal>03 — The Post</span>
+    <h2 class="chapter-title" data-reveal>Ready to post.<br>In minutes, not hours.</h2>
+    <p class="chapter-body" data-reveal>
+      A finished, ready-to-post short-form video comes out the other end —
+      no export settings, no re-renders, no second-guessing the crop.
+    </p>
+  </section>
+
+  <section class="cta">
+    <span class="chapter-num" data-reveal>Be first to try it</span>
+    <h2 class="chapter-title" data-reveal>Your next post<br>is one line away.</h2>
+    <a href="index.html" class="cta-btn" data-reveal>Join the waitlist</a>
+  </section>
+
+  <footer class="foot">SmartClips — internal design exploration, not the live site.</footer>
+
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/ScrollSmoother.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/SplitText.min.js"></script>
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js";
+(function () {
+  "use strict";
+
+  // ---------- Three.js background: a field of particles flowing outward
+  // along curved paths from a central point, echoing the reference clips'
+  // "golden threads emanating from a core" hero visual. Camera position and
+  // the flow's overall drift are driven by scroll progress (set from the
+  // GSAP ScrollTrigger below), not by an internal clock alone - so the
+  // scene genuinely advances as you scroll, the way a scrubbed video would.
+  const canvas = document.getElementById("gl");
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(0, 0, 9);
+
+  const STRAND_COUNT = 420;
+  const POINTS_PER_STRAND = 24;
+  const positions = new Float32Array(STRAND_COUNT * POINTS_PER_STRAND * 3);
+  const seeds = [];
+
+  function curlPoint(seed, t) {
+    const angle = seed.angle + t * seed.twist;
+    const radius = seed.radiusStart + t * seed.radiusGrow + Math.sin(t * seed.wobbleFreq + seed.phase) * seed.wobbleAmp;
+    const x = Math.cos(angle) * radius;
+    const y = Math.sin(angle) * radius * 0.6 + (t - 0.5) * seed.rise;
+    const z = Math.sin(t * seed.zFreq + seed.phase) * seed.zAmp - t * 6.0;
+    return [x, y, z];
+  }
+
+  for (let s = 0; s < STRAND_COUNT; s++) {
+    const seed = {
+      angle: Math.random() * Math.PI * 2,
+      twist: (Math.random() - 0.5) * 2.4,
+      radiusStart: 0.15 + Math.random() * 0.3,
+      radiusGrow: 2.2 + Math.random() * 3.2,
+      wobbleFreq: 2 + Math.random() * 4,
+      wobbleAmp: 0.15 + Math.random() * 0.35,
+      phase: Math.random() * Math.PI * 2,
+      rise: (Math.random() - 0.5) * 3.5,
+      zFreq: 1 + Math.random() * 3,
+      zAmp: 0.4 + Math.random() * 1.2,
+    };
+    seeds.push(seed);
+    for (let p = 0; p < POINTS_PER_STRAND; p++) {
+      const t = p / (POINTS_PER_STRAND - 1);
+      const [x, y, z] = curlPoint(seed, t);
+      const idx = (s * POINTS_PER_STRAND + p) * 3;
+      positions[idx] = x; positions[idx + 1] = y; positions[idx + 2] = z;
+    }
+  }
+
+  const lineGeo = new THREE.BufferGeometry();
+  lineGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const indices = [];
+  for (let s = 0; s < STRAND_COUNT; s++) {
+    for (let p = 0; p < POINTS_PER_STRAND - 1; p++) {
+      const a = s * POINTS_PER_STRAND + p;
+      indices.push(a, a + 1);
+    }
+  }
+  lineGeo.setIndex(indices);
+  const lineMat = new THREE.LineBasicMaterial({
+    color: 0xff8a4c,
+    transparent: true,
+    opacity: 0.35,
+    blending: THREE.AdditiveBlending,
+  });
+  const strands = new THREE.LineSegments(lineGeo, lineMat);
+  scene.add(strands);
+
+  // A denser point cloud at the strand tips for a spark-like accent, also
+  // additive-blended so overlaps glow instead of just overdrawing flatly.
+  const tipCount = STRAND_COUNT;
+  const tipPositions = new Float32Array(tipCount * 3);
+  for (let s = 0; s < STRAND_COUNT; s++) {
+    const idx = (s * POINTS_PER_STRAND + (POINTS_PER_STRAND - 1)) * 3;
+    tipPositions[s * 3] = positions[idx];
+    tipPositions[s * 3 + 1] = positions[idx + 1];
+    tipPositions[s * 3 + 2] = positions[idx + 2];
+  }
+  const tipGeo = new THREE.BufferGeometry();
+  tipGeo.setAttribute("position", new THREE.BufferAttribute(tipPositions, 3));
+  const tipMat = new THREE.PointsMaterial({
+    color: 0xffb27a,
+    size: 0.06,
+    transparent: true,
+    opacity: 0.8,
+    blending: THREE.AdditiveBlending,
+  });
+  scene.add(new THREE.Points(tipGeo, tipMat));
+
+  window.addEventListener("resize", () => {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+  });
+
+  // ---------- Whole-screen environment: dark intro -> bright cinematic
+  // mountain midpoint -> dark finale. One blend factor drives the env
+  // layer crossfade, the text colour, AND the particle colour together so
+  // the entire shot changes as one unit, not just an isolated detail.
+  const envDark = document.querySelector(".env-dark");
+  const envBright = document.querySelector(".env-bright");
+  const root = document.documentElement;
+  function smoothstep01(t) { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); }
+  function trapezoid(p, x0, x1, x2, x3) {
+    if (p <= x0 || p >= x3) return 0;
+    if (p < x1) return smoothstep01((p - x0) / (x1 - x0));
+    if (p < x2) return 1;
+    return 1 - smoothstep01((p - x2) / (x3 - x2));
+  }
+  const DARK_TEXT = { text: [245, 241, 234], muted: [140, 138, 147] };
+  const BRIGHT_TEXT = { text: [42, 22, 12], muted: [107, 66, 42] };
+  const DARK_PARTICLE = new THREE.Color(0xff8a4c);
+  const BRIGHT_PARTICLE = new THREE.Color(0xfff2d8);
+  const liveParticleColor = new THREE.Color();
+
+  const sceneState = { progress: 0 };
+  let clock = 0;
+  function renderLoop() {
+    requestAnimationFrame(renderLoop);
+    clock += 0.0035;
+
+    // chapter 02 + chapter 03 live in the bright band; hero/01 and the CTA
+    // finale stay dark either side of it.
+    const brightFactor = trapezoid(sceneState.progress, 0.27, 0.41, 0.74, 0.87);
+    envBright.style.opacity = brightFactor;
+
+    const tr = Math.round(DARK_TEXT.text[0] + (BRIGHT_TEXT.text[0] - DARK_TEXT.text[0]) * brightFactor);
+    const tg = Math.round(DARK_TEXT.text[1] + (BRIGHT_TEXT.text[1] - DARK_TEXT.text[1]) * brightFactor);
+    const tb = Math.round(DARK_TEXT.text[2] + (BRIGHT_TEXT.text[2] - DARK_TEXT.text[2]) * brightFactor);
+    const mr = Math.round(DARK_TEXT.muted[0] + (BRIGHT_TEXT.muted[0] - DARK_TEXT.muted[0]) * brightFactor);
+    const mg = Math.round(DARK_TEXT.muted[1] + (BRIGHT_TEXT.muted[1] - DARK_TEXT.muted[1]) * brightFactor);
+    const mb = Math.round(DARK_TEXT.muted[2] + (BRIGHT_TEXT.muted[2] - DARK_TEXT.muted[2]) * brightFactor);
+    root.style.setProperty("--text", `rgb(${tr},${tg},${tb})`);
+    root.style.setProperty("--muted", `rgb(${mr},${mg},${mb})`);
+
+    liveParticleColor.copy(DARK_PARTICLE).lerp(BRIGHT_PARTICLE, brightFactor);
+    lineMat.color.copy(liveParticleColor);
+    tipMat.color.copy(liveParticleColor);
+    lineMat.opacity = (0.22 + Math.sin(clock * 1.3) * 0.05) * (1 - brightFactor * 0.55);
+
+    strands.rotation.z = clock * 0.15 + sceneState.progress * 1.4;
+    strands.rotation.x = Math.sin(clock * 0.4) * 0.08;
+    camera.position.x = Math.sin(sceneState.progress * Math.PI * 2) * 1.4;
+    camera.position.y = -sceneState.progress * 1.8 + 0.3;
+    camera.position.z = 9 - sceneState.progress * 4.5;
+    camera.lookAt(0, -sceneState.progress * 1.2, 0);
+    renderer.render(scene, camera);
+  }
+  renderLoop();
+
+  // ---------- GSAP: smooth scroll + scroll-scrubbed scene progress + text reveals
+  gsap.registerPlugin(ScrollTrigger, ScrollSmoother, SplitText);
+
+  ScrollSmoother.create({
+    wrapper: "#smooth-wrapper",
+    content: "#smooth-content",
+    smooth: 1.4,
+    effects: false,
+  });
+
+  ScrollTrigger.create({
+    trigger: "#smooth-content",
+    start: "top top",
+    end: "bottom bottom",
+    onUpdate: (self) => {
+      sceneState.progress = self.progress;
+      gsap.set("#progress", { width: (self.progress * 100) + "%" });
+    },
+  });
+
+  // Hero title splits into words for a staggered rise-in on load (no
+  // scroll needed for the very first thing a visitor sees).
+  const heroSplit = new SplitText("#hero-title .word", { type: "lines" });
+  gsap.set(heroSplit.lines, { yPercent: 110, opacity: 0 });
+  gsap.timeline({ delay: 0.2 })
+    .to(heroSplit.lines, { yPercent: 0, opacity: 1, duration: 1.1, stagger: 0.12, ease: "power4.out" })
+    .to("[data-reveal]", { opacity: 1, duration: 0.8, stagger: 0.08, ease: "power2.out" }, "-=0.5");
+
+  // Every later chapter's text reveals as it scrolls into view, and each
+  // section pins briefly so the copy has a beat to breathe before the next
+  // chapter takes over - matching the "chapters" pacing from the Codrops
+  // cinematic-scroll pattern rather than a plain continuous scroll.
+  document.querySelectorAll("section.chapter[data-chapter]").forEach((sectionEl) => {
+    const reveals = sectionEl.querySelectorAll("[data-reveal]");
+    gsap.set(reveals, { y: 30, opacity: 0 });
+    ScrollTrigger.create({
+      trigger: sectionEl,
+      start: "top 65%",
+      onEnter: () => gsap.to(reveals, { y: 0, opacity: 1, duration: 0.9, stagger: 0.08, ease: "power3.out" }),
+      onLeaveBack: () => gsap.to(reveals, { y: 30, opacity: 0, duration: 0.5, ease: "power2.in" }),
+    });
+  });
+
+  const ctaReveals = document.querySelectorAll("section.cta [data-reveal]");
+  gsap.set(ctaReveals, { y: 30, opacity: 0 });
+  ScrollTrigger.create({
+    trigger: "section.cta",
+    start: "top 70%",
+    onEnter: () => gsap.to(ctaReveals, { y: 0, opacity: 1, duration: 0.9, stagger: 0.1, ease: "power3.out" }),
+  });
+})();
+</script>
+
+</body>
+</html>
