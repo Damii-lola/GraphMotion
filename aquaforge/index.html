@@ -77,6 +77,18 @@
       repeating-linear-gradient(90deg, rgba(180,240,240,0.4) 0px, rgba(180,240,240,0.4) 1px, transparent 1px, transparent 48px);
     mix-blend-mode: screen;
   }
+  /* WebGL background: 6 photos that flow into each other through per-pair
+     shader transitions (iris dive, liquid rise, sun burst, streak pan, ink
+     bleed). DOM layers above stay as the instant pre-JS hero + fallback. */
+  #bg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  html.glbg .layer, html.glbg .stage-scrim { display: none; }
+  .ghost {
+    position: absolute; left: 0; top: 0; z-index: 1; white-space: nowrap; pointer-events: none; opacity: 0; will-change: transform, opacity;
+    font-family: "Bricolage Grotesque", sans-serif; font-weight: 800; text-transform: uppercase; line-height: 0.8;
+    font-size: clamp(120px, 27vw, 420px); letter-spacing: -0.03em; color: transparent;
+    -webkit-text-stroke: 2px rgba(255,255,255,0.30);
+  }
+  .ghost.ink { -webkit-text-stroke-color: rgba(11,28,45,0.26); }
   .stage-scrim {
     position: absolute; inset: 0; z-index: 1;
     background: linear-gradient(180deg, rgba(6,14,22,0.22) 0%, rgba(6,14,22,0.24) 45%, rgba(6,14,22,0.94) 100%);
@@ -131,6 +143,13 @@
   .side-scrim { position: absolute; inset: 0; z-index: 1; opacity: 0; }
   .side-scrim.left { background: linear-gradient(90deg, rgba(6,14,22,0.82) 0%, rgba(6,14,22,0.55) 38%, rgba(6,14,22,0) 68%); }
   .side-scrim.right { background: linear-gradient(270deg, rgba(6,14,22,0.82) 0%, rgba(6,14,22,0.55) 38%, rgba(6,14,22,0) 68%); }
+  .light-scrim { position: absolute; inset: 0; z-index: 1; opacity: 0; }
+  .light-scrim.left { background: linear-gradient(90deg, rgba(248,250,251,0.92) 0%, rgba(248,250,251,0.82) 45%, rgba(248,250,251,0) 92%); }
+  .light-scrim.right { background: linear-gradient(270deg, rgba(248,250,251,0.92) 0%, rgba(248,250,251,0.82) 45%, rgba(248,250,251,0) 92%); }
+  section.beat.tone-light h2.beat-title, section.beat.tone-light .beat-stats .stat .num { color: #0B1C2D; }
+  section.beat.tone-light p.beat-body { color: #1E3446; }
+  section.beat.tone-light .beat-kicker { color: #075E66; }
+  section.beat.tone-light .beat-stats .stat .lbl { color: #3C5364; }
   #gl { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
   section.beat.center { align-items: center; justify-content: flex-start; text-align: left; padding-bottom: 0; }
   section.beat.center .beat-inner { max-width: 600px; }
@@ -150,6 +169,7 @@
 </nav>
 
 <div id="stage">
+  <canvas id="bg"></canvas>
   <div class="layer" data-img="hero"><div class="layer-img"></div><div class="layer-tint"></div><div class="layer-grid"></div></div>
   <div class="layer" data-img="core"><div class="layer-img"></div><div class="layer-tint"></div><div class="layer-grid"></div></div>
   <div class="layer" data-img="charge"><div class="layer-img"></div><div class="layer-tint"></div><div class="layer-grid"></div></div>
@@ -157,6 +177,9 @@
   <div class="stage-scrim"></div>
   <div class="side-scrim left"></div>
   <div class="side-scrim right"></div>
+  <div class="light-scrim left"></div>
+  <div class="light-scrim right"></div>
+  <div class="ghost" aria-hidden="true">Forge</div><div class="ghost ink" aria-hidden="true">Proof</div><div class="ghost" aria-hidden="true">Core</div><div class="ghost" aria-hidden="true">Charge</div><div class="ghost" aria-hidden="true">Recover</div><div class="ghost" aria-hidden="true">Join</div>
 </div>
 
 <canvas id="gl"></canvas>
@@ -173,7 +196,7 @@
     <div class="scroll-cue" data-reveal><span class="line"></span>Scroll</div>
   </section>
 
-  <section class="beat pos-right v-center" id="mission" data-beat>
+  <section class="beat pos-right v-center tone-light" id="mission" data-beat>
     <div class="beat-inner">
       <span class="beat-kicker" data-reveal>Why AquaForge</span>
       <h2 class="beat-title display" data-reveal>We publish our lab results. Most brands hope you never ask.</h2>
@@ -399,6 +422,7 @@
     (sectionTriggers.cta.start - totalStart) / span,
     1,
   ];
+  window.__BEATS = BEATS;
   window.__jumpToProgress = (frac) => {
     smoother.scrollTop(totalStart + span * frac);
     const p = Math.max(0, Math.min(1, frac));
@@ -472,7 +496,8 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { LA
 // the parts are pulled apart in the exploded view (a shared plane left the
 // displaced base fully solid while everything else was still wire).
 const mkPlanes = () => ({ solid: new THREE.Plane(), wire: new THREE.Plane() });
-const wireMatFor = (pl) => new THREE.LineBasicMaterial({ color: WIRE, transparent: true, opacity: 0.95, clippingPlanes: [pl.wire] });
+const WIRE_MATS = [];
+const wireMatFor = (pl) => { const m = new THREE.LineBasicMaterial({ color: WIRE, transparent: true, opacity: 0.95, clippingPlanes: [pl.wire] }); WIRE_MATS.push(m); return m; };
 const bodyMat = new THREE.MeshStandardMaterial({ map: LABELS[0], metalness: 0.45, roughness: 0.4, side: THREE.DoubleSide });
 const capMatFor = () => new THREE.MeshStandardMaterial({ color: 0xaeb8c0, metalness: 0.8, roughness: 0.42, side: THREE.DoubleSide });
 
@@ -529,7 +554,7 @@ const grid = new THREE.GridHelper(16, 32, 0x55dede, 0x2aa8a8); grid.position.y =
 // ----- per-beat poses. side = where the TEXT is (-1 left, 1 right); the can goes opposite.
 const POSES = [
   { x: 2.45, y: -0.1, s: 1.0, tz: -0.18, tx: 0.12, ex: 0, a: 0, b: 1, lab: 0, side: -1 },   // hero
-  { x: -2.4, y: 0.0, s: 0.95, tz: 0.1, tx: 0.28, ex: 1, a: 0, b: 0, lab: 0, side: 1 },       // mission: exploded blueprint
+  { x: -2.95, y: 0.0, s: 0.9, tz: 0.1, tx: 0.28, ex: 1, a: 0, b: 0, lab: 0, side: 1 },       // mission: exploded blueprint
   { x: 2.45, y: -0.15, s: 1.0, tz: 0.2, tx: 0.05, ex: 0, a: 0, b: 1, lab: 1, side: -1 },     // core
   { x: -2.45, y: 0.0, s: 1.0, tz: -0.3, tx: 0.1, ex: 0, a: 0, b: 1, lab: 2, side: 1 },       // charge
   { x: 2.45, y: -0.3, s: 1.0, tz: 0.12, tx: 0.05, ex: 0, a: 0, b: 1, lab: 3, side: -1 },     // recover
@@ -551,10 +576,193 @@ function target() {
 }
 const cur = { x: 2.45, y: -0.1, s: 1, tz: 0, tx: 0.1, ex: 0, sweep: 0, side: -1 };
 const scrimL = document.querySelector(".side-scrim.left"), scrimR = document.querySelector(".side-scrim.right");
+const lscrimL = document.querySelector(".light-scrim.left"), lscrimR = document.querySelector(".light-scrim.right");
+const CYAN = new THREE.Color(0x7ff0f0), INKC = new THREE.Color(0x073c49), INK = new THREE.Color();
+// ===================================================================
+// FLOWING BACKGROUND: six photographs rendered in ONE fragment shader.
+// Each photo is alive on its own (slow dolly toward the camera as you
+// scroll, idle breathing, water ripple / mist / sun-rays / floating
+// motes per scene) and hands over to the next through its own shader
+// transition that warps and flows the pixels - never a plain crossfade:
+//   0 hero  -> lab      iris dive out of the can, camera passes through
+//   1 lab   -> core     liquid surface rises and refracts the new photo
+//   2 core  -> charge   sun burst blooms outward from the horizon
+//   3 charge-> recover  streak pan with directional blur + mist seam
+//   4 recover->cta      ink bleed through domain-warped noise
+// Entering photos start as a cyan blueprint and resolve into colour.
+// ===================================================================
+const bgCanvas = document.getElementById("bg");
+const bgr = new THREE.WebGLRenderer({ canvas: bgCanvas, antialias: false, alpha: false });
+bgr.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+const bgScene = new THREE.Scene();
+const bgCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const BG_FILES = ["hero", "lab", "core", "charge", "recover", "store"];
+const bgTex = [], bgAsp = [1.5, 1.5, 1.5, 1.5, 1.5, 1.5];
+const blank = new THREE.DataTexture(new Uint8Array([11, 28, 45, 255]), 1, 1); blank.needsUpdate = true;
+BG_FILES.forEach((n, k) => { bgTex[k] = blank; });
+let bgHeroReady = false;
+BG_FILES.forEach((n, k) => {
+  new THREE.TextureLoader().load("images/" + n + ".webp", (t) => {
+    t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = 4;
+    bgTex[k] = t; bgAsp[k] = t.image.width / t.image.height;
+    if (k === 0) bgHeroReady = true;
+  });
+});
+const BG_FX = [ // ripple, mist, rays, motes
+  [0.35, 0.55, 0.0, 0.25], // hero: river shimmer + valley mist
+  [0.05, 0.0, 0.0, 0.30],  // lab: floating dust motes in daylight
+  [1.00, 0.0, 0.0, 0.55],  // core: running water + droplets
+  [0.10, 0.25, 1.0, 0.20], // charge: sun rays
+  [0.15, 0.85, 0.0, 0.20], // recover: rolling mist
+  [0.10, 0.25, 0.0, 0.75], // store: cold-air motes
+];
+const BG_LIGHT = [0, 1, 0, 0, 0, 0];
+const BG_DRIFT = [[0.035, -0.012], [-0.03, 0.01], [0.0, 0.03], [-0.02, -0.03], [0.03, 0.012], [-0.025, 0.02]];
+const bgMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uA: { value: blank }, uB: { value: blank }, uRes: { value: new THREE.Vector2(1, 1) }, uTime: { value: 0 }, uE: { value: 0 }, uType: { value: 0 },
+    uAsp: { value: new THREE.Vector2(1.5, 1.5) }, uZoom: { value: new THREE.Vector2(1.1, 1.1) }, uDrift: { value: new THREE.Vector4() },
+    uFxA: { value: new THREE.Vector4() }, uFxB: { value: new THREE.Vector4() }, uLight: { value: new THREE.Vector2() }, uPortal: { value: new THREE.Vector2(0.75, 0.5) },
+  },
+  vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+  fragmentShader: `
+    precision highp float;
+    uniform sampler2D uA; uniform sampler2D uB;
+    uniform vec2 uRes; uniform float uTime, uE, uType;
+    uniform vec2 uAsp, uZoom, uLight, uPortal; uniform vec4 uDrift, uFxA, uFxB;
+    varying vec2 vUv;
+    float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+    float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1,0)), f.x), mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y); }
+    float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 4; i++){ v += a * vnoise(p); p = p * 2.02 + vec2(17.3, 9.1); a *= 0.5; } return v; }
+    vec2 coverUV(vec2 uv, float ia){ float sa = uRes.x / uRes.y; vec2 s = sa > ia ? vec2(1.0, ia / sa) : vec2(sa / ia, 1.0); return (uv - 0.5) * s + 0.5; }
+    vec3 base(sampler2D t, vec2 uv, float ia, float zoom, vec2 drift, float rip, float seed){
+      float br = 0.012 * sin(uTime * 0.35 + seed * 3.0);
+      vec2 w = vec2(vnoise(uv * vec2(6.0, 14.0) + vec2(uTime * 0.25, seed)), vnoise(uv * vec2(9.0, 11.0) + vec2(seed, uTime * 0.2))) - 0.5;
+      vec2 q = uv + w * 0.022 * rip; q.x += sin(q.y * 70.0 + uTime * 1.4) * 0.0009 * rip;
+      q = (q - 0.5) / (zoom + br) + 0.5 + drift + vec2(sin(uTime * 0.11 + seed), cos(uTime * 0.09 + seed * 2.0)) * 0.006;
+      return texture2D(t, coverUV(q, ia)).rgb;
+    }
+    vec3 overlay(vec3 col, vec2 uv, vec4 fx, float seed, float light){
+      float asp = uRes.x / uRes.y;
+      if (fx.y > 0.0){ float m = fbm(uv * vec2(2.2, 3.2) + vec2(uTime * 0.035, seed)); col = mix(col, mix(vec3(0.80, 0.90, 0.95), vec3(1.0), light), fx.y * smoothstep(0.38, 0.85, m) * 0.5); }
+      if (fx.z > 0.0){ vec2 d = (uv - vec2(0.53, 0.5)) * vec2(asp, 1.0); float ang = atan(d.y, d.x);
+        float r = vnoise(vec2(ang * 5.0 + uTime * 0.10, seed)) * 0.7 + vnoise(vec2(ang * 11.0 - uTime * 0.07, seed + 3.0)) * 0.3;
+        col += vec3(1.0, 0.66, 0.36) * pow(r, 2.2) * exp(-length(d) * 1.5) * fx.z * 0.9; }
+      if (fx.w > 0.0){ for (int k = 0; k < 3; k++){ float sc = 12.0 + float(k) * 9.0;
+        vec2 p = uv * vec2(asp, 1.0) * sc + vec2(uTime * 0.05 * float(k + 1), -uTime * (0.25 + 0.12 * float(k))) + float(k) * 13.7;
+        vec2 id = floor(p), f = fract(p) - 0.5; float h = hash(id + seed); vec2 o = (vec2(hash(id + 1.3), hash(id + 7.9)) - 0.5) * 0.6;
+        float tw = 0.5 + 0.5 * sin(uTime * (1.0 + h * 2.0) + h * 20.0);
+        col += vec3(0.85, 1.0, 1.0) * smoothstep(0.09, 0.0, length(f - o)) * step(0.55, h) * tw * fx.w * (1.0 - 0.25 * float(k)) * (1.0 - 0.6 * light); } }
+      return col;
+    }
+    vec3 blueprint(vec3 c, vec2 uv, float amt, float light){
+      float g = dot(c, vec3(0.3, 0.59, 0.11));
+      vec3 t = mix(vec3(g) * vec3(0.55, 1.05, 1.1) + vec3(0.0, 0.05, 0.07), vec3(g * 0.55) * vec3(0.6, 1.0, 1.1), light);
+      vec2 gl = abs(fract(uv * vec2(uRes.x / uRes.y, 1.0) * 22.0) - 0.5);
+      t += smoothstep(0.47, 0.5, max(gl.x, gl.y)) * vec3(0.35, 0.9, 0.9) * 0.35 * (1.0 - light * 0.5);
+      return mix(c, t, amt);
+    }
+    void main(){
+      vec2 uv = vUv; float asp = uRes.x / uRes.y; float e = uE; vec3 col; float m = 0.0;
+      if (e <= 0.001){
+        col = base(uA, uv, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, 1.0); col = overlay(col, uv, uFxA, 1.0, uLight.x);
+      } else {
+        vec3 cA, cB, add = vec3(0.0); vec2 uvA = uv, uvB = uv; float bpK = 1.0; float PI = 3.14159265;
+        if (uType < 0.5){                                   // 0: iris dive out of the can
+          vec2 c = uPortal; vec2 d = (uv - c) * vec2(asp, 1.0); float far = length(max(c, 1.0 - c) * vec2(asp, 1.0)) * 1.05;
+          float n = fbm(uv * 3.5 + vec2(uTime * 0.2, 0.0)) - 0.5; float r = e * far * 1.1; float dist = length(d) + n * 0.16 * sin(PI * e);
+          m = smoothstep(r, r - 0.05, dist); add = smoothstep(0.06, 0.0, abs(dist - r)) * sin(PI * e) * vec3(0.45, 1.0, 1.0) * 0.9;
+          uvA = c + (uv - c) / (1.0 + 1.4 * e * e); uvB = c + (uv - c) / (0.55 + 0.45 * e);
+          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, 1.0); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, 2.0);
+        } else if (uType < 1.5){                            // 1: liquid rises and refracts
+          float wav = sin(uv.x * 7.0 + uTime * 1.6) * 0.018 + sin(uv.x * 17.0 - uTime * 2.3) * 0.008 + (fbm(vec2(uv.x * 3.0, uTime * 0.2)) - 0.5) * 0.07;
+          float surf = e * 1.3 - 0.1 + wav; m = smoothstep(surf + 0.012, surf - 0.012, uv.y);
+          float depth = clamp(surf - uv.y, 0.0, 1.0);
+          uvB = uv + vec2(sin(uv.y * 30.0 + uTime * 2.0), cos(uv.x * 25.0 + uTime * 1.6)) * 0.006 * (1.0 - e * 0.6) * (0.4 + depth);
+          uvA = uv + vec2(0.0, (1.0 - m) * e * 0.07);
+          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, 1.0); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, 2.0);
+          cB *= 1.0 + smoothstep(0.18, 0.0, depth) * 0.3; add = smoothstep(0.035, 0.0, abs(uv.y - surf)) * vec3(0.85, 0.95, 1.0) * 0.55 * sin(PI * e); bpK = 0.7;
+        } else if (uType < 2.5){                            // 2: sun burst
+          vec2 s = vec2(0.53, 0.5); vec2 d = (uv - s) * vec2(asp, 1.0); float dist = length(d);
+          float n = fbm(uv * 3.0 + vec2(0.0, uTime * 0.2)) - 0.5; float r = e * 1.7; m = smoothstep(r, r - 0.14, dist + n * 0.22);
+          uvB = s + (uv - s) / (1.0 + 0.6 * (1.0 - e)); uvA = s + (uv - s) / (1.0 + 0.25 * e);
+          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, 1.0); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, 2.0);
+          add = vec3(1.0, 0.78, 0.5) * exp(-dist * 2.6) * sin(PI * e) * 1.25 + smoothstep(0.08, 0.0, abs(dist + n * 0.22 - r)) * vec3(1.0, 0.85, 0.6) * 0.5 * sin(PI * e);
+        } else if (uType < 3.5){                            // 3: streak pan
+          float edge = 1.06 - e * 1.4 + (fbm(vec2(uv.y * 3.0, uTime * 0.3)) - 0.5) * 0.14; float sh = sin(PI * e);
+          m = 1.0 - smoothstep(edge + 0.02, edge - 0.02, uv.x); // B on the right of the seam, sweeping left
+          cA = vec3(0.0); cB = vec3(0.0);
+          float jit = hash(gl_FragCoord.xy) / 12.0;
+          for (int k = 0; k < 12; k++){ float o = ((float(k) / 12.0 + jit) - 0.5) * 0.16 * sh;
+            cA += base(uA, uv + vec2(e * 0.35 + o, 0.0), uAsp.x, uZoom.x, uDrift.xy, uFxA.x, 1.0);
+            cB += base(uB, uv + vec2(-(1.0 - e) * 0.35 + o, 0.0), uAsp.y, uZoom.y, uDrift.zw, uFxB.x, 2.0); }
+          cA /= 12.0; cB /= 12.0; add = smoothstep(0.2, 0.0, abs(uv.x - edge)) * (0.4 + fbm(uv * 4.0 + uTime * 0.1)) * sh * vec3(0.9, 0.95, 1.0) * 0.32; bpK = 0.0;
+        } else {                                            // 4: ink bleed
+          float nn = fbm(uv * 2.2 + vec2(uTime * 0.05, 0.0)) * 0.8 + fbm(uv * 5.0 + 3.0) * 0.2; float th = e * 1.45 - 0.2;
+          m = 1.0 - smoothstep(th - 0.08, th + 0.08, nn);
+          vec2 g = vec2(fbm(uv * 3.0 + 1.0), fbm(uv * 3.0 + 7.0)) - 0.5;
+          uvA = (uv - 0.5) / (1.0 + 0.3 * e) + 0.5 + g * 0.15 * e; uvB = (uv - 0.5) / (1.0 + 0.25 * (1.0 - e)) + 0.5 - g * 0.15 * (1.0 - e);
+          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, 1.0); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, 2.0);
+          add = smoothstep(0.1, 0.0, abs(nn - th)) * sin(PI * e) * vec3(0.3, 0.95, 0.95) * 0.7;
+        }
+        float bp = (1.0 - smoothstep(0.45, 1.0, e)) * 0.85 * bpK;
+        cB = blueprint(cB, uv, bp, uLight.y);
+        col = mix(cA, cB, m) + add;
+        col = overlay(col, uv, mix(uFxA, uFxB, m), 1.5, mix(uLight.x, uLight.y, m));
+      }
+      float lt = mix(uLight.x, uLight.y, m);
+      col *= 1.0 - mix(0.42, 0.08, lt) * pow(length((uv - 0.5) * vec2(1.0, 0.9)) * 1.35, 2.0);
+      col *= 1.0 - mix(0.30, 0.0, lt) * smoothstep(0.55, 0.0, uv.y);
+      gl_FragColor = vec4(col, 1.0);
+    }`,
+});
+bgScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), bgMat));
+const bgGhosts = [...document.querySelectorAll(".ghost")];
+const GHOST = [ // where each giant word sits: left/top in vw/vh, drift direction
+  { x: 18, y: 6, d: -1 }, { x: -6, y: 66, d: 1 }, { x: 30, y: 60, d: -1 }, { x: -12, y: 4, d: 1 }, { x: 22, y: 56, d: -1 }, { x: -4, y: 60, d: 1 },
+];
+const TYPES = [0, 1, 2, 3, 4, 4];
+const sm5 = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * t * (t * (t * 6 - 15) + 10); };
+const bgU = bgMat.uniforms;
+const bgLightState = { v: 0 };
+let bgShown = false;
+const projV = new THREE.Vector3();
+function bgResize(w, h) { bgr.setSize(w, h, false); bgU.uRes.value.set(bgCanvas.width, bgCanvas.height); }
+function bgFrame(now) {
+  const i = Math.min(state.i, 5), nxt = Math.min(i + 1, 5), t = state.t;
+  const last = i >= 5;
+  const e = last ? 0 : sm5((t - 0.6) / 0.4);
+  const dolly = (tt) => 1.06 + 0.14 * tt;
+  bgU.uTime.value = now * 0.001;
+  bgU.uE.value = e; bgU.uType.value = TYPES[i];
+  bgU.uA.value = bgTex[i]; bgU.uB.value = bgTex[nxt];
+  bgU.uAsp.value.set(bgAsp[i], bgAsp[nxt]);
+  bgU.uZoom.value.set(dolly(t), dolly(0));
+  bgU.uDrift.value.set(BG_DRIFT[i][0] * t, BG_DRIFT[i][1] * t, 0, 0);
+  bgU.uFxA.value.set(...BG_FX[i]); bgU.uFxB.value.set(...BG_FX[nxt]);
+  bgU.uLight.value.set(BG_LIGHT[i], BG_LIGHT[nxt]);
+  projV.set(stand.position.x, stand.position.y + 0.9 * stand.scale.x, 0).project(camera);
+  bgU.uPortal.value.set(projV.x * 0.5 + 0.5, projV.y * 0.5 + 0.5);
+  bgLightState.v = lerp(BG_LIGHT[i], BG_LIGHT[nxt], sm(e * 1.6 - 0.3));
+  bgr.render(bgScene, bgCam);
+  if (bgHeroReady && !bgShown) { bgShown = true; document.documentElement.classList.add("glbg"); }
+  // giant outlined words drift with the scroll and hand over between beats
+  bgGhosts.forEach((g, k) => {
+    let w = 0;
+    if (k === i) w = 1 - e; else if (k === nxt) w = e;
+    if (w < 0.01) { g.style.opacity = 0; return; }
+    const tt = k === i ? t : 0, GH = GHOST[k];
+    const enter = k === nxt && k !== i ? 1 - e : 0;
+    g.style.opacity = (w * w).toFixed(3);
+    g.style.transform = `translate3d(${GH.x + GH.d * (tt - 0.5) * -16 + enter * 14 * GH.d}vw, ${GH.y}vh, 0) scale(${1 + enter * 0.25})`;
+  });
+}
+
 let last = performance.now();
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
-  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  bgResize(w, h); renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
 }
 window.addEventListener("resize", resize); resize();
 
@@ -585,8 +793,16 @@ function frame(now) {
   dimMat.opacity = 0.15 + 0.8 * bp;
   [s1, s2, s3].forEach((s) => (s.material.opacity = 0.12 + 0.88 * bp));
   grid.material.opacity = 0.18 + 0.4 * bp;
-  if (scrimL) scrimL.style.opacity = Math.max(0, -cur.side);
-  if (scrimR) scrimR.style.opacity = Math.max(0, cur.side);
+  const L = bgLightState.v;
+  if (scrimL) scrimL.style.opacity = Math.max(0, -cur.side) * (1 - L);
+  if (scrimR) scrimR.style.opacity = Math.max(0, cur.side) * (1 - L);
+  if (lscrimL) lscrimL.style.opacity = Math.max(0, -cur.side) * L;
+  if (lscrimR) lscrimR.style.opacity = Math.max(0, cur.side) * L;
+  INK.copy(CYAN).lerp(INKC, L); WIRE_MATS.forEach((m) => m.color.copy(INK)); dimMat.color.copy(INK);
+  ringMat.color.set(L > 0.5 ? 0x0a4d58 : 0xbfffff); ringMat.blending = L > 0.5 ? THREE.NormalBlending : THREE.AdditiveBlending;
+  [s1, s2, s3].forEach((s) => s.material.color.setRGB(1 - 0.85 * L, 1 - 0.55 * L, 1 - 0.5 * L));
+  grid.material.color.setRGB(1 - 0.8 * L, 1 - 0.55 * L, 1 - 0.5 * L);
+  bgFrame(now);
   renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
