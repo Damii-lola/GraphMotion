@@ -95,16 +95,10 @@
       </div>
     </div>
 
-    <div class="status"><span class="dot" id="dot"></span><span id="statusTxt">Checking the recorder…</span></div>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusTxt">Connecting to the SmartClips server…</span></div>
     <div class="help" id="help">
-      The recorder isn't running. It needs Chrome and a real machine, so for now it runs on your computer. In a terminal:<br><br>
-      <code>node SmartClipsBackend/site-recorder/server.js</code><br><br>
-      Then come back here. (This page will connect automatically.)
+      The server is waking up (it sleeps when idle) or unreachable. Give it about 30 seconds, this page will connect automatically.
     </div>
-    <details>
-      <summary>Recorder address</summary>
-      <input id="api" type="text" value="http://localhost:8787" />
-    </details>
 
     <div class="job" id="job">
       <div class="bar"><i id="fill"></i></div>
@@ -125,15 +119,12 @@
 <script>
 (function () {
   const $ = (id) => document.getElementById(id);
-  const LS = "sc_rec_api";
-  let API = "http://localhost:8787";
-  try { API = localStorage.getItem(LS) || API; } catch (_) {}
-  $("api").value = API;
+  const API = "https://graphmotion.onrender.com"; // same backend as ai.html
+  const abs = (u) => (u && u.charAt(0) === "/" ? API + u : u);
 
   const STAGES = { queued: "Waiting in line…", loading: "Opening the page…", recording: "Recording scenes…", encoding: "Encoding the video…", done: "Done", error: "Failed" };
   let timer = null, busy = false;
 
-  $("api").addEventListener("change", () => { API = $("api").value.trim().replace(/\/$/, ""); try { localStorage.setItem(LS, API); } catch (_) {} ping(); });
   $("secs").addEventListener("input", () => { $("secsV").textContent = $("secs").value; });
   $("chips").addEventListener("click", (e) => { if (e.target.dataset.v) { $("page").value = e.target.dataset.v; $("page").focus(); } });
   $("page").addEventListener("keydown", (e) => { if (e.key === "Enter") start(); });
@@ -143,11 +134,11 @@
   async function ping() {
     try {
       const r = await fetch(API + "/health", { cache: "no-store" });
-      const j = await r.json();
-      $("dot").className = "dot on"; $("statusTxt").textContent = j.busy ? "Recorder connected · busy" + (j.queued ? " (" + j.queued + " waiting)" : "") : "Recorder connected";
+      if (!r.ok) throw new Error("bad");
+      $("dot").className = "dot on"; $("statusTxt").textContent = "Server connected";
       $("help").style.display = "none"; return true;
     } catch (_) {
-      $("dot").className = "dot off"; $("statusTxt").textContent = "Recorder not running"; $("help").style.display = "block"; return false;
+      $("dot").className = "dot off"; $("statusTxt").textContent = "Server not reachable yet"; $("help").style.display = "block"; return false;
     }
   }
   ping(); setInterval(() => { if (!busy) ping(); }, 5000);
@@ -160,7 +151,7 @@
   async function start() {
     const page = $("page").value.trim();
     if (!page || busy) { if (!page) $("page").focus(); return; }
-    if (!(await ping())) return;
+    await ping(); // wakes a sleeping server; the request below waits for it either way
     busy = true; $("go").disabled = true; $("result").style.display = "none"; $("err").style.display = "none";
     $("job").style.display = "block"; $("fill").style.width = "2%"; $("stage").textContent = STAGES.queued; $("eta").textContent = "";
     try {
@@ -187,7 +178,7 @@
         if (j.status === "error") return fail(j.error || "The recording failed.");
         if (j.status === "done") {
           clearInterval(timer); busy = false; $("go").disabled = false; $("fill").style.width = "100%"; $("eta").textContent = "";
-          $("vid").src = API + j.videoUrl; $("dl").href = API + j.videoUrl + "?download=1"; $("result").style.display = "block";
+          $("vid").src = abs(j.videoUrl); $("dl").href = abs(j.downloadUrl); $("result").style.display = "block";
           $("result").scrollIntoView({ behavior: "smooth", block: "center" }); $("vid").play().catch(() => {});
         }
       } catch (_) { fail("Lost connection to the recorder."); }

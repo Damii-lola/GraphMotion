@@ -20,6 +20,7 @@ const {
 } = require('./supabaseClient');
 
 const app = express();
+let siteVideo = null; // set below; a running site->video recording (headless Chrome) pauses new text->video renders
 app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
@@ -48,6 +49,7 @@ function scheduleRender(jobId, prompt, targetDurationSeconds, parentSceneJSON) {
 }
 
 function drainQueue() {
+  if (siteVideo && siteVideo.isActive()) return; // Chrome has the memory right now; onIdle re-drains
   if (activeRenders >= MAX_CONCURRENT_RENDERS) return;
   const next = renderQueue.shift();
   if (!next) return;
@@ -560,6 +562,8 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+siteVideo = require('./siteVideo').register(app, { rendersActive: () => activeRenders > 0, onIdle: drainQueue });
+
 app.listen(PORT, () => {
   console.log(`[server] listening on port ${PORT}`);
   // The old startWorkerKeepAlive() (REMOVED 2026-09-17, a real Render
