@@ -441,6 +441,7 @@
     1,
   ];
   window.__BEATS = BEATS;
+  window.__PACE = { revealEnd: 0.3, holdEnd: 0.6 }; // used by the video recorder: text is fully in by 30% of a scene, exit/transition starts at 60%
   window.__jumpToProgress = (frac) => {
     smoother.scrollTop(totalStart + span * frac);
     const p = Math.max(0, Math.min(1, frac));

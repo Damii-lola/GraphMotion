@@ -134,7 +134,7 @@ async function record(o, onProgress) {
   const fps = Math.max(12, Math.min(30, +o.fps || 30));
   const vw = +o.viewportWidth || 540;
   const dsf = W / vw, vh = Math.round(H / dsf);
-  const sceneSeconds = +o.sceneSeconds || 5;
+  const sceneSeconds = +o.sceneSeconds || 3.5;
   const holdStart = o.holdStart !== undefined ? +o.holdStart : 1.2;
   const holdEnd = o.holdEnd !== undefined ? +o.holdEnd : 2.0;
   const easeFn = EASE[o.ease || 'linear'] || EASE.linear;
@@ -169,6 +169,7 @@ async function record(o, onProgress) {
 
     const info = await page.evaluate(() => ({
       beats: Array.isArray(window.__BEATS) && typeof window.__jumpToProgress === 'function' ? window.__BEATS.slice() : null,
+      pace: window.__PACE || null, // where inside a scene the text has finished revealing / the exit-transition begins
       maxScroll: Math.max(0, document.documentElement.scrollHeight - window.innerHeight),
     }));
 
@@ -176,6 +177,11 @@ async function record(o, onProgress) {
     if (info.beats) {
       const scenes = info.beats.length - 1, endP = 0.975, seg = [];
       for (let i = 0; i < scenes; i++) seg.push([info.beats[i], i === scenes - 1 ? endP : info.beats[i + 1]]);
+      // Video pacing != scroll pacing. A scroll-driven scene is linear in scroll distance, which as video reads as
+      // slow drifting. Instead spend the scene's time like an editor would: quick reveal, a readable hold, then a
+      // short punchy transition. revealEnd / holdEnd are the scene positions (0..1) where those phases end.
+      const pc = info.pace || {}, rEnd = pc.revealEnd || 0.3, hEnd = pc.holdEnd || 0.6, F = [0.22, 0.48, 0.30];
+      const shape = (x) => (x < F[0] ? rEnd * (x / F[0]) : x < F[0] + F[1] ? rEnd + (hEnd - rEnd) * ((x - F[0]) / F[1]) : hEnd + (1 - hEnd) * ((x - F[0] - F[1]) / F[2]));
       const fStart = Math.round(holdStart * fps), fScene = Math.round(sceneSeconds * fps), fEnd = Math.round(holdEnd * fps);
       totalFrames = fStart + scenes * fScene + fEnd;
       plan = (f) => {
@@ -183,7 +189,7 @@ async function record(o, onProgress) {
         const g = f - fStart;
         if (g >= scenes * fScene) return endP;
         const i = Math.min(scenes - 1, Math.floor(g / fScene));
-        return seg[i][0] + (seg[i][1] - seg[i][0]) * easeFn((g % fScene) / fScene);
+        return seg[i][0] + (seg[i][1] - seg[i][0]) * shape(easeFn((g % fScene) / fScene));
       };
     } else {
       totalFrames = Math.round((+o.duration || 30) * fps);
