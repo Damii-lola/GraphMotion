@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>AquaForge — Forge Your Flow</title>
+<link rel="preload" as="image" href="images/hero.webp" fetchpriority="high">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap" rel="stylesheet">
@@ -47,15 +48,16 @@
      not just a plain crossfade. */
   #stage { position: fixed; inset: 0; z-index: 0; overflow: hidden; }
   .layer { position: absolute; inset: 0; opacity: 0; }
+  .layer[data-img="hero"] { opacity: 1; } /* visible instantly, before any JS loads; JS takes over after */
   .layer-img {
     position: absolute; inset: -6%;
     background-size: cover; background-position: 50% 45%;
     animation: slowZoom 22s ease-in-out infinite alternate;
   }
-  .layer[data-img="core"] .layer-img { background-image: url('images/core.png'); animation-delay: -4s; }
-  .layer[data-img="charge"] .layer-img { background-image: url('images/charge.png'); background-position: 50% 30%; animation-delay: -9s; }
-  .layer[data-img="recover"] .layer-img { background-image: url('images/recover.png'); animation-delay: -14s; }
-  .layer[data-img="hero"] .layer-img { background-image: url('images/hero.png'); }
+  .layer[data-img="core"] .layer-img { background-image: url('images/core.webp'); animation-delay: -4s; }
+  .layer[data-img="charge"] .layer-img { background-image: url('images/charge.webp'); background-position: 50% 30%; animation-delay: -9s; }
+  .layer[data-img="recover"] .layer-img { background-image: url('images/recover.webp'); animation-delay: -14s; }
+  .layer[data-img="hero"] .layer-img { background-image: url('images/hero.webp'); }
   @keyframes slowZoom { from { transform: scale(1.0); } to { transform: scale(1.09); } }
   /* Bug found via self-check: grayscale+sepia+hue-rotate composed on the
      photo itself rendered a murky green instead of a technical cyan -
@@ -372,6 +374,7 @@
     ScrollTrigger.update();
   };
   updateStage(0);
+  ["core", "charge", "recover"].forEach((n) => { new Image().src = "images/" + n + ".webp"; }); // warm the cache so crossfades never pop in
 })();
 </script>
 
