@@ -161,6 +161,21 @@
     background: var(--aqua-core); color: #04252A; font-weight: 700; font-size: 15px; text-decoration: none; opacity: 0;
   }
   footer.foot { position: relative; z-index: 2; text-align: center; padding: 36px 24px 56px; color: rgba(248,250,251,0.4); font-size: 12px; background: var(--forge-deep); }
+
+  /* Phones: every beat's text sits in the lower part of the screen at full width, with a bottom scrim (dark or light) instead of side scrims. */
+  @media (max-width: 760px) {
+    section.beat, section.beat.v-center, section.beat.v-top, section.beat.center { align-items: flex-end; justify-content: flex-start; padding: 0 22px 8vh; text-align: left; }
+    section.beat.pos-right { justify-content: flex-start; }
+    .beat-inner, section.beat.center .beat-inner { max-width: 100%; }
+    h1.hero-title { font-size: clamp(38px, 12vw, 56px); }
+    h2.beat-title { font-size: clamp(26px, 8vw, 38px); }
+    p.beat-body { font-size: 15px; margin-top: 14px; }
+    .beat-stats { margin-top: 20px; gap: 22px; }
+    .scroll-cue { display: none; }
+    .side-scrim.left, .side-scrim.right { background: linear-gradient(0deg, rgba(6,14,22,0.9) 0%, rgba(6,14,22,0.72) 40%, rgba(6,14,22,0) 78%); }
+    .light-scrim.left, .light-scrim.right { background: linear-gradient(0deg, rgba(248,250,251,0.95) 0%, rgba(248,250,251,0.85) 45%, rgba(248,250,251,0) 85%); }
+    nav.top { padding: 18px 20px; }
+  }
 </style>
 </head>
 <body>
@@ -364,7 +379,7 @@
 
   const PIN_DIST = "+=100%";
   const heroTl = gsap.timeline({ scrollTrigger: { trigger: "#hero", start: "top top", end: PIN_DIST, scrub: 0.5, pin: true, pinSpacing: true } })
-    .to("#hero .beat-inner, #hero .scroll-cue", { opacity: 0, y: -40, duration: 1 }, 0.6);
+    .to("#hero .beat-inner, #hero .scroll-cue", { opacity: 0, y: -40, duration: 0.4 }, 0.62);
 
   // Real boundaries, keyed by which photo should be fully resolved by the
   // time that section's pin begins (mission has no image of its own - it
@@ -435,64 +450,50 @@
     ScrollTrigger.update();
   };
   updateStage(0);
-  // ---------- Pacing: a time-based playhead. Every scene is on screen for
-  // at most DWELL seconds (it advances by itself after that) and can never be
-  // skipped before MINHOLD seconds: a scroll / swipe / key press before then
-  // is queued and fires the moment the minimum is reached. Native scrolling
-  // is blocked; the page position is driven from this playhead so text,
-  // background and transitions all share one clock.
-  const DWELL = 7, MINHOLD = 4;
-  let P = 0, tw = null, lockT = 0, pending = false, lastTs = 0, lastWheel = 0;
+  // ---------- Pacing: scrolling PLAYS the film. While the user is scrolling
+  // (wheel / swipe / keys) the playhead advances at a fixed pace, so one
+  // scene always takes between 4 s (hard scroll) and 7 s (gentle scroll) to
+  // play through, however fast they scroll - a scene can't be skipped in
+  // under 4 s. The moment they stop, it eases to a halt; nothing plays on
+  // its own. Scrolling up plays it backwards at the same pace.
+  const SLOW = 7, FAST = 4;
+  let P = 0, vel = 0, lastTs = 0;
+  const drive = { dir: 0, until: 0, k: 0.5 };
   const beatIdx = (p) => { for (let k = 0; k < BEATS.length - 1; k++) if (p < BEATS[k + 1]) return k; return BEATS.length - 2; };
-  const easeIO = (x) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
   function applyP(p) {
     P = p;
     smoother.scrollTop(totalStart + span * p);
     gsap.set("#progress", { width: (p * 100) + "%" });
     updateStage(p); ScrollTrigger.update();
   }
-  const go = (b, d) => { tw = { a: P, b, e: 0, d: d || 1.6 }; };
-  function advance() {
-    if (tw || lockT > 0 || window.__manual) return;
-    const i = beatIdx(P); if (i >= BEATS.length - 2) return;
-    const t = (P - BEATS[i]) / (BEATS[i + 1] - BEATS[i]);
-    if (t >= MINHOLD / DWELL) go(BEATS[i + 1]); else pending = true;
-  }
-  function retreat() {
-    if (tw || lockT > 0 || window.__manual) return;
-    pending = false; const i = beatIdx(P);
-    go(i > 0 ? BEATS[i - 1] + 0.25 * (BEATS[i] - BEATS[i - 1]) : 0);
-  }
+  const nudge = (dir, k, ms) => { drive.dir = dir; drive.k = Math.max(0, Math.min(1, k)); drive.until = performance.now() + (ms || 160); };
   function tick(ts) {
     requestAnimationFrame(tick);
     const dt = Math.min(0.1, Math.max(0, (ts - lastTs) / 1000)); lastTs = ts;
     if (window.__manual || BEATS.length < 2) return;
-    if (tw) {
-      tw.e += dt; const x = Math.min(1, tw.e / tw.d); applyP(tw.a + (tw.b - tw.a) * easeIO(x));
-      if (x >= 1) { tw = null; lockT = 0.35; }
-      return;
-    }
-    if (lockT > 0) lockT -= dt;
-    const i = beatIdx(P), last = i >= BEATS.length - 2, len = BEATS[i + 1] - BEATS[i], t = (P - BEATS[i]) / len;
-    if (pending && !last && t >= MINHOLD / DWELL) { pending = false; go(BEATS[i + 1]); return; }
-    const np = Math.min(P + dt * len / DWELL, BEATS[i] + (last ? 0.85 : 0.58) * len); // idle: play the scene in, then HOLD until the user scrolls
-    if (np > P) applyP(np);
+    vel += ((ts < drive.until ? drive.dir : 0) - vel) * (1 - Math.exp(-dt * 7));
+    if (Math.abs(vel) < 0.002) { vel = 0; return; }
+    const i = beatIdx(P), len = BEATS[i + 1] - BEATS[i];
+    const rate = 1 / SLOW + (1 / FAST - 1 / SLOW) * drive.k; // scenes per second
+    const end = BEATS[BEATS.length - 2] + 0.85 * (BEATS[BEATS.length - 1] - BEATS[BEATS.length - 2]);
+    const np = Math.max(0, Math.min(end, P + vel * rate * len * dt));
+    if (np !== P) applyP(np);
   }
   window.addEventListener("wheel", (e) => {
     e.preventDefault();
-    const now = performance.now(), gap = now - lastWheel; lastWheel = now;
-    if (gap > 220 && Math.abs(e.deltaY) > 3) (e.deltaY > 0 ? advance : retreat)();
+    const dy = e.deltaY * (e.deltaMode === 1 ? 16 : 1);
+    if (Math.abs(dy) > 0.5) nudge(dy > 0 ? 1 : -1, Math.abs(dy) / 120);
   }, { passive: false });
   let ty = null;
   window.addEventListener("touchstart", (e) => { ty = e.touches[0].clientY; }, { passive: true });
-  window.addEventListener("touchmove", (e) => { e.preventDefault(); }, { passive: false });
-  window.addEventListener("touchend", (e) => {
-    if (ty == null) return; const dy = ty - e.changedTouches[0].clientY; ty = null;
-    if (Math.abs(dy) > 40) (dy > 0 ? advance : retreat)();
-  });
+  window.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    const y = e.touches[0].clientY, dy = ty - y; ty = y;
+    if (Math.abs(dy) > 0.5) nudge(dy > 0 ? 1 : -1, Math.abs(dy) / 14);
+  }, { passive: false });
   window.addEventListener("keydown", (e) => {
-    if (["ArrowDown", "PageDown", " ", "ArrowRight"].includes(e.key)) { e.preventDefault(); advance(); }
-    else if (["ArrowUp", "PageUp", "ArrowLeft"].includes(e.key)) { e.preventDefault(); retreat(); }
+    if (["ArrowDown", "PageDown", " ", "ArrowRight"].includes(e.key)) { e.preventDefault(); nudge(1, 0.5, 700); }
+    else if (["ArrowUp", "PageUp", "ArrowLeft"].includes(e.key)) { e.preventDefault(); nudge(-1, 0.5, 700); }
   });
   requestAnimationFrame(tick);
   window.__pace = () => ({ P, i: beatIdx(P), t: (P - BEATS[beatIdx(P)]) / (BEATS[beatIdx(P) + 1] - BEATS[beatIdx(P)]) });
