@@ -262,40 +262,47 @@ async function record(o, onProgress) {
     if (srv) srv.server.close();
   }
 
-  // ---- phase 2: encode (Chrome is gone by now)
+  // ---- phase 2: encode (Chrome is gone by now).
+  // Captured frames are dense in transitions (gap 1) and sparse in calm parts (gap > 1). Each run of frames with the
+  // same gap is encoded on its own: gap 1 is used as-is, gap > 1 is BLENDED up to the full frame rate so calm parts
+  // (slow zoom, text settling) flow smoothly instead of stepping. The runs are then joined without re-encoding.
   try {
     emit('encoding', 0.76, null);
-    // Captured frames sit at uneven timeline positions (dense in transitions, sparse in calm holds), so tell ffmpeg
-    // how long each one lasts; the fps filter then fills the gaps by repeating the last frame.
-    const lines = ['ffconcat version 1.0'];
-    for (let k = 0; k < frameIdxs.length; k++) {
-      const dur = ((k + 1 < frameIdxs.length ? frameIdxs[k + 1] : totalFrames) - frameIdxs[k]) / fps;
-      lines.push(`file f${String(k).padStart(5, '0')}.jpg`, `duration ${dur.toFixed(6)}`);
+    const gaps = frameIdxs.map((f, k) => (k + 1 < frameIdxs.length ? frameIdxs[k + 1] : totalFrames) - f);
+    const runs = [];
+    for (let k = 0; k < gaps.length; k++) {
+      const r = runs[runs.length - 1];
+      if (r && r.gap === gaps[k]) r.count++; else runs.push({ start: k, count: 1, gap: gaps[k] });
     }
-    lines.push(`file f${String(frameIdxs.length - 1).padStart(5, '0')}.jpg`);
-    fs.writeFileSync(path.join(work, 'list.txt'), lines.join('\n'));
     const sparse = frameIdxs.length < totalFrames * 0.6;
-    const args = ['-y', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', '-f', 'concat', '-safe', '0', '-i', path.join(work, 'list.txt')];
-    if (o.audio) args.push('-i', path.resolve(o.audio));
-    args.push('-vf', `scale=${W}:${H}:flags=${sparse ? 'bilinear' : 'lanczos'},setsar=1,fps=${fps},format=yuv420p`, '-c:v', 'libx264', '-preset', o.encode || (sparse ? 'ultrafast' : 'veryfast'), '-crf', String(o.crf || 20),
-      '-threads', String(o.threads || 2), '-x264-params', 'rc-lookahead=10:ref=2', '-profile:v', 'high', '-level', '4.2', '-r', String(fps), '-g', String(fps * 2), '-movflags', '+faststart');
-    if (o.audio) args.push('-c:a', 'aac', '-b:a', '192k', '-af', `afade=t=out:st=${Math.max(0, totalFrames / fps - 1.5)}:d=1.5`, '-shortest');
-    args.push(out);
-    await new Promise((resolve, reject) => {
-      const ff = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-      let err = '', encStart = Date.now();
-      ff.stdout.on('data', (d) => {
-        const m = /frame=(\d+)/g; let last = null, x;
-        while ((x = m.exec(String(d)))) last = +x[1];
-        if (last != null) {
-          const frac = Math.min(1, last / totalFrames), el = (Date.now() - encStart) / 1000;
-          emit('encoding', 0.76 + 0.23 * frac, frac > 0.02 ? el / frac - el : null);
-        }
-      });
+    const vcodec = ['-c:v', 'libx264', '-preset', o.encode || (sparse ? 'ultrafast' : 'veryfast'), '-crf', String(o.crf || 20), '-threads', String(o.threads || 2),
+      '-x264-params', 'rc-lookahead=10:ref=2', '-profile:v', 'high', '-level', '4.2', '-r', String(fps), '-g', String(fps * 2)];
+    const runFF = (args) => new Promise((resolve, reject) => {
+      const ff = spawn(ffmpegPath, ['-y', '-loglevel', 'error', ...args], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let err = '';
       ff.stderr.on('data', (d) => { err += d; });
       ff.on('error', reject);
       ff.on('close', (c) => (c === 0 ? resolve() : reject(new Error('ffmpeg failed: ' + err.slice(-300)))));
     });
+    const parts = [];
+    const encStart = Date.now();
+    for (let i = 0; i < runs.length; i++) {
+      const r = runs[i], part = path.join(work, `part${String(i).padStart(3, '0')}.mp4`), outFrames = r.count * r.gap;
+      const blend = r.gap > 1 ? `,framerate=fps=${fps}:interp_start=0:interp_end=255:scene=100` : '';
+      await runFF(['-framerate', String(fps / r.gap), '-start_number', String(r.start), '-t', String(outFrames / fps), '-i', path.join(work, 'f%05d.jpg'),
+        '-vf', `scale=${W}:${H}:flags=${r.gap > 1 || sparse ? 'bilinear' : 'lanczos'},setsar=1${blend},tpad=stop_mode=clone:stop_duration=2,format=yuv420p`,
+        '-frames:v', String(outFrames), ...vcodec, part]);
+      parts.push(part);
+      const frac = (i + 1) / runs.length, el = (Date.now() - encStart) / 1000;
+      emit('encoding', 0.76 + 0.22 * frac, frac > 0.05 ? el / frac - el : null);
+    }
+    fs.writeFileSync(path.join(work, 'parts.txt'), parts.map((p) => `file '${p.replace(/\\/g, '/')}'`).join('\n'));
+    const join = ['-f', 'concat', '-safe', '0', '-i', path.join(work, 'parts.txt')];
+    if (o.audio) join.push('-i', path.resolve(o.audio));
+    join.push('-c:v', 'copy');
+    if (o.audio) join.push('-c:a', 'aac', '-b:a', '192k', '-af', `afade=t=out:st=${Math.max(0, totalFrames / fps - 1.5)}:d=1.5`, '-shortest');
+    join.push('-movflags', '+faststart', out);
+    await runFF(join);
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
   }
