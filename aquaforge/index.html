@@ -18,8 +18,7 @@
     --recover-sage: #7BA05B;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; overflow-x: hidden; scrollbar-width: none; }
-  ::-webkit-scrollbar { display: none; }
+  html, body { margin: 0; overflow-x: hidden; }
   body {
     background: var(--forge-deep);
     color: var(--clean-white);
@@ -450,53 +449,6 @@
     ScrollTrigger.update();
   };
   updateStage(0);
-  // ---------- Pacing: scrolling PLAYS the film. While the user is scrolling
-  // (wheel / swipe / keys) the playhead advances at a fixed pace, so one
-  // scene always takes between 4 s (hard scroll) and 7 s (gentle scroll) to
-  // play through, however fast they scroll - a scene can't be skipped in
-  // under 4 s. The moment they stop, it eases to a halt; nothing plays on
-  // its own. Scrolling up plays it backwards at the same pace.
-  const SLOW = 7, FAST = 4;
-  let P = 0, vel = 0, lastTs = 0;
-  const drive = { dir: 0, until: 0, k: 0.5 };
-  const beatIdx = (p) => { for (let k = 0; k < BEATS.length - 1; k++) if (p < BEATS[k + 1]) return k; return BEATS.length - 2; };
-  function applyP(p) {
-    P = p;
-    smoother.scrollTop(totalStart + span * p);
-    gsap.set("#progress", { width: (p * 100) + "%" });
-    updateStage(p); ScrollTrigger.update();
-  }
-  const nudge = (dir, k, ms) => { drive.dir = dir; drive.k = Math.max(0, Math.min(1, k)); drive.until = performance.now() + (ms || 160); };
-  function tick(ts) {
-    requestAnimationFrame(tick);
-    const dt = Math.min(0.1, Math.max(0, (ts - lastTs) / 1000)); lastTs = ts;
-    if (window.__manual || BEATS.length < 2) return;
-    vel += ((ts < drive.until ? drive.dir : 0) - vel) * (1 - Math.exp(-dt * 7));
-    if (Math.abs(vel) < 0.002) { vel = 0; return; }
-    const i = beatIdx(P), len = BEATS[i + 1] - BEATS[i];
-    const rate = 1 / SLOW + (1 / FAST - 1 / SLOW) * drive.k; // scenes per second
-    const end = BEATS[BEATS.length - 2] + 0.85 * (BEATS[BEATS.length - 1] - BEATS[BEATS.length - 2]);
-    const np = Math.max(0, Math.min(end, P + vel * rate * len * dt));
-    if (np !== P) applyP(np);
-  }
-  window.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    const dy = e.deltaY * (e.deltaMode === 1 ? 16 : 1);
-    if (Math.abs(dy) > 0.5) nudge(dy > 0 ? 1 : -1, Math.abs(dy) / 120);
-  }, { passive: false });
-  let ty = null;
-  window.addEventListener("touchstart", (e) => { ty = e.touches[0].clientY; }, { passive: true });
-  window.addEventListener("touchmove", (e) => {
-    e.preventDefault();
-    const y = e.touches[0].clientY, dy = ty - y; ty = y;
-    if (Math.abs(dy) > 0.5) nudge(dy > 0 ? 1 : -1, Math.abs(dy) / 14);
-  }, { passive: false });
-  window.addEventListener("keydown", (e) => {
-    if (["ArrowDown", "PageDown", " ", "ArrowRight"].includes(e.key)) { e.preventDefault(); nudge(1, 0.5, 700); }
-    else if (["ArrowUp", "PageUp", "ArrowLeft"].includes(e.key)) { e.preventDefault(); nudge(-1, 0.5, 700); }
-  });
-  requestAnimationFrame(tick);
-  window.__pace = () => ({ P, i: beatIdx(P), t: (P - BEATS[beatIdx(P)]) / (BEATS[beatIdx(P) + 1] - BEATS[beatIdx(P)]) });
   ["core", "charge", "recover"].forEach((n) => { new Image().src = "images/" + n + ".webp"; }); // warm the cache so crossfades never pop in
 })();
 </script>
