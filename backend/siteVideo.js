@@ -17,7 +17,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { fork } = require('child_process');
 const rateLimit = require('express-rate-limit');
-const { resolveTarget, SITE_BASE } = require('./siteRecorder');
+const { resolveTarget } = require('./siteRecorder');
 
 const MAX_QUEUE = 4;
 const TIMEOUT_MS = (+process.env.SITE_VIDEO_TIMEOUT_MIN || 30) * 60 * 1000;
@@ -48,28 +48,7 @@ function register(app, hooks = {}) {
     if (hooks.rendersActive && hooks.rendersActive()) { setTimeout(pump, 2000); return; } // wait for text->video renders to finish
     const job = queue.shift();
     current = job; job.status = 'loading'; job.progress = 0.01;
-    if (job.cacheName) { // a full-quality video of this page was already rendered on a fast machine: serve it, skip the slow live render
-      fetchPrerendered(job).then((ok) => { if (ok) { Object.assign(job, { status: 'done', progress: 1, eta: 0 }); release(job); } else startWorker(job); });
-      return;
-    }
     startWorker(job);
-  }
-
-  function release(job) {
-    current = null;
-    setTimeout(() => { jobs.delete(job.id); fs.rm(job.file, { force: true }, () => {}); }, KEEP_MS).unref();
-    if (hooks.onIdle) hooks.onIdle();
-    setImmediate(pump);
-  }
-
-  async function fetchPrerendered(job) {
-    try {
-      const r = await fetch(`${SITE_BASE}/videos/${job.cacheName}-tiktok.mp4`, { signal: AbortSignal.timeout(20000) });
-      if (!r.ok || !/video\/mp4/.test(r.headers.get('content-type') || '')) return false;
-      fs.writeFileSync(job.file, Buffer.from(await r.arrayBuffer()));
-      job.note = 'Full-quality version, rendered ahead of time.';
-      return true;
-    } catch (_) { return false; }
   }
 
   function startWorker(job) {
@@ -108,7 +87,6 @@ function register(app, hooks = {}) {
       const id = crypto.randomBytes(6).toString('hex');
       const job = {
         id, url, status: 'queued', progress: 0, eta: null, file: path.join(dir, id + '.mp4'),
-        cacheName: /^[a-z0-9_-]+$/i.test(String(b.page).trim()) && b.preset !== 'small' && Math.abs(clamp(b.sceneSeconds, 2, 10, 5) - 5) < 0.01 && clamp(b.fps, 24, 30, 30) === 30 ? String(b.page).trim().toLowerCase() : null,
         opts: { sceneSeconds: clamp(b.sceneSeconds, 2, 10, 5), fps: clamp(b.fps, 24, 30, 30), preset: b.preset === 'small' ? 'small' : 'tiktok', duration: 30 },
       };
       jobs.set(id, job); queue.push(job); pump();
