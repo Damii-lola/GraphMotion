@@ -270,4 +270,4 @@ async function record(o, onProgress) {
   return { out, seconds: totalFrames / fps, width: W, height: H };
 }
 
-module.exports = { record, resolveTarget, PRESETS };
+module.exports = { record, resolveTarget, PRESETS, SITE_BASE };
