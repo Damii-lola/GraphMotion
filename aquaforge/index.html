@@ -475,7 +475,7 @@
     if (lockT > 0) lockT -= dt;
     const i = beatIdx(P), last = i >= BEATS.length - 2, len = BEATS[i + 1] - BEATS[i], t = (P - BEATS[i]) / len;
     if (pending && !last && t >= MINHOLD / DWELL) { pending = false; go(BEATS[i + 1]); return; }
-    const np = Math.min(P + dt * len / DWELL, last ? BEATS[i] + 0.85 * len : 2);
+    const np = Math.min(P + dt * len / DWELL, BEATS[i] + (last ? 0.85 : 0.58) * len); // idle: play the scene in, then HOLD until the user scrolls
     if (np > P) applyP(np);
   }
   window.addEventListener("wheel", (e) => {
