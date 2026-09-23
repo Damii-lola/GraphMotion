@@ -37,7 +37,7 @@ const ffmpegPath = require('ffmpeg-static');
 
 const SITE_BASE = (process.env.SITE_BASE || 'https://smartclips.org').replace(/\/$/, '');
 const PRESETS = { tiktok: '1080x1920', reels: '1080x1920', shorts: '1080x1920', small: '720x1280' };
-const MAX_FRAMES = +process.env.SITE_VIDEO_MAX_FRAMES || 2400; // hard ceiling (80 s @ 30 fps)
+const MAX_FRAMES = +process.env.SITE_VIDEO_MAX_FRAMES || 4800; // hard ceiling (80 s @ 60 fps)
 
 // ------------------------------------------------------------- target check
 function isPrivateIp(ip) {
@@ -131,7 +131,7 @@ async function record(o, onProgress) {
   const emit = (stage, progress, eta = null, note = null) => { if (onProgress) try { onProgress({ stage, progress, eta, note }); } catch (_) { /* UI errors never break a render */ } };
   emit('loading', 0.01);
   const [W, H] = (PRESETS[o.preset] || o.size || '1080x1920').split('x').map(Number);
-  const fps = Math.max(12, Math.min(30, +o.fps || 30));
+  const fps = Math.max(12, Math.min(60, +o.fps || 60));
   const vw = +o.viewportWidth || 540;
   const dsf = W / vw, vh = Math.round(H / dsf);
   const sceneSeconds = +o.sceneSeconds || 3.5;
@@ -212,7 +212,7 @@ async function record(o, onProgress) {
       await apply(0); await page.evaluate((ms) => window.__advance(ms), 16); await shot(40);
       emit('loading', 0.02 + 0.01 * k);
     }
-    const budgetMs = (+o.captureBudgetSeconds || +process.env.SITE_VIDEO_CAPTURE_BUDGET_S || 150) * 1000;
+    const budgetMs = (+o.captureBudgetSeconds || +process.env.SITE_VIDEO_CAPTURE_BUDGET_S || 300) * 1000;
     const CALIB = 6, MAX_STRIDE = 12;
     let stride = 1, n = 0, f = 0, note = null, ema = null;
     const started = Date.now();

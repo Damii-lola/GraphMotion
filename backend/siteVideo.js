@@ -87,7 +87,7 @@ function register(app, hooks = {}) {
       const id = crypto.randomBytes(6).toString('hex');
       const job = {
         id, url, status: 'queued', progress: 0, eta: null, file: path.join(dir, id + '.mp4'),
-        opts: { sceneSeconds: clamp(b.sceneSeconds, 2, 10, 3.5), fps: clamp(b.fps, 24, 30, 30), preset: b.preset === 'small' ? 'small' : 'tiktok', duration: 30 },
+        opts: { sceneSeconds: clamp(b.sceneSeconds, 2, 10, 3.5), fps: clamp(b.fps, 24, 60, 60), preset: b.preset === 'small' ? 'small' : 'tiktok', duration: 30 },
       };
       jobs.set(id, job); queue.push(job); pump();
       res.status(202).json({ id });
