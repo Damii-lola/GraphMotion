@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Liquid Death</title>
+<link rel="preload" as="image" href="images/b0.webp" fetchpriority="high">
+<style>
+  html, body { margin: 0; background: #000; color: #fff; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
+  body { background: var(--bg, #000); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #spacer { position: relative; width: 1px; pointer-events: none; }
+  .sr { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  #hint { position: fixed; left: 50%; bottom: max(22px, env(safe-area-inset-bottom)); transform: translateX(-50%); font: 600 11px/1 var(--body, sans-serif); letter-spacing: .24em; text-transform: uppercase; color: rgba(255,255,255,.7); transition: opacity .5s; pointer-events: none; }
+  #cta { position: fixed; left: 50%; bottom: 9vh; transform: translateX(-50%); opacity: 0; pointer-events: none; padding: 16px 38px; border-radius: 999px; font: 700 16px/1 var(--body, sans-serif); letter-spacing: .04em; text-decoration: none; white-space: nowrap; color: transparent; }
+  #cta.on { pointer-events: auto; cursor: pointer; opacity: 1; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="spacer"></div>
+<div class="sr" id="sr"></div>
+<div id="hint">Scroll</div>
+<a id="cta" href="#"></a>
+
+<script>window.SITE = {"brand":"Liquid Death","tagline":"Murder Your Thirst","cta":"Kill Your Thirst","imageStyle":"high contrast cinematic","theme":{"look":"metal","displayFont":"Anton","displayWeight":400,"bodyFont":"Barlow","upper":true,"bg":"#1a1a1a","accent":"#ff3737","accentInk":"#0a0a0a","accentLight":"#ff7777"},"grade":{"mood":"teal-orange","contrast":1.2,"saturation":0.8,"grain":0.5},"motif":{"type":"embers","density":0.4},"music":{"style":"dark drone","bpm":100,"key":"E"},"images":[{"id":"b0","prompt":"a chrome skull centred in a dark alley, lit by a single streetlight, high contrast, teal-orange hues","hero":"a chrome skull"},{"id":"b1","prompt":"a can of Mountain Water in a snowy mountain landscape, sun behind, warm light, natural colours","hero":"a can of Mountain Water"},{"id":"b2","prompt":"a packet of Death Dust in a dark, gritty, urban environment, neon lights, high contrast","hero":"a packet of Death Dust"},{"id":"b3","prompt":"a dollar sign in a sea of cash, gold and black colours, high contrast, luxurious feel","hero":"a dollar sign"},{"id":"b4","prompt":"a plastic bottle in a polluted ocean, dark, gritty, high contrast, emotive","hero":"a plastic bottle"},{"id":"b5","prompt":"a Liquid Death can in a dark, bold, high-contrast environment, teal-orange hues","hero":"a Liquid Death can"},{"id":"b6","prompt":"a skull with a mouth open, dark, bold, high-contrast environment, teal-orange hues","hero":"a skull with a mouth open"},{"id":"b7","prompt":"a Liquid Death logo in a dark, bold, high-contrast environment, teal-orange hues","hero":"a Liquid Death logo"}],"beats":[{"image":"b0","hero":{"label":"a chrome skull","r":0.3},"dur":2.99,"camera":"crane-up","camAmount":0.2,"focus":[0.5,0.5],"dof":0.5,"dofFocus":0.8,"rack":"in","transition":{"type":"morph","dur":1},"sfx":[],"text":{"lines":[{"t":"MURDER","s":"xl","a":false},{"t":"Low-Calorie Drinks","s":"m","a":false}],"fx":"rise","x":0.5,"y":0.2,"align":"center","delay":0.3,"behind":false,"upper":true}},{"image":"b1","hero":{"label":"a can of Mountain Water","r":0.25},"dur":3.05,"camera":"pan-left","camAmount":0.25,"focus":[0.4,0.6],"dof":0.3,"dofFocus":0.5,"rack":"none","transition":{"type":"fly","dur":0.9},"sfx":[],"text":{"lines":[{"t":"HYDRATE","s":"xl","a":false},{"t":"Infinitely Recyclable","s":"m","a":false}],"fx":"carve","x":0.6,"y":0.24,"align":"right","delay":0.4,"behind":false,"upper":true}},{"image":"b2","hero":{"label":"a packet of Death Dust","r":0.2},"dur":2.99,"camera":"push","camAmount":0.15,"focus":[0.5,0.5],"dof":0.6,"dofFocus":0.9,"rack":"out","transition":{"type":"twist","dur":1.1},"sfx":[],"text":{"lines":[{"t":"RECHARGE","s":"xl","a":false},{"t":"100mg Caffeine","s":"m","a":false}],"fx":"pop","x":0.5,"y":0.15,"align":"center","delay":0.2,"behind":false,"upper":true}},{"image":"b3","hero":{"label":"a dollar sign","r":0.25},"dur":3.41,"camera":"crane-down","camAmount":0.3,"focus":[0.6,0.4],"dof":0.4,"dofFocus":0.6,"rack":"in","transition":{"type":"ripple","dur":1},"sfx":[],"text":{"lines":[{"t":"333M","s":"xl","a":false},{"t":"Retail Revenue 2024","s":"m","a":false}],"fx":"scatter","x":0.4,"y":0.7,"align":"left","delay":0.5,"behind":true,"upper":true}},{"image":"b4","hero":{"label":"a plastic bottle","r":0.3},"dur":2.86,"camera":"pan-right","camAmount":0.2,"focus":[0.5,0.5],"dof":0.7,"dofFocus":0.8,"rack":"none","transition":{"type":"flash","dur":0.9},"sfx":[],"text":{"lines":[{"t":"DEATH","s":"xl","a":false},{"t":"To Plastic","s":"m","a":false}],"fx":"glitch","x":0.5,"y":0.2,"align":"center","delay":0.3,"behind":false,"upper":true}},{"image":"b5","hero":{"label":"a Liquid Death can","r":0.25},"dur":3.11,"camera":"orbit","camAmount":0.25,"focus":[0.4,0.6],"dof":0.5,"dofFocus":0.7,"rack":"out","transition":{"type":"iris","dur":1},"sfx":[],"text":{"lines":[{"t":"LIQUID","s":"xl","a":false},{"t":"Death","s":"m","a":false}],"fx":"drip","x":0.6,"y":0.24,"align":"right","delay":0.4,"behind":false,"upper":true}},{"image":"b6","hero":{"label":"a skull with a mouth open","r":0.3},"dur":2.68,"camera":"handheld","camAmount":0.2,"focus":[0.5,0.5],"dof":0.6,"dofFocus":0.9,"rack":"in","transition":{"type":"cut","dur":0.7},"sfx":[],"text":{"lines":[{"t":"MURDER","s":"xl","a":false},{"t":"Your Thirst","s":"m","a":false}],"fx":"focus","x":0.5,"y":0.15,"align":"center","delay":0.3,"behind":false,"upper":true}},{"image":"b7","hero":{"label":"a Liquid Death logo","r":0.25},"dur":3.41,"camera":"crane-up","camAmount":0.3,"focus":[0.6,0.4],"dof":0.4,"dofFocus":0.6,"rack":"out","transition":{"type":"morph","dur":0.3},"sfx":[],"text":{"lines":[{"t":"LIQUID DEATH","s":"xl","a":false},{"t":"Kill Your Thirst","s":"m","a":false}],"fx":"pop","x":0.4,"y":0.7,"align":"left","delay":0.5,"behind":false,"upper":true}}],"cues":[{"t":1.9500000000000002,"kind":"whoosh","dur":1.3,"gain":0.55},{"t":4.239999999999999,"kind":"riser","dur":0.9,"gain":0.36},{"t":5.1,"kind":"whoosh","dur":1.2,"gain":0.55},{"t":5.662,"kind":"impact","gain":0.75},{"t":6.28,"kind":"impact","gain":0.36},{"t":7.8900000000000015,"kind":"whoosh","dur":1.4000000000000001,"gain":0.55},{"t":9.57,"kind":"impact","gain":0.36},{"t":11.400000000000002,"kind":"whoosh","dur":1.3,"gain":0.55},{"t":12.780000000000001,"kind":"impact","gain":0.36},{"t":13.5,"kind":"riser","dur":0.9,"gain":0.36},{"t":14.360000000000001,"kind":"whoosh","dur":1.2,"gain":0.55},{"t":14.922,"kind":"impact","gain":0.75},{"t":15.74,"kind":"impact","gain":0.36},{"t":17.37,"kind":"whoosh","dur":1.3,"gain":0.55},{"t":17.99,"kind":"impact","gain":0.75},{"t":20.35,"kind":"whoosh","dur":1,"gain":0.55},{"t":20.796,"kind":"impact","gain":0.5},{"t":21.63,"kind":"impact","gain":0.36},{"t":22.1,"kind":"riser","dur":1.7,"gain":0.4},{"t":23.88,"kind":"impact","gain":0.85},{"t":23.88,"kind":"sub","gain":0.8}],"directorNotes":["text is repeated across beats (\"death\") - every line must be unique"],"audio":"audio.wav"};</script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js"}}</script>
+<script type="module">
+// =====================================================================================================
+// CINEMA ENGINE. The whole page is ONE deterministic function of time: render(T). Scrolling scrubs T;
+// the video recorder calls __seek(t) frame by frame. Everything below is a general-purpose vocabulary -
+// what a given site actually DOES with it (beats, camera, kinetic type, transitions, motif, grade, sound)
+// is authored per company by the AI director and lives in window.SITE.
+//   - 2.5D parallax: a depth map is estimated from each photo, so the camera really moves through it
+//   - depth of field + rack focus, dolly-style depth zoom, handheld shake
+//   - kinetic typography drawn per glyph (rise / carve / pop / scatter / glitch / drip / focus), composited
+//     INSIDE the scene so foreground can occlude it
+//   - ten transition types that warp the pixels instead of cross-fading
+//   - a physical particle motif, colour grade, film grain, chromatic aberration
+// =====================================================================================================
+import * as THREE from "three";
+const S = window.SITE, B = S.beats, N = B.length;
+const TH = S.theme;
+const root = document.documentElement;
+root.style.setProperty("--bg", TH.bg); root.style.setProperty("--accent", TH.accent); root.style.setProperty("--accent-ink", TH.accentInk);
+root.style.setProperty("--body", '"' + TH.bodyFont + '", sans-serif');
+document.title = S.brand + " — " + S.tagline;
+{
+  const fams = [TH.displayFont, TH.bodyFont].filter(Boolean);
+  const noW = ["Anton", "UnifrakturCook", "Bebas Neue"];
+  const l = document.createElement("link"); l.rel = "stylesheet";
+  l.href = "https://fonts.googleapis.com/css2?" + fams.map((f) => "family=" + f.replace(/ /g, "+") + (noW.indexOf(f) >= 0 ? "" : ":wght@400;700;800")).join("&") + "&display=swap";
+  document.head.appendChild(l);
+}
+// accessible / SEO copy of everything the canvas says
+document.getElementById("sr").innerHTML = "<h1>" + esc(S.brand) + " — " + esc(S.tagline) + "</h1>" + B.map((b) => (b.text ? "<p>" + b.text.lines.map((x) => esc(x.t)).join(" ") + "</p>" : "")).join("");
+function esc(t) { const d = document.createElement("div"); d.textContent = t == null ? "" : String(t); return d.innerHTML; }
+
+// ---------------------------------------------------------------- timeline
+const starts = []; let TOTAL = 0;
+B.forEach((b) => { starts.push(TOTAL); TOTAL += b.dur; });
+window.__duration = TOTAL; window.__audio = S.audio || null; window.__cues = S.cues || []; window.__calibT = B[0].dur - (N > 1 ? B[0].transition.dur / 2 : 0); // a mid-transition moment: the costliest frame, used to time the server
+const smooth = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * t * (t * (t * 6 - 15) + 10); };
+const ease = (p) => { p = Math.max(-0.5, Math.min(1.5, p)); const c = Math.max(0, Math.min(1, p)); return (0.45 * p + 0.55 * (c * c * (3 - 2 * c))) + (p < 0 || p > 1 ? 0 : 0); };
+function locate(T) {
+  T = Math.max(0, Math.min(TOTAL - 1e-4, T));
+  let i = N - 1; for (let k = 0; k < N; k++) if (T < starts[k] + B[k].dur) { i = k; break; }
+  const b = B[i], u = T - starts[i], trd = i < N - 1 ? b.transition.dur : 0, trS = b.dur - trd;
+  const e = trd > 0 && u > trS ? smooth((u - trS) / trd) : 0;
+  return { i, b, u, e, trd, trS };
+}
+// camera: pure function of beat progress p (can go slightly negative for the incoming beat's pre-roll)
+const noise1 = (x) => Math.sin(x * 2.1) * 0.5 + Math.sin(x * 3.7 + 1.3) * 0.3 + Math.sin(x * 6.3 + 4.1) * 0.2;
+function camera(b, p, T) {
+  const a = b.camAmount, e = ease(p); let zoom = 1.06, tx = 0, ty = 0, rot = 0;
+  switch (b.camera) {
+    case "push": zoom += a * e; break;
+    case "pull": zoom += a * (1 - e); break;
+    case "pan-left": zoom += a * 0.5; tx = a * 0.55 * (0.5 - e); break;
+    case "pan-right": zoom += a * 0.5; tx = -a * 0.55 * (0.5 - e); break;
+    case "crane-up": zoom += a * 0.45; ty = a * 0.55 * (e - 0.5); break;
+    case "crane-down": zoom += a * 0.45; ty = -a * 0.55 * (e - 0.5); break;
+    case "orbit": zoom += a * 0.45; tx = a * 0.5 * Math.sin((e - 0.5) * Math.PI); rot = 0.05 * a * (e - 0.5); break;
+    default: /* handheld */ zoom += a * 0.3 * e; tx = a * 0.05 * noise1(T * 1.7); ty = a * 0.05 * noise1(T * 1.3 + 9); rot = a * 0.01 * noise1(T * 0.9 + 3);
+  }
+  return [zoom, tx, ty, rot];
+}
+const dofOf = (b, p) => {
+  const c = Math.max(0, Math.min(1, p)); let f = b.dofFocus;
+  if (b.rack === "in") f = b.dofFocus + (1 - c) * 0.45; else if (b.rack === "out") f = b.dofFocus + c * 0.45;
+  return [Math.min(1, f), b.dof];
+};
+
+// ---------------------------------------------------------------- renderer + shader
+const canvas = document.getElementById("gl");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, preserveDrawingBuffer: false });
+const dprCap = () => Math.min(window.devicePixelRatio || 1, 2);
+renderer.setPixelRatio(dprCap());
+const scene = new THREE.Scene(), cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const IDS = S.images.map((im) => im.id);
+const blankTex = new THREE.DataTexture(new Uint8Array([8, 8, 10, 255]), 1, 1); blankTex.needsUpdate = true;
+const midDepth = new THREE.DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1); midDepth.needsUpdate = true;
+const imgTex = {}, depTex = {}, imgAsp = {};
+IDS.forEach((id) => { imgTex[id] = blankTex; depTex[id] = midDepth; imgAsp[id] = 1.5; });
+let loaded = 0, fontsOk = false;
+window.__assetsReady = () => loaded >= IDS.length && fontsOk && !!window.__ready;
+
+// pseudo-depth from a photo: lower / darker-and-detailed = nearer, hazy bright = far, plus a centre bias
+function makeDepth(img) {
+  const w = 96, h = Math.max(48, Math.round(96 / (img.width / img.height))), c = document.createElement("canvas"); c.width = w; c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(img, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data, L = new Float32Array(w * h);
+  for (let k = 0; k < w * h; k++) L[k] = (d[k * 4] * 0.299 + d[k * 4 + 1] * 0.587 + d[k * 4 + 2] * 0.114) / 255;
+  const blur = (src, r) => { const o = new Float32Array(src.length), t = new Float32Array(src.length);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let s = 0, n = 0; for (let k = -r; k <= r; k++) { const xx = x + k; if (xx >= 0 && xx < w) { s += src[y * w + xx]; n++; } } t[y * w + x] = s / n; }
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let s = 0, n = 0; for (let k = -r; k <= r; k++) { const yy = y + k; if (yy >= 0 && yy < h) { s += t[yy * w + x]; n++; } } o[y * w + x] = s / n; } return o; };
+  const Lb = blur(L, 5), det = new Float32Array(w * h);
+  for (let k = 0; k < w * h; k++) det[k] = Math.abs(L[k] - Lb[k]);
+  const Db = blur(det, 4); let dm = 1e-4; for (let k = 0; k < w * h; k++) dm = Math.max(dm, Db[k]);
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const k = y * w + x, v = y / (h - 1), cx = (x / (w - 1) - 0.5), cy = (v - 0.55), centre = Math.max(0, 1 - Math.sqrt(cx * cx * 1.4 + cy * cy) * 1.7);
+    out[k] = 0.36 * v + 0.22 * (1 - Lb[k]) + 0.24 * (Db[k] / dm) + 0.18 * centre;
+  }
+  const fin = blur(out, 3); let lo = 1, hi = 0; for (let k = 0; k < fin.length; k++) { lo = Math.min(lo, fin[k]); hi = Math.max(hi, fin[k]); }
+  const px = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const v = Math.round(255 * (fin[(h - 1 - y) * w + x] - lo) / Math.max(1e-4, hi - lo)); const o = (y * w + x) * 4; px[o] = px[o + 1] = px[o + 2] = v; px[o + 3] = 255; } // rows flipped: GL uv origin is bottom-left
+  const t = new THREE.DataTexture(px, w, h, THREE.RGBAFormat); t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter; t.needsUpdate = true; return t;
+}
+IDS.forEach((id) => {
+  const im = new Image(); im.crossOrigin = "anonymous";
+  im.onload = () => {
+    const t = new THREE.Texture(im); t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = 4; t.needsUpdate = true;
+    imgTex[id] = t; imgAsp[id] = im.width / im.height; depTex[id] = makeDepth(im); depTex[id].wrapS = depTex[id].wrapT = THREE.MirroredRepeatWrapping; loaded++; dirtyRender = true;
+  };
+  im.onerror = () => { loaded++; };
+  im.src = "images/" + id + ".webp";
+});
+Promise.all([document.fonts.load('400 40px "' + TH.displayFont + '"'), document.fonts.load('700 40px "' + TH.displayFont + '"'), document.fonts.load('400 20px "' + TH.bodyFont + '"'), document.fonts.load('700 20px "' + TH.bodyFont + '"')].map((p) => p.catch(() => null))).then(() => { fontsOk = true; textDirty = true; dirtyRender = true; });
+
+const textCanvas = document.createElement("canvas"), tctx = textCanvas.getContext("2d");
+const textTex = new THREE.CanvasTexture(textCanvas); textTex.minFilter = THREE.LinearFilter; textTex.generateMipmaps = false;
+const MOTIFS = { none: 0, embers: 1, dust: 2, rain: 3, snow: 4, sparks: 5, bubbles: 6 };
+const TRANS = { cut: 0, morph: 1, fly: 2, twist: 3, ripple: 4, flash: 5, iris: 6, glitch: 7 };
+const hexv = (h) => { const n = parseInt(h.slice(1), 16); return new THREE.Vector3(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255); };
+const MOODS = { // shadow tint, highlight tint
+  "teal-orange": ["#0b3a4a", "#ffb37a"], "mono-red": ["#1a0000", "#ff5a4a"], gold: ["#2a1a00", "#ffd27a"], "cold-blue": ["#06182e", "#9fd0ff"], neon: ["#2a0a4a", "#4affea"], natural: ["#101418", "#fff3e0"], mono: ["#000000", "#ffffff"],
+};
+const mood = MOODS[S.grade.mood] || MOODS.natural;
+const U = {
+  uA: { value: blankTex }, uB: { value: blankTex }, uDA: { value: midDepth }, uDB: { value: midDepth }, uText: { value: textTex },
+  uRes: { value: new THREE.Vector2(1, 1) }, uAsp: { value: new THREE.Vector2(1.5, 1.5) }, uT: { value: 0 }, uE: { value: 0 }, uType: { value: 0 },
+  uCA: { value: new THREE.Vector3(0.5, 0.5, 0.3) }, uCB: { value: new THREE.Vector3(0.5, 0.5, 0.3) }, uCamA: { value: new THREE.Vector4(1, 0, 0, 0) }, uCamB: { value: new THREE.Vector4(1, 0, 0, 0) },
+  uFA: { value: new THREE.Vector4(0.5, 0.5, 0.5, 0) }, uFB: { value: new THREE.Vector4(0.5, 0.5, 0.5, 0) }, uPar: { value: new THREE.Vector2(1, 1) },
+  uGrade: { value: new THREE.Vector4(S.grade.contrast, S.grade.saturation, S.grade.grain, 0) }, uTintS: { value: hexv(mood[0]) }, uTintH: { value: hexv(mood[1]) }, uAccent: { value: hexv(TH.accent) },
+  uMotif: { value: new THREE.Vector4(MOTIFS[S.motif.type] || 0, S.motif.density, 1, 0) }, uBehind: { value: new THREE.Vector2(0, 0) }, uEnergy: { value: 0 },
+};
+const mat = new THREE.ShaderMaterial({
+  uniforms: U, vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+  fragmentShader: `
+precision highp float;
+uniform sampler2D uA, uB, uDA, uDB, uText;
+uniform vec2 uRes, uAsp, uPar, uBehind; uniform float uT, uE, uType, uEnergy;
+uniform vec4 uCamA, uCamB, uFA, uFB, uGrade, uMotif; uniform vec3 uTintS, uTintH, uAccent, uCA, uCB;
+varying vec2 vUv;
+const float PI = 3.14159265;
+float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+vec2 hash2(vec2 p){ return vec2(hash(p), hash(p + 17.31)); }
+float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1,0)), f.x), mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y); }
+float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 4; i++){ v += a * vnoise(p); p = p * 2.02 + vec2(17.3, 9.1); a *= 0.5; } return v; }
+vec2 coverUV(vec2 uv, float ia){ float sa = uRes.x / uRes.y; vec2 s = sa > ia ? vec2(1.0, ia / sa) : vec2(sa / ia, 1.0); return (uv - 0.5) * s + 0.5; }
+
+// one photograph seen through the camera: depth-aware zoom + pan (parallax), rotation, depth of field, optional chromatic split
+vec3 layer(sampler2D tx, sampler2D dx, vec2 uv, float ia, vec4 cm, vec4 f, float par, float ca, out float dep){
+  vec2 fc = f.xy;
+  float d0 = texture2D(dx, coverUV(uv, ia)).r;
+  vec2 q = uv - fc;
+  float c = cos(cm.w), s = sin(cm.w); q = mat2(c, -s, s, c) * q;
+  float z = cm.x * (1.0 + (d0 - 0.5) * (cm.x - 1.0) * 1.8);   // nearer surfaces zoom faster: a dolly, not a scale
+  q = q / max(z, 0.3) + fc - cm.yz * (0.55 + (d0 - 0.5) * par);
+  vec2 cuv = coverUV(q, ia);
+  dep = d0;
+  float r = f.w * abs(d0 - f.z) * 0.018;
+  vec3 col;
+  if (r > 0.0007){
+    col = vec3(0.0); float ga = 2.39996;
+    for (int i = 0; i < 6; i++){ float fi = float(i); float rr = r * sqrt((fi + 0.5) / 6.0); float a = fi * ga; col += texture2D(tx, cuv + vec2(cos(a), sin(a)) * rr * vec2(uRes.y / uRes.x, 1.0)).rgb; }
+    col /= 6.0;
+  } else col = texture2D(tx, cuv).rgb;
+  if (ca > 0.001){ vec2 o = normalize(q - fc + 1e-4) * ca * 0.006; col.r = texture2D(tx, cuv + o).r; col.b = texture2D(tx, cuv - o).b; }
+  return col;
+}
+// procedural particle field with three depth planes that parallax against the camera
+vec3 motif(vec2 uv, vec2 camMove){
+  float ty = uMotif.x; if (ty < 0.5) return vec3(0.0);
+  float asp = uRes.x / uRes.y, dens = uMotif.y; vec3 acc = vec3(0.0);
+  for (int L = 0; L < 3; L++){
+    float fl = float(L), depth = 0.35 + fl * 0.32, sc = 7.0 + fl * 9.0;
+    vec2 vel = ty < 1.5 ? vec2(0.02, 0.10) : ty < 2.5 ? vec2(0.02, 0.012) : ty < 3.5 ? vec2(-0.10, -1.4) : ty < 4.5 ? vec2(0.03, -0.16) : ty < 5.5 ? vec2(0.05, 0.42) : vec2(0.0, 0.16);
+    vec2 p = (uv - camMove * depth * 0.5) * vec2(asp, 1.0) * sc + vel * uT * sc * (0.6 + depth) + vec2(fl * 13.7, fl * 5.1);
+    vec2 id = floor(p), f = fract(p) - 0.5; float h = hash(id + fl);
+    if (h > dens * (0.5 - fl * 0.08)) continue;
+    vec2 o = (hash2(id) - 0.5) * 0.6; if (ty > 0.5 && ty < 1.5) o.x += sin(uT * 1.3 + h * 40.0) * 0.18;
+    vec2 dv = f - o; float rad = (ty > 2.5 && ty < 3.5) ? 0.03 : 0.05 + (2.0 - fl) * 0.03;
+    float m;
+    if (ty > 2.5 && ty < 3.5) m = smoothstep(rad, 0.0, abs(dv.x)) * smoothstep(0.42, 0.0, abs(dv.y)) * 0.5;   // rain: streaks
+    else m = smoothstep(rad, 0.0, length(dv)) * (0.55 + 0.45 * sin(uT * (1.5 + h * 3.0) + h * 30.0));
+    vec3 c = ty < 1.5 ? vec3(1.0, 0.45, 0.12) : ty < 2.5 ? vec3(0.9, 0.9, 0.85) : ty < 3.5 ? vec3(0.65, 0.75, 0.9) : ty < 4.5 ? vec3(0.95) : ty < 5.5 ? vec3(1.0, 0.8, 0.35) : vec3(0.7, 0.9, 1.0);
+    acc += c * m * (1.1 - fl * 0.25);
+  }
+  return acc;
+}
+void main(){
+  vec2 uv = vUv; float asp = uRes.x / uRes.y; float e = uE; vec3 col; float m = 0.0, dA = 0.5, dB = 0.5; vec3 add = vec3(0.0); float ca = 0.0;
+  vec2 camMove = mix(uCamA.yz, uCamB.yz, e);
+  if (e <= 0.001){
+    col = layer(uA, uDA, uv, uAsp.x, uCamA, uFA, uPar.x, 0.0, dA); dB = dA;
+  } else {
+    // ---- HERO-OBJECT TRANSITIONS. Every beat has a hero object at its focus point. While a scene hands over to the next, the eye stays locked on
+    // that spot: the outgoing scene's hero is brought to the anchor (rigid zoom / rotation only - nothing is ever stretched or warped), the
+    // incoming scene's hero arrives at the same spot at the same size, the hero MORPHS into the next one, and the next scene grows out of it.
+    vec2 uvA = uv, uvB = uv; vec4 cA = uCamA, cB = uCamB; float sh = sin(PI * e);
+    vec2 pa = uCA.xy, pb = uCB.xy; float ra = max(uCA.z, 0.06), rb = max(uCB.z, 0.06);
+    vec2 P = mix(pa, pb, smoothstep(0.0, 1.0, e)); float R = 0.30;                 // the anchor: where the eye is held, and how big the hero is at the moment of change
+    vec2 dv = (uv - P) * vec2(asp, 1.0); float d = length(dv);
+    float far = length(max(P, 1.0 - P) * vec2(asp, 1.0)) * 1.15;
+    float scA = mix(1.0, clamp(R / ra, 0.85, 3.4), smoothstep(0.0, 0.55, e));       // outgoing hero grows to anchor size
+    float scB = mix(clamp(R / rb, 0.85, 3.4), 1.0, smoothstep(0.45, 1.0, e));       // incoming hero starts at anchor size and settles back to its own scene
+    float rotA = 0.0, rotB = 0.0;
+    if (uType < 0.5){                                   // 0 cut: hard cut on the beat through a white-hot frame
+      m = step(0.5, e); add = vec3(1.0, 0.95, 0.9) * pow(sh, 4.0) * 0.9; ca = sh;
+    } else if (uType < 1.5){                            // 1 morph: the hero changes into the next hero; the next scene grows outward from it in a ring
+      float mt = smoothstep(0.34, 0.66, e); float rr = mix(R * 1.1, far, smoothstep(0.32, 0.98, e));
+      float ring = smoothstep(rr + 0.04, rr - 0.04, d), obj = smoothstep(R * 1.15, R * 0.9, d);
+      m = mix(ring, mt, obj); add = uAccent * smoothstep(0.035, 0.0, abs(d - rr)) * sh * 0.9;
+    } else if (uType < 2.5){                            // 2 fly: fly INTO the hero until it fills the frame, then pull back out of the next hero
+      scA = mix(1.0, clamp(0.95 / ra, 1.6, 5.5), smoothstep(0.0, 0.5, e)); scB = mix(clamp(0.95 / rb, 1.6, 5.5), 1.0, smoothstep(0.5, 1.0, e));
+      m = smoothstep(0.47, 0.53, e); add = vec3(1.0) * pow(sh, 6.0) * 0.5; ca = sh * 0.6;
+    } else if (uType < 3.5){                            // 3 twist: both scenes rotate rigidly about the hero while it morphs
+      float k = smoothstep(0.0, 1.0, e); rotA = k * 0.9; rotB = -(1.0 - k) * 0.9;
+      float mt = smoothstep(0.34, 0.66, e); float rr = far * smoothstep(0.2, 0.9, e);
+      float ring = smoothstep(rr + 0.05, rr - 0.05, d), obj = smoothstep(R * 1.2, R * 0.9, d);
+      m = mix(ring, mt, obj); add = uAccent * smoothstep(0.04, 0.0, abs(d - rr)) * sh * 0.7;
+    } else if (uType < 4.5){                            // 4 ripple: rings pulse outward from the hero, each one revealing the next scene
+      float mt = smoothstep(0.34, 0.66, e); float rr = mix(R * 1.1, far, smoothstep(0.3, 0.98, e));
+      float dd = d + 0.02 * sin(d * 60.0 - e * 24.0), ring = smoothstep(rr + 0.025, rr - 0.025, dd), obj = smoothstep(R * 1.15, R * 0.9, d);
+      m = mix(ring, mt, obj); add = uAccent * (smoothstep(0.03, 0.0, abs(d - rr)) + 0.5 * smoothstep(0.03, 0.0, abs(d - rr * 0.78))) * sh * 0.8;
+    } else if (uType < 5.5){                            // 5 flash: light blooms from the hero; the next hero is standing there when it fades
+      m = smoothstep(0.44, 0.56, e); add = mix(vec3(1.0, 0.92, 0.8), uAccent, 0.35) * exp(-d * 3.2) * pow(sh, 1.5) * 1.5; ca = sh * 0.5;
+    } else if (uType < 6.5){                            // 6 iris: the next scene opens as a circle from the hero
+      scA = mix(1.0, 1.25, e); scB = mix(0.75, 1.0, e); float rr = far * smoothstep(0.0, 1.0, e);
+      m = smoothstep(rr + 0.03, rr - 0.03, d); add = uAccent * smoothstep(0.05, 0.0, abs(d - rr)) * sh * 0.9;
+    } else {                                            // 7 glitch: sliced, channel-split digital tear (an accent, used sparingly)
+      float row = floor(uv.y * 26.0 + floor(uT * 20.0) * 3.0); float r = hash(vec2(row, floor(uT * 20.0))); float on = step(0.72, r) * sh * 1.6;
+      uvA.x += (r - 0.5) * 0.25 * on; uvB.x += (r - 0.5) * 0.25 * on; m = step(hash(vec2(row * 0.37, 3.0)), e); ca = 0.6 + sh * 1.6; add = vec3(0.08) * on;
+    }
+    if (uType > 0.5 && uType < 6.5) {                   // rigid placement of both heroes on the shared anchor (rotation + uniform scale only)
+      vec2 va = dv; float c1 = cos(rotA), s1 = sin(rotA); va = mat2(c1, -s1, s1, c1) * va; uvA = pa + va / scA / vec2(asp, 1.0);
+      vec2 vb = dv; float c2 = cos(rotB), s2 = sin(rotB); vb = mat2(c2, -s2, s2, c2) * vb; uvB = pb + vb / scB / vec2(asp, 1.0);
+    }
+    vec3 cAcol = layer(uA, uDA, uvA, uAsp.x, cA, uFA, uPar.x, ca, dA);
+    vec3 cBcol = layer(uB, uDB, uvB, uAsp.y, cB, uFB, uPar.y, ca, dB);
+    col = mix(cAcol, cBcol, m) + add;
+  }
+  float dm = mix(dA, dB, m);
+  col += motif(uv, camMove) * (1.0 - 0.3 * uEnergy);
+  // grade: contrast curve, saturation, split toning
+  col = (col - 0.5) * uGrade.x + 0.5; float g = dot(col, vec3(0.299, 0.587, 0.114)); col = mix(vec3(g), col, uGrade.y);
+  col += uTintS * (1.0 - smoothstep(0.0, 0.55, g)) * 0.16 + uTintH * smoothstep(0.45, 1.0, g) * 0.12;
+  // text, composited into the scene: foreground depth can pass in front of it
+  float occ = smoothstep(0.62, 0.9, dm) * mix(uBehind.x, uBehind.y, m);   // how much foreground stands in front of the text here
+  gl_FragColor = vec4(clamp(col, 0.0, 1.0), occ);
+}`,
+});
+scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+
+// The expensive part (parallax, depth of field, transitions, particles) is drawn into a render target at a fraction of the output
+// resolution - the photographs are soft anyway. A second, trivial pass upsamples it to full resolution and adds the things that must be
+// razor sharp: the typography (occluded by foreground where the scene says so), vignette and film grain.
+const sceneRT = new THREE.WebGLRenderTarget(2, 2, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false });
+const FU = { uScene: { value: sceneRT.texture }, uText: { value: textTex }, uRes: { value: new THREE.Vector2(1, 1) }, uT: { value: 0 }, uGrain: { value: S.grade.grain }, uTexel: { value: new THREE.Vector2(1, 1) }, uTB: { value: 0 }, uTextRes: { value: new THREE.Vector2(720, 1280) } };
+const finalScene = new THREE.Scene();
+finalScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+  uniforms: FU, vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+  fragmentShader: `
+precision highp float;
+uniform sampler2D uScene, uText; uniform vec2 uRes, uTexel, uTextRes; uniform float uT, uGrain, uTB; varying vec2 vUv;
+float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+void main(){
+  vec4 s = texture2D(uScene, vUv);
+  vec3 blur = (texture2D(uScene, vUv + vec2(uTexel.x, 0.0)).rgb + texture2D(uScene, vUv - vec2(uTexel.x, 0.0)).rgb + texture2D(uScene, vUv + vec2(0.0, uTexel.y)).rgb + texture2D(uScene, vUv - vec2(0.0, uTexel.y)).rgb) * 0.25;
+  vec3 col = s.rgb + (s.rgb - blur) * 0.6;                       // gentle sharpen after the upsample
+  vec4 tx = texture2D(uText, vUv);
+  vec2 tp = 1.0 / uTextRes;
+  float occ = s.a * smoothstep(0.12, 0.3, vUv.y);                    // foreground may hide words, but never the call-to-action button at the bottom
+  if (uTB > 0.5){ vec4 acc = tx; float rr = uTB;                     // rack-focus / pop blur, applied to the whole text layer
+    for (int i = 0; i < 8; i++){ float a = float(i) * 0.785398; acc += texture2D(uText, vUv + vec2(cos(a), sin(a)) * rr * tp); } tx = acc / 9.0; }
+  float far = max(max(texture2D(uText, vUv + vec2(22.0, 0.0) * tp).a, texture2D(uText, vUv - vec2(22.0, 0.0) * tp).a), max(texture2D(uText, vUv + vec2(0.0, 22.0) * tp).a, texture2D(uText, vUv - vec2(0.0, 22.0) * tp).a));
+  if (tx.a < 0.99 && (tx.a > 0.0 || far > 0.0)){                     // soft dark halo behind the words
+    float h = 0.0; for (int i = 0; i < 8; i++){ float a = float(i) * 0.785398; h += texture2D(uText, vUv + vec2(cos(a), sin(a)) * 12.0 * tp + vec2(0.0, -3.0) * tp).a; }
+    col *= 1.0 - 0.6 * clamp(h / 8.0 * 1.6, 0.0, 1.0) * (1.0 - occ * 0.9);
+  }
+  col = mix(col, tx.rgb, tx.a * (1.0 - occ * 0.93));
+  float v = length((vUv - 0.5) * vec2(1.0, 0.85)); col *= 1.0 - 0.5 * smoothstep(0.35, 0.95, v);
+  col += (hash(vUv * uRes + floor(uT * 24.0)) - 0.5) * uGrain * 0.16;
+  gl_FragColor = vec4(max(col, 0.0), 1.0);
+}`,
+})));
+let QUALITY = 0.6;
+
+// ---------------------------------------------------------------- kinetic typography (Canvas2D, one glyph at a time)
+const easeOutCubic = (x) => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 3);
+const easeOutBack = (x) => { x = Math.max(0, Math.min(1, x)); const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+const easeOutBounce = (x) => { x = Math.max(0, Math.min(1, x)); const n1 = 7.5625, d1 = 2.75; if (x < 1 / d1) return n1 * x * x; if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75; if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375; return n1 * (x -= 2.625 / d1) * x + 0.984375; };
+const SIZES = { xl: 0.215, l: 0.15, m: 0.085, s: 0.042 };
+const rnd = (a, b) => { const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x); };
+let textDirty = true, lastTextKey = "";
+function drawBeatText(b, bi, u, alphaMul) {
+  const tx = b.text; if (!tx || !tx.lines.length) return false;
+  const W = textCanvas.width, H = textCanvas.height, R = Math.min(W, H * 0.62), d0 = tx.delay;
+  const inDur = 0.7, outStart = b.dur - (bi < N - 1 ? b.transition.dur : 0) - 0.05, outP = Math.max(0, Math.min(1, (u - outStart) / 0.25));
+  if (u < d0 - 0.02 || outP >= 1) return false;
+  const font = (px, weight) => weight + " " + Math.round(px) + 'px "' + TH.displayFont + '", Impact, sans-serif';
+  // layout
+  const maxW = W * 0.88, lines = tx.lines.map((ln) => {
+    let px = R * SIZES[ln.s] * (tx.upper ? 1 : 0.92); const wt = TH.displayWeight || 700; tctx.font = font(px, wt);
+    const label = tx.upper ? ln.t.toUpperCase() : ln.t; let wpx = tctx.measureText(label).width; if (wpx > maxW) { px *= maxW / wpx; tctx.font = font(px, wt); wpx = tctx.measureText(label).width; }
+    return { label, px, w: wpx, a: ln.a, wt, isSub: ln.s === "s" };
+  });
+  const gap = R * 0.02, blockH = lines.reduce((s, l) => s + l.px * 1.02, 0) + gap * (lines.length - 1);
+  let y = H * tx.y - blockH / 2; const alignX = tx.align === "left" ? W * 0.07 : tx.align === "right" ? W * 0.93 : W * tx.x;
+  let charIndex = 0, blurAcc = 0, blurN = 0;
+  lines.forEach((ln, li) => {
+    const lh = ln.px * 1.02; y += lh;
+    const baseX = tx.align === "left" ? alignX : tx.align === "right" ? alignX - ln.w : alignX - ln.w / 2;
+    tctx.font = ln.isSub ? '700 ' + Math.round(ln.px) + 'px "' + TH.bodyFont + '", sans-serif' : font(ln.px, ln.wt);
+    if (ln.isSub) { tctx.font = '700 ' + Math.round(ln.px * 1.15) + 'px "' + TH.bodyFont + '", sans-serif'; }
+    const chars = [...ln.label]; const stag = ln.isSub ? 0 : 0.028; const color = ln.a ? TH.accentLight : "#ffffff";
+    tctx.save(); tctx.textBaseline = "alphabetic";
+    if (tx.fx === "rise") { tctx.beginPath(); tctx.rect(baseX - ln.px * 0.2, y - lh * 0.95, ln.w + ln.px * 0.4, lh * 1.12); tctx.clip(); }
+    for (let ci = 0; ci < chars.length; ci++) {
+      const ch = chars[ci]; if (ch === " ") { charIndex++; continue; }
+      const cx = baseX + tctx.measureText(chars.slice(0, ci).join("")).width, cw = tctx.measureText(ch).width;
+      const p = (u - d0 - (charIndex + li * 2) * stag) / inDur; const pin = Math.max(0, Math.min(1, p));
+      if (pin <= 0) { charIndex++; continue; }
+      let dx = 0, dy = 0, sx = 1, sy = 1, rot = 0, al = 1, blur = 0, fake = 0;
+      switch (tx.fx) {
+        case "rise": dy = (1 - easeOutCubic(pin)) * lh * 1.05; al = Math.min(1, pin * 3); break;
+        case "carve": { const wipe = pin * 1.25 - (cx - baseX) / Math.max(1, ln.w) * 0.55; al = Math.max(0, Math.min(1, wipe * 2.2)); dx = (1 - al) * -ln.px * 0.25; blur = (1 - al) * 6; break; }
+        case "pop": { const k = easeOutBack(pin); sx = sy = 1.9 - 0.9 * k; al = Math.min(1, pin * 3.5); blur = (1 - pin) * 14; break; }
+        case "scatter": { const k = easeOutCubic(pin); dx = (rnd(bi, ci + li * 40) - 0.5) * R * 1.6 * (1 - k); dy = (rnd(ci + li * 40, bi + 3) - 0.5) * R * 1.6 * (1 - k); rot = (rnd(bi + 1, ci) - 0.5) * 3 * (1 - k); al = Math.min(1, pin * 2.5); break; }
+        case "glitch": { const f = Math.floor(u * 30); const jit = pin < 0.7 ? 1 : 0; dx = jit * (rnd(f, ci + li * 9) - 0.5) * ln.px * 0.7; dy = jit * (rnd(ci + li * 9, f) - 0.5) * ln.px * 0.25; al = pin < 0.7 ? (rnd(f, ci * 3) > 0.35 ? 1 : 0.15) : 1; fake = 1; break; }
+        case "drip": { const k = easeOutBounce(pin); dy = -(1 - k) * H * 0.55; al = Math.min(1, pin * 6); break; }
+        default: { blur = (1 - pin) * 22; sx = sy = 1.06 - 0.06 * pin; al = pin; } // "focus": racks into sharpness
+      }
+      if (outP > 0) { al *= 1 - outP; blur += outP * 12; dy -= outP * lh * 0.35; sx *= 1 + outP * 0.06; sy *= 1 + outP * 0.06; }
+      al *= alphaMul; if (al <= 0.003) { charIndex++; continue; }
+      tctx.save(); tctx.translate(cx + cw / 2 + dx, y + dy - lh * 0.3); tctx.rotate(rot); tctx.scale(sx, sy); tctx.globalAlpha = al;
+      blurAcc += blur; blurN++;   // the blur itself is applied to the whole text layer in the (cheap) final GPU pass
+      if (fake) { tctx.fillStyle = "rgba(255,40,60,0.9)"; tctx.fillText(ch, -cw / 2 - ln.px * 0.04, lh * 0.3); tctx.fillStyle = "rgba(40,220,255,0.9)"; tctx.fillText(ch, -cw / 2 + ln.px * 0.04, lh * 0.3); }
+      tctx.fillStyle = color; tctx.fillText(ch, -cw / 2, lh * 0.3);
+      tctx.restore(); charIndex++;
+    }
+    tctx.restore(); y += gap;
+  });
+  window.__textBlurPx = blurN ? blurAcc / blurN : 0;
+  if (tx.fx === "carve") { // the light that carves the words: a bright edge that sweeps across the block
+    const pr = Math.max(0, Math.min(1, (u - d0) / (inDur * 1.1)));
+    if (pr > 0 && pr < 1 && outP === 0) { const xx = W * 0.05 + pr * W * 0.9, gr = tctx.createLinearGradient(xx - 90, 0, xx + 30, 0); gr.addColorStop(0, "rgba(255,255,255,0)"); gr.addColorStop(0.85, "rgba(255,255,255," + (0.55 * alphaMul) + ")"); gr.addColorStop(1, "rgba(255,255,255,0)"); tctx.save(); tctx.globalCompositeOperation = "source-atop"; tctx.fillStyle = gr; tctx.fillRect(xx - 90, H * tx.y - blockH / 2 - 20, 130, blockH + 40); tctx.restore(); }
+  }
+  return true;
+}
+
+function drawCTA(a) {
+  if (a <= 0.01) return;
+  const W = textCanvas.width, H = textCanvas.height, px = Math.round(W * 0.036), padX = px * 1.8, h = px * 2.9;
+  tctx.save(); tctx.globalAlpha = a; tctx.font = "700 " + px + 'px "' + TH.bodyFont + '", sans-serif';
+  const w = tctx.measureText(S.cta).width + padX * 2, x = (W - w) / 2, y = H * 0.885 - h / 2 + (1 - a) * px;
+  tctx.fillStyle = TH.accent; tctx.beginPath(); tctx.roundRect(x, y, w, h, h / 2); tctx.fill();
+  tctx.fillStyle = TH.accentInk; tctx.textBaseline = "middle"; tctx.textAlign = "center"; tctx.fillText(S.cta, W / 2, y + h / 2 + px * 0.04); tctx.restore();
+}
+// ---------------------------------------------------------------- frame
+let Tcur = 0, Ttarget = 0, seekMode = false, dirtyRender = true;
+function sizeAll() {
+  const w = Math.max(2, window.innerWidth), h = Math.max(2, window.innerHeight);
+  renderer.setSize(w, h, false); applyQuality();
+  textCanvas.width = Math.min(1440, Math.round(w * dprCap())); textCanvas.height = Math.round(textCanvas.width * h / w); textDirty = true; dirtyRender = true;
+}
+function applyQuality() {
+  const rw = Math.max(2, Math.round(canvas.width * QUALITY)), rh = Math.max(2, Math.round(canvas.height * QUALITY));
+  sceneRT.setSize(rw, rh); U.uRes.value.set(rw, rh); FU.uRes.value.set(canvas.width, canvas.height); FU.uTexel.value.set(1 / rw, 1 / rh); dirtyRender = true;
+}
+window.__setQuality = (q) => { QUALITY = Math.max(0.2, Math.min(1, q)); applyQuality(); };
+const PX_PER_SEC = 230;
+function layoutSpacer() { document.getElementById("spacer").style.height = Math.round(TOTAL * PX_PER_SEC + window.innerHeight) + "px"; }
+function render(T) {
+  const L = locate(T), b = L.b, nxt = B[Math.min(L.i + 1, N - 1)], e = L.e;
+  const pA = L.u / b.dur, pB = -(1 - e) * 0.1;
+  const camA = camera(b, pA, T), camB = camera(nxt, pB, T + 0.3);
+  const fa = dofOf(b, pA), fb = dofOf(nxt, Math.max(0, pB));
+  U.uA.value = imgTex[b.image]; U.uDA.value = depTex[b.image]; U.uB.value = imgTex[nxt.image]; U.uDB.value = depTex[nxt.image];
+  U.uAsp.value.set(imgAsp[b.image], imgAsp[nxt.image]);
+  U.uCamA.value.set(...camA); U.uCamB.value.set(...camB);
+  U.uFA.value.set(b.focus[0], b.focus[1], fa[0], fa[1]); U.uFB.value.set(nxt.focus[0], nxt.focus[1], fb[0], fb[1]);
+  U.uPar.value.set(2.2 + b.camAmount * 4, 2.2 + nxt.camAmount * 4);
+  { // where each scene's hero object is on screen at the moment of hand-over (end of this beat / start of the next), and how big
+    const zEnd = camera(b, 1, T)[0] / 1.06, zStart = camera(nxt, 0, T)[0] / 1.06;
+    U.uCA.value.set(b.focus[0], b.focus[1], (b.hero ? b.hero.r : 0.28) * zEnd); U.uCB.value.set(nxt.focus[0], nxt.focus[1], (nxt.hero ? nxt.hero.r : 0.28) * zStart);
+  }
+  U.uE.value = e; U.uType.value = L.i < N - 1 ? TRANS[b.transition.type] : 0; U.uT.value = T;
+  U.uBehind.value.set(b.text && b.text.behind ? 1 : 0, nxt.text && nxt.text.behind ? 1 : 0);
+  // text of the outgoing beat lives until its exit, the incoming beat's text starts after its own delay
+  // words only need re-drawing while they animate in / out; while they simply sit there the texture is reused (Canvas2D text is costly on software renderers)
+  let animEnd = 0, outStart = 1e9;
+  if (b.text) { const nch = b.text.lines.reduce((t, l, li) => t + [...l.t].length + li * 2, 0); animEnd = b.text.delay + 0.7 + (nch + 2) * 0.03 + 0.06; outStart = b.dur - (L.i < N - 1 ? b.transition.dur : 0) - 0.05; }
+  const ctaAnimating = L.i === N - 1 && L.u < 1.5;
+  const staticText = !ctaAnimating && (!b.text || (L.u > animEnd && L.u < outStart && !(L.i > 0 && L.u < 0.9)) || (!b.text && L.u > 0));
+  const key = staticText ? L.i + ":hold:" + textCanvas.width : L.i + ":" + (Math.round(L.u * 60)) + ":" + textCanvas.width;
+  if (key !== lastTextKey || textDirty) {
+    tctx.clearRect(0, 0, textCanvas.width, textCanvas.height);
+    const tp0 = performance.now(); const drewA = window.__dbgNoText ? false : drawBeatText(b, L.i, L.u, 1); window.__textMs = performance.now() - tp0;
+    if (L.i > 0 && L.u < 0.9) drawBeatText(B[L.i - 1], L.i - 1, B[L.i - 1].dur + L.u, 1); // exit tail that overlaps the boundary
+    if (L.i === N - 1 && S.cta) drawCTA(smooth((L.u - 0.9) / 0.45));
+    FU.uTB.value = window.__textBlurPx || 0; FU.uTextRes.value.set(textCanvas.width, textCanvas.height); window.__textBlurPx = 0;
+    textTex.needsUpdate = true; lastTextKey = key; textDirty = false;
+  }
+  const last = L.i === N - 1;
+  const ctaEl = document.getElementById("cta"); if (S.cta) { if (!ctaEl.textContent) ctaEl.textContent = S.cta; ctaEl.classList.toggle("on", last && L.u > 0.9); }
+  FU.uT.value = T;
+  renderer.setRenderTarget(sceneRT); renderer.render(scene, cam);
+  renderer.setRenderTarget(null); renderer.render(finalScene, cam);
+}
+// energy: how much the picture is changing at time t (0 calm .. 1 busy) - the recorder spends its frames where this is high
+window.__energy = (t) => {
+  const L = locate(t), b = L.b; let en = 0.5 + b.camAmount * 0.6; // the camera is always moving, so nothing here is 'safe' to thin hard
+  if (L.e > 0 && L.e < 1) en = 1;
+  if (b.text && L.u > b.text.delay - 0.05 && L.u < b.text.delay + 0.9) en = Math.max(en, 0.85);
+  if (b.text && L.u > b.dur - (L.i < N - 1 ? b.transition.dur : 0) - 0.35) en = Math.max(en, 0.8);
+  if (L.i === 0 && t < 0.4) en = 1;
+  return en;
+};
+window.__seek = (t) => { seekMode = true; document.getElementById("hint").style.opacity = 0; Ttarget = Tcur = Math.max(0, Math.min(TOTAL, t)); window.__ready = true; render(Tcur); };
+window.addEventListener("resize", () => { sizeAll(); layoutSpacer(); });
+sizeAll(); layoutSpacer(); render(0); window.__ready = true;
+let lastNow = performance.now(), slow = 0, t0 = -1;
+const AUTOPLAY = /[?&]autoplay/.test(location.search); // plays itself from the page clock (lets frame-capture tools that virtualise time drive it)
+function loop(now) {
+  requestAnimationFrame(loop);
+  if (seekMode) return;
+  const dt = Math.max(0, Math.min(0.1, (now - lastNow) / 1000)); lastNow = now;
+  if (AUTOPLAY) { if (t0 < 0) t0 = now; Ttarget = Tcur = Math.min(TOTAL, (now - t0) / 1000); window.__t = Tcur; if (Tcur >= TOTAL) window.__finished = true; render(Tcur); return; }
+  Ttarget = Math.max(0, Math.min(TOTAL, (window.scrollY || 0) / PX_PER_SEC));
+  Tcur += (Ttarget - Tcur) * (1 - Math.exp(-dt * 7));
+  slow += dt > 0.03 ? 1 : dt < 0.02 ? -1 : 0; slow = Math.max(-60, Math.min(60, slow));
+  if (slow > 30 && QUALITY > 0.34) { slow = 0; QUALITY = Math.max(0.34, QUALITY - 0.1); applyQuality(); }
+  if (Math.abs(Ttarget - Tcur) < 1e-4) Tcur = Ttarget;
+  document.getElementById("hint").style.opacity = Ttarget > 0.3 ? 0 : 0.7;
+  render(Tcur);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

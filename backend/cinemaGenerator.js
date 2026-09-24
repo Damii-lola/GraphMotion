@@ -12,6 +12,7 @@ const fetch = require('node-fetch');
 const ffmpegPath = require('ffmpeg-static');
 const { directFilm, normalize } = require('./cinemaDirector');
 const { synth, cuesFromSpec } = require('./siteAudio');
+const neurons = require('./neuronBudget');
 
 const IMAGE_SUFFIX = ', wide cinematic photograph, dramatic rim lighting, volumetric atmosphere, deep contrast, epic scale, film grain, vertical composition with the subject centred, no text, no letters, no logos, no watermark';
 
@@ -31,11 +32,14 @@ const toWebp = (inFile, outFile) => new Promise((resolve, reject) => {
   ff.on('close', (c) => (c === 0 ? resolve() : reject(new Error('webp conversion failed: ' + err.slice(-200)))));
 });
 
-async function generateCinemaSite({ brief, outDir, slug, onProgress, spec: given, planOnly, keepImages }) {
+async function generateCinemaSite({ brief, outDir, slug, onProgress, spec: given, planOnly, keepImages, resume }) {
+  neurons.resetRun();
   const say = (stage, progress) => { if (onProgress) onProgress({ stage, progress }); };
   let spec = given ? (given.theme ? given : normalize(given, slug)) : null; // a saved site.json is already normalised
+  if (!spec && resume && fs.existsSync(path.join(outDir, 'site.json'))) { spec = JSON.parse(fs.readFileSync(path.join(outDir, 'site.json'), 'utf8')); keepImages = true; say('Resuming a saved plan (no neurons spent on directing)', 0.1); }
   if (!spec) { say('Directing the film', 0.05); spec = await directFilm(brief, slug); }
   fs.mkdirSync(outDir, { recursive: true });
+  fs.writeFileSync(path.join(outDir, 'site.json'), JSON.stringify(spec, null, 2)); // saved at once: if anything later fails, --resume reuses this plan instead of paying for it twice
   if (planOnly) { fs.writeFileSync(path.join(outDir, 'site.json'), JSON.stringify(spec, null, 2)); return { outDir, spec }; }
   fs.mkdirSync(path.join(outDir, 'images'), { recursive: true });
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-'));
@@ -44,6 +48,7 @@ async function generateCinemaSite({ brief, outDir, slug, onProgress, spec: given
       const im = spec.images[k], webp = path.join(outDir, 'images', im.id + '.webp');
       if (keepImages && fs.existsSync(webp)) { say(`Image ${k + 1}/${spec.images.length} (kept)`, 0.12 + 0.7 * ((k + 1) / spec.images.length)); continue; }
       say(`Painting image ${k + 1} of ${spec.images.length}`, 0.12 + 0.7 * (k / spec.images.length));
+      neurons.charge(neurons.estImage(), `image ${k + 1}`);
       const png = path.join(tmp, im.id + '.png');
       fs.writeFileSync(png, await flux(`${im.prompt}${im.hero ? ', ' + im.hero + ' as the single large hero subject in the exact centre of the frame' : ''}, ${spec.imageStyle}${IMAGE_SUFFIX}`));
       await toWebp(png, webp);

@@ -9,6 +9,7 @@
  */
 const { callCloudflareRaw } = require('./cloudflareClient');
 const { cuesFromSpec } = require('./siteAudio');
+const neurons = require('./neuronBudget');
 const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 
 const CAMERAS = ['push', 'pull', 'pan-left', 'pan-right', 'crane-up', 'crane-down', 'orbit', 'handheld'];
@@ -183,6 +184,7 @@ async function directFilm(brief, brandFallback) {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
       const prompt = directorPrompt(String(brief).slice(0, 2600)) + (feedback ? '\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED BY THE CREATIVE DIRECTOR FOR: ' + feedback + '. Fix every point and output the full JSON again.' : '');
+      neurons.charge(neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 3000), 'director call'); // refuses BEFORE spending if it would cross the ceiling
       const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: 3800, temperature: 0.85, model: SPEC_MODEL, timeoutMs: 150000 });
       const spec = normalize(typeof txt === 'string' ? JSON.parse(txt) : txt, brandFallback); // throws if unusable
       const issues = qualityIssues(spec);

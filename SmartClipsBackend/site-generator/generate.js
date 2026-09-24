@@ -16,7 +16,7 @@ if (!o.brief || !o.out) { console.log("Usage: node generate.js --brief <file.txt
 const run = o.engine === "classic" ? require(path.join(backend, "siteGenerator")).generateSite : require(path.join(backend, "cinemaGenerator")).generateCinemaSite;
 run({
   brief: fs.readFileSync(o.brief, "utf8"), outDir: path.resolve(o.out), slug: o.slug,
-  spec: o.spec ? JSON.parse(fs.readFileSync(o.spec, "utf8")) : undefined, planOnly: o["plan-only"] === "true", keepImages: o["keep-images"] === "true",
+  spec: o.spec ? JSON.parse(fs.readFileSync(o.spec, "utf8")) : undefined, planOnly: o["plan-only"] === "true", keepImages: o["keep-images"] === "true", resume: o.resume === "true",
   onProgress: (e) => console.log(`${String(Math.round(e.progress * 100)).padStart(3)}%  ${e.stage}`),
 }).then((r) => {
   console.log("\nSite written to", r.outDir);
