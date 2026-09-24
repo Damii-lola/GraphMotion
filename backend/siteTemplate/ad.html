@@ -168,10 +168,10 @@ window.SITE = /*__SITE_JSON__*/null;
     const q = (s) => sec.querySelectorAll(s), one = (s) => sec.querySelector(s);
     const hlw = q(".hl .wi"), subw = q(".sub .wi"), tag = one(".tag"), stk = one(".sticker"), btn = one(".cta-btn"), lnk = one(".cta-link"), lg = one(".cta-logo, .cta-word");
     const t0 = first ? 0 : i - 0.1;                       // the next scene's caption starts landing while the camera is still arriving
-    if (tag) master.fromTo(tag, { opacity: 0, y: 14, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.09, ease: "back.out(2)" }, t0);
+    if (tag) master.fromTo(tag, { opacity: 0, y: 14, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.0667, ease: "back.out(2)" }, t0);
     if (lg) master.fromTo(lg, { opacity: 0, y: 24, scale: 0.8 }, { opacity: 1, y: 0, scale: 1, duration: 0.14, ease: "back.out(1.7)" }, t0);
-    master.fromTo(hlw, { yPercent: 118, scale: 0.92 }, { yPercent: 0, scale: 1, duration: 0.11, stagger: first ? 0.03 : 0.04, ease: "back.out(1.5)" }, t0 + (tag ? 0.04 : lg ? 0.05 : 0));
-    if (subw.length) master.fromTo(subw, { yPercent: 118 }, { yPercent: 0, duration: 0.09, stagger: 0.018, ease: "power3.out" }, i + 0.2);
+    master.fromTo(hlw, { yPercent: 118, scale: 0.92 }, { yPercent: 0, scale: 1, duration: 0.0815, stagger: first ? 0.0222 : 0.0296, ease: "back.out(1.5)" }, t0 + (tag ? 0.04 : lg ? 0.05 : 0));
+    if (subw.length) master.fromTo(subw, { yPercent: 118 }, { yPercent: 0, duration: 0.0667, stagger: 0.0133, ease: "power3.out" }, i + 0.2);
     if (stk) master.fromTo(stk, { opacity: 0, scale: 0.55, rotation: -14 }, { opacity: 1, scale: 1, rotation: -3, duration: 0.14, ease: "back.out(2.2)" }, i + 0.28);
     if (btn) master.fromTo(btn, { opacity: 0, y: 26, scale: 0.85 }, { opacity: 1, y: 0, scale: 1, duration: 0.14, ease: "back.out(2)" }, i + 0.3);
     if (lnk) master.fromTo(lnk, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.12, ease: "power2.out" }, i + 0.4);
