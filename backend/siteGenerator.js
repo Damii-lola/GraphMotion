@@ -41,6 +41,8 @@ const LOOKS = {
 // Vertical, single-subject, bold and bright: what performs in a phone feed. The shader crops the (square) render to 9:16, so the subject must sit in the middle.
 const IMAGE_SUFFIX = ', bold commercial photograph for a social media ad, ONE clear subject in the centre, vertical composition, vibrant saturated colour, crisp dramatic lighting, shallow depth of field, clean uncluttered background, no text, no letters, no logos, no watermark';
 const IDS = ['hook', 'pain', 'solution', 'feature', 'proof', 'cta'];
+const TEXT_POS = ['mm', 'bm', 'bl', 'br'];                       // Middle Middle, Bottom Middle, Bottom Left, Bottom Right (the lower edge of the safe zone)
+const DEFAULT_POS = ['mm', 'bl', 'mm', 'br', 'bm', 'mm'];       // used when the AI does not choose
 const USER_IMAGE_ORDER = [2, 0, 3, 4, 5, 1]; // where the client's own photos go first: product scene, then the hook, then the rest
 
 // ------------------------------------------------------------- the brief
@@ -78,7 +80,7 @@ MASK = a GLSL float expression that shapes the opening. Variables: p (vec2: posi
 
 ${soundBlock()}Return ONE JSON object with these keys:
 "brand", "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "imageStyle" (6-10 words: ONE consistent photographic look), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
-"scenes": EXACTLY 6 objects, each: "id", "tag" (1-3 word pill label like "POV", "Real talk", "The proof"; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 22 words, ONE subject, no text, no logos, no faces or bodies or bare skin - every image must pass a strict family-friendly safety filter), "move" (see 2), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
+"scenes": EXACTLY 6 objects, each: "id", "tag" (1-3 word pill label like "POV", "Real talk", "The proof"; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 22 words, ONE subject, no text, no logos, no faces or bodies or bare skin - every image must pass a strict family-friendly safety filter), "move" (see 2), "pos" (where this scene's text sits: "mm" middle, "bm" bottom centre, "bl" bottom left, "br" bottom right - pick the spot that leaves the picture's subject clear, and vary it), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
 "transitions": EXACTLY 5 objects (see 3)${adMixMenu() ? ', "sound" (see SOUND)' : ''}.
 Output the JSON object only.`;
 }
@@ -146,7 +148,7 @@ function normalizeSpec(raw, brand, opts = {}) {
       headline: cleanHeadline(s.headline || s.title, k === 5 ? `Try *${name}* today` : `*${name}*`),
       sub, sticker,
       imagePrompt: str(s.imagePrompt, `${name} atmosphere, ${spec.imageStyle}`, 200),
-      tone,
+      tone, pos: TEXT_POS.includes(s.pos) ? s.pos : DEFAULT_POS[k],
       fx: { ripple: num01(fx.ripple, 0.12), mist: num01(fx.mist, 0.25), rays: num01(fx.rays, 0) },
       move: flow.normalizeMove(s.move, seed, k),
     });

@@ -37,21 +37,24 @@
   #chip .av.plate.dark { background: #0b0d12; }
   #chip .nm { font: 800 3.5vw/1 var(--bodyf); color: #fff; letter-spacing: .01em; max-width: 52vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  /* ---------- scenes */
+  /* ---------- scenes. Each scene's text lives in the SAFE ZONE box (below the top 14-17%, above the bottom 34%, 6% side margins) and sits at one of four spots:
+     mm = middle, bm = bottom centre, bl = bottom left, br = bottom right (bottom = the lower edge of the safe zone). */
   #scenes { position: fixed; inset: 0; z-index: 2; overflow: hidden; }
-  section.beat { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: var(--pt, 22vh) 6vw 0; text-align: center; }
-  section.role-hook { --pt: 25vh; } section.role-pain { --pt: 22vh; } section.role-solution { --pt: 23vh; }
-  section.role-feature { --pt: 22vh; } section.role-proof { --pt: 24vh; } section.role-cta { --pt: 20vh; }
+  section.beat { position: absolute; left: 6vw; right: 6vw; top: 17vh; bottom: 34vh; display: flex; }
   section.tone-light { --ink: #0b1420; --ink2: #1b2f42; }
-  .ad-inner { width: 100%; display: flex; flex-direction: column; align-items: center; will-change: transform, opacity; }
+  .ad-inner { display: flex; flex-direction: column; width: 100%; will-change: transform, opacity; }
+  .pos-mm .ad-inner { margin: auto 0; align-items: center; text-align: center; }
+  .pos-bm .ad-inner { margin: auto 0 0; align-items: center; text-align: center; }
+  .pos-bl .ad-inner { margin: auto auto 0 0; width: 84%; align-items: flex-start; text-align: left; }
+  .pos-br .ad-inner { margin: auto 0 0 auto; width: 84%; align-items: flex-end; text-align: right; }
 
   .tag { display: inline-block; padding: 1.5vw 3.8vw; border-radius: 99px; background: #fff; color: #0a0c10; font: 800 3.1vw/1 var(--bodyf); letter-spacing: .14em; text-transform: uppercase; margin-bottom: 2.4vh; opacity: 0; box-shadow: 0 .8vw 0 rgba(0,0,0,.28); }
   .hl { margin: 0; font-family: var(--dispf); font-weight: var(--dispw); font-size: var(--hs); line-height: 1.04; letter-spacing: -.01em; color: var(--ink); text-shadow: 0 .05em 0 rgba(0,0,0,.30), 0 0 .55em rgba(0,0,0,.42); }
   section.tone-light .hl, section.tone-light .sub { text-shadow: 0 0 .5em rgba(255,255,255,.75); }
-  /* every text is revealed WORD BY WORD: .w is the mask, .wi is the word that slides up through it */
-  .w { display: inline-block; overflow: hidden; vertical-align: top; padding: .05em .1em .14em; margin: -.05em -.1em -.14em; }
-  .wi { display: inline-block; visibility: hidden; will-change: transform; } /* hidden until GSAP parks it below its mask (no CSS transform here: GSAP would read it back as pixels) */
-  .w.hi .wi { background: var(--accent); color: var(--accent-ink); border-radius: .14em; padding: 0 .16em; text-shadow: none; }
+  /* every text is revealed WORD BY WORD as one flowing wave: each word rises, un-blurs and settles (no hard-edged masks); a highlighted word gets its accent block WIPED in behind it */
+  .w { display: inline-block; vertical-align: top; }
+  .wi { display: inline-block; opacity: 0; }
+  .w.hi .wi { background: linear-gradient(var(--accent), var(--accent)) no-repeat 0 0 / 0% 100%; border-radius: .14em; padding: 0 .16em; text-shadow: none; }
   .sub { margin: 2.2vh 0 0; max-width: 94%; font-family: var(--bodyf); font-weight: 700; font-size: var(--ss); line-height: 1.24; color: var(--ink2); text-shadow: 0 .06em 0 rgba(0,0,0,.28), 0 0 .6em rgba(0,0,0,.45); }
   .sticker { margin-top: 3vh; opacity: 0; display: flex; align-items: center; gap: 3vw; padding: 1.5vh 5.2vw; border-radius: 3.2vw; background: var(--accent); color: var(--accent-ink); box-shadow: 0 1.3vw 0 rgba(0,0,0,.36); }
   .sticker .n { font-family: var(--dispf); font-weight: var(--dispw); font-size: 10vw; line-height: 1; }
@@ -112,7 +115,7 @@ window.SITE = /*__SITE_JSON__*/null;
   var html = "";
   S.scenes.forEach(function (sc, k) {
     var last = k === N - 1;
-    html += '<section class="beat role-' + esc(sc.id) + (sc.tone === "light" ? " tone-light" : "") + '" data-beat data-key="' + esc(sc.id) + '"><div class="ad-inner">';
+    html += '<section class="beat pos-' + esc(sc.pos || 'mm') + ' role-' + esc(sc.id) + (sc.tone === "light" ? " tone-light" : "") + '" data-beat data-key="' + esc(sc.id) + '"><div class="ad-inner">';
     if (last) html += logo ? '<div class="cta-logo ' + (logo.plate === "dark" ? "dark" : "") + '"><img src="' + esc(logo.file) + '" alt=""></div>' : '<div class="cta-word">' + esc(S.brand) + "</div>";
     else if (sc.tag) html += '<span class="tag">' + esc(sc.tag) + "</span>";
     html += "<" + (k ? "h2" : "h1") + ' class="hl">' + words(sc.headline) + "</" + (k ? "h2" : "h1") + ">";
@@ -131,14 +134,14 @@ window.SITE = /*__SITE_JSON__*/null;
   const clamp01 = (v) => Math.max(0, Math.min(1, v));
   const S = window.SITE, N = S.scenes.length;
 
-  // ---------- fit: the headline is sized so the longest word fits the safe width and the block stays inside the safe zone
+  // ---------- fit: the headline is sized so the longest word fits its block and the whole block fits the safe-zone box
   function fit() {
-    const vw = window.innerWidth, vh = window.innerHeight, avail = vw * 0.88;
+    const vw = window.innerWidth;
     document.querySelectorAll(".hl").forEach((h) => {
       const sec = h.closest("section"), inner = h.closest(".ad-inner");
       const hook = sec.classList.contains("role-hook"), cta = sec.classList.contains("role-cta");
       let fs = vw * (hook ? 0.175 : cta ? 0.125 : 0.15);
-      const maxH = vh * (hook ? 0.30 : cta ? 0.17 : 0.27), maxBlock = vh * (cta ? 0.46 : hook ? 0.40 : 0.41);
+      const avail = inner.clientWidth, maxH = sec.clientHeight * (hook ? 0.62 : cta ? 0.36 : 0.56), maxBlock = sec.clientHeight;
       for (let k = 0; k < 40; k++) {
         h.style.fontSize = fs + "px";
         const widest = Math.max(0, ...[...h.querySelectorAll(".w")].map((w) => w.getBoundingClientRect().width));
@@ -161,23 +164,41 @@ window.SITE = /*__SITE_JSON__*/null;
   const TR = S.transitions || [];
   const ovOf = (i) => (TR[i] && TR[i].overlap) || 0.4;
   const master = gsap.timeline({ paused: true });
-  gsap.set(".wi", { yPercent: 118, visibility: "visible" });
+  const INK_ON_ACCENT = S.theme.accentInk;
   const secs = [...document.querySelectorAll("section.beat")];
   secs.forEach((sec, i) => {
     const last = i === secs.length - 1, first = i === 0;
-    const q = (s) => sec.querySelectorAll(s), one = (s) => sec.querySelector(s);
-    const hlw = q(".hl .wi"), subw = q(".sub .wi"), tag = one(".tag"), stk = one(".sticker"), btn = one(".cta-btn"), lnk = one(".cta-link"), lg = one(".cta-logo, .cta-word");
-    const t0 = first ? 0 : i - 0.1;                       // the next scene's caption starts landing while the camera is still arriving
-    if (tag) master.fromTo(tag, { opacity: 0, y: 14, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.0444, ease: "back.out(2)" }, t0);
-    if (lg) master.fromTo(lg, { opacity: 0, y: 24, scale: 0.8 }, { opacity: 1, y: 0, scale: 1, duration: 0.14, ease: "back.out(1.7)" }, t0);
-    master.fromTo(hlw, { yPercent: 118, scale: 0.92 }, { yPercent: 0, scale: 1, duration: 0.0543, stagger: first ? 0.0148 : 0.0197, ease: "back.out(1.5)" }, t0 + (tag ? 0.04 : lg ? 0.05 : 0));
-    if (subw.length) master.fromTo(subw, { yPercent: 118 }, { yPercent: 0, duration: 0.0444, stagger: 0.0089, ease: "power3.out" }, i + 0.2);
-    if (stk) master.fromTo(stk, { opacity: 0, scale: 0.55, rotation: -14 }, { opacity: 1, scale: 1, rotation: -3, duration: 0.14, ease: "back.out(2.2)" }, i + 0.28);
-    if (btn) master.fromTo(btn, { opacity: 0, y: 26, scale: 0.85 }, { opacity: 1, y: 0, scale: 1, duration: 0.14, ease: "back.out(2)" }, i + 0.3);
-    if (lnk) master.fromTo(lnk, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.12, ease: "power2.out" }, i + 0.4);
+    const q = (s) => [...sec.querySelectorAll(s)], one = (s) => sec.querySelector(s);
+    const inner = one(".ad-inner"), hlw = q(".hl .wi"), subw = q(".sub .wi"), tag = one(".tag"), stk = one(".sticker"), btn = one(".cta-btn"), lnk = one(".cta-link"), lg = one(".cta-logo, .cta-word");
+    const t0 = first ? 0 : i - 0.14;   // the words start rising while the camera is still arriving, so the text is part of the same motion (not a separate event after it)
+
+    // ONE continuous wave: every word rises out of a soft blur, overlapping its neighbours, decelerating into place (power4.out: fast start, long soft settle)
+    const wave = (words, start, dur, stag, rise) => {
+      if (words.length) {                               // ONE soft blur over the whole line (a single layer, cheap), clearing as the last word lands; removed entirely once it has
+        const el = words[0].closest(".hl, .sub"), end = start + (words.length - 1) * stag + dur;
+        master.fromTo(el, { filter: "blur(7px)" }, { filter: "blur(0px)", duration: (end - start) * 0.8, ease: "power2.out" }, start);
+        master.set(el, { filter: "none" }, end + 0.001);
+      }
+      words.forEach((w, n) => {
+        const at = start + n * stag;
+        master.fromTo(w, { opacity: 0, yPercent: rise, scale: 0.94, rotation: n % 2 ? 2.2 : -2.2 }, { opacity: 1, yPercent: 0, scale: 1, rotation: 0, duration: dur, ease: "power4.out" }, at);
+        if (w.parentElement.classList.contains("hi")) {   // the accent block is wiped in behind the word once it has landed, and the ink flips to the block's readable colour
+          master.fromTo(w, { backgroundSize: "0% 100%" }, { backgroundSize: "100% 100%", color: INK_ON_ACCENT, duration: dur * 0.9, ease: "power3.out" }, at + dur * 0.45);
+        }
+      });
+    };
+    if (tag) master.fromTo(tag, { opacity: 0, y: 14, filter: "blur(5px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.09, ease: "power3.out" }, t0);
+    if (lg) master.fromTo(lg, { opacity: 0, y: 24, scale: 0.86, filter: "blur(6px)" }, { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", duration: 0.16, ease: "power4.out" }, t0);
+    wave(hlw, t0 + (tag ? 0.03 : lg ? 0.05 : 0), 0.1, first ? 0.017 : 0.022, 42);
+    if (subw.length) wave(subw, i + 0.16, 0.08, 0.011, 30);
+    if (stk) master.fromTo(stk, { opacity: 0, scale: 0.6, rotation: -14, y: 18 }, { opacity: 1, scale: 1, rotation: -3, y: 0, duration: 0.16, ease: "back.out(1.6)" }, i + 0.24);
+    if (btn) master.fromTo(btn, { opacity: 0, y: 26, scale: 0.88, filter: "blur(5px)" }, { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", duration: 0.14, ease: "power4.out" }, i + 0.22);
+    if (lnk) master.fromTo(lnk, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.1, ease: "power2.out" }, i + 0.32);
+    // the block never sits perfectly still: a slow drift across the whole scene (text and picture share the same continuous motion)
+    master.fromTo(inner, { yPercent: 2.2 }, { yPercent: -2.2, duration: 1, ease: "none" }, i);
     if (!last) {                                          // the caption is carried off by the same dive that takes the picture
       const ov = ovOf(i), z = Math.min(1, (TR[i] ? TR[i].zoom : 0.8)), bl = TR[i] ? TR[i].blur : 0.4;
-      master.to(one(".ad-inner"), { opacity: 0, scale: 1 + 0.32 * z, filter: `blur(${(2 + 8 * bl).toFixed(1)}px)`, duration: 0.6 * ov, ease: "power2.in" }, i + 1 - ov + 0.03);
+      master.to(inner, { opacity: 0, scale: 1 + 0.32 * z, filter: `blur(${(2 + 8 * bl).toFixed(1)}px)`, duration: 0.6 * ov, ease: "power2.in" }, i + 1 - ov + 0.03);
     }
   });
   master.to({}, { duration: 0.001 }, N);                  // total length = N scene units exactly

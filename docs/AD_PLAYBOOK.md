@@ -78,3 +78,9 @@ The first version had five fixed shader transitions, a frozen "calm" phase in th
 * **Chained images.** The prompt tells the model to write every image as the continuation of the previous one so the dive point of scene N is where scene N+1's subject sits.
 * **Captions travel with the camera:** the outgoing caption is carried off by the same dive (scale + blur), the incoming caption starts landing while the camera is still arriving.
 * **Sound:** real CC0 sound-effect recordings (`backend/sfx/`, picked by a person via `audition.html`, installed with `buildLibrary.js`), placed by `adMix.js`. The AI picks which recording to use for each transition and moment from the menu in its prompt. Transition whooshes are fixed at 20 % volume. With no library installed the synthesised fallback is used (whoosh 9 %).
+
+## 7. Text motion and placement (rebuilt)
+
+The old caption animation (each word sliding up through a hard-edged mask, with an overshoot) looked sliced and jumpy. It was deleted and rebuilt as **one flowing wave**: words rise out of a soft blur, overlap their neighbours and decelerate into place (`power4.out`); one blur layer covers the whole line and is removed once the line has landed; a highlighted word gets its accent block *wiped* in behind it; the block drifts slowly through the whole scene (nothing is ever perfectly still); the words start rising while the camera is still arriving (`i - 0.14`) so text and picture share one motion; the block leaves with the dive. Per-word blur was tried and dropped: it made each captured frame ~4x more expensive.
+
+Placement: each scene's text sits at one of four spots inside the safe-zone box (top 17 %, bottom 34 %, 6 % sides): `mm` middle, `bm` bottom centre, `bl` bottom left, `br` bottom right ("bottom" = the lower edge of the safe zone, above the platform's caption/button area). The AI picks a spot per scene (`pos`); without a choice a fixed rotation is used.
