@@ -291,9 +291,14 @@ async function record(o, onProgress) {
       if (a[a.length - 1] !== totalFrames - 1) a.push(totalFrames - 1);
       return a;
     };
-    const STEPS = [[0, 1], [0.5, 1], [1, 1], [2, 1], [3, 1], [5, 1], [5, 2], [5, 3], [6, 4], [8, 4], [10, 6]];
-    let idxs = pick(...STEPS[STEPS.length - 1]);
-    for (const st of STEPS) { const cand = pick(...st); if (cand.length * perFrameMs <= budgetMs * 0.8) { idxs = cand; break; } }
+    // A page whose camera never rests (ad.html) has no static stretch to thin, so a big gap anywhere reads as choppiness. Its ladder therefore never leaves a gap
+    // wider than a few frames: [gap while captions land, gap elsewhere], everything else being the same time-budget logic.
+    const flatPage = !!(info.beats && info.pace && info.pace.flat);
+    const pickFlat = (gr, gc) => { const a = []; let f = 0; while (f < totalFrames) { a.push(f); f += weight(f) === 1 ? gr : gc; } if (a[a.length - 1] !== totalFrames - 1) a.push(totalFrames - 1); return a; };
+    const STEPS = flatPage ? [[1, 1], [1, 2], [2, 2], [2, 3], [3, 3], [3, 4], [4, 5], [5, 6]] : [[0, 1], [0.5, 1], [1, 1], [2, 1], [3, 1], [5, 1], [5, 2], [5, 3], [6, 4], [8, 4], [10, 6]];
+    const pk = flatPage ? pickFlat : pick;
+    let idxs = pk(...STEPS[STEPS.length - 1]);
+    for (const st of STEPS) { const cand = pk(...st); if (cand.length * perFrameMs <= budgetMs * 0.8) { idxs = cand; break; } }
     // never plan more frames than the budget can capture: if the gentlest ladder step was not enough, sample the list down to fit
     const cap = Math.max(12, Math.floor((budgetMs * 0.8) / perFrameMs));
     if (idxs.length > cap) { const k = idxs.length / cap; idxs = Array.from({ length: cap }, (_, i) => idxs[Math.min(idxs.length - 1, Math.floor(i * k))]); if (idxs[idxs.length - 1] !== totalFrames - 1) idxs.push(totalFrames - 1); }
