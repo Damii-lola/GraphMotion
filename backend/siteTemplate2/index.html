@@ -12,8 +12,8 @@
   #spacer { position: relative; width: 1px; pointer-events: none; }
   .sr { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
   #hint { position: fixed; left: 50%; bottom: max(22px, env(safe-area-inset-bottom)); transform: translateX(-50%); font: 600 11px/1 var(--body, sans-serif); letter-spacing: .24em; text-transform: uppercase; color: rgba(255,255,255,.7); transition: opacity .5s; pointer-events: none; }
-  #cta { position: fixed; left: 50%; bottom: 9vh; transform: translateX(-50%); opacity: 0; pointer-events: none; padding: 16px 38px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font: 700 16px/1 var(--body, sans-serif); letter-spacing: .04em; text-decoration: none; transition: opacity .4s; white-space: nowrap; }
-  #cta.on { opacity: 1; pointer-events: auto; }
+  #cta { position: fixed; left: 50%; bottom: 9vh; transform: translateX(-50%); opacity: 0; pointer-events: none; padding: 16px 38px; border-radius: 999px; font: 700 16px/1 var(--body, sans-serif); letter-spacing: .04em; text-decoration: none; white-space: nowrap; color: transparent; }
+  #cta.on { pointer-events: auto; cursor: pointer; opacity: 1; }
 </style>
 </head>
 <body>
@@ -276,20 +276,29 @@ scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
 // resolution - the photographs are soft anyway. A second, trivial pass upsamples it to full resolution and adds the things that must be
 // razor sharp: the typography (occluded by foreground where the scene says so), vignette and film grain.
 const sceneRT = new THREE.WebGLRenderTarget(2, 2, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false });
-const FU = { uScene: { value: sceneRT.texture }, uText: { value: textTex }, uRes: { value: new THREE.Vector2(1, 1) }, uT: { value: 0 }, uGrain: { value: S.grade.grain }, uTexel: { value: new THREE.Vector2(1, 1) } };
+const FU = { uScene: { value: sceneRT.texture }, uText: { value: textTex }, uRes: { value: new THREE.Vector2(1, 1) }, uT: { value: 0 }, uGrain: { value: S.grade.grain }, uTexel: { value: new THREE.Vector2(1, 1) }, uTB: { value: 0 }, uTextRes: { value: new THREE.Vector2(720, 1280) } };
 const finalScene = new THREE.Scene();
 finalScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
   uniforms: FU, vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
   fragmentShader: `
 precision highp float;
-uniform sampler2D uScene, uText; uniform vec2 uRes, uTexel; uniform float uT, uGrain; varying vec2 vUv;
+uniform sampler2D uScene, uText; uniform vec2 uRes, uTexel, uTextRes; uniform float uT, uGrain, uTB; varying vec2 vUv;
 float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
 void main(){
   vec4 s = texture2D(uScene, vUv);
   vec3 blur = (texture2D(uScene, vUv + vec2(uTexel.x, 0.0)).rgb + texture2D(uScene, vUv - vec2(uTexel.x, 0.0)).rgb + texture2D(uScene, vUv + vec2(0.0, uTexel.y)).rgb + texture2D(uScene, vUv - vec2(0.0, uTexel.y)).rgb) * 0.25;
   vec3 col = s.rgb + (s.rgb - blur) * 0.6;                       // gentle sharpen after the upsample
   vec4 tx = texture2D(uText, vUv);
-  col = mix(col, tx.rgb, tx.a * (1.0 - s.a * 0.93));
+  vec2 tp = 1.0 / uTextRes;
+  float occ = s.a * smoothstep(0.12, 0.3, vUv.y);                    // foreground may hide words, but never the call-to-action button at the bottom
+  if (uTB > 0.5){ vec4 acc = tx; float rr = uTB;                     // rack-focus / pop blur, applied to the whole text layer
+    for (int i = 0; i < 8; i++){ float a = float(i) * 0.785398; acc += texture2D(uText, vUv + vec2(cos(a), sin(a)) * rr * tp); } tx = acc / 9.0; }
+  float far = max(max(texture2D(uText, vUv + vec2(22.0, 0.0) * tp).a, texture2D(uText, vUv - vec2(22.0, 0.0) * tp).a), max(texture2D(uText, vUv + vec2(0.0, 22.0) * tp).a, texture2D(uText, vUv - vec2(0.0, 22.0) * tp).a));
+  if (tx.a < 0.99 && (tx.a > 0.0 || far > 0.0)){                     // soft dark halo behind the words
+    float h = 0.0; for (int i = 0; i < 8; i++){ float a = float(i) * 0.785398; h += texture2D(uText, vUv + vec2(cos(a), sin(a)) * 12.0 * tp + vec2(0.0, -3.0) * tp).a; }
+    col *= 1.0 - 0.6 * clamp(h / 8.0 * 1.6, 0.0, 1.0) * (1.0 - occ * 0.9);
+  }
+  col = mix(col, tx.rgb, tx.a * (1.0 - occ * 0.93));
   float v = length((vUv - 0.5) * vec2(1.0, 0.85)); col *= 1.0 - 0.5 * smoothstep(0.35, 0.95, v);
   col += (hash(vUv * uRes + floor(uT * 24.0)) - 0.5) * uGrain * 0.16;
   gl_FragColor = vec4(max(col, 0.0), 1.0);
@@ -318,7 +327,7 @@ function drawBeatText(b, bi, u, alphaMul) {
   });
   const gap = R * 0.02, blockH = lines.reduce((s, l) => s + l.px * 1.02, 0) + gap * (lines.length - 1);
   let y = H * tx.y - blockH / 2; const alignX = tx.align === "left" ? W * 0.07 : tx.align === "right" ? W * 0.93 : W * tx.x;
-  let charIndex = 0;
+  let charIndex = 0, blurAcc = 0, blurN = 0;
   lines.forEach((ln, li) => {
     const lh = ln.px * 1.02; y += lh;
     const baseX = tx.align === "left" ? alignX : tx.align === "right" ? alignX - ln.w : alignX - ln.w / 2;
@@ -345,14 +354,14 @@ function drawBeatText(b, bi, u, alphaMul) {
       if (outP > 0) { al *= 1 - outP; blur += outP * 12; dy -= outP * lh * 0.35; sx *= 1 + outP * 0.06; sy *= 1 + outP * 0.06; }
       al *= alphaMul; if (al <= 0.003) { charIndex++; continue; }
       tctx.save(); tctx.translate(cx + cw / 2 + dx, y + dy - lh * 0.3); tctx.rotate(rot); tctx.scale(sx, sy); tctx.globalAlpha = al;
-      if (blur > 0.4) tctx.filter = "blur(" + blur.toFixed(1) + "px)";
-      tctx.shadowColor = "rgba(0,0,0,0.75)"; tctx.shadowBlur = ln.px * 0.28; tctx.shadowOffsetY = ln.px * 0.03;
+      blurAcc += blur; blurN++;   // the blur itself is applied to the whole text layer in the (cheap) final GPU pass
       if (fake) { tctx.fillStyle = "rgba(255,40,60,0.9)"; tctx.fillText(ch, -cw / 2 - ln.px * 0.04, lh * 0.3); tctx.fillStyle = "rgba(40,220,255,0.9)"; tctx.fillText(ch, -cw / 2 + ln.px * 0.04, lh * 0.3); }
       tctx.fillStyle = color; tctx.fillText(ch, -cw / 2, lh * 0.3);
       tctx.restore(); charIndex++;
     }
     tctx.restore(); y += gap;
   });
+  window.__textBlurPx = blurN ? blurAcc / blurN : 0;
   if (tx.fx === "carve") { // the light that carves the words: a bright edge that sweeps across the block
     const pr = Math.max(0, Math.min(1, (u - d0) / (inDur * 1.1)));
     if (pr > 0 && pr < 1 && outP === 0) { const xx = W * 0.05 + pr * W * 0.9, gr = tctx.createLinearGradient(xx - 90, 0, xx + 30, 0); gr.addColorStop(0, "rgba(255,255,255,0)"); gr.addColorStop(0.85, "rgba(255,255,255," + (0.55 * alphaMul) + ")"); gr.addColorStop(1, "rgba(255,255,255,0)"); tctx.save(); tctx.globalCompositeOperation = "source-atop"; tctx.fillStyle = gr; tctx.fillRect(xx - 90, H * tx.y - blockH / 2 - 20, 130, blockH + 40); tctx.restore(); }
@@ -360,6 +369,14 @@ function drawBeatText(b, bi, u, alphaMul) {
   return true;
 }
 
+function drawCTA(a) {
+  if (a <= 0.01) return;
+  const W = textCanvas.width, H = textCanvas.height, px = Math.round(W * 0.036), padX = px * 1.8, h = px * 2.9;
+  tctx.save(); tctx.globalAlpha = a; tctx.font = "700 " + px + 'px "' + TH.bodyFont + '", sans-serif';
+  const w = tctx.measureText(S.cta).width + padX * 2, x = (W - w) / 2, y = H * 0.885 - h / 2 + (1 - a) * px;
+  tctx.fillStyle = TH.accent; tctx.beginPath(); tctx.roundRect(x, y, w, h, h / 2); tctx.fill();
+  tctx.fillStyle = TH.accentInk; tctx.textBaseline = "middle"; tctx.textAlign = "center"; tctx.fillText(S.cta, W / 2, y + h / 2 + px * 0.04); tctx.restore();
+}
 // ---------------------------------------------------------------- frame
 let Tcur = 0, Ttarget = 0, seekMode = false, dirtyRender = true;
 function sizeAll() {
@@ -390,16 +407,19 @@ function render(T) {
   // words only need re-drawing while they animate in / out; while they simply sit there the texture is reused (Canvas2D text is costly on software renderers)
   let animEnd = 0, outStart = 1e9;
   if (b.text) { const nch = b.text.lines.reduce((t, l, li) => t + [...l.t].length + li * 2, 0); animEnd = b.text.delay + 0.7 + (nch + 2) * 0.03 + 0.06; outStart = b.dur - (L.i < N - 1 ? b.transition.dur : 0) - 0.05; }
-  const staticText = !b.text || (L.u > animEnd && L.u < outStart && !(L.i > 0 && L.u < 0.9)) || (!b.text && L.u > 0);
+  const ctaAnimating = L.i === N - 1 && L.u < 1.5;
+  const staticText = !ctaAnimating && (!b.text || (L.u > animEnd && L.u < outStart && !(L.i > 0 && L.u < 0.9)) || (!b.text && L.u > 0));
   const key = staticText ? L.i + ":hold:" + textCanvas.width : L.i + ":" + (Math.round(L.u * 60)) + ":" + textCanvas.width;
   if (key !== lastTextKey || textDirty) {
     tctx.clearRect(0, 0, textCanvas.width, textCanvas.height);
-    const drewA = drawBeatText(b, L.i, L.u, 1);
+    const tp0 = performance.now(); const drewA = window.__dbgNoText ? false : drawBeatText(b, L.i, L.u, 1); window.__textMs = performance.now() - tp0;
     if (L.i > 0 && L.u < 0.9) drawBeatText(B[L.i - 1], L.i - 1, B[L.i - 1].dur + L.u, 1); // exit tail that overlaps the boundary
+    if (L.i === N - 1 && S.cta) drawCTA(smooth((L.u - 0.9) / 0.45));
+    FU.uTB.value = window.__textBlurPx || 0; FU.uTextRes.value.set(textCanvas.width, textCanvas.height); window.__textBlurPx = 0;
     textTex.needsUpdate = true; lastTextKey = key; textDirty = false;
   }
   const last = L.i === N - 1;
-  const ctaEl = document.getElementById("cta"); if (S.cta) { ctaEl.textContent = S.cta; ctaEl.classList.toggle("on", last && L.u > 0.9); }
+  const ctaEl = document.getElementById("cta"); if (S.cta) { if (!ctaEl.textContent) ctaEl.textContent = S.cta; ctaEl.classList.toggle("on", last && L.u > 0.9); }
   FU.uT.value = T;
   renderer.setRenderTarget(sceneRT); renderer.render(scene, cam);
   renderer.setRenderTarget(null); renderer.render(finalScene, cam);

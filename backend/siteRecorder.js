@@ -237,6 +237,13 @@ async function record(o, onProgress) {
     // the fast-moving transitions.
     const client = await page.createCDPSession();
     const shot = (q) => client.send('Page.captureScreenshot', { format: 'jpeg', quality: q, optimizeForSpeed: true, captureBeyondViewport: false });
+    // One frame = move the page, then read the picture. Cinema pages draw everything (text included) into ONE canvas, so the frame is read straight
+    // from that canvas in the same call as the seek: no separate compositor screenshot, and one browser round trip instead of three.
+    const frame = async (p, q, advMs) => {
+      if (info.seekDur) return page.evaluate((x, qq) => { window.__seek(x); return document.getElementById('gl').toDataURL('image/jpeg', qq / 100).slice(23); }, p, q);
+      await apply(p); if (advMs) await page.evaluate((ms) => window.__advance(ms), advMs);
+      return (await shot(q)).data;
+    };
     if (!audioPath && info.audio) {
       try {
         const buf = o.dir ? fs.readFileSync(path.join(path.resolve(o.dir), info.audio)) : Buffer.from(await (await fetch(new URL(info.audio, url).href)).arrayBuffer());
@@ -245,11 +252,11 @@ async function record(o, onProgress) {
     }
     const heavyP = info.seekDur ? plan(Math.round(fps * (info.calibT || 1))) : info.beats ? plan(Math.round(fps * holdStart + sceneSeconds * fps * 0.85)) : 0.5; // mid-transition of the first scene
     for (let k = 0; k < 3; k++) { // warm-up: the first frames pay for shader compilation; not counted
-      await apply(heavyP); await page.evaluate((ms) => window.__advance(ms), 16); await shot(40);
+      await frame(heavyP, 40, 16);
       emit('loading', 0.02 + 0.01 * k);
     }
     const tc = Date.now();
-    for (let k = 0; k < 4; k++) { await apply(heavyP + k * 1e-4); await page.evaluate((ms) => window.__advance(ms), 16); await shot(quality); }
+    for (let k = 0; k < 4; k++) await frame(heavyP + k * 1e-4, quality, 16);
     let perFrameMs = (Date.now() - tc) / 4, sceneQuality = null;
     const budgetMs = (+o.captureBudgetSeconds || +process.env.SITE_VIDEO_CAPTURE_BUDGET_S || 300) * 1000;
     // Cinema pages render their heavy 3D-ish scene at a fraction of the output resolution (the typography stays razor sharp in a
@@ -258,9 +265,9 @@ async function record(o, onProgress) {
     if (info.seekDur && (await page.evaluate(() => typeof window.__setQuality === 'function'))) {
       for (const q of [1, 0.75, 0.6, 0.45, 0.35, 0.28]) {
         await page.evaluate((v) => window.__setQuality(v), q);
-        for (let k = 0; k < 2; k++) { await apply(heavyP + k * 1e-4); await page.evaluate((ms) => window.__advance(ms), 16); await shot(40); }
+        for (let k = 0; k < 2; k++) await frame(heavyP + k * 1e-4, 40, 16);
         const t0q = Date.now();
-        for (let k = 0; k < 3; k++) { await apply(heavyP + (k + 3) * 1e-4); await page.evaluate((ms) => window.__advance(ms), 16); await shot(quality); }
+        for (let k = 0; k < 3; k++) await frame(heavyP + (k + 3) * 1e-4, quality, 16);
         perFrameMs = (Date.now() - t0q) / 3; sceneQuality = q;
         if (perFrameMs * totalFrames <= budgetMs * 0.8) break;
       }
@@ -291,10 +298,8 @@ async function record(o, onProgress) {
     for (let k = 0; k < idxs.length; k++) {
       cancelled();
       const f = idxs[k], t1 = Date.now();
-      await apply(plan(f));
-      if (!info.seekDur) await page.evaluate((ms) => window.__advance(ms), (1000 / fps) * (prev < 0 ? 1 : f - prev)); // cinema pages are pure functions of time: no clock to drive
+      const data = await frame(plan(f), quality, (1000 / fps) * (prev < 0 ? 1 : f - prev)); // (cinema pages are pure functions of time: no clock to drive)
       prev = f;
-      const { data } = await shot(quality);
       await fs.promises.writeFile(path.join(work, `f${String(k).padStart(5, '0')}.jpg`), Buffer.from(data, 'base64'));
       ema = ema * 0.9 + (Date.now() - t1) * 0.1;
       if (k % 4 === 0) emit('recording', 0.03 + 0.72 * ((k + 1) / idxs.length), (idxs.length - k - 1) * ema / 1000 + 30, note, `Frame ${k + 1} of ${idxs.length} · ${(ema / 1000).toFixed(2)}s per frame${sceneQuality !== null ? ' · scene quality ' + Math.round(sceneQuality * 100) + '%' : ''}`);
