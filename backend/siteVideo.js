@@ -37,7 +37,7 @@ function register(app, hooks = {}) {
   function view(j) {
     return {
       id: j.id, status: j.status, progress: +j.progress.toFixed(3), eta: j.eta == null ? null : Math.round(j.eta),
-      error: j.error || null, note: j.note || null, position: j.status === 'queued' ? queue.indexOf(j) + 1 : 0,
+      error: j.error || null, note: j.note || null, detail: j.detail || null, position: j.status === 'queued' ? queue.indexOf(j) + 1 : 0,
       videoUrl: j.status === 'done' ? (j.publicUrl || `/api/site-video/${j.id}/file`) : null,
       downloadUrl: j.status === 'done' ? `/api/site-video/${j.id}/file?download=1` : null,
     };
@@ -58,6 +58,7 @@ function register(app, hooks = {}) {
       if (settled) return;
       settled = true; clearTimeout(killer);
       Object.assign(job, { status }, extra);
+      console.log(`[site-video] job ${job.id} ${status}${extra.error ? ': ' + extra.error : ''} after ${Math.round((Date.now() - job.created) / 1000)}s`);
       if (status === 'done') { job.progress = 1; job.eta = 0; }
       current = null;
       try { child.kill(); } catch (_) { /* already gone */ }
@@ -65,13 +66,15 @@ function register(app, hooks = {}) {
       if (hooks.onIdle) hooks.onIdle();
       setImmediate(pump);
     };
+    job.cancel = () => { try { child.send({ type: 'cancel' }); } catch (_) { /* gone */ } setTimeout(() => { if (!settled) { try { child.kill('SIGKILL'); } catch (_) { /* gone */ } finish('cancelled'); } }, 8000).unref(); };
     const killer = setTimeout(() => finish('error', { error: 'The recording took too long and was stopped.' }), TIMEOUT_MS);
     child.on('message', (m) => {
       if (!m || m.jobId !== job.id) return;
       if (m.type === 'progress') {
         job.status = m.stage === 'encoding' ? 'encoding' : m.stage === 'recording' ? 'recording' : 'loading';
-        job.progress = Math.max(job.progress, m.progress); job.eta = m.eta; if (m.note) job.note = m.note;
+        job.progress = Math.max(job.progress, m.progress); job.eta = m.eta; if (m.note) job.note = m.note; if (m.detail) job.detail = m.detail;
       } else if (m.type === 'done') finish('done', { publicUrl: m.publicUrl || null });
+      else if (m.type === 'cancelled') finish('cancelled');
       else if (m.type === 'error') finish('error', { error: m.error });
     });
     child.on('exit', (code) => { if (!settled) finish('error', { error: 'The recorder crashed' + (code ? ` (code ${code})` : '') + ' - the server probably ran out of memory.' }); });
@@ -87,11 +90,20 @@ function register(app, hooks = {}) {
       const id = crypto.randomBytes(6).toString('hex');
       const job = {
         id, url, status: 'queued', progress: 0, eta: null, file: path.join(dir, id + '.mp4'),
-        opts: { sceneSeconds: clamp(b.sceneSeconds, 2, 10, 3.5), fps: clamp(b.fps, 24, 60, 60), preset: b.preset === 'small' ? 'small' : 'tiktok', duration: 30 },
+        opts: { sceneSeconds: clamp(b.sceneSeconds, 2, 10, 3.5), fps: clamp(b.fps, 24, 60, 60), preset: ['small', 'hd'].includes(b.preset) ? b.preset : 'tiktok', duration: 30 },
       };
+      console.log(`[site-video] job ${id} queued: ${url} (${job.opts.preset}, ${job.opts.fps}fps)`);
       jobs.set(id, job); queue.push(job); pump();
       res.status(202).json({ id });
     } catch (e) { res.status(400).json({ error: e.message }); }
+  });
+
+  app.post('/api/site-video/:id/cancel', (req, res) => {
+    const j = jobs.get(req.params.id);
+    if (!j) return res.status(404).json({ error: 'Unknown or expired job.' });
+    if (j.status === 'queued') { const k = queue.indexOf(j); if (k >= 0) queue.splice(k, 1); j.status = 'cancelled'; console.log(`[site-video] job ${j.id} cancelled while queued`); }
+    else if (['loading', 'recording', 'encoding'].includes(j.status) && j.cancel) { j.status = 'cancelling'; j.cancel(); }
+    res.json(view(j));
   });
 
   app.get('/api/site-video/:id', (req, res) => {

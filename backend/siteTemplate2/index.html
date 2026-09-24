@@ -387,7 +387,11 @@ function render(T) {
   U.uE.value = e; U.uType.value = L.i < N - 1 ? TRANS[b.transition.type] : 0; U.uT.value = T;
   U.uBehind.value.set(b.text && b.text.behind ? 1 : 0, nxt.text && nxt.text.behind ? 1 : 0);
   // text of the outgoing beat lives until its exit, the incoming beat's text starts after its own delay
-  const key = L.i + ":" + (Math.round(L.u * 60)) + ":" + textCanvas.width;
+  // words only need re-drawing while they animate in / out; while they simply sit there the texture is reused (Canvas2D text is costly on software renderers)
+  let animEnd = 0, outStart = 1e9;
+  if (b.text) { const nch = b.text.lines.reduce((t, l, li) => t + [...l.t].length + li * 2, 0); animEnd = b.text.delay + 0.7 + (nch + 2) * 0.03 + 0.06; outStart = b.dur - (L.i < N - 1 ? b.transition.dur : 0) - 0.05; }
+  const staticText = !b.text || (L.u > animEnd && L.u < outStart && !(L.i > 0 && L.u < 0.9)) || (!b.text && L.u > 0);
+  const key = staticText ? L.i + ":hold:" + textCanvas.width : L.i + ":" + (Math.round(L.u * 60)) + ":" + textCanvas.width;
   if (key !== lastTextKey || textDirty) {
     tctx.clearRect(0, 0, textCanvas.width, textCanvas.height);
     const drewA = drawBeatText(b, L.i, L.u, 1);

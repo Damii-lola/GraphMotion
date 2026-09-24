@@ -36,7 +36,7 @@ const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 
 const SITE_BASE = (process.env.SITE_BASE || 'https://smartclips.org').replace(/\/$/, '');
-const PRESETS = { tiktok: '1080x1920', reels: '1080x1920', shorts: '1080x1920', small: '720x1280' };
+const PRESETS = { tiktok: '720x1280', reels: '720x1280', shorts: '720x1280', hd: '1080x1920', small: '540x960' };
 const MAX_FRAMES = +process.env.SITE_VIDEO_MAX_FRAMES || 4800; // hard ceiling (80 s @ 60 fps)
 
 // ------------------------------------------------------------- target check
@@ -127,10 +127,14 @@ const EASE = { linear: (x) => x, smooth: (x) => x * x * (3 - 2 * x), sine: (x) =
  * record({ url | dir, out, preset|size, fps, sceneSeconds, duration, ... }, onProgress)
  * onProgress({ stage: 'loading'|'recording'|'encoding', progress: 0..1, eta: seconds|null })
  */
+const runs0 = (idx, total) => { let n = 0, g = -1; idx.forEach((f, k) => { const gap = (k + 1 < idx.length ? idx[k + 1] : total) - f; if (gap !== g) { n++; g = gap; } }); return n; };
 async function record(o, onProgress) {
-  const emit = (stage, progress, eta = null, note = null) => { if (onProgress) try { onProgress({ stage, progress, eta, note }); } catch (_) { /* UI errors never break a render */ } };
+  const emit = (stage, progress, eta = null, note = null, detail = null) => { if (onProgress) try { onProgress({ stage, progress, eta, note, detail }); } catch (_) { /* UI errors never break a render */ } };
+  const log = (...a) => console.log('[site-video]', ...a); // shows up in the host's log stream (Render dashboard)
+  const cancelled = () => { if (o.isCancelled && o.isCancelled()) throw new Error('cancelled'); };
+  const t00 = Date.now();
   emit('loading', 0.01);
-  const [W, H] = (PRESETS[o.preset] || o.size || '1080x1920').split('x').map(Number);
+  const [W, H] = (PRESETS[o.preset] || o.size || '720x1280').split('x').map(Number);
   const fps = Math.max(12, Math.min(60, +o.fps || 60));
   const vw = +o.viewportWidth || 540;
   const dsf = W / vw, vh = Math.round(H / dsf);
@@ -151,7 +155,10 @@ async function record(o, onProgress) {
   }
 
   let totalFrames = 0, frameIdxs = [], audioPath = o.audio ? path.resolve(o.audio) : null;
+  log(`start: ${url || o.dir}`);
+  emit('loading', 0.01, null, null, 'Starting the browser');
   const browser = await launchChrome();
+  log(`browser up after ${Math.round((Date.now() - t00) / 1000)}s`);
   try {
     const page = await browser.newPage();
     page.on('pageerror', (e) => console.warn('[site-video page error]', e.message));
@@ -167,6 +174,7 @@ async function record(o, onProgress) {
     await page.evaluate(() => (document.fonts && document.fonts.ready) || null);
     await page.evaluate(() => { window.__advance(16); window.__advance(16); });
 
+    log(`page ready after ${Math.round((Date.now() - t00) / 1000)}s`); emit('loading', 0.02, null, null, 'Page loaded, measuring this server'); cancelled();
     const info = await page.evaluate(() => ({
       beats: Array.isArray(window.__BEATS) && typeof window.__jumpToProgress === 'function' ? window.__BEATS.slice() : null,
       pace: window.__PACE || null, // where inside a scene the text has finished revealing / the exit-transition begins
@@ -270,21 +278,27 @@ async function record(o, onProgress) {
       if (a[a.length - 1] !== totalFrames - 1) a.push(totalFrames - 1);
       return a;
     };
-    const STEPS = [[0, 1], [0.5, 1], [1, 1], [2, 1], [3, 1], [5, 1], [5, 2], [5, 3], [6, 4]];
+    const STEPS = [[0, 1], [0.5, 1], [1, 1], [2, 1], [3, 1], [5, 1], [5, 2], [5, 3], [6, 4], [8, 4], [10, 6]];
     let idxs = pick(...STEPS[STEPS.length - 1]);
     for (const st of STEPS) { const cand = pick(...st); if (cand.length * perFrameMs <= budgetMs * 0.8) { idxs = cand; break; } }
+    // never plan more frames than the budget can capture: if the gentlest ladder step was not enough, sample the list down to fit
+    const cap = Math.max(12, Math.floor((budgetMs * 0.8) / perFrameMs));
+    if (idxs.length > cap) { const k = idxs.length / cap; idxs = Array.from({ length: cap }, (_, i) => idxs[Math.min(idxs.length - 1, Math.floor(i * k))]); if (idxs[idxs.length - 1] !== totalFrames - 1) idxs.push(totalFrames - 1); }
+    log(`plan: ${W}x${H} @${fps}fps, ${totalFrames} timeline frames -> capturing ${idxs.length}; measured ${Math.round(perFrameMs)} ms/frame${sceneQuality !== null ? ', scene quality ' + sceneQuality : ''}; budget ${Math.round(budgetMs / 1000)}s`);
     const note = sceneQuality !== null && sceneQuality < 0.5 && idxs.length >= totalFrames * 0.6 ? 'This server is slow, so the moving scene is rendered at reduced resolution (text stays sharp).' : idxs.length < totalFrames * 0.6 ? 'This server is slow, so calm parts of the video use fewer frames; transitions keep full smoothness where possible.' : null;
     const started = Date.now();
     let ema = perFrameMs, prev = -1;
     for (let k = 0; k < idxs.length; k++) {
+      cancelled();
       const f = idxs[k], t1 = Date.now();
       await apply(plan(f));
-      await page.evaluate((ms) => window.__advance(ms), (1000 / fps) * (prev < 0 ? 1 : f - prev));
+      if (!info.seekDur) await page.evaluate((ms) => window.__advance(ms), (1000 / fps) * (prev < 0 ? 1 : f - prev)); // cinema pages are pure functions of time: no clock to drive
       prev = f;
       const { data } = await shot(quality);
       await fs.promises.writeFile(path.join(work, `f${String(k).padStart(5, '0')}.jpg`), Buffer.from(data, 'base64'));
       ema = ema * 0.9 + (Date.now() - t1) * 0.1;
-      if (k % 4 === 0) emit('recording', 0.03 + 0.72 * ((k + 1) / idxs.length), (idxs.length - k - 1) * ema / 1000 + 30, note);
+      if (k % 4 === 0) emit('recording', 0.03 + 0.72 * ((k + 1) / idxs.length), (idxs.length - k - 1) * ema / 1000 + 30, note, `Frame ${k + 1} of ${idxs.length} · ${(ema / 1000).toFixed(2)}s per frame${sceneQuality !== null ? ' · scene quality ' + Math.round(sceneQuality * 100) + '%' : ''}`);
+      if (k > 0 && k % Math.max(1, Math.round(idxs.length / 10)) === 0) log(`capturing ${k}/${idxs.length} (${Math.round(100 * k / idxs.length)}%), ${(ema / 1000).toFixed(2)}s/frame, elapsed ${Math.round((Date.now() - t00) / 1000)}s`);
     }
     frameIdxs = idxs;
   } finally {
@@ -297,7 +311,8 @@ async function record(o, onProgress) {
   // same gap is encoded on its own: gap 1 is used as-is, gap > 1 is BLENDED up to the full frame rate so calm parts
   // (slow zoom, text settling) flow smoothly instead of stepping. The runs are then joined without re-encoding.
   try {
-    emit('encoding', 0.76, null);
+    log(`capture done in ${Math.round((Date.now() - t00) / 1000)}s, encoding ${runs0(frameIdxs, totalFrames)} segment(s)`);
+    emit('encoding', 0.76, null, null, 'Encoding the video');
     const gaps = frameIdxs.map((f, k) => (k + 1 < frameIdxs.length ? frameIdxs[k + 1] : totalFrames) - f);
     const runs = [];
     for (let k = 0; k < gaps.length; k++) {
@@ -336,6 +351,7 @@ async function record(o, onProgress) {
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
   }
+  log(`finished in ${Math.round((Date.now() - t00) / 1000)}s: ${totalFrames / fps}s video ${W}x${H}`);
   emit('done', 1, 0);
   return { out, seconds: totalFrames / fps, width: W, height: H };
 }

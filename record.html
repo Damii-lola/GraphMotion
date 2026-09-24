@@ -93,8 +93,9 @@
       <div>
         <label class="f" for="preset">Size</label>
         <select id="preset">
-          <option value="tiktok">TikTok / Reels / Shorts — 1080×1920</option>
-          <option value="small">Small & fast — 720×1280</option>
+          <option value="tiktok">TikTok / Reels / Shorts — 720×1280 (recommended)</option>
+          <option value="hd">Full HD — 1080×1920 (slower)</option>
+          <option value="small">Small — 540×960 (fastest)</option>
         </select>
       </div>
     </div>
@@ -107,7 +108,9 @@
     <div class="job" id="job">
       <div class="bar"><i id="fill"></i></div>
       <div class="jobline"><b id="stage">Starting…</b><span id="eta"></span></div>
+      <div class="jobline" id="detail" style="display:none"></div>
       <div class="jobline" id="note" style="display:none"></div>
+      <div class="jobline"><span></span><button class="ghost" id="cancel" style="padding:8px 16px;font-size:14px">Cancel</button></div>
       <div class="err" id="err"></div>
     </div>
 
@@ -127,7 +130,7 @@
   const API = "https://graphmotion.onrender.com"; // same backend as ai.html
   const abs = (u) => (u && u.charAt(0) === "/" ? API + u : u);
 
-  const STAGES = { queued: "Waiting in line…", loading: "Opening the page…", recording: "Recording scenes…", encoding: "Encoding the video…", done: "Done", error: "Failed" };
+  const STAGES = { queued: "Waiting in line…", loading: "Opening the page…", recording: "Recording scenes…", encoding: "Encoding the video…", done: "Done", error: "Failed", cancelling: "Cancelling…", cancelled: "Cancelled" };
   let timer = null, busy = false;
 
   $("secs").addEventListener("input", () => { $("secsV").textContent = $("secs").value; });
@@ -172,18 +175,26 @@
 
   function fail(msg) { busy = false; clearInterval(timer); $("go").disabled = false; $("err").textContent = msg; $("err").style.display = "block"; $("stage").textContent = STAGES.error; }
 
+  let currentId = null;
+  $("cancel").addEventListener("click", async () => {
+    if (!currentId) return; $("cancel").disabled = true; $("stage").textContent = STAGES.cancelling;
+    try { await fetch(API + "/api/site-video/" + currentId + "/cancel", { method: "POST" }); } catch (_) {}
+  });
   function poll(id) {
+    currentId = id; $("cancel").disabled = false;
     clearInterval(timer);
     timer = setInterval(async () => {
       try {
         const j = await (await fetch(API + "/api/site-video/" + id, { cache: "no-store" })).json();
         $("fill").style.width = Math.max(2, Math.round(j.progress * 100)) + "%";
         $("stage").textContent = j.status === "queued" && j.position ? "Waiting in line (" + j.position + ")…" : STAGES[j.status] || j.status;
+        $("detail").style.display = j.detail ? "flex" : "none"; $("detail").textContent = j.detail || "";
+        if (j.status === "cancelled") { clearInterval(timer); busy = false; $("go").disabled = false; $("job").style.display = "none"; return; }
         $("note").style.display = j.note ? "flex" : "none"; $("note").textContent = j.note || "";
         $("eta").textContent = j.eta != null && (j.status === "recording" || j.status === "encoding") ? "about " + (j.eta >= 60 ? Math.ceil(j.eta / 60) + " min" : j.eta + " s") + " left" : "";
-        if (j.status === "error") return fail(j.error || "The recording failed.");
+        if (j.status === "error") { currentId = null; return fail(j.error || "The recording failed."); }
         if (j.status === "done") {
-          clearInterval(timer); busy = false; $("go").disabled = false; $("fill").style.width = "100%"; $("eta").textContent = "";
+          clearInterval(timer); busy = false; currentId = null; $("go").disabled = false; $("fill").style.width = "100%"; $("eta").textContent = "";
           $("vid").src = abs(j.videoUrl); $("dl").href = abs(j.downloadUrl); $("result").style.display = "block";
           $("result").scrollIntoView({ behavior: "smooth", block: "center" }); $("vid").play().catch(() => {});
         }
