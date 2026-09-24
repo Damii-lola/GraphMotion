@@ -1,0 +1,156 @@
+{
+  "brand": "AquaForge",
+  "tagline": "Forge Your Flow. Pure Energy, Zero Compromise.",
+  "cta": "Find Your Flow",
+  "imageStyle": "minimalist nature macro close-ups hyper-focussed on pristine elemental objects",
+  "theme": {
+    "look": "clean",
+    "displayFont": "Bricolage Grotesque",
+    "displayWeight": 700,
+    "bodyFont": "Inter",
+    "upper": false,
+    "bg": "#0b1c28",
+    "accent": "#00a8a8",
+    "accentInk": "#0a0a0a",
+    "accentLight": "#1fb2b2",
+    "accentDark": "#007272"
+  },
+  "scenes": [
+    {
+      "id": "hero",
+      "kicker": "Welcome to",
+      "title": "The New Hydration | Forged in Mountains",
+      "body": "Pure energy and clean hydration, no compromises, no artificial anything.",
+      "stats": [],
+      "imagePrompt": "A perfectly still pristine snowmelt stream in the forest at dawn",
+      "tone": "dark",
+      "align": "left",
+      "valign": "bottom",
+      "fx": {
+        "ripple": 0.5,
+        "mist": 0,
+        "rays": 0.5
+      }
+    },
+    {
+      "id": "story",
+      "kicker": "Our Mission",
+      "title": "Honesty is | Our First Ingredient",
+      "body": "Tired of beverage industry tricks, we publish our lab results for all to see.",
+      "stats": [
+        {
+          "n": "2018",
+          "l": "Founded"
+        },
+        {
+          "n": "Boulder",
+          "l": "Headquarters"
+        },
+        {
+          "n": "100%",
+          "l": "Recyclable"
+        }
+      ],
+      "imagePrompt": "A close-up of pure transparent spring water dripping from a glacier",
+      "tone": "dark",
+      "align": "right",
+      "valign": "top",
+      "fx": {
+        "ripple": 0,
+        "mist": 0.8,
+        "rays": 0
+      }
+    },
+    {
+      "id": "product1",
+      "kicker": "Everyday Hydration",
+      "title": "AquaForge Core | Pure & Refreshing",
+      "body": "Electrolytes and trace minerals in still and sparkling water, zero sugar.",
+      "stats": [
+        {
+          "n": "10-20",
+          "l": "Calories"
+        },
+        {
+          "n": "0g",
+          "l": "Sugar"
+        }
+      ],
+      "imagePrompt": "A chilled can of sparkling water in a lush mountain meadow",
+      "tone": "dark",
+      "align": "left",
+      "valign": "center",
+      "fx": {
+        "ripple": 0,
+        "mist": 0,
+        "rays": 0
+      }
+    },
+    {
+      "id": "product2",
+      "kicker": "Natural Energy",
+      "title": "AquaForge Charge | Enhance Your Endurance",
+      "body": "Natural caffeine and adaptogens for sustained energy, no crash, no artificial stuff.",
+      "stats": [
+        {
+          "n": "80-120",
+          "l": "mg Caffeine"
+        },
+        {
+          "n": "4,200",
+          "l": "Stores"
+        }
+      ],
+      "imagePrompt": "A trail runner's hand holding a can of Charge at sunrise",
+      "tone": "dark",
+      "align": "right",
+      "valign": "center",
+      "fx": {
+        "ripple": 0,
+        "mist": 0,
+        "rays": 0
+      }
+    },
+    {
+      "id": "proof",
+      "kicker": "Our Impact",
+      "title": "No Gimmicks | Just Good Science",
+      "body": "We believe in transparency, so we publish our lab results for all to see.",
+      "stats": [
+        {
+          "n": "100%",
+          "l": "Transparent"
+        },
+        {
+          "n": "Zero",
+          "l": "Artificial"
+        }
+      ],
+      "imagePrompt": "A laboratory beaker of sparkling water under examination",
+      "tone": "dark",
+      "align": "left",
+      "valign": "top",
+      "fx": {
+        "ripple": 0,
+        "mist": 0,
+        "rays": 0.5
+      }
+    },
+    {
+      "id": "join",
+      "kicker": "Join Us",
+      "title": "Forge Your Flow",
+      "body": "Choose AquaForge for clean, science-backed hydration and energy.",
+      "stats": [],
+      "imagePrompt": "A person standing atop a mountain peak, overlooking the valley",
+      "tone": "dark",
+      "align": "left",
+      "valign": "center",
+      "fx": {
+        "ripple": 0,
+        "mist": 0,
+        "rays": 0.8
+      }
+    }
+  ]
+}
