@@ -254,7 +254,9 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
     let raw = null, lastErr = null;
     for (let attempt = 0; attempt < 2 && !raw; attempt++) {
       try {
-        const prompt = briefPrompt(text.slice(0, 7800)), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 1400);
+        // a long brief is trimmed until the whole film (script + the images still to paint) fits the per-film neuron ceiling
+        let keep = 7800, prompt = briefPrompt(text.slice(0, keep)), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 1400);
+        while (keep > 2200 && est + fluxCount * neurons.estImage() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep)); est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 1400); }
         neurons.charge(est, 'ad script', fluxCount * neurons.estImage()); // refuses BEFORE spending if the ad could not be finished inside its ceiling
         let usage = null;
         const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: 2000, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });

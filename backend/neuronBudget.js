@@ -16,7 +16,7 @@ const crypto = require('crypto');
 
 const FILE = path.join(__dirname, '.neuron_usage.json');
 const DAILY_CEILING = +process.env.NEURON_DAILY_CEILING || 6000;   // hard stop well under the 10,000 allowance
-const PER_RUN_CEILING = +process.env.NEURON_RUN_CEILING || 720;    // ONE FILM MAY NEVER COST MORE THAN THIS (estimated, then settled to the measured figure)
+const PER_RUN_CEILING = +process.env.NEURON_RUN_CEILING || 745;    // ONE FILM MAY NEVER COST MORE THAN THIS (estimated, then settled to the measured figure)
 const SAFETY = 1.15;
 const RATE = { '70b': [26668, 204805], mistral: [31909, 50455], '8b': [4119, 34868] };
 
@@ -37,7 +37,7 @@ function used() { const u = load(); return (u[who()] && u[who()].day === day()) 
 
 /** Call BEFORE spending: throws if this would cross the per-run or daily ceiling; otherwise records the estimate. */
 function charge(neurons, what, reserve = 0) {
-  if (runSpent + neurons + reserve > PER_RUN_CEILING) throw new Error(`Neuron guard: ${what} would take this run to ~${runSpent + neurons} neurons (run ceiling ${PER_RUN_CEILING}). Stopped before spending.`);
+  if (runSpent + neurons + reserve > PER_RUN_CEILING) throw new Error(`Neuron guard: ${what} (~${neurons}) plus ~${reserve} reserved for the images it still needs would take this run to ~${runSpent + neurons + reserve} neurons (run ceiling ${PER_RUN_CEILING}). Stopped before spending.`);
   const u = load(), k = who(), cur = (u[k] && u[k].day === day()) ? u[k].n : 0;
   if (cur + neurons > DAILY_CEILING) throw new Error(`Neuron guard: ${what} would take today's estimated total to ~${cur + neurons} of the ${DAILY_CEILING} safety ceiling (free allowance 10,000). Stopped before spending.`);
   u[k] = { day: day(), n: cur + neurons }; save(u); runSpent += neurons;
