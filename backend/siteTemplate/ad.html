@@ -16,7 +16,7 @@
     - story-style progress bars, sticker-style proof badges: the native social look, not the corporate-site look
 -->
 <style>
-  :root { --accent: #ff5c1a; --accent-ink: #fff; --bg: #0b0b0d; --ink: #fff; --ink2: rgba(255,255,255,.95); --dispf: "Bricolage Grotesque", Impact, sans-serif; --dispw: 800; --bodyf: "Inter", -apple-system, sans-serif; --hs: 14vw; --ss: 4.6vw; }
+  :root { --accent: #ff5c1a; --accent-ink: #fff; --bg: #0b0b0d; --ink: #fff; --ink2: rgba(255,255,255,.95); --dispf: "Bricolage Grotesque", Impact, sans-serif; --dispw: 800; --bodyf: "Inter", -apple-system, sans-serif; --hs: 14vw; --ss: 5.3vw; }
   * { box-sizing: border-box; }
   html, body { margin: 0; overflow-x: hidden; background: var(--bg); }
   body { color: #fff; font-family: var(--bodyf); -webkit-font-smoothing: antialiased; }
@@ -190,7 +190,7 @@ window.SITE = /*__SITE_JSON__*/null;
     if (tag) master.fromTo(tag, { opacity: 0, y: 14, filter: "blur(5px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.09, ease: "power3.out" }, t0);
     if (lg) master.fromTo(lg, { opacity: 0, y: 24, scale: 0.86, filter: "blur(6px)" }, { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", duration: 0.16, ease: "power4.out" }, t0);
     wave(hlw, t0 + (tag ? 0.03 : lg ? 0.05 : 0), 0.1, first ? 0.017 : 0.022, 42);
-    if (subw.length) wave(subw, i + 0.16, 0.08, 0.011, 30);
+    if (subw.length) wave(subw, i + 0.1, 0.08, 0.011, 30);
     if (stk) master.fromTo(stk, { opacity: 0, scale: 0.6, rotation: -14, y: 18 }, { opacity: 1, scale: 1, rotation: -3, y: 0, duration: 0.16, ease: "back.out(1.6)" }, i + 0.24);
     if (btn) master.fromTo(btn, { opacity: 0, y: 26, scale: 0.88, filter: "blur(5px)" }, { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", duration: 0.14, ease: "power4.out" }, i + 0.22);
     if (lnk) master.fromTo(lnk, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.1, ease: "power2.out" }, i + 0.32);

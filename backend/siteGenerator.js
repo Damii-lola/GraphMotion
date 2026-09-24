@@ -39,7 +39,7 @@ const LOOKS = {
   clean: { displayFont: 'Bricolage Grotesque', displayWeight: 800, bodyFont: 'Inter', upper: false, music: 'warm pad' },
 };
 // Vertical, single-subject, bold and bright: what performs in a phone feed. The shader crops the (square) render to 9:16, so the subject must sit in the middle.
-const IMAGE_SUFFIX = ', bold commercial photograph for a social media ad, ONE clear subject in the centre, vertical composition, vibrant saturated colour, crisp dramatic lighting, shallow depth of field, clean uncluttered background, no text, no letters, no logos, no watermark';
+const IMAGE_SUFFIX = ', bold commercial photograph for a social media ad, ONE clear subject in the centre, vertical composition, natural true-to-life colour, crisp soft lighting, shallow depth of field, clean uncluttered background, no text, no letters, no logos, no watermark';
 const IDS = ['hook', 'pain', 'solution', 'feature', 'proof', 'cta'];
 const TEXT_POS = ['mm', 'bm', 'bl', 'br'];                       // Middle Middle, Bottom Middle, Bottom Left, Bottom Right (the lower edge of the safe zone)
 const DEFAULT_POS = ['mm', 'bl', 'mm', 'br', 'bm', 'mm'];       // used when the AI does not choose
@@ -72,15 +72,21 @@ ${brief}
 
 SCENES, in this exact order (ids fixed): 1 "hook" - stops the scroll in the first second (a bold claim, a surprising fact from the brief, a sharp question, a relatable moment; never a greeting or just the company name). 2 "pain" - the problem or desire the viewer has. 3 "solution" - the product as the answer. 4 "feature" - the single strongest benefit. 5 "proof" - credibility from the brief (number, scale, result, guarantee). 6 "cta" - the closing call to action, built around the MAIN FOCUS.
 
-THE FLOW (the most important part). The ad is ONE continuous camera move through six images, never six slides with effects between them. Study how the best scroll-driven 3D-website shorts do it: an aeroplane window fills the screen, the camera flies INTO the window, the sky outside becomes the whole screen and rushes past, and the next scene emerges out of the clouds - nothing stops, nothing cuts, the end of every scene literally becomes the beginning of the next. Another: a face made of strands dissolves into fibres that swirl into a glowing ring which becomes the next object. Another: one mountain island keeps its shape while the light changes dawn to dusk and the camera never stops gliding. You control the flow with three things:
+CRAFT RULES (a human creative director will judge the result):
+- The client's NOTES are binding. Obey their tone and their "avoid" list over everything else. If they ask you not to use numbers, stats or big claims, use NONE anywhere: no stickers, no counts, no years, no "fast-growing", no "trusted by".
+- ONE story, one emotional thread. hook = a specific, felt moment from the viewer's own world (never generic); pain stays in that same moment and sharpens it; solution resolves exactly that tension; feature SHOWS the product doing its job (hands, a screen glowing, the object in use) - the picture and the words prove one concrete thing; proof = the payoff, what changes for the viewer once it works (a feeling or a result taken from the brief), never "customers love us"; cta = a callback to the hook's words or image, so the ad closes a loop.
+- Copy: concrete, human, a little witty, in the client's own words and voice. Banned: "love us", "so will you", "game-changer", "revolutionary", "next level", "fast-growing", "trusted by", "unlock", "supercharge", "seamless", and any statistic that is not written in the brief.
+- Images: specific to THIS company's world - close-ups of objects, hands, screens, places, materials. NEVER a group of smiling people, an office team, a handshake or generic stock-photo people. Natural, true-to-life colour and lighting (no heavy colour cast).
+
+THE FLOW (the most important part). The ad is ONE continuous camera move through six images, never six slides with effects between them. Study how the best scroll-driven 3D-website shorts do it: an aeroplane window fills the screen, the camera flies INTO the window, the sky outside becomes the whole screen and rushes past, and the next scene emerges out of the clouds - nothing stops, nothing cuts, the end of every scene literally becomes the beginning of the next. You control the flow with three things:
 (1) CHAIN THE IMAGES. Write every imagePrompt as the continuation of the previous one: same palette and light, and the main subject of image N+1 sits exactly where the camera dives into image N (dive into a bottle's neck -> next image is a macro of the liquid in that same spot; dive into a window -> next image is what is outside it).
 (2) EVERY SCENE HAS A CAMERA MOVE that never rests: "move": {"zoom": -0.24..0.24 (+ pushes in, - pulls out), "pan": [-0.15..0.15, -0.04..0.04], "roll": -3..3 degrees}. Vary it scene to scene.
-(3) EVERY TRANSITION is the camera diving through the current image while the next one is already opening inside it. There are 5 transitions (scene 1->2 ... 5->6) in "transitions": {"focus": [x, y] where in the frame (0..1, y from the top) the camera dives - the thing that should open: a hole, a glow, the product, "zoom": 0.3..1.8 how violently it rushes, "spin": -25..25 degrees, "blur": 0..1 motion blur, "warp": 0..1 liquid distortion of the opening's edge, "glow": 0..1 light bloom, "chroma": 0..1 colour split, "soft": 0.03..0.35 edge softness, "overlap": 0.28..0.5 share of the scene the dive lasts, "mask": "..." optional}. Invent each one for THIS story; never repeat the same numbers or shape twice in a row; calm luxury brands = low blur/warp/spin, aggressive brands = high.
+(3) EVERY TRANSITION is the camera diving through the current image while the next one is already opening inside it. There are 5 transitions (scene 1->2 ... 5->6) in "transitions": {"focus": [x, y] where in the frame (0..1, y from the top) the camera dives - the thing that should open: a hole, a glow, the product, "zoom": 0.3..1.8 how violently it rushes, "spin": -25..25 degrees, "blur": 0..1 motion blur, "warp": 0..1 liquid distortion of the opening's edge, "glow": 0..1 light bloom, "soft": 0.03..0.35 edge softness, "overlap": 0.28..0.5 share of the scene the dive lasts, "mask": "..." optional}. Invent each one for THIS story; never repeat the same numbers or shape twice in a row; calm luxury brands = low blur/warp/spin, aggressive brands = high.
 MASK = a GLSL float expression that shapes the opening. Variables: p (vec2: position relative to the dive point, screen height = 1, x right, y up), q (0..1 progress), t (seconds). The next image shows where the expression is NEGATIVE. Style examples (invent your own, do not copy): "length(p)-1.6*q" a circle opening; "abs(p.y)-2.0*q+0.15*sin(p.x*9.0+t*3.0)" a rippling slit widening; "length(p*vec2(1.0,0.5))-1.7*q" an ellipse; "abs(p.x)+abs(p.y)-1.9*q" a diamond. By q=1 it must cover |p|<=1.8. Allowed: p q t, numbers WITH a decimal point, + - * / ( ) . , and the functions sin cos abs length min max pow smoothstep mix clamp fract atan sqrt exp vec2. Leave "" for the plain circle.
 
 ${soundBlock()}Return ONE JSON object with these keys:
 "brand", "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "imageStyle" (6-10 words: ONE consistent photographic look), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
-"scenes": EXACTLY 6 objects, each: "id", "tag" (1-3 word pill label like "POV", "Real talk", "The proof"; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 22 words, ONE subject, no text, no logos, no faces or bodies or bare skin - every image must pass a strict family-friendly safety filter), "move" (see 2), "pos" (where this scene's text sits: "mm" middle, "bm" bottom centre, "bl" bottom left, "br" bottom right - pick the spot that leaves the picture's subject clear, and vary it), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
+"scenes": EXACTLY 6 objects, each: "id", "tag" (1-3 word pill label like "POV", "Real talk", "The proof"; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 22 words, ONE subject, no text, no logos, no faces or bodies or bare skin, never a group of people - every image must pass a strict family-friendly safety filter), "move" (see 2), "pos" (where this scene's text sits: "mm" middle, "bm" bottom centre, "bl" bottom left, "br" bottom right - pick the spot that leaves the picture's subject clear, and vary it), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
 "transitions": EXACTLY 5 objects (see 3)${adMixMenu() ? ', "sound" (see SOUND)' : ''}.
 Output the JSON object only.`;
 }
@@ -108,6 +114,12 @@ function cleanHeadline(raw, fallback) {
 }
 
 const flowSeed = (n) => flow.hashStr(n);
+/** A badge may only show what the client wrote: every alphanumeric token on it must appear in their text (so nothing like '20 PEOPLE HIRED' can be invented). */
+function groundedIn(n, text) {
+  const t = ' ' + String(text || '').toLowerCase().replace(/[^a-z0-9%.]+/g, ' ') + ' ';
+  const toks = String(n || '').toLowerCase().replace(/[^a-z0-9%.]+/g, ' ').split(' ').filter(Boolean);
+  return toks.length > 0 && toks.every((w) => t.includes(' ' + w + ' ') || t.includes(' ' + w.replace(/[a-z%]+$/, '') + ' ') && /^[0-9.]+/.test(w));
+}
 function normalizeSpec(raw, brand, opts = {}) {
   const S = raw && typeof raw === 'object' ? raw : {};
   const str = (v, d = '', n = 200) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : d);
@@ -120,6 +132,7 @@ function normalizeSpec(raw, brand, opts = {}) {
   if (Math.max(...accRgb) - Math.min(...accRgb) < 40) accRgb = lum(accRgb) < 0.4 ? [242, 242, 242] : accRgb; // a grey accent is invisible: use stark off-white
   const name = clip(opts.brand || S.brand || brand || 'Brand', 40);
   const briefText = String(opts.brief || '');
+  const noStats = /(don'?t|do not|dont|no|avoid|without|never|not)\b[^.\n]{0,45}\b(numbers?|stats?|statistics|figures?|claims?)\b/i.test(briefText);   // the client asked for none
   let link = str(S.link, '', 60);
   if (link && !briefText.toLowerCase().includes(link.toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, ''))) link = ''; // only a link the client actually gave us
   const spec = {
@@ -140,7 +153,7 @@ function normalizeSpec(raw, brand, opts = {}) {
     const tone = s.tone === 'light' && lightUsed < 1 && k > 0 && k < 5 ? 'light' : 'dark';
     if (tone === 'light') lightUsed++;
     let sticker = null;
-    if (s.sticker && typeof s.sticker === 'object' && (s.sticker.n || s.sticker.l) && k >= 2 && k <= 4) { const n = stickerNumber(s.sticker.n), l = clipWords(str(s.sticker.l, '', 80), 28); if (n || l) sticker = { n, l }; }
+    if (!noStats && s.sticker && typeof s.sticker === 'object' && (s.sticker.n || s.sticker.l) && k >= 2 && k <= 4) { const n = stickerNumber(s.sticker.n), l = clipWords(str(s.sticker.l, '', 80), 28); if ((n || l) && groundedIn(n, briefText)) sticker = { n, l }; }
     const sub = words(str(s.sub, '', 120)).slice(0, 10).join(' ');
     spec.scenes.push({
       id,
