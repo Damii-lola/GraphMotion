@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 "use strict";
-// Generate a cinematic site (cinema engine) from a company brief with Cloudflare Workers AI.
+// Generate a site from a company brief with Cloudflare Workers AI. Default engine: the section-based scroll engine (the AquaForge look).
 //   node generate.js --brief briefs/liquiddeath.txt --out ../../liquiddeath2 [--slug name]
 //   --plan-only true      only write the director's plan (site.json), no images/audio
 //   --spec site.json      reuse a saved plan (add --keep-images true to reuse existing images)
-//   --engine classic      the older section-based template
+//   --engine cinema      the experimental film engine (beats, hero-object transitions, generated sound)
 const fs = require("fs");
 const path = require("path");
 const backend = path.join(__dirname, "..", "..", "backend");
@@ -12,8 +12,8 @@ try { require(path.join(backend, "node_modules", "dotenv")).config({ path: path.
 
 const a = process.argv.slice(2), o = {};
 for (let i = 0; i < a.length; i += 2) o[a[i].replace(/^--/, "")] = a[i + 1];
-if (!o.brief || !o.out) { console.log("Usage: node generate.js --brief <file.txt> --out <folder> [--slug name] [--plan-only true] [--spec site.json] [--keep-images true] [--engine classic]"); process.exit(1); }
-const run = o.engine === "classic" ? require(path.join(backend, "siteGenerator")).generateSite : require(path.join(backend, "cinemaGenerator")).generateCinemaSite;
+if (!o.brief || !o.out) { console.log("Usage: node generate.js --brief <file.txt> --out <folder> [--slug name] [--plan-only true] [--spec site.json] [--keep-images true] [--engine cinema]"); process.exit(1); }
+const run = o.engine === "cinema" ? require(path.join(backend, "cinemaGenerator")).generateCinemaSite : require(path.join(backend, "siteGenerator")).generateSite; // the section-based engine (the AquaForge look) is the default; --engine cinema is the experimental film engine
 run({
   brief: fs.readFileSync(o.brief, "utf8"), outDir: path.resolve(o.out), slug: o.slug,
   spec: o.spec ? JSON.parse(fs.readFileSync(o.spec, "utf8")) : undefined, planOnly: o["plan-only"] === "true", keepImages: o["keep-images"] === "true", resume: o.resume === "true",

@@ -19,7 +19,8 @@ const { spawn } = require('child_process');
 const fetch = require('node-fetch');
 const ffmpegPath = require('ffmpeg-static');
 const { callCloudflareRaw } = require('./cloudflareClient');
-const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast'; // art direction needs real copywriting + JSON discipline; one call per site
+const neurons = require('./neuronBudget');
+const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/mistralai/mistral-small-3.1-24b-instruct'; // ~4x cheaper per token than the 70B; one call per site
 
 // ------------------------------------------------------------- colour helpers (WCAG)
 const hex2rgb = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(String(h || '').trim()); if (!m) return null; const n = parseInt(m[1], 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
@@ -111,7 +112,7 @@ async function flux(prompt) {
   const acct = process.env.CLOUDFLARE_ACCOUNT_ID, tok = process.env.CLOUDFLARE_API_TOKEN;
   if (!acct || !tok) throw new Error('CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN not set');
   const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acct}/ai/run/@cf/black-forest-labs/flux-1-schnell`, {
-    method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: prompt.slice(0, 900), steps: 6 }),
+    method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: prompt.slice(0, 900), steps: neurons.FLUX_STEPS }), // ~44.8 neurons per step per image (measured)
   });
   const j = await r.json();
   if (!j.result || !j.result.image) throw new Error('image generation failed: ' + JSON.stringify(j.errors || j).slice(0, 220));
@@ -125,6 +126,7 @@ const toWebp = (inFile, outFile) => new Promise((resolve, reject) => {
 
 // ------------------------------------------------------------- main
 async function generateSite({ brief, outDir, slug, onProgress, spec: given, planOnly }) {
+  neurons.resetRun();
   const say = (stage, progress) => { if (onProgress) onProgress({ stage, progress }); };
   let spec = given;
   if (!spec) {
@@ -132,8 +134,12 @@ async function generateSite({ brief, outDir, slug, onProgress, spec: given, plan
     let raw = null, lastErr = null;
     for (let attempt = 0; attempt < 2 && !raw; attempt++) {
       try {
-        const txt = await callCloudflareRaw(SYSTEM, briefPrompt(String(brief).slice(0, 2600)), { jsonMode: true, maxTokens: 2200, temperature: 0.8, model: SPEC_MODEL });
-        raw = typeof txt === 'string' ? JSON.parse(txt) : txt;
+        const prompt = briefPrompt(String(brief).slice(0, 2600)), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 1800);
+        neurons.charge(est, 'site plan', 6 * neurons.estImage()); // refuses BEFORE spending if the site could not be finished inside its ceiling
+        let usage = null;
+        const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: 2000, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
+        neurons.settleText(SPEC_MODEL, est, usage, 'site plan');
+        raw = typeof txt === 'string' ? JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)) : txt;
       } catch (e) { lastErr = e; }
     }
     if (!raw) throw new Error('The AI could not produce a site plan: ' + (lastErr && lastErr.message));
@@ -147,6 +153,7 @@ async function generateSite({ brief, outDir, slug, onProgress, spec: given, plan
       const sc = spec.scenes[k], webp = path.join(outDir, 'images', sc.id + '.webp');
       if (fs.existsSync(webp) && given) { say(`Image ${k + 1}/${spec.scenes.length} (kept)`, 0.1 + 0.8 * ((k + 1) / spec.scenes.length)); continue; }
       say(`Painting scene ${k + 1} of ${spec.scenes.length}`, 0.1 + 0.8 * (k / spec.scenes.length));
+      neurons.charge(neurons.estImage(), `image ${k + 1}`);
       const png = path.join(tmp, sc.id + '.png');
       fs.writeFileSync(png, await flux(`${sc.imagePrompt}, ${spec.imageStyle}${IMAGE_SUFFIX}`));
       await toWebp(png, webp);
