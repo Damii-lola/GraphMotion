@@ -45,7 +45,7 @@ async function generateCinemaSite({ brief, outDir, slug, onProgress, spec: given
       if (keepImages && fs.existsSync(webp)) { say(`Image ${k + 1}/${spec.images.length} (kept)`, 0.12 + 0.7 * ((k + 1) / spec.images.length)); continue; }
       say(`Painting image ${k + 1} of ${spec.images.length}`, 0.12 + 0.7 * (k / spec.images.length));
       const png = path.join(tmp, im.id + '.png');
-      fs.writeFileSync(png, await flux(`${im.prompt}, ${spec.imageStyle}${IMAGE_SUFFIX}`));
+      fs.writeFileSync(png, await flux(`${im.prompt}${im.hero ? ', ' + im.hero + ' as the single large hero subject in the exact centre of the frame' : ''}, ${spec.imageStyle}${IMAGE_SUFFIX}`));
       await toWebp(png, webp);
     }
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }

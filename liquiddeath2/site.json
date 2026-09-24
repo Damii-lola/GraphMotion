@@ -71,14 +71,14 @@
       "camAmount": 0.25,
       "focus": [
         0.5,
-        0.7
+        0.5
       ],
       "dof": 0.5,
       "dofFocus": 0.7,
       "rack": "in",
       "transition": {
         "type": "iris",
-        "dur": 0.6
+        "dur": 0.9
       },
       "sfx": [],
       "text": {
@@ -96,16 +96,20 @@
         ],
         "fx": "rise",
         "x": 0.5,
-        "y": 0.3,
+        "y": 0.78,
         "align": "center",
         "delay": 0.2,
         "behind": false,
         "upper": true
+      },
+      "hero": {
+        "label": "a dead tree in the fog",
+        "r": 0.3
       }
     },
     {
       "image": "tallboy",
-      "dur": 2.14,
+      "dur": 2.4,
       "camera": "push",
       "camAmount": 0.15,
       "focus": [
@@ -116,8 +120,8 @@
       "dofFocus": 0.5,
       "rack": "out",
       "transition": {
-        "type": "flow",
-        "dur": 0.4
+        "type": "morph",
+        "dur": 0.9
       },
       "sfx": [],
       "text": {
@@ -135,11 +139,15 @@
         ],
         "fx": "carve",
         "x": 0.5,
-        "y": 0.6,
+        "y": 0.78,
         "align": "center",
         "delay": 0.3,
         "behind": false,
         "upper": true
+      },
+      "hero": {
+        "label": "a red-glowing tallboy can",
+        "r": 0.3
       }
     },
     {
@@ -148,15 +156,15 @@
       "camera": "pan-left",
       "camAmount": 0.2,
       "focus": [
-        0.3,
-        0.4
+        0.5,
+        0.5
       ],
       "dof": 0.4,
       "dofFocus": 0.4,
       "rack": "none",
       "transition": {
         "type": "glitch",
-        "dur": 0.5
+        "dur": 0.9
       },
       "sfx": [],
       "text": {
@@ -174,28 +182,32 @@
         ],
         "fx": "pop",
         "x": 0.4,
-        "y": 0.4,
+        "y": 0.78,
         "align": "left",
         "delay": 0.4,
         "behind": true,
         "upper": true
+      },
+      "hero": {
+        "label": "a skateboarder frozen in mid-air",
+        "r": 0.3
       }
     },
     {
       "image": "severedlime",
-      "dur": 2.26,
+      "dur": 2.4,
       "camera": "crane-down",
       "camAmount": 0.12,
       "focus": [
         0.5,
-        0.3
+        0.5
       ],
       "dof": 0.6,
       "dofFocus": 0.3,
       "rack": "in",
       "transition": {
-        "type": "liquid",
-        "dur": 0.5
+        "type": "ripple",
+        "dur": 0.9
       },
       "sfx": [],
       "text": {
@@ -218,6 +230,10 @@
         "delay": 0.3,
         "behind": false,
         "upper": true
+      },
+      "hero": {
+        "label": "a lime green can on a grate",
+        "r": 0.3
       }
     },
     {
@@ -226,15 +242,15 @@
       "camera": "pan-right",
       "camAmount": 0.18,
       "focus": [
-        0.7,
-        0.6
+        0.5,
+        0.5
       ],
       "dof": 0.7,
       "dofFocus": 0.6,
       "rack": "out",
       "transition": {
-        "type": "zoomthrough",
-        "dur": 0.6
+        "type": "fly",
+        "dur": 0.9
       },
       "sfx": [],
       "text": {
@@ -252,28 +268,32 @@
         ],
         "fx": "drip",
         "x": 0.6,
-        "y": 0.5,
+        "y": 0.78,
         "align": "right",
         "delay": 0.4,
         "behind": false,
         "upper": true
+      },
+      "hero": {
+        "label": "a glass of mountain water",
+        "r": 0.3
       }
     },
     {
       "image": "festival",
-      "dur": 2.26,
+      "dur": 2.4,
       "camera": "handheld",
       "camAmount": 0.22,
       "focus": [
-        0.4,
+        0.5,
         0.5
       ],
       "dof": 0.5,
       "dofFocus": 0.5,
       "rack": "none",
       "transition": {
-        "type": "shatter",
-        "dur": 0.5
+        "type": "iris",
+        "dur": 0.9
       },
       "sfx": [],
       "text": {
@@ -291,11 +311,15 @@
         ],
         "fx": "glitch",
         "x": 0.5,
-        "y": 0.4,
+        "y": 0.78,
         "align": "center",
         "delay": 0.3,
         "behind": false,
         "upper": true
+      },
+      "hero": {
+        "label": "a crowd under red stage light",
+        "r": 0.3
       }
     },
     {
@@ -305,14 +329,14 @@
       "camAmount": 0.25,
       "focus": [
         0.5,
-        0.7
+        0.5
       ],
       "dof": 0.8,
       "dofFocus": 0.7,
       "rack": "in",
       "transition": {
-        "type": "burst",
-        "dur": 0.6
+        "type": "flash",
+        "dur": 0.9
       },
       "sfx": [],
       "text": {
@@ -330,11 +354,15 @@
         ],
         "fx": "focus",
         "x": 0.5,
-        "y": 0.3,
+        "y": 0.78,
         "align": "center",
         "delay": 0.4,
         "behind": false,
         "upper": true
+      },
+      "hero": {
+        "label": "a heap of plastic waste",
+        "r": 0.3
       }
     },
     {
@@ -350,8 +378,8 @@
       "dofFocus": 0.5,
       "rack": "out",
       "transition": {
-        "type": "ink",
-        "dur": 0.7
+        "type": "ripple",
+        "dur": 0.9
       },
       "sfx": [],
       "text": {
@@ -369,11 +397,15 @@
         ],
         "fx": "pop",
         "x": 0.5,
-        "y": 0.6,
+        "y": 0.78,
         "align": "center",
         "delay": 0.5,
         "behind": false,
         "upper": true
+      },
+      "hero": {
+        "label": "the Liquid Death can, close up",
+        "r": 0.3
       }
     },
     {
@@ -382,15 +414,15 @@
       "camera": "pan-left",
       "camAmount": 0.2,
       "focus": [
-        0.3,
-        0.4
+        0.5,
+        0.5
       ],
       "dof": 0.4,
       "dofFocus": 0.4,
       "rack": "none",
       "transition": {
         "type": "cut",
-        "dur": 0.3
+        "dur": 0.9
       },
       "sfx": [],
       "text": {
@@ -408,138 +440,147 @@
         ],
         "fx": "rise",
         "x": 0.4,
-        "y": 0.4,
+        "y": 0.78,
         "align": "left",
         "delay": 0.4,
         "behind": true,
         "upper": true
+      },
+      "hero": {
+        "label": "a dead tree in the fog",
+        "r": 0.3
       }
     }
   ],
   "cues": [
     {
-      "t": 1.9099999999999997,
+      "t": 1.6099999999999999,
       "kind": "whoosh",
-      "dur": 0.8999999999999999,
+      "dur": 1.2,
       "gain": 0.55
     },
     {
-      "t": 4.249999999999999,
-      "kind": "whoosh",
-      "dur": 0.7,
-      "gain": 0.55
-    },
-    {
-      "t": 5.13,
-      "kind": "impact",
-      "gain": 0.36
-    },
-    {
-      "t": 7.159999999999999,
-      "kind": "whoosh",
-      "dur": 0.8,
-      "gain": 0.55
-    },
-    {
-      "t": 7.35,
-      "kind": "glitch",
-      "gain": 0.6
-    },
-    {
-      "t": 7.489999999999999,
+      "t": 2.1719999999999997,
       "kind": "impact",
       "gain": 0.75
     },
     {
-      "t": 8.04,
+      "t": 4.009999999999999,
+      "kind": "whoosh",
+      "dur": 1.2,
+      "gain": 0.55
+    },
+    {
+      "t": 5.39,
+      "kind": "impact",
+      "gain": 0.36
+    },
+    {
+      "t": 7.019999999999999,
+      "kind": "whoosh",
+      "dur": 1.2,
+      "gain": 0.55
+    },
+    {
+      "t": 7.329999999999999,
+      "kind": "glitch",
+      "gain": 0.6
+    },
+    {
+      "t": 7.581999999999999,
+      "kind": "impact",
+      "gain": 0.75
+    },
+    {
+      "t": 8.299999999999999,
       "kind": "impact",
       "gain": 0.36
     },
     {
       "t": 9.42,
       "kind": "whoosh",
-      "dur": 0.8,
+      "dur": 1.2,
       "gain": 0.55
     },
     {
-      "t": 10.399999999999999,
+      "t": 10.799999999999999,
       "kind": "impact",
       "gain": 0.36
     },
     {
-      "t": 10.909999999999998,
+      "t": 11.11,
       "kind": "riser",
-      "dur": 1,
+      "dur": 0.9,
       "gain": 0.36
     },
     {
-      "t": 11.87,
+      "t": 11.97,
       "kind": "whoosh",
-      "dur": 0.8999999999999999,
+      "dur": 1.2,
       "gain": 0.55
     },
     {
-      "t": 12.257999999999997,
+      "t": 12.532,
       "kind": "impact",
       "gain": 0.75
     },
     {
-      "t": 12.849999999999998,
+      "t": 13.25,
       "kind": "impact",
       "gain": 0.36
     },
     {
-      "t": 14.229999999999999,
+      "t": 14.370000000000001,
       "kind": "whoosh",
-      "dur": 0.8,
+      "dur": 1.2,
       "gain": 0.55
     },
     {
-      "t": 14.559999999999997,
+      "t": 14.932,
       "kind": "impact",
       "gain": 0.75
     },
     {
-      "t": 16.069999999999997,
+      "t": 16.410000000000004,
       "kind": "riser",
-      "dur": 1,
+      "dur": 0.9,
       "gain": 0.36
     },
     {
-      "t": 17.029999999999998,
+      "t": 17.270000000000003,
       "kind": "whoosh",
-      "dur": 0.8999999999999999,
+      "dur": 1.2,
       "gain": 0.55
     },
     {
-      "t": 17.418,
+      "t": 17.832,
       "kind": "impact",
       "gain": 0.75
     },
     {
-      "t": 18.209999999999997,
+      "t": 18.75,
       "kind": "impact",
       "gain": 0.36
     },
     {
-      "t": 20.52,
+      "t": 20.860000000000003,
       "kind": "whoosh",
-      "dur": 1,
+      "dur": 1.2,
       "gain": 0.55
     },
     {
-      "t": 22.1,
+      "t": 22.64,
       "kind": "riser",
       "dur": 1.7,
       "gain": 0.4
     },
     {
-      "t": 23.88,
+      "t": 24.419999999999998,
       "kind": "impact",
       "gain": 0.85
     },
     {
-      "t": 23.88,
+      "t": 24.419999999999998,
       "kind": "sub",
       "gain": 0.8
     }

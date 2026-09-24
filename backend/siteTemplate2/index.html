@@ -141,7 +141,7 @@ Promise.all([document.fonts.load('400 40px "' + TH.displayFont + '"'), document.
 const textCanvas = document.createElement("canvas"), tctx = textCanvas.getContext("2d");
 const textTex = new THREE.CanvasTexture(textCanvas); textTex.minFilter = THREE.LinearFilter; textTex.generateMipmaps = false;
 const MOTIFS = { none: 0, embers: 1, dust: 2, rain: 3, snow: 4, sparks: 5, bubbles: 6 };
-const TRANS = { cut: 0, flow: 1, iris: 2, liquid: 3, burst: 4, pan: 5, ink: 6, glitch: 7, zoomthrough: 8, shatter: 9 };
+const TRANS = { cut: 0, morph: 1, fly: 2, twist: 3, ripple: 4, flash: 5, iris: 6, glitch: 7 };
 const hexv = (h) => { const n = parseInt(h.slice(1), 16); return new THREE.Vector3(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255); };
 const MOODS = { // shadow tint, highlight tint
   "teal-orange": ["#0b3a4a", "#ffb37a"], "mono-red": ["#1a0000", "#ff5a4a"], gold: ["#2a1a00", "#ffd27a"], "cold-blue": ["#06182e", "#9fd0ff"], neon: ["#2a0a4a", "#4affea"], natural: ["#101418", "#fff3e0"], mono: ["#000000", "#ffffff"],
@@ -150,7 +150,7 @@ const mood = MOODS[S.grade.mood] || MOODS.natural;
 const U = {
   uA: { value: blankTex }, uB: { value: blankTex }, uDA: { value: midDepth }, uDB: { value: midDepth }, uText: { value: textTex },
   uRes: { value: new THREE.Vector2(1, 1) }, uAsp: { value: new THREE.Vector2(1.5, 1.5) }, uT: { value: 0 }, uE: { value: 0 }, uType: { value: 0 },
-  uCamA: { value: new THREE.Vector4(1, 0, 0, 0) }, uCamB: { value: new THREE.Vector4(1, 0, 0, 0) },
+  uCA: { value: new THREE.Vector3(0.5, 0.5, 0.3) }, uCB: { value: new THREE.Vector3(0.5, 0.5, 0.3) }, uCamA: { value: new THREE.Vector4(1, 0, 0, 0) }, uCamB: { value: new THREE.Vector4(1, 0, 0, 0) },
   uFA: { value: new THREE.Vector4(0.5, 0.5, 0.5, 0) }, uFB: { value: new THREE.Vector4(0.5, 0.5, 0.5, 0) }, uPar: { value: new THREE.Vector2(1, 1) },
   uGrade: { value: new THREE.Vector4(S.grade.contrast, S.grade.saturation, S.grade.grain, 0) }, uTintS: { value: hexv(mood[0]) }, uTintH: { value: hexv(mood[1]) }, uAccent: { value: hexv(TH.accent) },
   uMotif: { value: new THREE.Vector4(MOTIFS[S.motif.type] || 0, S.motif.density, 1, 0) }, uBehind: { value: new THREE.Vector2(0, 0) }, uEnergy: { value: 0 },
@@ -161,7 +161,7 @@ const mat = new THREE.ShaderMaterial({
 precision highp float;
 uniform sampler2D uA, uB, uDA, uDB, uText;
 uniform vec2 uRes, uAsp, uPar, uBehind; uniform float uT, uE, uType, uEnergy;
-uniform vec4 uCamA, uCamB, uFA, uFB, uGrade, uMotif; uniform vec3 uTintS, uTintH, uAccent;
+uniform vec4 uCamA, uCamB, uFA, uFB, uGrade, uMotif; uniform vec3 uTintS, uTintH, uAccent, uCA, uCB;
 varying vec2 vUv;
 const float PI = 3.14159265;
 float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -217,44 +217,47 @@ void main(){
   if (e <= 0.001){
     col = layer(uA, uDA, uv, uAsp.x, uCamA, uFA, uPar.x, 0.0, dA); dB = dA;
   } else {
+    // ---- HERO-OBJECT TRANSITIONS. Every beat has a hero object at its focus point. While a scene hands over to the next, the eye stays locked on
+    // that spot: the outgoing scene's hero is brought to the anchor (rigid zoom / rotation only - nothing is ever stretched or warped), the
+    // incoming scene's hero arrives at the same spot at the same size, the hero MORPHS into the next one, and the next scene grows out of it.
     vec2 uvA = uv, uvB = uv; vec4 cA = uCamA, cB = uCamB; float sh = sin(PI * e);
-    if (uType < 0.5){                                   // 0 cut: hard cut through a white-hot flash frame
+    vec2 pa = uCA.xy, pb = uCB.xy; float ra = max(uCA.z, 0.06), rb = max(uCB.z, 0.06);
+    vec2 P = mix(pa, pb, smoothstep(0.0, 1.0, e)); float R = 0.30;                 // the anchor: where the eye is held, and how big the hero is at the moment of change
+    vec2 dv = (uv - P) * vec2(asp, 1.0); float d = length(dv);
+    float far = length(max(P, 1.0 - P) * vec2(asp, 1.0)) * 1.15;
+    float scA = mix(1.0, clamp(R / ra, 0.85, 3.4), smoothstep(0.0, 0.55, e));       // outgoing hero grows to anchor size
+    float scB = mix(clamp(R / rb, 0.85, 3.4), 1.0, smoothstep(0.45, 1.0, e));       // incoming hero starts at anchor size and settles back to its own scene
+    float rotA = 0.0, rotB = 0.0;
+    if (uType < 0.5){                                   // 0 cut: hard cut on the beat through a white-hot frame
       m = step(0.5, e); add = vec3(1.0, 0.95, 0.9) * pow(sh, 4.0) * 0.9; ca = sh;
-    } else if (uType < 1.5){                            // 1 flow: noise-warped dissolve that drags the pixels along
-      float n = fbm(uv * 2.6 + vec2(uT * 0.1, 0.0)); m = smoothstep(n - 0.12, n + 0.12, e * 1.4 - 0.2);
-      vec2 g = vec2(fbm(uv * 3.0 + 1.0), fbm(uv * 3.0 + 7.0)) - 0.5; uvA += g * 0.16 * e; uvB -= g * 0.16 * (1.0 - e); cA.x *= 1.0 + 0.25 * e; cB.x *= 1.0 + 0.2 * (1.0 - e);
-      add = smoothstep(0.1, 0.0, abs(n - (e * 1.4 - 0.2))) * uAccent * 0.5 * sh;
-    } else if (uType < 2.5){                            // 2 iris: the next scene opens like a lens from the focal point
-      vec2 c = uFB.xy; vec2 d = (uv - c) * vec2(asp, 1.0); float far = length(max(c, 1.0 - c) * vec2(asp, 1.0)) * 1.1;
-      float n = fbm(uv * 3.0 + uT * 0.2) - 0.5; float r = e * far * 1.1; float dist = length(d) + n * 0.12 * sh;
-      m = smoothstep(r, r - 0.05, dist); add = smoothstep(0.06, 0.0, abs(dist - r)) * sh * uAccent * 1.1;
-      uvA = c + (uv - c) / (1.0 + 1.3 * e * e); uvB = c + (uv - c) / (0.55 + 0.45 * e);
-    } else if (uType < 3.5){                            // 3 liquid: a rippling surface rises and refracts the new image
-      float wav = sin(uv.x * 7.0 + uT * 1.6) * 0.018 + sin(uv.x * 17.0 - uT * 2.3) * 0.008 + (fbm(vec2(uv.x * 3.0, uT * 0.2)) - 0.5) * 0.07;
-      float surf = e * 1.3 - 0.1 + wav; m = smoothstep(surf + 0.012, surf - 0.012, uv.y); float depth = clamp(surf - uv.y, 0.0, 1.0);
-      uvB += vec2(sin(uv.y * 30.0 + uT * 2.0), cos(uv.x * 25.0 + uT * 1.6)) * 0.006 * (1.0 - e) * (0.4 + depth); uvA += vec2(0.0, (1.0 - m) * e * 0.07);
-      add = smoothstep(0.035, 0.0, abs(uv.y - surf)) * vec3(0.9) * 0.5 * sh;
-    } else if (uType < 4.5){                            // 4 burst: an energy flare blooms out of the focal point
-      vec2 s = uFB.xy; vec2 d = (uv - s) * vec2(asp, 1.0); float dist = length(d); float n = fbm(uv * 3.0 + vec2(0.0, uT * 0.2)) - 0.5;
-      float r = e * 1.7; m = smoothstep(r, r - 0.14, dist + n * 0.22);
-      uvB = s + (uv - s) / (1.0 + 0.6 * (1.0 - e)); uvA = s + (uv - s) / (1.0 + 0.25 * e);
-      add = mix(vec3(1.0, 0.85, 0.6), uAccent, 0.5) * (exp(-dist * 3.2) * sh * 0.55 + smoothstep(0.08, 0.0, abs(dist + n * 0.22 - r)) * 0.45 * sh); ca = sh * 0.8;
-    } else if (uType < 5.5){                            // 5 pan: whip pan with motion blur and a fog seam
-      float edge = 1.06 - e * 1.4 + (fbm(vec2(uv.y * 3.0, uT * 0.3)) - 0.5) * 0.14; m = 1.0 - smoothstep(edge + 0.02, edge - 0.02, uv.x);
-      uvA.x += e * 0.4; uvB.x -= (1.0 - e) * 0.4; add = smoothstep(0.2, 0.0, abs(uv.x - edge)) * (0.4 + fbm(uv * 4.0 + uT * 0.1)) * sh * vec3(0.85) * 0.3;
-    } else if (uType < 6.5){                            // 6 ink: dark ink bleeds across the frame
-      float nn = fbm(uv * 2.2 + vec2(uT * 0.05, 0.0)) * 0.8 + fbm(uv * 5.0 + 3.0) * 0.2; float th = e * 1.45 - 0.2; m = 1.0 - smoothstep(th - 0.08, th + 0.08, nn);
-      vec2 g = vec2(fbm(uv * 3.0 + 1.0), fbm(uv * 3.0 + 7.0)) - 0.5; uvA += g * 0.15 * e; uvB -= g * 0.15 * (1.0 - e);
-      add = -vec3(0.5) * smoothstep(0.16, 0.0, abs(nn - th)) * sh + smoothstep(0.05, 0.0, abs(nn - th)) * uAccent * 0.5 * sh;
-    } else if (uType < 7.5){                            // 7 glitch: sliced, channel-split digital tear
+    } else if (uType < 1.5){                            // 1 morph: the hero changes into the next hero; the next scene grows outward from it in a ring
+      float mt = smoothstep(0.34, 0.66, e); float rr = mix(R * 1.1, far, smoothstep(0.32, 0.98, e));
+      float ring = smoothstep(rr + 0.04, rr - 0.04, d), obj = smoothstep(R * 1.15, R * 0.9, d);
+      m = mix(ring, mt, obj); add = uAccent * smoothstep(0.035, 0.0, abs(d - rr)) * sh * 0.9;
+    } else if (uType < 2.5){                            // 2 fly: fly INTO the hero until it fills the frame, then pull back out of the next hero
+      scA = mix(1.0, clamp(0.95 / ra, 1.6, 5.5), smoothstep(0.0, 0.5, e)); scB = mix(clamp(0.95 / rb, 1.6, 5.5), 1.0, smoothstep(0.5, 1.0, e));
+      m = smoothstep(0.47, 0.53, e); add = vec3(1.0) * pow(sh, 6.0) * 0.5; ca = sh * 0.6;
+    } else if (uType < 3.5){                            // 3 twist: both scenes rotate rigidly about the hero while it morphs
+      float k = smoothstep(0.0, 1.0, e); rotA = k * 0.9; rotB = -(1.0 - k) * 0.9;
+      float mt = smoothstep(0.34, 0.66, e); float rr = far * smoothstep(0.2, 0.9, e);
+      float ring = smoothstep(rr + 0.05, rr - 0.05, d), obj = smoothstep(R * 1.2, R * 0.9, d);
+      m = mix(ring, mt, obj); add = uAccent * smoothstep(0.04, 0.0, abs(d - rr)) * sh * 0.7;
+    } else if (uType < 4.5){                            // 4 ripple: rings pulse outward from the hero, each one revealing the next scene
+      float mt = smoothstep(0.34, 0.66, e); float rr = mix(R * 1.1, far, smoothstep(0.3, 0.98, e));
+      float dd = d + 0.02 * sin(d * 60.0 - e * 24.0), ring = smoothstep(rr + 0.025, rr - 0.025, dd), obj = smoothstep(R * 1.15, R * 0.9, d);
+      m = mix(ring, mt, obj); add = uAccent * (smoothstep(0.03, 0.0, abs(d - rr)) + 0.5 * smoothstep(0.03, 0.0, abs(d - rr * 0.78))) * sh * 0.8;
+    } else if (uType < 5.5){                            // 5 flash: light blooms from the hero; the next hero is standing there when it fades
+      m = smoothstep(0.44, 0.56, e); add = mix(vec3(1.0, 0.92, 0.8), uAccent, 0.35) * exp(-d * 3.2) * pow(sh, 1.5) * 1.5; ca = sh * 0.5;
+    } else if (uType < 6.5){                            // 6 iris: the next scene opens as a circle from the hero
+      scA = mix(1.0, 1.25, e); scB = mix(0.75, 1.0, e); float rr = far * smoothstep(0.0, 1.0, e);
+      m = smoothstep(rr + 0.03, rr - 0.03, d); add = uAccent * smoothstep(0.05, 0.0, abs(d - rr)) * sh * 0.9;
+    } else {                                            // 7 glitch: sliced, channel-split digital tear (an accent, used sparingly)
       float row = floor(uv.y * 26.0 + floor(uT * 20.0) * 3.0); float r = hash(vec2(row, floor(uT * 20.0))); float on = step(0.72, r) * sh * 1.6;
       uvA.x += (r - 0.5) * 0.25 * on; uvB.x += (r - 0.5) * 0.25 * on; m = step(hash(vec2(row * 0.37, 3.0)), e); ca = 0.6 + sh * 1.6; add = vec3(0.08) * on;
-    } else if (uType < 8.5){                            // 8 zoomthrough: fly through the old scene into the new one
-      vec2 c = uFA.xy; uvA = c + (uv - c) / (1.0 + 3.0 * e * e * e); uvB = uFB.xy + (uv - uFB.xy) / (0.35 + 0.65 * smoothstep(0.0, 1.0, e));
-      m = smoothstep(0.55, 0.8, e); add = vec3(1.0) * pow(sh, 6.0) * 0.55; ca = sh;
-    } else {                                            // 9 shatter: the frame breaks into drifting shards that reveal the next scene
-      vec2 cell = floor(uv * vec2(7.0 * asp, 7.0)); float hh = hash(cell); float t0 = hh * 0.55; float p = smoothstep(t0, t0 + 0.4, e);
-      vec2 dir = (hash2(cell) - 0.5); uvA += dir * p * 0.35; m = step(0.5, p); add = vec3(1.0) * smoothstep(0.35, 0.5, p) * (1.0 - smoothstep(0.5, 0.65, p)) * 0.6; ca = sh * 0.7;
+    }
+    if (uType > 0.5 && uType < 6.5) {                   // rigid placement of both heroes on the shared anchor (rotation + uniform scale only)
+      vec2 va = dv; float c1 = cos(rotA), s1 = sin(rotA); va = mat2(c1, -s1, s1, c1) * va; uvA = pa + va / scA / vec2(asp, 1.0);
+      vec2 vb = dv; float c2 = cos(rotB), s2 = sin(rotB); vb = mat2(c2, -s2, s2, c2) * vb; uvB = pb + vb / scB / vec2(asp, 1.0);
     }
     vec3 cAcol = layer(uA, uDA, uvA, uAsp.x, cA, uFA, uPar.x, ca, dA);
     vec3 cBcol = layer(uB, uDB, uvB, uAsp.y, cB, uFB, uPar.y, ca, dB);
@@ -401,6 +404,10 @@ function render(T) {
   U.uCamA.value.set(...camA); U.uCamB.value.set(...camB);
   U.uFA.value.set(b.focus[0], b.focus[1], fa[0], fa[1]); U.uFB.value.set(nxt.focus[0], nxt.focus[1], fb[0], fb[1]);
   U.uPar.value.set(2.2 + b.camAmount * 4, 2.2 + nxt.camAmount * 4);
+  { // where each scene's hero object is on screen at the moment of hand-over (end of this beat / start of the next), and how big
+    const zEnd = camera(b, 1, T)[0] / 1.06, zStart = camera(nxt, 0, T)[0] / 1.06;
+    U.uCA.value.set(b.focus[0], b.focus[1], (b.hero ? b.hero.r : 0.28) * zEnd); U.uCB.value.set(nxt.focus[0], nxt.focus[1], (nxt.hero ? nxt.hero.r : 0.28) * zStart);
+  }
   U.uE.value = e; U.uType.value = L.i < N - 1 ? TRANS[b.transition.type] : 0; U.uT.value = T;
   U.uBehind.value.set(b.text && b.text.behind ? 1 : 0, nxt.text && nxt.text.behind ? 1 : 0);
   // text of the outgoing beat lives until its exit, the incoming beat's text starts after its own delay

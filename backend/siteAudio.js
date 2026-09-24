@@ -23,8 +23,8 @@ function cuesFromSpec(spec) {
     if (tr) {
       cues.push({ t: end - tr.dur - 0.04, kind: 'whoosh', dur: tr.dur + 0.3, gain: 0.55 });
       if (tr.type === 'glitch') cues.push({ t: end - tr.dur * 0.7, kind: 'glitch', gain: 0.6 });
-      if (['burst', 'glitch', 'zoomthrough', 'shatter', 'cut'].includes(tr.type)) cues.push({ t: end - tr.dur * 0.42, kind: 'impact', gain: tr.type === 'cut' ? 0.5 : 0.75 });
-      if (['burst', 'zoomthrough'].includes(tr.type)) cues.push({ t: end - tr.dur - 1.0, kind: 'riser', dur: 1.0, gain: 0.36 });
+      if (['fly', 'flash', 'glitch', 'cut', 'iris'].includes(tr.type)) cues.push({ t: end - tr.dur * 0.42, kind: 'impact', gain: tr.type === 'cut' ? 0.5 : 0.75 });
+      if (['fly', 'flash'].includes(tr.type)) cues.push({ t: end - tr.dur - 0.9, kind: 'riser', dur: 0.9, gain: 0.36 });
     }
     (b.sfx || []).forEach((s) => cues.push({ t: t + s.at * b.dur, kind: s.kind, gain: 0.5, dur: s.kind === 'riser' ? 1.0 : undefined }));
     t = end;

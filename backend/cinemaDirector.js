@@ -12,7 +12,7 @@ const { cuesFromSpec } = require('./siteAudio');
 const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 
 const CAMERAS = ['push', 'pull', 'pan-left', 'pan-right', 'crane-up', 'crane-down', 'orbit', 'handheld'];
-const TRANSITIONS = ['cut', 'flow', 'iris', 'liquid', 'burst', 'pan', 'ink', 'glitch', 'zoomthrough', 'shatter'];
+const TRANSITIONS = ['cut', 'morph', 'fly', 'twist', 'ripple', 'flash', 'iris', 'glitch'];
 const TEXT_FX = ['rise', 'carve', 'pop', 'scatter', 'glitch', 'drip', 'focus'];
 const MOTIFS = ['none', 'embers', 'dust', 'rain', 'snow', 'sparks', 'bubbles'];
 const MOODS = ['teal-orange', 'mono-red', 'gold', 'cold-blue', 'neon', 'natural', 'mono'];
@@ -40,9 +40,11 @@ function directorPrompt(brief) {
 COMPANY BRIEF:
 ${brief}
 
-You have this toolbox. Choose from it with intent.
+THE CORE IDEA: every scene has ONE hero object at the centre of the frame (the thing the viewer's eye is locked on). When a scene ends, the camera locks onto its hero object, and THAT OBJECT TRANSFORMS INTO THE HERO OBJECT OF THE NEXT SCENE, which then grows into that whole scene - like a paper plane that flies up and becomes a boat, or a moon that turns into a coin that turns into a can. Each scene has its OWN unique hero object (never the same one twice). Choose heroes that rhyme visually with the next one (round -> round, tall -> tall, bright -> bright) so the transformation feels magical, and that tell the brand's story in order.
+
+Toolbox (choose with intent):
 camera moves: ${CAMERAS.join(', ')}
-transitions (warp pixels between beats): ${TRANSITIONS.join(', ')}
+transitions (all of them keep the eye on the hero object; nothing is ever stretched): morph = the hero changes into the next hero and the next scene grows out of it in a ring; fly = fly into the hero until it fills the screen, then pull back out of the next hero; twist = both scenes rotate around the hero while it morphs; ripple = rings pulse out of the hero revealing the next scene; flash = light blooms from the hero and the next hero is standing there; iris = the next scene opens as a circle from the hero; glitch = digital tear (use once at most); cut = hard cut on the beat (use once at most).
 kinetic text effects: ${TEXT_FX.join(', ')}  (rise = emerges from a baseline, carve = revealed by a sweep of light, pop = slams in with a blur, scatter = letters fly together, glitch = digital tear, drip = letters fall and bounce, focus = racks into sharpness)
 particle motif (ONE signature physics for the whole film): ${MOTIFS.join(', ')}
 colour grade mood: ${MOODS.join(', ')}
@@ -57,27 +59,25 @@ Return ONE JSON object:
  "motif": {"type": one motif, "density": 0.2-0.8},
  "music": {"style": one music style, "bpm": 84-140, "key": "A"|"C"|"D"|"E"|"F"|"G"},
  "imageStyle": "6-10 words: ONE consistent photographic look for every image",
- "images": [ {"id":"short_id","prompt":"vivid cinematic scene, max 24 words, subject centred, no text, no logos, no faces"} ],
  "beats": [ {
-   "image": "an id from images",
-   "dur": seconds 1.3-3.4,
+   "hero": {"label": "the hero object, e.g. 'a chrome skull' (specific, physical, one thing)", "r": 0.2-0.4 (its size as a fraction of screen height)},
+   "image": {"prompt": "vivid cinematic shot, 18-26 words: the hero object large and centred in its environment, light, lens, colour. no text, no logos, no faces"},
+   "dur": seconds 1.6-3.4,
    "camera": one camera move, "camAmount": 0.10-0.34,
-   "focus": [x, y] each 0-1, the point the eye and camera go to,
+   "focus": [0.35-0.65, 0.35-0.65] (where the hero sits in the frame),
    "dof": 0-0.9 depth of field strength, "dofFocus": 0-1, "rack": "in" | "out" | "none",
-   "text": {"lines":[{"t":"1-4 WORDS","s":"xl|l|m|s","a":false}], "fx": one text effect, "x":0.5, "y":0.25-0.78, "align":"left"|"center"|"right", "delay":0.1-0.5, "behind": false},
-   "transition": {"type": one transition, "dur": 0.3-0.9}
+   "text": {"lines":[{"t":"1-4 WORDS","s":"xl|l|m|s","a":false}], "fx": one text effect, "x":0.5, "y":0.15-0.3 or 0.7-0.85 (keep the words away from the hero), "align":"left"|"center"|"right", "delay":0.1-0.5, "behind": false},
+   "transition": {"type": one transition, "dur": 0.7-1.2}
  } ]
 }
 
 DIRECTING RULES (these matter more than anything):
-- 9 to 12 beats, total 24-32 seconds. It is a short film with a hook, escalation, product moments, proof and a payoff - not sections of a web page.
-- Beat 1 hooks in under 2.6s with the boldest line. Vary the rhythm: mix fast beats (1.3-1.8s) with slower holds (2.6-3.4s). Never make all beats similar in length.
-- Something new every 2-3 seconds: new image or a new camera move, a different transition, a different text effect. Do not use the same transition twice in a row. Use at least 5 different transitions, 5 camera moves and 4 text effects across the film.
-- Story arc: hook -> the world and attitude of the brand -> product reveal 1 -> product reveal 2 -> scale / proof with real numbers -> mission or impact -> payoff with the brand name and call to action.
-- Text is a character, not a caption. Most beats have TWO lines: a huge hook line (1-3 words, size "xl") and a smaller line (size "m" or "s", 2-6 words) that carries a concrete brand fact (a product name, flavour, number, mission). Never repeat a headline or line of text in two beats. Give each beat a different y and align. Put "behind": true on one or two beats where the text should sit behind foreground objects.
-- 6 to 8 DIFFERENT images, and every image must be used. You may reuse one image a second time in a later beat only as a detail shot with a different focus and camera. Each image "prompt" must be rich (18-26 words) like a cinematographer's shot description: subject, setting, light, lens/atmosphere, colour. Product beats: a hero shot of the product on a dramatic surface, centred and rim-lit.
-- Use real brand facts from the brief in the text: product names, flavours, numbers. The last beat = the brand name / call to action.
-- transition on the last beat is ignored but must be present.
+- 8 to 10 beats, total 24-30 seconds. A short film: hook -> the world and attitude -> product reveals -> proof with real numbers -> mission -> payoff with the brand name and call to action.
+- Every beat has its own image and its own hero. Never repeat a hero, an image idea or a headline.
+- Beat 1 hooks in under 2.6s with the boldest line. Vary the rhythm: some beats short (1.8s), some long holds (3s+).
+- Use at least 4 different transitions and 5 different camera moves, and at least 4 different text effects. Never the same transition twice in a row. Most transitions are morph, fly, twist, ripple, flash or iris.
+- Text is a character: most beats have TWO lines - a huge hook line (1-3 words, size "xl") and a smaller line (size "m" or "s") with a concrete brand fact (product name, flavour, number, mission). Put "behind": true on one or two beats.
+- Use real brand facts from the brief in the text. The last beat = the brand name / call to action; its transition is ignored but must be present.
 Output the JSON object only.`;
 }
 
@@ -105,41 +105,45 @@ function normalize(raw, brandFallback) {
     music: { style: pick(S.music && S.music.style, ['dark drone', 'pulse', 'warm pad', 'tense', 'none'], 'dark drone'), bpm: num(S.music && S.music.bpm, 70, 150, 100), key: pick(S.music && S.music.key, ['A', 'C', 'D', 'E', 'F', 'G', 'B'], 'A') },
     images: [], beats: [],
   };
-  // images (unique ids, 4-8)
+  // images: one per beat (from beat.image.prompt); a legacy top-level images[] list is still understood
   const seen = new Set();
   (Array.isArray(S.images) ? S.images : []).forEach((im, k) => {
     if (!im) return; const id = str(im.id, 'img' + k, 20).toLowerCase().replace(/[^a-z0-9_]/g, '_');
     if (seen.has(id) || spec.images.length >= 8) return; seen.add(id);
     spec.images.push({ id, prompt: str(im.prompt, spec.brand + ' atmosphere', 220) });
   });
-  if (!spec.images.length) spec.images.push({ id: 'hero', prompt: `${spec.brand} atmosphere, ${spec.imageStyle}` });
   const ids = spec.images.map((i) => i.id);
+  const beatSrc = Array.isArray(S.beats) ? S.beats.filter((x) => x && typeof x === 'object').slice(0, 11) : [];
+  beatSrc.forEach((bb, k) => { if (bb.image && typeof bb.image === 'object' && str(bb.image.prompt)) { const id = 'b' + k; if (!spec.images.some((im) => im.id === id)) spec.images.push({ id, prompt: str(bb.image.prompt, '', 260), hero: str(bb.hero && bb.hero.label, '', 80) }); } });
+  if (!spec.images.length) spec.images.push({ id: 'hero', prompt: `${spec.brand} atmosphere, ${spec.imageStyle}` });
+  const allIds = spec.images.map((i) => i.id);
   // beats
-  let src = Array.isArray(S.beats) ? S.beats.filter((b) => b && typeof b === 'object') : [];
-  src = src.slice(0, 13);
+  const src = beatSrc;
   let prevType = null;
   src.forEach((b, k) => {
     const last = k === src.length - 1;
     const lines = (b.text && Array.isArray(b.text.lines) ? b.text.lines : []).map((l) => (typeof l === 'string' ? { t: l, s: 'l', a: false } : l)).filter((l) => l && str(l.t)).slice(0, 3)
       .map((l, li) => ({ t: str(l.t, '', 30), s: pick(l.s, ['xl', 'l', 'm', 's'], li === 0 ? 'xl' : 'm'), a: !!l.a }));
     const delay = num(b.text && b.text.delay, 0.05, 0.6, 0.2);
-    let ttype = pick(b.transition && b.transition.type, TRANSITIONS, 'flow');
+    let ttype = pick(b.transition && b.transition.type, TRANSITIONS, 'morph');
     if (ttype === prevType) ttype = TRANSITIONS[(TRANSITIONS.indexOf(ttype) + 3) % TRANSITIONS.length];
     prevType = ttype;
-    const trd = last ? 0.3 : num(b.transition && b.transition.dur, 0.3, 0.95, 0.6);
+    const trd = last ? 0.3 : num(b.transition && b.transition.dur, 0.6, 1.3, 0.9);
     // the words must be readable: in + hold ≥ 1.1s before the transition starts
     const minDur = lines.length ? delay + 1.15 + trd : 1.2 + trd;
     const beat = {
-      image: ids.includes(b.image) ? b.image : ids[k % ids.length],
+      image: b.image && typeof b.image === 'object' ? 'b' + k : (allIds.includes(b.image) ? b.image : allIds[k % allIds.length]),
+      hero: { label: str(b.hero && b.hero.label, '', 80), r: num(b.hero && b.hero.r, 0.14, 0.42, 0.28) },
       dur: Math.min(3.8, Math.max(num(b.dur, 1.2, 3.6, 2.2), minDur)),
       camera: pick(b.camera, CAMERAS, CAMERAS[k % CAMERAS.length]), camAmount: num(b.camAmount, 0.08, 0.36, 0.2),
-      focus: [num(b.focus && b.focus[0], 0.15, 0.85, 0.5), num(b.focus && b.focus[1], 0.15, 0.85, 0.5)],
+      focus: [num(b.focus && b.focus[0], 0.36, 0.64, 0.5), num(b.focus && b.focus[1], 0.36, 0.64, 0.5)], // the hero sits near the middle, where the image generator puts it
       dof: num(b.dof, 0, 0.95, 0.4), dofFocus: num(b.dofFocus, 0, 1, 0.5), rack: pick(b.rack, ['in', 'out', 'none'], 'none'),
       transition: { type: ttype, dur: trd },
       sfx: [],
     };
     if (lines.length) {
-      beat.text = { lines, fx: pick(b.text.fx, TEXT_FX, 'rise'), x: num(b.text.x, 0.1, 0.9, 0.5), y: num(b.text.y, 0.22, 0.8, 0.62), align: pick(b.text.align, ['left', 'center', 'right'], 'left'), delay, behind: !!b.text.behind, upper: spec.theme.upper };
+      let ty = num(b.text.y, 0.14, 0.86, 0.75); if (Math.abs(ty - beat.focus[1]) < 0.22) ty = beat.focus[1] < 0.5 ? 0.76 : 0.24; // never write over the hero
+      beat.text = { lines, fx: pick(b.text.fx, TEXT_FX, 'rise'), x: num(b.text.x, 0.1, 0.9, 0.5), y: ty, align: pick(b.text.align, ['left', 'center', 'right'], 'left'), delay, behind: !!b.text.behind, upper: spec.theme.upper };
     }
     spec.beats.push(beat);
   });
@@ -156,10 +160,10 @@ function normalize(raw, brandFallback) {
 function qualityIssues(spec) {
   const out = [], B = spec.beats;
   const total = B.reduce((t, b) => t + b.dur, 0), used = new Set(B.map((b) => b.image));
-  if (B.length < 9) out.push('only ' + B.length + ' beats - I need 9 to 12');
+  if (B.length < 8) out.push('only ' + B.length + ' beats - I need 8 to 10');
   if (total < 23) out.push('the film is only ' + total.toFixed(0) + ' seconds - I need 24 to 32 (lengthen holds, add beats)');
-  if (spec.images.length < 6) out.push('only ' + spec.images.length + ' images - I need 6 to 8 different ones');
-  const unused = spec.images.filter((i) => !used.has(i.id)).length; if (unused) out.push(unused + ' images are never used in a beat');
+  if (spec.images.length < B.length) out.push('every beat needs its own image and its own hero object (' + spec.images.length + ' images for ' + B.length + ' beats)');
+  const heroes = B.map((b) => (b.hero && b.hero.label || '').toLowerCase()); if (heroes.some((h) => !h)) out.push('every beat needs a hero object label'); if (new Set(heroes).size < heroes.length) out.push('hero objects repeat - every scene needs its own unique hero object');
   const words = spec.images.reduce((t, i) => t + i.prompt.split(/\s+/).length, 0) / spec.images.length;
   if (words < 14) out.push('image prompts are too short (' + words.toFixed(0) + ' words on average) - write 18-26 word cinematographer shot descriptions');
   const texts = B.flatMap((b) => (b.text ? b.text.lines.map((l) => l.t.trim().toLowerCase()) : []));
@@ -167,7 +171,7 @@ function qualityIssues(spec) {
   const withFact = B.filter((b) => b.text && b.text.lines.length >= 2).length; if (withFact < Math.ceil(B.length * 0.5)) out.push('too many beats have a single line - give most beats a huge hook line PLUS a smaller line with a concrete brand fact');
   if (!texts.some((t) => /\d/.test(t))) out.push('no numbers anywhere in the text - use real figures from the brief');
   const distinct = (f) => new Set(B.map(f)).size;
-  if (distinct((b) => b.transition.type) < 5) out.push('use at least 5 different transitions');
+  if (distinct((b) => b.transition.type) < 4) out.push('use at least 4 different transitions');
   if (distinct((b) => b.camera) < 5) out.push('use at least 5 different camera moves');
   if (distinct((b) => b.text && b.text.fx) < 4) out.push('use at least 4 different text effects');
   return out;
