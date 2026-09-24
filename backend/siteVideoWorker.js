@@ -6,11 +6,11 @@ const { record } = require('./siteRecorder');
 
 let stop = false;
 process.on('message', (m) => { if (m && m.type === 'cancel') stop = true; });
-process.once('message', async ({ jobId, url, out, opts }) => {
+process.once('message', async ({ jobId, url, dir, out, opts }) => {
   const send = (m) => { if (process.send) process.send({ jobId, ...m }); };
   try {
     let lastSent = 0;
-    const res = await record({ ...opts, url, out, isCancelled: () => stop }, (e) => {
+    const res = await record({ ...opts, ...(dir ? { dir } : { url }), out, isCancelled: () => stop }, (e) => {
       const now = Date.now();
       if (e.stage === 'done' || now - lastSent < 700) return; // 'done' is reported by the message below, after the upload
       lastSent = now;

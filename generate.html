@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SmartClips — Generate Video</title>
+<style>
+  :root {
+    --cream: #FBF2E6; --cream-soft: #F5E8D6; --card: #FFFCF7; --orange: #FF5C1A; --orange-dark: #E24E12;
+    --orange-soft: #FFE4D2; --text: #2B1E13; --muted: #7A6552; --border: #EEDFC6; --ok: #2E8B57; --bad: #C0392B;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--cream); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; min-height: 100%; }
+  .bg-grid { position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image: linear-gradient(to right, rgba(43,30,19,.045) 1px, transparent 1px), linear-gradient(to bottom, rgba(43,30,19,.045) 1px, transparent 1px); background-size: 42px 42px; }
+  .glow { position: fixed; z-index: 0; border-radius: 50%; pointer-events: none; filter: blur(90px); width: 480px; height: 480px; top: -200px; right: -160px; background: radial-gradient(circle, var(--orange) 0%, transparent 70%); opacity: .22; }
+  main { position: relative; z-index: 1; max-width: 760px; margin: 0 auto; padding: 28px 20px 72px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 30px; }
+  .brand { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -.01em; }
+  .brand span { color: var(--orange); }
+  header a { color: var(--muted); font-size: 14px; text-decoration: none; }
+  header a:hover { color: var(--orange-dark); }
+  h2 { font-size: clamp(28px, 5vw, 40px); line-height: 1.05; letter-spacing: -.02em; margin: 0 0 10px; }
+  .sub { color: var(--muted); font-size: 16px; line-height: 1.55; margin: 0 0 26px; max-width: 580px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 24px; box-shadow: 0 6px 28px rgba(43,30,19,.06); }
+  .field { margin-bottom: 22px; }
+  label.f { display: flex; align-items: baseline; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  label.f em { font-style: normal; font-weight: 600; letter-spacing: 0; text-transform: none; font-size: 12px; color: #a8917a; }
+  label.f .req { color: var(--orange-dark); }
+  input[type=text], textarea { width: 100%; font: inherit; font-size: 16px; padding: 13px 15px; border-radius: 12px; border: 1.5px solid var(--border); background: #fff; color: var(--text); outline: none; }
+  textarea { resize: vertical; line-height: 1.5; }
+  input[type=text]:focus, textarea:focus { border-color: var(--orange); box-shadow: 0 0 0 4px var(--orange-soft); }
+  .bad input[type=text], .bad textarea { border-color: var(--bad); }
+  .count { text-align: right; font-size: 12px; color: #a8917a; margin-top: 4px; }
+  button { font: inherit; font-weight: 700; font-size: 16px; padding: 14px 22px; border: 0; border-radius: 12px; background: var(--orange); color: #fff; cursor: pointer; white-space: nowrap; }
+  button:hover:not(:disabled) { background: var(--orange-dark); }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  button.ghost { background: var(--orange-soft); color: var(--orange-dark); }
+  button.go { width: 100%; font-size: 18px; padding: 17px 22px; margin-top: 6px; }
+  .drop { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .drop input[type=file] { display: none; }
+  .pick { display: inline-flex; align-items: center; gap: 8px; padding: 11px 16px; border-radius: 12px; border: 1.5px dashed #d9c3a5; background: #fff; color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer; }
+  .pick:hover { border-color: var(--orange); color: var(--orange-dark); }
+  .thumbs { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+  .thumb { position: relative; width: 74px; height: 74px; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); background: #fff; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb.logo img { object-fit: contain; padding: 6px; background: repeating-conic-gradient(#eee 0% 25%, #fff 0% 50%) 50% / 14px 14px; }
+  .thumb button { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; padding: 0; border-radius: 50%; font-size: 14px; line-height: 22px; background: rgba(0,0,0,.65); }
+  .hint { font-size: 13px; color: #a8917a; margin-top: 6px; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin-top: 16px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #bbb; }
+  .dot.on { background: var(--ok); } .dot.off { background: var(--bad); }
+  .help { display: none; margin-top: 12px; padding: 14px 16px; border-radius: 12px; background: var(--orange-soft); font-size: 14px; line-height: 1.55; }
+  .job { display: none; text-align: center; padding: 18px 4px 6px; }
+  .job h3 { margin: 0 0 16px; font-size: 22px; letter-spacing: -.01em; }
+  .bar { height: 12px; border-radius: 999px; background: var(--cream-soft); overflow: hidden; border: 1px solid var(--border); }
+  .bar > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--orange), #FF9A5C); border-radius: 999px; transition: width .35s ease; }
+  .jobline { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; margin-top: 10px; color: var(--muted); }
+  .err { color: var(--bad); font-weight: 600; margin-top: 12px; display: none; }
+  .result { display: none; text-align: center; }
+  .phone { width: min(320px, 78vw); aspect-ratio: 9 / 16; margin: 0 auto; border-radius: 26px; overflow: hidden; background: #000; border: 6px solid #1c130c; box-shadow: 0 18px 50px rgba(43,30,19,.25); }
+  .phone video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .actions { display: flex; justify-content: center; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
+  .actions a { text-decoration: none; display: inline-block; }
+</style>
+</head>
+<body>
+<div class="bg-grid"></div><div class="glow"></div>
+<main>
+  <header>
+    <h1 class="brand">Smart<span>Clips</span></h1>
+    <a href="ai.html">← Text to video</a>
+  </header>
+
+  <h2>Tell us about your company.<br>Get a marketing video.</h2>
+  <p class="sub">Fill in the details below. Our AI writes and designs a short, scroll-stopping ad for TikTok, Reels and Shorts, then films it and hands you the video.</p>
+
+  <section class="card" id="formCard">
+    <form id="form" novalidate>
+      <div class="field" data-f="company">
+        <label class="f" for="company">Company name <span class="req">*</span></label>
+        <input id="company" type="text" maxlength="60" autocomplete="organization" placeholder="e.g. AquaForge Beverages" />
+      </div>
+
+      <div class="field" data-f="details">
+        <label class="f" for="details">Company's details <span class="req">*</span> <em>what you do, who it's for, what makes you different, real numbers</em></label>
+        <textarea id="details" rows="8" maxlength="2400" placeholder="Tell us about your products or services, your customers, your story, and any facts worth shouting about (years in business, stores, results, awards)…"></textarea>
+        <div class="count"><span id="detailsN">0</span> / 2400</div>
+      </div>
+
+      <div class="field" data-f="focus">
+        <label class="f" for="focus">Main focus <span class="req">*</span> <em>what should this video sell or promote?</em></label>
+        <input id="focus" type="text" maxlength="240" placeholder="e.g. Our new AquaForge Charge energy drink launching this month" />
+      </div>
+
+      <div class="field">
+        <label class="f" for="notes">Notes for the AI <em>optional · tone, colours, things to include or avoid</em></label>
+        <input id="notes" type="text" maxlength="600" placeholder="e.g. Bold and energetic, use our orange, don't mention competitors" />
+      </div>
+
+      <div class="field">
+        <label class="f">Logo <em>optional · one image</em></label>
+        <div class="drop">
+          <label class="pick" for="logoIn">＋ Add logo</label>
+          <input id="logoIn" type="file" accept="image/png,image/jpeg,image/webp" />
+        </div>
+        <div class="thumbs" id="logoThumb"></div>
+      </div>
+
+      <div class="field">
+        <label class="f">Other images <em>optional · up to 6, product shots work best</em></label>
+        <div class="drop">
+          <label class="pick" for="imgIn">＋ Add images</label>
+          <input id="imgIn" type="file" accept="image/png,image/jpeg,image/webp" multiple />
+        </div>
+        <div class="thumbs" id="imgThumbs"></div>
+        <div class="hint">Photos you add are used in your video. Scenes without a photo are illustrated by the AI.</div>
+      </div>
+
+      <div class="err" id="formErr"></div>
+      <button class="go" id="go" type="submit">Generate Video</button>
+      <div class="status"><span class="dot" id="dot"></span><span id="statusTxt">Connecting to the SmartClips server…</span></div>
+      <div class="help" id="help">The server is waking up (it sleeps when idle) or unreachable. Give it about 30 seconds, this page will connect automatically.</div>
+    </form>
+
+    <div class="job" id="job">
+      <h3 id="stage">Cloudflare is generating your video</h3>
+      <div class="bar"><i id="fill"></i></div>
+      <div class="jobline"><span id="pos"></span><span id="eta"></span></div>
+      <div class="jobline"><span></span><button class="ghost" id="cancel" style="padding:8px 16px;font-size:14px">Cancel</button></div>
+      <div class="err" id="err"></div>
+    </div>
+
+    <div class="result" id="result">
+      <div class="phone"><video id="vid" controls playsinline loop></video></div>
+      <div class="actions">
+        <a id="dl" href="#"><button type="button">Download MKV</button></a>
+        <a id="dl2" href="#"><button type="button" class="ghost">Download MP4</button></a>
+        <button type="button" class="ghost" id="again">Make another</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const API = "https://graphmotion.onrender.com"; // same backend as ai.html
+  const abs = (u) => (u && u.charAt(0) === "/" ? API + u : u);
+  const MAX_IMAGES = 6;
+  let logoData = null, images = [], timer = null, busy = false, currentId = null;
+
+  $("details").addEventListener("input", () => { $("detailsN").textContent = $("details").value.length; });
+
+  // ---------- images: downscaled in the browser so a phone photo never becomes a 12 MB upload
+  function toDataUrl(file, maxEdge, type, q) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => {
+        const k = Math.min(1, maxEdge / Math.max(img.naturalWidth, img.naturalHeight)), c = document.createElement("canvas");
+        c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+        resolve(c.toDataURL(type, q));
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Couldn't read \"" + file.name + "\" - use a JPG, PNG or WebP."));  };
+      img.src = url;
+    });
+  }
+  function thumb(src, cls, onRemove) {
+    const d = document.createElement("div"); d.className = "thumb " + (cls || "");
+    d.innerHTML = '<img alt=""><button type="button" aria-label="Remove">×</button>'; d.firstChild.src = src; d.lastChild.addEventListener("click", onRemove);
+    return d;
+  }
+  function drawLogo() { $("logoThumb").innerHTML = ""; if (logoData) $("logoThumb").appendChild(thumb(logoData, "logo", () => { logoData = null; $("logoIn").value = ""; drawLogo(); })); }
+  function drawImages() { $("imgThumbs").innerHTML = ""; images.forEach((s, k) => $("imgThumbs").appendChild(thumb(s, "", () => { images.splice(k, 1); drawImages(); }))); }
+  $("logoIn").addEventListener("change", async () => {
+    const f = $("logoIn").files[0]; if (!f) return;
+    try { logoData = await toDataUrl(f, 512, "image/png"); drawLogo(); } catch (e) { showFormErr(e.message); }
+  });
+  $("imgIn").addEventListener("change", async () => {
+    try {
+      const picked = [...$("imgIn").files], room = MAX_IMAGES - images.length;
+      for (const f of picked.slice(0, room)) images.push(await toDataUrl(f, 1280, "image/jpeg", 0.86));
+      if (picked.length > room) showFormErr("Only " + MAX_IMAGES + " images are used - the extra ones were skipped.");
+    } catch (e) { showFormErr(e.message); }
+    $("imgIn").value = ""; drawImages();
+  });
+
+  // ---------- server connection
+  async function ping() {
+    try {
+      const r = await fetch(API + "/health", { cache: "no-store" });
+      if (!r.ok) throw new Error("bad");
+      $("dot").className = "dot on"; $("statusTxt").textContent = "Server connected"; $("help").style.display = "none"; return true;
+    } catch (_) { $("dot").className = "dot off"; $("statusTxt").textContent = "Server not reachable yet"; $("help").style.display = "block"; return false; }
+  }
+  ping(); setInterval(() => { if (!busy) ping(); }, 5000);
+
+  // ---------- submit
+  const showFormErr = (m) => { $("formErr").textContent = m; $("formErr").style.display = m ? "block" : "none"; };
+  function check() {
+    const bad = [];
+    if (!$("company").value.trim()) bad.push("company");
+    if ($("details").value.trim().length < 20) bad.push("details");
+    if (!$("focus").value.trim()) bad.push("focus");
+    document.querySelectorAll(".field[data-f]").forEach((f) => f.classList.toggle("bad", bad.includes(f.dataset.f)));
+    if (bad.length) { showFormErr(bad.includes("details") && $("details").value.trim() ? "Add a few more sentences about your company (at least 20 characters)." : "Please fill in the highlighted fields."); $(bad[0]).focus(); }
+    else showFormErr("");
+    return !bad.length;
+  }
+  $("form").addEventListener("submit", async (e) => {
+    e.preventDefault(); if (busy || !check()) return;
+    await ping(); // wakes a sleeping server; the request below waits for it either way
+    busy = true; $("go").disabled = true; $("err").style.display = "none";
+    $("formCard").querySelector("form").style.display = "none"; $("job").style.display = "block"; $("fill").style.width = "2%"; $("stage").textContent = "Cloudflare is generating your video"; $("eta").textContent = ""; $("pos").textContent = "";
+    try {
+      const r = await fetch(API + "/api/generate-video", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ company: $("company").value.trim(), details: $("details").value.trim(), focus: $("focus").value.trim(), notes: $("notes").value.trim(), logo: logoData, images }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "Couldn't start - please try again.");
+      poll(j.id);
+    } catch (err) { fail(err.message); }
+  });
+
+  function backToForm() { busy = false; clearInterval(timer); currentId = null; $("go").disabled = false; $("job").style.display = "none"; $("formCard").querySelector("form").style.display = "block"; }
+  function fail(msg) { clearInterval(timer); currentId = null; $("stage").textContent = "Something went wrong"; $("err").textContent = msg; $("err").style.display = "block"; $("cancel").textContent = "Back"; $("cancel").disabled = false; $("cancel").onclick = () => { $("cancel").textContent = "Cancel"; $("cancel").onclick = null; backToForm(); }; }
+  $("cancel").addEventListener("click", async () => {
+    if ($("cancel").onclick) return; if (!currentId) return; $("cancel").disabled = true; $("stage").textContent = "Cancelling…";
+    try { await fetch(API + "/api/generate-video/" + currentId + "/cancel", { method: "POST" }); } catch (_) {}
+  });
+  $("again").addEventListener("click", () => { $("result").style.display = "none"; $("vid").removeAttribute("src"); $("vid").load(); $("fill").style.width = "0%"; backToForm(); $("formCard").querySelector("form").scrollIntoView({ behavior: "smooth" }); });
+
+  function poll(id) {
+    currentId = id; $("cancel").disabled = false; clearInterval(timer);
+    timer = setInterval(async () => {
+      try {
+        const j = await (await fetch(API + "/api/generate-video/" + id, { cache: "no-store" })).json();
+        $("fill").style.width = Math.max(2, Math.round(j.progress * 100)) + "%";
+        $("stage").textContent = j.status === "generating" ? "Cloudflare is generating your video" : j.status === "rendering" ? "Rendering video" : j.label;
+        $("pos").textContent = j.position ? "Waiting in line (" + j.position + ")…" : "";
+        $("eta").textContent = j.eta != null && j.status === "rendering" ? "about " + (j.eta >= 60 ? Math.ceil(j.eta / 60) + " min" : j.eta + " s") + " left" : "";
+        if (j.status === "cancelled") return backToForm();
+        if (j.status === "error") return fail(j.error || "The video could not be made.");
+        if (j.status === "done") {
+          clearInterval(timer); busy = false; currentId = null; $("fill").style.width = "100%"; $("eta").textContent = ""; $("job").style.display = "none";
+          $("vid").src = abs(j.videoUrl); $("dl").href = abs(j.downloadUrl); $("dl2").href = abs(j.mp4Url); $("result").style.display = "block";
+          $("result").scrollIntoView({ behavior: "smooth", block: "center" }); $("vid").play().catch(() => {});
+        }
+      } catch (_) { fail("Lost connection to the server."); }
+    }, 1000);
+  }
+})();
+</script>
+</body>
+</html>

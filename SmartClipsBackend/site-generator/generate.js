@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-// Generate a site from a company brief with Cloudflare Workers AI. Default engine: the section-based scroll engine (the AquaForge look).
+// Generate a 9:16 marketing-ad page from a company brief with Cloudflare Workers AI (backend/siteGenerator.js + siteTemplate/ad.html; see docs/AD_PLAYBOOK.md).
 //   node generate.js --brief briefs/liquiddeath.txt --out ../../liquiddeath2 [--slug name]
 //   --plan-only true      only write the director's plan (site.json), no images/audio
 //   --spec site.json      reuse a saved plan (add --keep-images true to reuse existing images)
@@ -24,8 +24,8 @@ run({
   if (s.beats) {                                    // cinema engine
     console.log(`${s.brand} | ${s.theme.look} | motif ${s.motif.type} | grade ${s.grade.mood} | ${s.beats.length} beats, ${s.beats.reduce((t, b) => t + b.dur, 0).toFixed(1)}s`);
     s.beats.forEach((b, i) => console.log(`${String(i + 1).padStart(2)}. ${b.dur.toFixed(1)}s ${b.image.padEnd(10)} ${b.camera.padEnd(10)} ${(b.text ? b.text.lines.map((l) => l.t).join(" / ") : "-").padEnd(34)} ${b.text ? b.text.fx.padEnd(8) : "        "} -> ${b.transition.type}`));
-  } else {                                          // section-based engine
-    console.log(`${s.brand} | ${s.theme.look} | accent ${s.theme.accent} | ${s.scenes.length} scenes`);
-    s.scenes.forEach((sc, i) => console.log(`${String(i + 1).padStart(2)}. ${sc.id.padEnd(9)} ${sc.tone.padEnd(5)} ${sc.align.padEnd(5)} ${sc.title.replace(/|/g, " / ")}`));
+  } else {                                          // ad engine (default): hook -> pain -> solution -> feature -> proof -> cta
+    console.log(`${s.brand} | ${s.theme.look} | accent ${s.theme.accent} | ${s.scenes.length} scenes${s.audio ? " | with soundtrack" : ""}`);
+    s.scenes.forEach((sc, i) => console.log(`${String(i + 1).padStart(2)}. ${sc.id.padEnd(9)} ${sc.tone.padEnd(5)} ${sc.headline.replace(/\*/g, "").replace(/\|/g, " / ")}${sc.sticker ? "   [" + sc.sticker.n + " " + sc.sticker.l + "]" : ""}`));
   }
 }).catch((e) => { console.error("\nFAILED:", e.message); process.exit(1); });

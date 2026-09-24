@@ -28,9 +28,17 @@
   const APP_PATH = BASE_PATH + "/ai.html";
   const path = location.pathname.slice(1); // drop the leading slash
   const search = location.search ? location.search.slice(1) + "&" : "";
-  location.replace(
-    location.origin + APP_PATH + "?" + search + "p=" + encodeURIComponent(path) + location.hash
-  );
+  if (/^preview\/\d{10,20}\/?$/.test(path)) {
+    // /preview/<job-id> is a generated marketing ad, not an ai.html job: show the preview viewer in place
+    // (the URL stays /preview/<job-id>; preview.html reads the id from it).
+    fetch(BASE_PATH + "/preview.html").then(function (r) { return r.text(); }).then(function (t) {
+      document.open(); document.write(t); document.close();
+    }).catch(function () { location.replace(location.origin + BASE_PATH + "/preview.html?id=" + path.replace(/\D/g, "")); });
+  } else {
+    location.replace(
+      location.origin + APP_PATH + "?" + search + "p=" + encodeURIComponent(path) + location.hash
+    );
+  }
 </script>
 </head>
 <body>

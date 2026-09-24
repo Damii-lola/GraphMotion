@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SmartClips — Preview</title>
+<style>
+  :root { --cream: #FBF2E6; --card: #FFFCF7; --orange: #FF5C1A; --orange-dark: #E24E12; --orange-soft: #FFE4D2; --text: #2B1E13; --muted: #7A6552; --border: #EEDFC6; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--cream); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  main { max-width: 640px; margin: 0 auto; padding: 26px 20px 56px; text-align: center; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; }
+  .brand { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -.01em; }
+  .brand span { color: var(--orange); }
+  header a { color: var(--muted); font-size: 14px; text-decoration: none; }
+  h2 { margin: 0 0 6px; font-size: clamp(24px, 5vw, 32px); letter-spacing: -.02em; }
+  .id { color: var(--muted); font-size: 14px; margin: 0 0 22px; font-variant-numeric: tabular-nums; }
+  .phone { width: min(360px, 84vw); aspect-ratio: 9 / 16; margin: 0 auto; border-radius: 28px; overflow: hidden; background: #000; border: 7px solid #1c130c; box-shadow: 0 18px 50px rgba(43,30,19,.25); }
+  .phone iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .actions { display: flex; justify-content: center; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
+  button, a.btn { font: inherit; font-weight: 700; font-size: 15px; padding: 12px 20px; border: 0; border-radius: 12px; background: var(--orange); color: #fff; cursor: pointer; text-decoration: none; display: inline-block; }
+  button.ghost, a.btn.ghost { background: var(--orange-soft); color: var(--orange-dark); }
+  .msg { color: var(--muted); font-size: 16px; line-height: 1.6; }
+  form { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
+  input { font: inherit; font-size: 16px; padding: 12px 14px; border-radius: 12px; border: 1.5px solid var(--border); background: #fff; width: 230px; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1 class="brand">Smart<span>Clips</span></h1><a href="/generate.html">Make a video →</a></header>
+  <div id="view"></div>
+</main>
+<script>
+(function () {
+  const API = "https://graphmotion.onrender.com";
+  const view = document.getElementById("view");
+  const m = /\/preview\/(\d{10,20})\/?$/.exec(location.pathname) || /[?&]id=(\d{10,20})/.exec(location.search);
+  if (!m) {
+    view.innerHTML = '<h2>Preview</h2><p class="msg">Open a preview by its job id.</p><form id="f"><input id="i" inputmode="numeric" placeholder="Job id (digits)" autocomplete="off"><button>Open</button></form>';
+    document.getElementById("f").addEventListener("submit", (e) => { e.preventDefault(); const v = document.getElementById("i").value.replace(/\D/g, ""); if (v) location.href = "/preview/" + v; });
+    return;
+  }
+  const id = m[1];
+  view.innerHTML = '<h2>Your ad</h2><p class="id">Job ' + id + '</p><div class="phone"><iframe id="fr" title="Ad preview" allow="autoplay"></iframe></div>' +
+    '<div class="actions"><button id="replay">Replay</button><a class="btn ghost" id="vid" style="display:none" target="_blank" rel="noopener">Open the video</a></div><p class="msg" id="note" style="margin-top:18px"></p>';
+  const fr = document.getElementById("fr");
+  fr.src = API + "/preview/" + id + "/?autoplay=1";   // the generated page itself, playing exactly like the recorded video
+  document.getElementById("replay").addEventListener("click", () => { fr.contentWindow.postMessage({ type: "smartclips-play" }, "*"); });
+  fetch(API + "/api/preview/" + id, { cache: "no-store" }).then((r) => (r.ok ? r.json() : Promise.reject())).then((j) => {
+    if (j.company) document.querySelector("h2").textContent = j.company;
+    if (j.videoUrl) { const a = document.getElementById("vid"); a.href = j.videoUrl; a.style.display = "inline-block"; }
+  }).catch(() => { document.getElementById("note").textContent = "This preview could not be found - it may have expired."; });
+})();
+</script>
+</body>
+</html>

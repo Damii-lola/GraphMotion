@@ -5,6 +5,8 @@
  *   POST /api/site-video            { page, sceneSeconds?, preset?, fps? } -> { id }
  *   GET  /api/site-video/:id        -> { status, progress, eta, error?, videoUrl? }
  *   GET  /api/site-video/:id/file   -> the mp4 (Range ok; ?download=1 forces a download)
+ *   register() also returns submit()/view()/cancel() so other server code (generateVideo.js: company details -> ad -> video)
+ *   can queue a recording of a LOCAL folder without going through the URL guard.
  *
  * One recording at a time (headless Chrome + WebGL is the heaviest thing this
  * server does). A recording only starts once no text->video render is active,
@@ -80,30 +82,39 @@ function register(app, hooks = {}) {
     });
     child.on('exit', (code) => { if (!settled) finish('error', { error: 'The recorder crashed' + (code ? ` (code ${code})` : '') + ' - the server probably ran out of memory.' }); });
     child.on('error', (e) => finish('error', { error: 'Could not start the recorder: ' + e.message }));
-    child.send({ jobId: job.id, url: job.url, out: job.file, opts: job.opts });
+    child.send({ jobId: job.id, url: job.url, dir: job.dir, out: job.file, opts: job.opts });
+  }
+
+  /** Queue a recording. target = { url } (already validated) or { dir } (a local folder with an index.html). Returns the live job object. */
+  function submit(target, o = {}) {
+    if (queue.length >= MAX_QUEUE) { const e = new Error('The recorder is busy right now - try again in a few minutes.'); e.busy = true; throw e; }
+    const id = crypto.randomBytes(6).toString('hex');
+    const job = {
+      id, url: target.url || null, dir: target.dir || null, status: 'queued', progress: 0, eta: null, created: Date.now(), file: path.join(dir, id + '.mp4'),
+      opts: { sceneSeconds: clamp(o.sceneSeconds, 2, 10, 3.5), fps: clamp(o.fps, 24, 60, 60), preset: ['small', 'hd'].includes(o.preset) ? o.preset : 'tiktok', duration: 30,
+        ...(o.holdStart !== undefined ? { holdStart: clamp(o.holdStart, 0, 3, 1.2) } : {}), ...(o.holdEnd !== undefined ? { holdEnd: clamp(o.holdEnd, 0, 4, 2) } : {}) },
+    };
+    console.log(`[site-video] job ${id} queued: ${job.url || job.dir} (${job.opts.preset}, ${job.opts.fps}fps)`);
+    jobs.set(id, job); queue.push(job); pump();
+    return job;
+  }
+  function cancel(j) {
+    if (j.status === 'queued') { const k = queue.indexOf(j); if (k >= 0) queue.splice(k, 1); j.status = 'cancelled'; console.log(`[site-video] job ${j.id} cancelled while queued`); }
+    else if (['loading', 'recording', 'encoding'].includes(j.status) && j.cancel) { j.status = 'cancelling'; j.cancel(); }
   }
 
   app.post('/api/site-video', limiter, async (req, res) => {
     try {
       const b = req.body || {};
-      if (queue.length >= MAX_QUEUE) return res.status(429).json({ error: 'The recorder is busy right now - try again in a few minutes.' });
       const url = await resolveTarget(b.page);
-      const id = crypto.randomBytes(6).toString('hex');
-      const job = {
-        id, url, status: 'queued', progress: 0, eta: null, created: Date.now(), file: path.join(dir, id + '.mp4'),
-        opts: { sceneSeconds: clamp(b.sceneSeconds, 2, 10, 3.5), fps: clamp(b.fps, 24, 60, 60), preset: ['small', 'hd'].includes(b.preset) ? b.preset : 'tiktok', duration: 30 },
-      };
-      console.log(`[site-video] job ${id} queued: ${url} (${job.opts.preset}, ${job.opts.fps}fps)`);
-      jobs.set(id, job); queue.push(job); pump();
-      res.status(202).json({ id });
-    } catch (e) { res.status(400).json({ error: e.message }); }
+      res.status(202).json({ id: submit({ url }, b).id });
+    } catch (e) { res.status(e.busy ? 429 : 400).json({ error: e.message }); }
   });
 
   app.post('/api/site-video/:id/cancel', (req, res) => {
     const j = jobs.get(req.params.id);
     if (!j) return res.status(404).json({ error: 'Unknown or expired job.' });
-    if (j.status === 'queued') { const k = queue.indexOf(j); if (k >= 0) queue.splice(k, 1); j.status = 'cancelled'; console.log(`[site-video] job ${j.id} cancelled while queued`); }
-    else if (['loading', 'recording', 'encoding'].includes(j.status) && j.cancel) { j.status = 'cancelling'; j.cancel(); }
+    cancel(j);
     res.json(view(j));
   });
 
@@ -131,7 +142,7 @@ function register(app, hooks = {}) {
   app.get('/api/site-video/:id/file', sendFile('mp4'));
   app.get('/api/site-video/:id/file.mkv', sendFile('mkv'));
 
-  return { isActive };
+  return { isActive, submit, view, cancel };
 }
 
 module.exports = { register };

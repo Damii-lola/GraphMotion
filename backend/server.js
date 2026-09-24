@@ -23,7 +23,8 @@ const app = express();
 let siteVideo = null; // set below; a running site->video recording (headless Chrome) pauses new text->video renders
 app.set('trust proxy', 1);
 app.use(cors());
-app.use(express.json({ limit: '1mb' }));
+const smallJson = express.json({ limit: '1mb' });
+app.use((req, res, next) => (req.path === '/api/generate-video' ? next() : smallJson(req, res, next))); // that one route takes the client's logo/photos and parses its own (bigger) body
 
 process.on('unhandledRejection', (reason) => {
   console.error('[unhandledRejection] server staying up despite:', reason);
@@ -563,6 +564,7 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 siteVideo = require('./siteVideo').register(app, { rendersActive: () => activeRenders > 0, onIdle: drainQueue });
+require('./generateVideo').register(app, { siteVideo }); // company details -> AI-written ad page (/preview/<job-id>) -> recorded MKV
 
 app.listen(PORT, () => {
   console.log(`[server] listening on port ${PORT}`);
