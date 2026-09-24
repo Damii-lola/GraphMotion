@@ -78,7 +78,7 @@ MASK = a GLSL float expression that shapes the opening. Variables: p (vec2: posi
 
 ${soundBlock()}Return ONE JSON object with these keys:
 "brand", "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "imageStyle" (6-10 words: ONE consistent photographic look), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
-"scenes": EXACTLY 6 objects, each: "id", "tag" (1-3 word pill label like "POV", "Real talk", "The proof"; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 22 words, ONE subject, no text, no logos, no faces), "move" (see 2), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
+"scenes": EXACTLY 6 objects, each: "id", "tag" (1-3 word pill label like "POV", "Real talk", "The proof"; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 22 words, ONE subject, no text, no logos, no faces or bodies or bare skin - every image must pass a strict family-friendly safety filter), "move" (see 2), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
 "transitions": EXACTLY 5 objects (see 3)${adMixMenu() ? ', "sound" (see SOUND)' : ''}.
 Output the JSON object only.`;
 }
@@ -168,6 +168,27 @@ async function flux(prompt) {
   const j = await r.json();
   if (!j.result || !j.result.image) throw new Error('image generation failed: ' + JSON.stringify(j.errors || j).slice(0, 220));
   return Buffer.from(j.result.image, 'base64');
+}
+/**
+ * Flux's safety filter sometimes rejects an innocent prompt (error 8007 "NSFW", e.g. a snack held in hands). A refused prompt produces nothing and costs
+ * nothing, so instead of failing the whole film we retry with gentler wordings under the SAME neuron charge: first a family-friendly still life in the ad's
+ * own look, then a plain abstract backdrop (the captions carry the scene anyway).
+ */
+async function fluxSafe(sc, spec) {
+  const tries = [
+    `${sc.imagePrompt}, ${spec.imageStyle}${IMAGE_SUFFIX}`,
+    `${spec.imageStyle}, wholesome family-friendly still life photograph of a single simple object, soft studio light, clean neutral background${IMAGE_SUFFIX}`,
+    `${spec.imageStyle}, abstract soft colour gradient with gentle bokeh light, no objects${IMAGE_SUFFIX}`,
+  ];
+  let last = null;
+  for (let k = 0; k < tries.length; k++) {
+    try { return await flux(tries[k]); } catch (e) {
+      last = e;
+      if (!/8007|NSFW/i.test(String(e && e.message))) throw e;   // only the safety filter is retried; anything else (quota, network) is a real failure
+      console.warn(`[image] scene ${sc.id}: prompt ${k + 1} was refused by the safety filter, ${k + 1 < tries.length ? 'retrying with a gentler prompt' : 'giving up'}`);
+    }
+  }
+  throw last;
 }
 const runFfmpeg = (args, wantStdout) => new Promise((resolve, reject) => {
   const ff = spawn(ffmpegPath, ['-y', '-loglevel', 'error', ...args], { stdio: ['ignore', wantStdout ? 'pipe' : 'ignore', 'pipe'] });
@@ -294,7 +315,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
       else {
         say(`Painting scene ${k + 1} of ${spec.scenes.length}`, progress);
         neurons.charge(neurons.estImage(), `image ${k + 1}`);
-        fs.writeFileSync(f, await flux(`${sc.imagePrompt}, ${spec.imageStyle}${IMAGE_SUFFIX}`));
+        fs.writeFileSync(f, await fluxSafe(sc, spec));
       }
       await toWebp(f, webp);
     }
