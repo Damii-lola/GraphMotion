@@ -213,7 +213,7 @@ async function record(o, onProgress) {
         return x < F[0] ? 1 : x < F[0] + F[1] ? 4 : 1; // text reveal + transition: every frame; the still hold: thinned
       };
     } else if (info.seekDur) {
-      totalFrames = Math.max(2, Math.round(info.seekDur * fps));
+      totalFrames = Math.max(2, Math.round(Math.min(info.seekDur, +o.maxSeconds || 1e9) * fps));
       plan = (f) => Math.min(info.seekDur, f / fps);
       // the page reports how busy each moment is; the recorder spends its frames there when it has to thin
       const en = await page.evaluate((fp, n) => Array.from({ length: n }, (_, f) => window.__energy(f / fp)), fps, totalFrames);

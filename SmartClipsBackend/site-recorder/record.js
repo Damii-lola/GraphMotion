@@ -21,7 +21,7 @@ const { record, resolveTarget } = require("../../backend/siteRecorder");
   if (!page && !o.dir) { console.log("Usage: node record.js <page-name | url> [--dir folder] [--out file.mp4] [--scene-seconds 5] [--fps 30] [--preset tiktok|small] [--audio file]"); process.exit(1); }
   const opts = {
     out: o.out || path.join(__dirname, "..", "out", "recording.mp4"), preset: o.preset, fps: o.fps, sceneSeconds: o["scene-seconds"], duration: o.duration,
-    holdStart: o["hold-start"], holdEnd: o["hold-end"], ease: o.ease, audio: o.audio, crf: o.crf,
+    holdStart: o["hold-start"], holdEnd: o["hold-end"], maxSeconds: o["max-seconds"], ease: o.ease, audio: o.audio, crf: o.crf,
   };
   if (o.dir) opts.dir = path.resolve(o.dir); else opts.url = await resolveTarget(page, { allowPrivate: !!o.private });
   const t0 = Date.now();

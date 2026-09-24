@@ -436,11 +436,13 @@ window.__energy = (t) => {
 window.__seek = (t) => { seekMode = true; document.getElementById("hint").style.opacity = 0; Ttarget = Tcur = Math.max(0, Math.min(TOTAL, t)); window.__ready = true; render(Tcur); };
 window.addEventListener("resize", () => { sizeAll(); layoutSpacer(); });
 sizeAll(); layoutSpacer(); render(0); window.__ready = true;
-let lastNow = performance.now(), slow = 0;
+let lastNow = performance.now(), slow = 0, t0 = -1;
+const AUTOPLAY = /[?&]autoplay/.test(location.search); // plays itself from the page clock (lets frame-capture tools that virtualise time drive it)
 function loop(now) {
   requestAnimationFrame(loop);
   if (seekMode) return;
   const dt = Math.max(0, Math.min(0.1, (now - lastNow) / 1000)); lastNow = now;
+  if (AUTOPLAY) { if (t0 < 0) t0 = now; Ttarget = Tcur = Math.min(TOTAL, (now - t0) / 1000); window.__t = Tcur; if (Tcur >= TOTAL) window.__finished = true; render(Tcur); return; }
   Ttarget = Math.max(0, Math.min(TOTAL, (window.scrollY || 0) / PX_PER_SEC));
   Tcur += (Ttarget - Tcur) * (1 - Math.exp(-dt * 7));
   slow += dt > 0.03 ? 1 : dt < 0.02 ? -1 : 0; slow = Math.max(-60, Math.min(60, slow));
