@@ -40,14 +40,14 @@ function normalizeTransition(t, seed, i) {
   const f = Array.isArray(t.focus) ? t.focus : [];
   return {
     focus: [num(f[0], 0.12, 0.88, 0.32 + 0.36 * rnd(seed, i, 5)), num(f[1], 0.12, 0.85, 0.28 + 0.26 * rnd(seed, i, 6))],
-    zoom: num(t.zoom, 0.3, 1.8, 0.7 + 0.7 * rnd(seed, i, 7)),
+    zoom: num(t.zoom, 0.5, 2.4, 1.0 + 0.9 * rnd(seed, i, 7)),
     spin: num(t.spin, -25, 25, (rnd(seed, i, 8) - 0.5) * 30),
-    blur: num(t.blur, 0, 1, 0.35 + 0.45 * rnd(seed, i, 9)),
+    blur: num(t.blur, 0, 1, 0.5 + 0.4 * rnd(seed, i, 9)),
     warp: num(t.warp, 0, 1, 0.15 + 0.5 * rnd(seed, i, 10)),
     glow: num(t.glow, 0, 1, 0.2 + 0.5 * rnd(seed, i, 11)),
     chroma: num(t.chroma, 0, 1, 0.1 + 0.4 * rnd(seed, i, 12)),
     soft: num(t.soft, 0.03, 0.35, 0.08 + 0.14 * rnd(seed, i, 13)),
-    overlap: num(t.overlap, 0.28, 0.5, 0.34 + 0.12 * rnd(seed, i, 14)),
+    overlap: num(t.overlap, 0.24, 0.38, 0.26 + 0.1 * rnd(seed, i, 14)),
     mask: sanitizeMask(t.mask),
     sfx: typeof t.sfx === 'string' ? t.sfx.replace(/[^a-z0-9_-]/gi, '').slice(0, 40) : '',
   };

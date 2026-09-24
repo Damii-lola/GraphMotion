@@ -168,13 +168,13 @@ window.SITE = /*__SITE_JSON__*/null;
     const q = (s) => sec.querySelectorAll(s), one = (s) => sec.querySelector(s);
     const hlw = q(".hl .wi"), subw = q(".sub .wi"), tag = one(".tag"), stk = one(".sticker"), btn = one(".cta-btn"), lnk = one(".cta-link"), lg = one(".cta-logo, .cta-word");
     const t0 = first ? 0 : i - 0.1;                       // the next scene's caption starts landing while the camera is still arriving
-    if (tag) master.fromTo(tag, { opacity: 0, y: 14, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.09, ease: "back.out(2)" }, t0);
+    if (tag) master.fromTo(tag, { opacity: 0, y: 14, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.06, ease: "back.out(2)" }, t0);
     if (lg) master.fromTo(lg, { opacity: 0, y: 24, scale: 0.8 }, { opacity: 1, y: 0, scale: 1, duration: 0.14, ease: "back.out(1.7)" }, t0);
-    master.fromTo(hlw, { yPercent: 118, scale: 0.92 }, { yPercent: 0, scale: 1, duration: 0.11, stagger: first ? 0.03 : 0.04, ease: "back.out(1.5)" }, t0 + (tag ? 0.04 : lg ? 0.05 : 0));
-    if (subw.length) master.fromTo(subw, { yPercent: 118 }, { yPercent: 0, duration: 0.09, stagger: 0.018, ease: "power3.out" }, i + 0.2);
-    if (stk) master.fromTo(stk, { opacity: 0, scale: 0.55, rotation: -14 }, { opacity: 1, scale: 1, rotation: -3, duration: 0.14, ease: "back.out(2.2)" }, i + 0.28);
-    if (btn) master.fromTo(btn, { opacity: 0, y: 26, scale: 0.85 }, { opacity: 1, y: 0, scale: 1, duration: 0.14, ease: "back.out(2)" }, i + 0.3);
-    if (lnk) master.fromTo(lnk, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.12, ease: "power2.out" }, i + 0.4);
+    master.fromTo(hlw, { yPercent: 118, scale: 0.92 }, { yPercent: 0, scale: 1, duration: 0.075, stagger: first ? 0.018 : 0.024, ease: "back.out(1.4)" }, t0 + (tag ? 0.04 : lg ? 0.05 : 0));
+    if (subw.length) master.fromTo(subw, { yPercent: 118 }, { yPercent: 0, duration: 0.07, stagger: 0.013, ease: "power3.out" }, i + 0.15);
+    if (stk) master.fromTo(stk, { opacity: 0, scale: 0.55, rotation: -14 }, { opacity: 1, scale: 1, rotation: -3, duration: 0.1, ease: "back.out(2.2)" }, i + 0.2);
+    if (btn) master.fromTo(btn, { opacity: 0, y: 26, scale: 0.85 }, { opacity: 1, y: 0, scale: 1, duration: 0.1, ease: "back.out(2)" }, i + 0.22);
+    if (lnk) master.fromTo(lnk, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.09, ease: "power2.out" }, i + 0.3);
     if (!last) {                                          // the caption is carried off by the same dive that takes the picture
       const ov = ovOf(i), z = Math.min(1, (TR[i] ? TR[i].zoom : 0.8)), bl = TR[i] ? TR[i].blur : 0.4;
       master.to(one(".ad-inner"), { opacity: 0, scale: 1 + 0.32 * z, filter: `blur(${(2 + 8 * bl).toFixed(1)}px)`, duration: 0.6 * ov, ease: "power2.in" }, i + 1 - ov + 0.03);
@@ -230,7 +230,7 @@ const chip = document.getElementById("chip"), pulse = document.querySelector(".c
 const accRgb = (() => { const m = /^#?([0-9a-f]{6})$/i.exec(S.theme.accent); const n = m ? parseInt(m[1], 16) : 0xff5c1a; return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; })();
 const TR = S.transitions || [];
 const MV = S.scenes.map((s) => Object.assign({ zoom: 0.14, pan: [0.05, 0], roll: 0 }, s.move || {}));
-const TRD = (i) => Object.assign({ focus: [0.5, 0.42], zoom: 0.9, spin: 0, blur: 0.5, warp: 0.3, glow: 0.3, chroma: 0.15, soft: 0.12, overlap: 0.4 }, TR[i] || {});
+const TRD = (i) => Object.assign({ focus: [0.5, 0.42], zoom: 0.9, spin: 0, blur: 0.5, warp: 0.3, glow: 0.3, chroma: 0.15, soft: 0.12, overlap: 0.32 }, TR[i] || {});
 const FILM_S = N * 3.5;
 
 const bgCanvas = document.getElementById("bg");
@@ -311,7 +311,7 @@ void main(){
     float bl = uTr.y * sp, jit = hash(gl_FragCoord.xy);
     vec3 cA = vec3(0.0), cB = vec3(0.0);
     for (int k = 0; k < 8; k++){                                            // radial motion blur toward the dive point
-      float f = (float(k) + jit) / 8.0, s = 1.0 - bl * 0.24 * f; vec2 uvs = uF + (uv + wv - uF) * s;
+      float f = (float(k) + jit) / 8.0, s = 1.0 - bl * 0.32 * f; vec2 uvs = uF + (uv + wv - uF) * s;
       cA += tap(uA, camUV(uvs, uCamA, scA, rA), uAsp.x);
       cB += tap(uB, camUV(uvs, uCamB, scB, rB), uAsp.y);
     }
@@ -345,8 +345,8 @@ const FX = S.scenes.map((s) => [s.fx.ripple, s.fx.mist, s.fx.rays, 0]), LIGHT = 
 
 // a scene's own camera: a slow continuous move (push/pull + drift + roll) that is defined for ALL u, so the incoming scene is already moving while it opens
 function camOf(k, u, T) {
-  const m = MV[k], sway = 0.004 * Math.sin(T * 1.7 + k * 2.1);
-  return [1.26 * Math.exp(1.5 * m.zoom * (u - 0.5)), 1.5 * m.pan[0] * (u - 0.5) + sway, 1.5 * m.pan[1] * (u - 0.5) + sway * 0.6, (1.5 * m.roll * (u - 0.5) * Math.PI) / 180];
+  const m = MV[k], sway = 0.006 * Math.sin(T * 1.7 + k * 2.1);
+  return [1.38 * Math.exp(2.3 * m.zoom * (u - 0.5)), 2.3 * m.pan[0] * (u - 0.5) + sway, 2.3 * m.pan[1] * (u - 0.5) + sway * 0.6, (2.3 * m.roll * (u - 0.5) * Math.PI) / 180];
 }
 let lastSize = "";
 function draw(p) {
