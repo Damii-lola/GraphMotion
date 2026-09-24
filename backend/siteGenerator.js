@@ -269,7 +269,7 @@ async function adAudio(spec, dir) {
   if (spark) ev.push({ file: at(spark), at: end + 1.1, gain: G.sparkle });
   const bed = adMix.tmpFile('.wav'), out = path.join(dir, 'audio.wav');
   fs.writeFileSync(bed, synth({ duration: n * S + 1, cues: [], music }));
-  try { await adMix.mix({ bedWav: bed, events: ev, outWav: out }); } finally { fs.rmSync(bed, { force: true }); }
+  try { await adMix.mix({ bedWav: bed, events: ev, outWav: out, end }); } finally { fs.rmSync(bed, { force: true }); }
   return 'audio.wav';
 }
 

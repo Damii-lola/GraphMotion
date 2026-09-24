@@ -337,7 +337,7 @@ async function record(o, onProgress) {
     }
     const sparse = frameIdxs.length < totalFrames * 0.6;
     const vcodec = ['-c:v', 'libx264', '-preset', o.encode || (sparse ? 'ultrafast' : 'veryfast'), '-crf', String(o.crf || 25), '-threads', String(o.threads || 2),
-      '-x264-params', 'rc-lookahead=10:ref=2', '-profile:v', 'high', '-level', '4.2', '-r', String(fps), '-g', String(fps * 2)];
+      '-x264-params', 'rc-lookahead=10:ref=2:aq-mode=3', '-profile:v', 'high', '-level', '4.2', '-r', String(fps), '-g', String(fps * 2)];
     const runFF = (args) => new Promise((resolve, reject) => {
       const ff = spawn(ffmpegPath, ['-y', '-loglevel', 'error', ...args], { stdio: ['ignore', 'ignore', 'pipe'] });
       let err = '';
