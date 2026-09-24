@@ -222,7 +222,7 @@
     e.preventDefault(); if (busy || !check()) return;
     await ping(); // wakes a sleeping server; the request below waits for it either way
     busy = true; $("go").disabled = true; $("err").style.display = "none";
-    $("formCard").querySelector("form").style.display = "none"; $("job").style.display = "block"; $("fill").style.width = "2%"; $("pct").textContent = "2%"; $("what").textContent = "Getting started…"; $("stage").textContent = "Cloudflare is generating your video"; $("eta").textContent = ""; $("pos").textContent = "";
+    $("formCard").querySelector("form").style.display = "none"; $("job").style.display = "block"; $("fill").style.width = "0%"; $("pct").textContent = "0%"; document.querySelectorAll("#steps span").forEach((x) => { x.className = ""; }); $("what").textContent = "Getting started…"; $("stage").textContent = "Cloudflare is generating your video"; $("eta").textContent = ""; $("pos").textContent = "";
     try {
       const r = await fetch(API + "/api/generate-video", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -242,26 +242,32 @@
   });
   $("again").addEventListener("click", () => { $("result").style.display = "none"; $("vid").removeAttribute("src"); $("vid").load(); $("fill").style.width = "0%"; backToForm(); $("formCard").querySelector("form").scrollIntoView({ behavior: "smooth" }); });
 
+  function setSteps(step) { document.querySelectorAll("#steps span").forEach((s) => { const n = +s.dataset.s; s.className = n < step ? "done" : n === step ? "on" : ""; }); }
   function poll(id) {
-    currentId = id; $("cancel").disabled = false; clearInterval(timer);
+    currentId = id; $("cancel").disabled = false; clearInterval(timer); setSteps(-1);
+    let bad = 0;
     timer = setInterval(async () => {
-      try {
-        const j = await (await fetch(API + "/api/generate-video/" + id, { cache: "no-store" })).json();
-        const pct = Math.max(1, Math.min(99, Math.round(j.progress * 100)));
-        $("fill").style.width = pct + "%"; $("pct").textContent = pct + "%"; $("what").textContent = (j.detail || "Working") + (/%$/.test(j.detail || "") ? "" : "…");
-        const step = j.status === "generating" ? (/script|Getting started|Waiting for the AI/i.test(j.detail || "") ? 0 : 1) : /Encoding/i.test(j.detail || "") ? 3 : 2;
-        document.querySelectorAll("#steps span").forEach((s) => { const n = +s.dataset.s; s.className = n < step ? "done" : n === step ? "on" : ""; });
-        $("stage").textContent = j.status === "generating" ? "Cloudflare is generating your video" : j.status === "rendering" ? "Rendering video" : j.label;
-        $("pos").textContent = j.position ? "Waiting in line (" + j.position + ")…" : "";
-        $("eta").textContent = j.eta != null && j.status === "rendering" ? "about " + (j.eta >= 60 ? Math.ceil(j.eta / 60) + " min" : j.eta + " s") + " left" : "";
-        if (j.status === "cancelled") return backToForm();
-        if (j.status === "error") return fail(j.error || "The video could not be made.", j.errorDetail);
-        if (j.status === "done") {
-          clearInterval(timer); busy = false; currentId = null; $("fill").style.width = "100%"; $("pct").textContent = "100%"; $("eta").textContent = ""; $("job").style.display = "none";
-          $("vid").src = abs(j.videoUrl); $("dl").href = abs(j.downloadUrl); $("result").style.display = "block";
-          $("result").scrollIntoView({ behavior: "smooth", block: "center" }); $("vid").play().catch(() => {});
-        }
-      } catch (_) { fail("Lost connection to the server."); }
+      let r, j;
+      try { r = await fetch(API + "/api/generate-video/" + id, { cache: "no-store" }); j = await r.json().catch(() => ({})); }
+      catch (_) { if (++bad >= 8) fail("Lost connection to the server."); return; }
+      if (r.status === 404) return fail("The server lost track of this video - it most likely restarted while working. Press Back and try again.");
+      if (!r.ok || typeof j.progress !== "number") { if (++bad >= 8) fail(j.error || "The server is not answering properly. Press Back and try again."); return; }   // a hiccup (or a rate-limit reply) is not a progress report: never show it as one
+      bad = 0;
+      const pct = Math.max(0, Math.min(99, Math.round(j.progress * 100)));
+      $("fill").style.width = pct + "%"; $("pct").textContent = pct + "%"; $("what").textContent = (j.detail || "Working") + (/%$/.test(j.detail || "") ? "" : "…");
+      // nothing is "selected" until real work has started; then: script -> visuals -> filming -> encoding
+      const step = pct <= 2 ? -1 : j.status === "generating" ? (/script|Getting started|Waiting for the AI/i.test(j.detail || "") ? 0 : 1) : /Encoding/i.test(j.detail || "") ? 3 : 2;
+      setSteps(step);
+      $("stage").textContent = j.status === "generating" ? "Cloudflare is generating your video" : j.status === "rendering" ? "Rendering video" : j.label;
+      $("pos").textContent = j.position ? "Waiting in line (" + j.position + ")…" : "";
+      $("eta").textContent = j.eta != null && j.status === "rendering" ? "about " + (j.eta >= 60 ? Math.ceil(j.eta / 60) + " min" : j.eta + " s") + " left" : "";
+      if (j.status === "cancelled") return backToForm();
+      if (j.status === "error") return fail(j.error || "The video could not be made.", j.errorDetail);
+      if (j.status === "done") {
+        clearInterval(timer); busy = false; currentId = null; $("fill").style.width = "100%"; $("pct").textContent = "100%"; $("eta").textContent = ""; $("job").style.display = "none";
+        $("vid").src = abs(j.videoUrl); $("dl").href = abs(j.downloadUrl); $("result").style.display = "block";
+        $("result").scrollIntoView({ behavior: "smooth", block: "center" }); $("vid").play().catch(() => {});
+      }
     }, 1000);
   }
 })();
