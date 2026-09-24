@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>{{TITLE}}</title>
+<link rel="preload" as="image" href="images/{{FIRST}}.webp" fetchpriority="high">
+<style>
+  html, body { margin: 0; background: #000; color: #fff; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
+  body { background: var(--bg, #000); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #spacer { position: relative; width: 1px; pointer-events: none; }
+  .sr { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+  #hint { position: fixed; left: 50%; bottom: max(22px, env(safe-area-inset-bottom)); transform: translateX(-50%); font: 600 11px/1 var(--body, sans-serif); letter-spacing: .24em; text-transform: uppercase; color: rgba(255,255,255,.7); transition: opacity .5s; pointer-events: none; }
+  #cta { position: fixed; left: 50%; bottom: 9vh; transform: translateX(-50%); opacity: 0; pointer-events: none; padding: 16px 38px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font: 700 16px/1 var(--body, sans-serif); letter-spacing: .04em; text-decoration: none; transition: opacity .4s; white-space: nowrap; }
+  #cta.on { opacity: 1; pointer-events: auto; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="spacer"></div>
+<div class="sr" id="sr"></div>
+<div id="hint">Scroll</div>
+<a id="cta" href="#"></a>
+
+<script>window.SITE = /*__SITE_JSON__*/null;</script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js"}}</script>
+<script type="module">
+// =====================================================================================================
+// CINEMA ENGINE. The whole page is ONE deterministic function of time: render(T). Scrolling scrubs T;
+// the video recorder calls __seek(t) frame by frame. Everything below is a general-purpose vocabulary -
+// what a given site actually DOES with it (beats, camera, kinetic type, transitions, motif, grade, sound)
+// is authored per company by the AI director and lives in window.SITE.
+//   - 2.5D parallax: a depth map is estimated from each photo, so the camera really moves through it
+//   - depth of field + rack focus, dolly-style depth zoom, handheld shake
+//   - kinetic typography drawn per glyph (rise / carve / pop / scatter / glitch / drip / focus), composited
+//     INSIDE the scene so foreground can occlude it
+//   - ten transition types that warp the pixels instead of cross-fading
+//   - a physical particle motif, colour grade, film grain, chromatic aberration
+// =====================================================================================================
+import * as THREE from "three";
+const S = window.SITE, B = S.beats, N = B.length;
+const TH = S.theme;
+const root = document.documentElement;
+root.style.setProperty("--bg", TH.bg); root.style.setProperty("--accent", TH.accent); root.style.setProperty("--accent-ink", TH.accentInk);
+root.style.setProperty("--body", '"' + TH.bodyFont + '", sans-serif');
+document.title = S.brand + " — " + S.tagline;
+{
+  const fams = [TH.displayFont, TH.bodyFont].filter(Boolean);
+  const noW = ["Anton", "UnifrakturCook", "Bebas Neue"];
+  const l = document.createElement("link"); l.rel = "stylesheet";
+  l.href = "https://fonts.googleapis.com/css2?" + fams.map((f) => "family=" + f.replace(/ /g, "+") + (noW.indexOf(f) >= 0 ? "" : ":wght@400;700;800")).join("&") + "&display=swap";
+  document.head.appendChild(l);
+}
+// accessible / SEO copy of everything the canvas says
+document.getElementById("sr").innerHTML = "<h1>" + esc(S.brand) + " — " + esc(S.tagline) + "</h1>" + B.map((b) => (b.text ? "<p>" + b.text.lines.map((x) => esc(x.t)).join(" ") + "</p>" : "")).join("");
+function esc(t) { const d = document.createElement("div"); d.textContent = t == null ? "" : String(t); return d.innerHTML; }
+
+// ---------------------------------------------------------------- timeline
+const starts = []; let TOTAL = 0;
+B.forEach((b) => { starts.push(TOTAL); TOTAL += b.dur; });
+window.__duration = TOTAL; window.__audio = S.audio || null; window.__cues = S.cues || []; window.__calibT = B[0].dur - (N > 1 ? B[0].transition.dur / 2 : 0); // a mid-transition moment: the costliest frame, used to time the server
+const smooth = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * t * (t * (t * 6 - 15) + 10); };
+const ease = (p) => { p = Math.max(-0.5, Math.min(1.5, p)); const c = Math.max(0, Math.min(1, p)); return (0.45 * p + 0.55 * (c * c * (3 - 2 * c))) + (p < 0 || p > 1 ? 0 : 0); };
+function locate(T) {
+  T = Math.max(0, Math.min(TOTAL - 1e-4, T));
+  let i = N - 1; for (let k = 0; k < N; k++) if (T < starts[k] + B[k].dur) { i = k; break; }
+  const b = B[i], u = T - starts[i], trd = i < N - 1 ? b.transition.dur : 0, trS = b.dur - trd;
+  const e = trd > 0 && u > trS ? smooth((u - trS) / trd) : 0;
+  return { i, b, u, e, trd, trS };
+}
+// camera: pure function of beat progress p (can go slightly negative for the incoming beat's pre-roll)
+const noise1 = (x) => Math.sin(x * 2.1) * 0.5 + Math.sin(x * 3.7 + 1.3) * 0.3 + Math.sin(x * 6.3 + 4.1) * 0.2;
+function camera(b, p, T) {
+  const a = b.camAmount, e = ease(p); let zoom = 1.06, tx = 0, ty = 0, rot = 0;
+  switch (b.camera) {
+    case "push": zoom += a * e; break;
+    case "pull": zoom += a * (1 - e); break;
+    case "pan-left": zoom += a * 0.5; tx = a * 0.55 * (0.5 - e); break;
+    case "pan-right": zoom += a * 0.5; tx = -a * 0.55 * (0.5 - e); break;
+    case "crane-up": zoom += a * 0.45; ty = a * 0.55 * (e - 0.5); break;
+    case "crane-down": zoom += a * 0.45; ty = -a * 0.55 * (e - 0.5); break;
+    case "orbit": zoom += a * 0.45; tx = a * 0.5 * Math.sin((e - 0.5) * Math.PI); rot = 0.05 * a * (e - 0.5); break;
+    default: /* handheld */ zoom += a * 0.3 * e; tx = a * 0.05 * noise1(T * 1.7); ty = a * 0.05 * noise1(T * 1.3 + 9); rot = a * 0.01 * noise1(T * 0.9 + 3);
+  }
+  return [zoom, tx, ty, rot];
+}
+const dofOf = (b, p) => {
+  const c = Math.max(0, Math.min(1, p)); let f = b.dofFocus;
+  if (b.rack === "in") f = b.dofFocus + (1 - c) * 0.45; else if (b.rack === "out") f = b.dofFocus + c * 0.45;
+  return [Math.min(1, f), b.dof];
+};
+
+// ---------------------------------------------------------------- renderer + shader
+const canvas = document.getElementById("gl");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, preserveDrawingBuffer: false });
+const dprCap = () => Math.min(window.devicePixelRatio || 1, 2);
+renderer.setPixelRatio(Math.min(dprCap(), 1.5));
+const scene = new THREE.Scene(), cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const IDS = S.images.map((im) => im.id);
+const blankTex = new THREE.DataTexture(new Uint8Array([8, 8, 10, 255]), 1, 1); blankTex.needsUpdate = true;
+const midDepth = new THREE.DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1); midDepth.needsUpdate = true;
+const imgTex = {}, depTex = {}, imgAsp = {};
+IDS.forEach((id) => { imgTex[id] = blankTex; depTex[id] = midDepth; imgAsp[id] = 1.5; });
+let loaded = 0, fontsOk = false;
+window.__assetsReady = () => loaded >= IDS.length && fontsOk && !!window.__ready;
+
+// pseudo-depth from a photo: lower / darker-and-detailed = nearer, hazy bright = far, plus a centre bias
+function makeDepth(img) {
+  const w = 96, h = Math.max(48, Math.round(96 / (img.width / img.height))), c = document.createElement("canvas"); c.width = w; c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true }); g.drawImage(img, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data, L = new Float32Array(w * h);
+  for (let k = 0; k < w * h; k++) L[k] = (d[k * 4] * 0.299 + d[k * 4 + 1] * 0.587 + d[k * 4 + 2] * 0.114) / 255;
+  const blur = (src, r) => { const o = new Float32Array(src.length), t = new Float32Array(src.length);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let s = 0, n = 0; for (let k = -r; k <= r; k++) { const xx = x + k; if (xx >= 0 && xx < w) { s += src[y * w + xx]; n++; } } t[y * w + x] = s / n; }
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { let s = 0, n = 0; for (let k = -r; k <= r; k++) { const yy = y + k; if (yy >= 0 && yy < h) { s += t[yy * w + x]; n++; } } o[y * w + x] = s / n; } return o; };
+  const Lb = blur(L, 5), det = new Float32Array(w * h);
+  for (let k = 0; k < w * h; k++) det[k] = Math.abs(L[k] - Lb[k]);
+  const Db = blur(det, 4); let dm = 1e-4; for (let k = 0; k < w * h; k++) dm = Math.max(dm, Db[k]);
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const k = y * w + x, v = y / (h - 1), cx = (x / (w - 1) - 0.5), cy = (v - 0.55), centre = Math.max(0, 1 - Math.sqrt(cx * cx * 1.4 + cy * cy) * 1.7);
+    out[k] = 0.36 * v + 0.22 * (1 - Lb[k]) + 0.24 * (Db[k] / dm) + 0.18 * centre;
+  }
+  const fin = blur(out, 3); let lo = 1, hi = 0; for (let k = 0; k < fin.length; k++) { lo = Math.min(lo, fin[k]); hi = Math.max(hi, fin[k]); }
+  const px = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const v = Math.round(255 * (fin[(h - 1 - y) * w + x] - lo) / Math.max(1e-4, hi - lo)); const o = (y * w + x) * 4; px[o] = px[o + 1] = px[o + 2] = v; px[o + 3] = 255; } // rows flipped: GL uv origin is bottom-left
+  const t = new THREE.DataTexture(px, w, h, THREE.RGBAFormat); t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter; t.needsUpdate = true; return t;
+}
+IDS.forEach((id) => {
+  const im = new Image(); im.crossOrigin = "anonymous";
+  im.onload = () => {
+    const t = new THREE.Texture(im); t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = 4; t.needsUpdate = true;
+    imgTex[id] = t; imgAsp[id] = im.width / im.height; depTex[id] = makeDepth(im); depTex[id].wrapS = depTex[id].wrapT = THREE.MirroredRepeatWrapping; loaded++; dirtyRender = true;
+  };
+  im.onerror = () => { loaded++; };
+  im.src = "images/" + id + ".webp";
+});
+Promise.all([document.fonts.load('400 40px "' + TH.displayFont + '"'), document.fonts.load('700 40px "' + TH.displayFont + '"'), document.fonts.load('400 20px "' + TH.bodyFont + '"'), document.fonts.load('700 20px "' + TH.bodyFont + '"')].map((p) => p.catch(() => null))).then(() => { fontsOk = true; textDirty = true; dirtyRender = true; });
+
+const textCanvas = document.createElement("canvas"), tctx = textCanvas.getContext("2d");
+const textTex = new THREE.CanvasTexture(textCanvas); textTex.minFilter = THREE.LinearFilter; textTex.generateMipmaps = false;
+const MOTIFS = { none: 0, embers: 1, dust: 2, rain: 3, snow: 4, sparks: 5, bubbles: 6 };
+const TRANS = { cut: 0, flow: 1, iris: 2, liquid: 3, burst: 4, pan: 5, ink: 6, glitch: 7, zoomthrough: 8, shatter: 9 };
+const hexv = (h) => { const n = parseInt(h.slice(1), 16); return new THREE.Vector3(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255); };
+const MOODS = { // shadow tint, highlight tint
+  "teal-orange": ["#0b3a4a", "#ffb37a"], "mono-red": ["#1a0000", "#ff5a4a"], gold: ["#2a1a00", "#ffd27a"], "cold-blue": ["#06182e", "#9fd0ff"], neon: ["#2a0a4a", "#4affea"], natural: ["#101418", "#fff3e0"], mono: ["#000000", "#ffffff"],
+};
+const mood = MOODS[S.grade.mood] || MOODS.natural;
+const U = {
+  uA: { value: blankTex }, uB: { value: blankTex }, uDA: { value: midDepth }, uDB: { value: midDepth }, uText: { value: textTex },
+  uRes: { value: new THREE.Vector2(1, 1) }, uAsp: { value: new THREE.Vector2(1.5, 1.5) }, uT: { value: 0 }, uE: { value: 0 }, uType: { value: 0 },
+  uCamA: { value: new THREE.Vector4(1, 0, 0, 0) }, uCamB: { value: new THREE.Vector4(1, 0, 0, 0) },
+  uFA: { value: new THREE.Vector4(0.5, 0.5, 0.5, 0) }, uFB: { value: new THREE.Vector4(0.5, 0.5, 0.5, 0) }, uPar: { value: new THREE.Vector2(1, 1) },
+  uGrade: { value: new THREE.Vector4(S.grade.contrast, S.grade.saturation, S.grade.grain, 0) }, uTintS: { value: hexv(mood[0]) }, uTintH: { value: hexv(mood[1]) }, uAccent: { value: hexv(TH.accent) },
+  uMotif: { value: new THREE.Vector4(MOTIFS[S.motif.type] || 0, S.motif.density, 1, 0) }, uBehind: { value: new THREE.Vector2(0, 0) }, uEnergy: { value: 0 },
+};
+const mat = new THREE.ShaderMaterial({
+  uniforms: U, vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+  fragmentShader: `
+precision highp float;
+uniform sampler2D uA, uB, uDA, uDB, uText;
+uniform vec2 uRes, uAsp, uPar, uBehind; uniform float uT, uE, uType, uEnergy;
+uniform vec4 uCamA, uCamB, uFA, uFB, uGrade, uMotif; uniform vec3 uTintS, uTintH, uAccent;
+varying vec2 vUv;
+const float PI = 3.14159265;
+float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+vec2 hash2(vec2 p){ return vec2(hash(p), hash(p + 17.31)); }
+float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1,0)), f.x), mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y); }
+float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 4; i++){ v += a * vnoise(p); p = p * 2.02 + vec2(17.3, 9.1); a *= 0.5; } return v; }
+vec2 coverUV(vec2 uv, float ia){ float sa = uRes.x / uRes.y; vec2 s = sa > ia ? vec2(1.0, ia / sa) : vec2(sa / ia, 1.0); return (uv - 0.5) * s + 0.5; }
+
+// one photograph seen through the camera: depth-aware zoom + pan (parallax), rotation, depth of field, optional chromatic split
+vec3 layer(sampler2D tx, sampler2D dx, vec2 uv, float ia, vec4 cm, vec4 f, float par, float ca, out float dep){
+  vec2 fc = f.xy;
+  float d0 = texture2D(dx, coverUV(uv, ia)).r;
+  vec2 q = uv - fc;
+  float c = cos(cm.w), s = sin(cm.w); q = mat2(c, -s, s, c) * q;
+  float z = cm.x * (1.0 + (d0 - 0.5) * (cm.x - 1.0) * 1.8);   // nearer surfaces zoom faster: a dolly, not a scale
+  q = q / max(z, 0.3) + fc - cm.yz * (0.55 + (d0 - 0.5) * par);
+  vec2 cuv = coverUV(q, ia);
+  dep = d0;
+  float r = f.w * abs(d0 - f.z) * 0.018;
+  vec3 col;
+  if (r > 0.0007){
+    col = vec3(0.0); float ga = 2.39996;
+    for (int i = 0; i < 9; i++){ float fi = float(i); float rr = r * sqrt((fi + 0.5) / 9.0); float a = fi * ga; col += texture2D(tx, cuv + vec2(cos(a), sin(a)) * rr * vec2(uRes.y / uRes.x, 1.0)).rgb; }
+    col /= 9.0;
+  } else col = texture2D(tx, cuv).rgb;
+  if (ca > 0.001){ vec2 o = normalize(q - fc + 1e-4) * ca * 0.006; col.r = texture2D(tx, cuv + o).r; col.b = texture2D(tx, cuv - o).b; }
+  return col;
+}
+// procedural particle field with three depth planes that parallax against the camera
+vec3 motif(vec2 uv, vec2 camMove){
+  float ty = uMotif.x; if (ty < 0.5) return vec3(0.0);
+  float asp = uRes.x / uRes.y, dens = uMotif.y; vec3 acc = vec3(0.0);
+  for (int L = 0; L < 3; L++){
+    float fl = float(L), depth = 0.35 + fl * 0.32, sc = 7.0 + fl * 9.0;
+    vec2 vel = ty < 1.5 ? vec2(0.02, 0.10) : ty < 2.5 ? vec2(0.02, 0.012) : ty < 3.5 ? vec2(-0.10, -1.4) : ty < 4.5 ? vec2(0.03, -0.16) : ty < 5.5 ? vec2(0.05, 0.42) : vec2(0.0, 0.16);
+    vec2 p = (uv - camMove * depth * 0.5) * vec2(asp, 1.0) * sc + vel * uT * sc * (0.6 + depth) + vec2(fl * 13.7, fl * 5.1);
+    vec2 id = floor(p), f = fract(p) - 0.5; float h = hash(id + fl);
+    if (h > dens * (0.5 - fl * 0.08)) continue;
+    vec2 o = (hash2(id) - 0.5) * 0.6; if (ty > 0.5 && ty < 1.5) o.x += sin(uT * 1.3 + h * 40.0) * 0.18;
+    vec2 dv = f - o; float rad = (ty > 2.5 && ty < 3.5) ? 0.03 : 0.05 + (2.0 - fl) * 0.03;
+    float m;
+    if (ty > 2.5 && ty < 3.5) m = smoothstep(rad, 0.0, abs(dv.x)) * smoothstep(0.42, 0.0, abs(dv.y)) * 0.5;   // rain: streaks
+    else m = smoothstep(rad, 0.0, length(dv)) * (0.55 + 0.45 * sin(uT * (1.5 + h * 3.0) + h * 30.0));
+    vec3 c = ty < 1.5 ? vec3(1.0, 0.45, 0.12) : ty < 2.5 ? vec3(0.9, 0.9, 0.85) : ty < 3.5 ? vec3(0.65, 0.75, 0.9) : ty < 4.5 ? vec3(0.95) : ty < 5.5 ? vec3(1.0, 0.8, 0.35) : vec3(0.7, 0.9, 1.0);
+    acc += c * m * (1.1 - fl * 0.25);
+  }
+  return acc;
+}
+void main(){
+  vec2 uv = vUv; float asp = uRes.x / uRes.y; float e = uE; vec3 col; float m = 0.0, dA = 0.5, dB = 0.5; vec3 add = vec3(0.0); float ca = 0.0;
+  vec2 camMove = mix(uCamA.yz, uCamB.yz, e);
+  if (e <= 0.001){
+    col = layer(uA, uDA, uv, uAsp.x, uCamA, uFA, uPar.x, 0.0, dA); dB = dA;
+  } else {
+    vec2 uvA = uv, uvB = uv; vec4 cA = uCamA, cB = uCamB; float sh = sin(PI * e);
+    if (uType < 0.5){                                   // 0 cut: hard cut through a white-hot flash frame
+      m = step(0.5, e); add = vec3(1.0, 0.95, 0.9) * pow(sh, 4.0) * 0.9; ca = sh;
+    } else if (uType < 1.5){                            // 1 flow: noise-warped dissolve that drags the pixels along
+      float n = fbm(uv * 2.6 + vec2(uT * 0.1, 0.0)); m = smoothstep(n - 0.12, n + 0.12, e * 1.4 - 0.2);
+      vec2 g = vec2(fbm(uv * 3.0 + 1.0), fbm(uv * 3.0 + 7.0)) - 0.5; uvA += g * 0.16 * e; uvB -= g * 0.16 * (1.0 - e); cA.x *= 1.0 + 0.25 * e; cB.x *= 1.0 + 0.2 * (1.0 - e);
+      add = smoothstep(0.1, 0.0, abs(n - (e * 1.4 - 0.2))) * uAccent * 0.5 * sh;
+    } else if (uType < 2.5){                            // 2 iris: the next scene opens like a lens from the focal point
+      vec2 c = uFB.xy; vec2 d = (uv - c) * vec2(asp, 1.0); float far = length(max(c, 1.0 - c) * vec2(asp, 1.0)) * 1.1;
+      float n = fbm(uv * 3.0 + uT * 0.2) - 0.5; float r = e * far * 1.1; float dist = length(d) + n * 0.12 * sh;
+      m = smoothstep(r, r - 0.05, dist); add = smoothstep(0.06, 0.0, abs(dist - r)) * sh * uAccent * 1.1;
+      uvA = c + (uv - c) / (1.0 + 1.3 * e * e); uvB = c + (uv - c) / (0.55 + 0.45 * e);
+    } else if (uType < 3.5){                            // 3 liquid: a rippling surface rises and refracts the new image
+      float wav = sin(uv.x * 7.0 + uT * 1.6) * 0.018 + sin(uv.x * 17.0 - uT * 2.3) * 0.008 + (fbm(vec2(uv.x * 3.0, uT * 0.2)) - 0.5) * 0.07;
+      float surf = e * 1.3 - 0.1 + wav; m = smoothstep(surf + 0.012, surf - 0.012, uv.y); float depth = clamp(surf - uv.y, 0.0, 1.0);
+      uvB += vec2(sin(uv.y * 30.0 + uT * 2.0), cos(uv.x * 25.0 + uT * 1.6)) * 0.006 * (1.0 - e) * (0.4 + depth); uvA += vec2(0.0, (1.0 - m) * e * 0.07);
+      add = smoothstep(0.035, 0.0, abs(uv.y - surf)) * vec3(0.9) * 0.5 * sh;
+    } else if (uType < 4.5){                            // 4 burst: an energy flare blooms out of the focal point
+      vec2 s = uFB.xy; vec2 d = (uv - s) * vec2(asp, 1.0); float dist = length(d); float n = fbm(uv * 3.0 + vec2(0.0, uT * 0.2)) - 0.5;
+      float r = e * 1.7; m = smoothstep(r, r - 0.14, dist + n * 0.22);
+      uvB = s + (uv - s) / (1.0 + 0.6 * (1.0 - e)); uvA = s + (uv - s) / (1.0 + 0.25 * e);
+      add = mix(vec3(1.0, 0.85, 0.6), uAccent, 0.5) * (exp(-dist * 3.2) * sh * 0.55 + smoothstep(0.08, 0.0, abs(dist + n * 0.22 - r)) * 0.45 * sh); ca = sh * 0.8;
+    } else if (uType < 5.5){                            // 5 pan: whip pan with motion blur and a fog seam
+      float edge = 1.06 - e * 1.4 + (fbm(vec2(uv.y * 3.0, uT * 0.3)) - 0.5) * 0.14; m = 1.0 - smoothstep(edge + 0.02, edge - 0.02, uv.x);
+      uvA.x += e * 0.4; uvB.x -= (1.0 - e) * 0.4; add = smoothstep(0.2, 0.0, abs(uv.x - edge)) * (0.4 + fbm(uv * 4.0 + uT * 0.1)) * sh * vec3(0.85) * 0.3;
+    } else if (uType < 6.5){                            // 6 ink: dark ink bleeds across the frame
+      float nn = fbm(uv * 2.2 + vec2(uT * 0.05, 0.0)) * 0.8 + fbm(uv * 5.0 + 3.0) * 0.2; float th = e * 1.45 - 0.2; m = 1.0 - smoothstep(th - 0.08, th + 0.08, nn);
+      vec2 g = vec2(fbm(uv * 3.0 + 1.0), fbm(uv * 3.0 + 7.0)) - 0.5; uvA += g * 0.15 * e; uvB -= g * 0.15 * (1.0 - e);
+      add = -vec3(0.5) * smoothstep(0.16, 0.0, abs(nn - th)) * sh + smoothstep(0.05, 0.0, abs(nn - th)) * uAccent * 0.5 * sh;
+    } else if (uType < 7.5){                            // 7 glitch: sliced, channel-split digital tear
+      float row = floor(uv.y * 26.0 + floor(uT * 20.0) * 3.0); float r = hash(vec2(row, floor(uT * 20.0))); float on = step(0.72, r) * sh * 1.6;
+      uvA.x += (r - 0.5) * 0.25 * on; uvB.x += (r - 0.5) * 0.25 * on; m = step(hash(vec2(row * 0.37, 3.0)), e); ca = 0.6 + sh * 1.6; add = vec3(0.08) * on;
+    } else if (uType < 8.5){                            // 8 zoomthrough: fly through the old scene into the new one
+      vec2 c = uFA.xy; uvA = c + (uv - c) / (1.0 + 3.0 * e * e * e); uvB = uFB.xy + (uv - uFB.xy) / (0.35 + 0.65 * smoothstep(0.0, 1.0, e));
+      m = smoothstep(0.55, 0.8, e); add = vec3(1.0) * pow(sh, 6.0) * 0.55; ca = sh;
+    } else {                                            // 9 shatter: the frame breaks into drifting shards that reveal the next scene
+      vec2 cell = floor(uv * vec2(7.0 * asp, 7.0)); float hh = hash(cell); float t0 = hh * 0.55; float p = smoothstep(t0, t0 + 0.4, e);
+      vec2 dir = (hash2(cell) - 0.5); uvA += dir * p * 0.35; m = step(0.5, p); add = vec3(1.0) * smoothstep(0.35, 0.5, p) * (1.0 - smoothstep(0.5, 0.65, p)) * 0.6; ca = sh * 0.7;
+    }
+    vec3 cAcol = layer(uA, uDA, uvA, uAsp.x, cA, uFA, uPar.x, ca, dA);
+    vec3 cBcol = layer(uB, uDB, uvB, uAsp.y, cB, uFB, uPar.y, ca, dB);
+    col = mix(cAcol, cBcol, m) + add;
+  }
+  float dm = mix(dA, dB, m);
+  col += motif(uv, camMove) * (1.0 - 0.3 * uEnergy);
+  // grade: contrast curve, saturation, split toning
+  col = (col - 0.5) * uGrade.x + 0.5; float g = dot(col, vec3(0.299, 0.587, 0.114)); col = mix(vec3(g), col, uGrade.y);
+  col += uTintS * (1.0 - smoothstep(0.0, 0.55, g)) * 0.16 + uTintH * smoothstep(0.45, 1.0, g) * 0.12;
+  // text, composited into the scene: foreground depth can pass in front of it
+  vec4 tx = texture2D(uText, uv); float occ = smoothstep(0.62, 0.9, dm) * mix(uBehind.x, uBehind.y, m);
+  col = mix(col, tx.rgb, tx.a * (1.0 - occ * 0.93));
+  // vignette + film grain
+  float v = length((uv - 0.5) * vec2(1.0, 0.85)); col *= 1.0 - 0.5 * smoothstep(0.35, 0.95, v);
+  col += (hash(uv * uRes + floor(uT * 24.0)) - 0.5) * uGrade.z * 0.16;
+  gl_FragColor = vec4(max(col, 0.0), 1.0);
+}`,
+});
+scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+
+// ---------------------------------------------------------------- kinetic typography (Canvas2D, one glyph at a time)
+const easeOutCubic = (x) => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 3);
+const easeOutBack = (x) => { x = Math.max(0, Math.min(1, x)); const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+const easeOutBounce = (x) => { x = Math.max(0, Math.min(1, x)); const n1 = 7.5625, d1 = 2.75; if (x < 1 / d1) return n1 * x * x; if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75; if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375; return n1 * (x -= 2.625 / d1) * x + 0.984375; };
+const SIZES = { xl: 0.215, l: 0.15, m: 0.085, s: 0.042 };
+const rnd = (a, b) => { const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x); };
+let textDirty = true, lastTextKey = "";
+function drawBeatText(b, bi, u, alphaMul) {
+  const tx = b.text; if (!tx || !tx.lines.length) return false;
+  const W = textCanvas.width, H = textCanvas.height, R = Math.min(W, H * 0.62), d0 = tx.delay;
+  const inDur = 0.7, outStart = b.dur - (bi < N - 1 ? b.transition.dur : 0) - 0.05, outP = Math.max(0, Math.min(1, (u - outStart) / 0.25));
+  if (u < d0 - 0.02 || outP >= 1) return false;
+  const font = (px, weight) => weight + " " + Math.round(px) + 'px "' + TH.displayFont + '", Impact, sans-serif';
+  // layout
+  const maxW = W * 0.88, lines = tx.lines.map((ln) => {
+    let px = R * SIZES[ln.s] * (tx.upper ? 1 : 0.92); const wt = TH.displayWeight || 700; tctx.font = font(px, wt);
+    const label = tx.upper ? ln.t.toUpperCase() : ln.t; let wpx = tctx.measureText(label).width; if (wpx > maxW) { px *= maxW / wpx; tctx.font = font(px, wt); wpx = tctx.measureText(label).width; }
+    return { label, px, w: wpx, a: ln.a, wt, isSub: ln.s === "s" };
+  });
+  const gap = R * 0.02, blockH = lines.reduce((s, l) => s + l.px * 1.02, 0) + gap * (lines.length - 1);
+  let y = H * tx.y - blockH / 2; const alignX = tx.align === "left" ? W * 0.07 : tx.align === "right" ? W * 0.93 : W * tx.x;
+  let charIndex = 0;
+  lines.forEach((ln, li) => {
+    const lh = ln.px * 1.02; y += lh;
+    const baseX = tx.align === "left" ? alignX : tx.align === "right" ? alignX - ln.w : alignX - ln.w / 2;
+    tctx.font = ln.isSub ? '700 ' + Math.round(ln.px) + 'px "' + TH.bodyFont + '", sans-serif' : font(ln.px, ln.wt);
+    if (ln.isSub) { tctx.font = '700 ' + Math.round(ln.px * 1.15) + 'px "' + TH.bodyFont + '", sans-serif'; }
+    const chars = [...ln.label]; const stag = ln.isSub ? 0 : 0.028; const color = ln.a ? TH.accentLight : "#ffffff";
+    tctx.save(); tctx.textBaseline = "alphabetic";
+    if (tx.fx === "rise") { tctx.beginPath(); tctx.rect(baseX - ln.px * 0.2, y - lh * 0.95, ln.w + ln.px * 0.4, lh * 1.12); tctx.clip(); }
+    for (let ci = 0; ci < chars.length; ci++) {
+      const ch = chars[ci]; if (ch === " ") { charIndex++; continue; }
+      const cx = baseX + tctx.measureText(chars.slice(0, ci).join("")).width, cw = tctx.measureText(ch).width;
+      const p = (u - d0 - (charIndex + li * 2) * stag) / inDur; const pin = Math.max(0, Math.min(1, p));
+      if (pin <= 0) { charIndex++; continue; }
+      let dx = 0, dy = 0, sx = 1, sy = 1, rot = 0, al = 1, blur = 0, fake = 0;
+      switch (tx.fx) {
+        case "rise": dy = (1 - easeOutCubic(pin)) * lh * 1.05; al = Math.min(1, pin * 3); break;
+        case "carve": { const wipe = pin * 1.25 - (cx - baseX) / Math.max(1, ln.w) * 0.55; al = Math.max(0, Math.min(1, wipe * 2.2)); dx = (1 - al) * -ln.px * 0.25; blur = (1 - al) * 6; break; }
+        case "pop": { const k = easeOutBack(pin); sx = sy = 1.9 - 0.9 * k; al = Math.min(1, pin * 3.5); blur = (1 - pin) * 14; break; }
+        case "scatter": { const k = easeOutCubic(pin); dx = (rnd(bi, ci + li * 40) - 0.5) * R * 1.6 * (1 - k); dy = (rnd(ci + li * 40, bi + 3) - 0.5) * R * 1.6 * (1 - k); rot = (rnd(bi + 1, ci) - 0.5) * 3 * (1 - k); al = Math.min(1, pin * 2.5); break; }
+        case "glitch": { const f = Math.floor(u * 30); const jit = pin < 0.7 ? 1 : 0; dx = jit * (rnd(f, ci + li * 9) - 0.5) * ln.px * 0.7; dy = jit * (rnd(ci + li * 9, f) - 0.5) * ln.px * 0.25; al = pin < 0.7 ? (rnd(f, ci * 3) > 0.35 ? 1 : 0.15) : 1; fake = 1; break; }
+        case "drip": { const k = easeOutBounce(pin); dy = -(1 - k) * H * 0.55; al = Math.min(1, pin * 6); break; }
+        default: { blur = (1 - pin) * 22; sx = sy = 1.06 - 0.06 * pin; al = pin; } // "focus": racks into sharpness
+      }
+      if (outP > 0) { al *= 1 - outP; blur += outP * 12; dy -= outP * lh * 0.35; sx *= 1 + outP * 0.06; sy *= 1 + outP * 0.06; }
+      al *= alphaMul; if (al <= 0.003) { charIndex++; continue; }
+      tctx.save(); tctx.translate(cx + cw / 2 + dx, y + dy - lh * 0.3); tctx.rotate(rot); tctx.scale(sx, sy); tctx.globalAlpha = al;
+      if (blur > 0.4) tctx.filter = "blur(" + blur.toFixed(1) + "px)";
+      tctx.shadowColor = "rgba(0,0,0,0.75)"; tctx.shadowBlur = ln.px * 0.28; tctx.shadowOffsetY = ln.px * 0.03;
+      if (fake) { tctx.fillStyle = "rgba(255,40,60,0.9)"; tctx.fillText(ch, -cw / 2 - ln.px * 0.04, lh * 0.3); tctx.fillStyle = "rgba(40,220,255,0.9)"; tctx.fillText(ch, -cw / 2 + ln.px * 0.04, lh * 0.3); }
+      tctx.fillStyle = color; tctx.fillText(ch, -cw / 2, lh * 0.3);
+      tctx.restore(); charIndex++;
+    }
+    tctx.restore(); y += gap;
+  });
+  if (tx.fx === "carve") { // the light that carves the words: a bright edge that sweeps across the block
+    const pr = Math.max(0, Math.min(1, (u - d0) / (inDur * 1.1)));
+    if (pr > 0 && pr < 1 && outP === 0) { const xx = W * 0.05 + pr * W * 0.9, gr = tctx.createLinearGradient(xx - 90, 0, xx + 30, 0); gr.addColorStop(0, "rgba(255,255,255,0)"); gr.addColorStop(0.85, "rgba(255,255,255," + (0.55 * alphaMul) + ")"); gr.addColorStop(1, "rgba(255,255,255,0)"); tctx.save(); tctx.globalCompositeOperation = "source-atop"; tctx.fillStyle = gr; tctx.fillRect(xx - 90, H * tx.y - blockH / 2 - 20, 130, blockH + 40); tctx.restore(); }
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------- frame
+let Tcur = 0, Ttarget = 0, seekMode = false, dirtyRender = true;
+function sizeAll() {
+  const w = Math.max(2, window.innerWidth), h = Math.max(2, window.innerHeight);
+  renderer.setSize(w, h, false); U.uRes.value.set(canvas.width, canvas.height);
+  textCanvas.width = Math.min(1440, Math.round(w * dprCap())); textCanvas.height = Math.round(textCanvas.width * h / w); textDirty = true; dirtyRender = true;
+}
+const PX_PER_SEC = 230;
+function layoutSpacer() { document.getElementById("spacer").style.height = Math.round(TOTAL * PX_PER_SEC + window.innerHeight) + "px"; }
+function render(T) {
+  const L = locate(T), b = L.b, nxt = B[Math.min(L.i + 1, N - 1)], e = L.e;
+  const pA = L.u / b.dur, pB = -(1 - e) * 0.1;
+  const camA = camera(b, pA, T), camB = camera(nxt, pB, T + 0.3);
+  const fa = dofOf(b, pA), fb = dofOf(nxt, Math.max(0, pB));
+  U.uA.value = imgTex[b.image]; U.uDA.value = depTex[b.image]; U.uB.value = imgTex[nxt.image]; U.uDB.value = depTex[nxt.image];
+  U.uAsp.value.set(imgAsp[b.image], imgAsp[nxt.image]);
+  U.uCamA.value.set(...camA); U.uCamB.value.set(...camB);
+  U.uFA.value.set(b.focus[0], b.focus[1], fa[0], fa[1]); U.uFB.value.set(nxt.focus[0], nxt.focus[1], fb[0], fb[1]);
+  U.uPar.value.set(2.2 + b.camAmount * 4, 2.2 + nxt.camAmount * 4);
+  U.uE.value = e; U.uType.value = L.i < N - 1 ? TRANS[b.transition.type] : 0; U.uT.value = T;
+  U.uBehind.value.set(b.text && b.text.behind ? 1 : 0, nxt.text && nxt.text.behind ? 1 : 0);
+  // text of the outgoing beat lives until its exit, the incoming beat's text starts after its own delay
+  const key = L.i + ":" + (Math.round(L.u * 60)) + ":" + textCanvas.width;
+  if (key !== lastTextKey || textDirty) {
+    tctx.clearRect(0, 0, textCanvas.width, textCanvas.height);
+    const drewA = drawBeatText(b, L.i, L.u, 1);
+    if (L.i > 0 && L.u < 0.9) drawBeatText(B[L.i - 1], L.i - 1, B[L.i - 1].dur + L.u, 1); // exit tail that overlaps the boundary
+    textTex.needsUpdate = true; lastTextKey = key; textDirty = false;
+  }
+  const last = L.i === N - 1;
+  const ctaEl = document.getElementById("cta"); if (S.cta) { ctaEl.textContent = S.cta; ctaEl.classList.toggle("on", last && L.u > 0.9); }
+  renderer.render(scene, cam);
+}
+// energy: how much the picture is changing at time t (0 calm .. 1 busy) - the recorder spends its frames where this is high
+window.__energy = (t) => {
+  const L = locate(t), b = L.b; let en = 0.15 + b.camAmount * 0.6;
+  if (L.e > 0 && L.e < 1) en = 1;
+  if (b.text && L.u > b.text.delay - 0.05 && L.u < b.text.delay + 0.9) en = Math.max(en, 0.85);
+  if (b.text && L.u > b.dur - (L.i < N - 1 ? b.transition.dur : 0) - 0.35) en = Math.max(en, 0.8);
+  if (L.i === 0 && t < 0.4) en = 1;
+  return en;
+};
+window.__seek = (t) => { seekMode = true; document.getElementById("hint").style.opacity = 0; Ttarget = Tcur = Math.max(0, Math.min(TOTAL, t)); window.__ready = true; render(Tcur); };
+window.addEventListener("resize", () => { sizeAll(); layoutSpacer(); });
+sizeAll(); layoutSpacer(); render(0); window.__ready = true;
+let lastNow = performance.now();
+function loop(now) {
+  requestAnimationFrame(loop);
+  if (seekMode) return;
+  const dt = Math.max(0, Math.min(0.1, (now - lastNow) / 1000)); lastNow = now;
+  Ttarget = Math.max(0, Math.min(TOTAL, (window.scrollY || 0) / PX_PER_SEC));
+  Tcur += (Ttarget - Tcur) * (1 - Math.exp(-dt * 7));
+  if (Math.abs(Ttarget - Tcur) < 1e-4) Tcur = Ttarget;
+  document.getElementById("hint").style.opacity = Ttarget > 0.3 ? 0 : 0.7;
+  render(Tcur);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

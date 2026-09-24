@@ -39,13 +39,13 @@ const CLOUDFLARE_TIMEOUT_MS = 30000;
  * validation-retry loop already retries on failure with corrective
  * feedback, matching the same convention callOpenRouterRaw uses.
  */
-async function callCloudflareRaw(systemPrompt, userMessage, { jsonMode = true, maxTokens = 1500, temperature = 0.7, model = CLOUDFLARE_MODEL } = {}) {
+async function callCloudflareRaw(systemPrompt, userMessage, { jsonMode = true, maxTokens = 1500, temperature = 0.7, model = CLOUDFLARE_MODEL, timeoutMs = CLOUDFLARE_TIMEOUT_MS } = {}) {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const apiToken = process.env.CLOUDFLARE_API_TOKEN;
   if (!accountId || !apiToken) throw new Error('CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN is not set');
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CLOUDFLARE_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   let res;
   try {
@@ -70,7 +70,7 @@ async function callCloudflareRaw(systemPrompt, userMessage, { jsonMode = true, m
       }),
     });
   } catch (err) {
-    if (err.name === 'AbortError') throw new Error(`Cloudflare Workers AI request timed out after ${CLOUDFLARE_TIMEOUT_MS}ms`);
+    if (err.name === 'AbortError') throw new Error(`Cloudflare Workers AI request timed out after ${timeoutMs}ms`);
     throw err;
   } finally {
     clearTimeout(timeout);

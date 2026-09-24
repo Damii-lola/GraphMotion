@@ -1,0 +1,558 @@
+{
+  "brand": "Liquid Death",
+  "tagline": "Murder Your Thirst",
+  "cta": "Kill Your Thirst Now",
+  "imageStyle": "high contrast cinematic darkness",
+  "theme": {
+    "look": "metal",
+    "displayFont": "Anton",
+    "displayWeight": 400,
+    "bodyFont": "Barlow",
+    "upper": true,
+    "bg": "#0b0b0c",
+    "accent": "#ff3737",
+    "accentInk": "#0a0a0a",
+    "accentLight": "#ff7777"
+  },
+  "grade": {
+    "mood": "mono-red",
+    "contrast": 1.2,
+    "saturation": 0.8,
+    "grain": 0.5
+  },
+  "motif": {
+    "type": "embers",
+    "density": 0.5
+  },
+  "music": {
+    "style": "dark drone",
+    "bpm": 100,
+    "key": "G"
+  },
+  "images": [
+    {
+      "id": "darkforest",
+      "prompt": "dramatic dark forest with skull-like trees, misty atmosphere, warm backlight, black and white colour"
+    },
+    {
+      "id": "tallboy",
+      "prompt": "hero shot of Liquid Death tallboy can on a rugged stone surface, centred, rim-lit, bold typography"
+    },
+    {
+      "id": "skatepark",
+      "prompt": "skateboarder in mid-air at a dark skatepark, bold shadows, high contrast, monochrome colours"
+    },
+    {
+      "id": "severedlime",
+      "prompt": "close-up of Severed Lime flavour can on a dark metal surface, high contrast, bold lighting, detailed texture"
+    },
+    {
+      "id": "mountainwater",
+      "prompt": "still mountain water in a glass on a rocky mountain surface, natural light, serene atmosphere, monochrome colours"
+    },
+    {
+      "id": "festival",
+      "prompt": "crowd of people at a music festival, dark and bold colours, high energy atmosphere, bold lighting"
+    },
+    {
+      "id": "plasticwaste",
+      "prompt": "dark and gritty image of plastic waste in the ocean, bold shadows, high contrast, monochrome colours"
+    },
+    {
+      "id": "liquiddeathcan",
+      "prompt": "detailed shot of Liquid Death can with the brand name prominent, bold typography, high contrast, monochrome colours"
+    }
+  ],
+  "beats": [
+    {
+      "image": "darkforest",
+      "dur": 2.55,
+      "camera": "crane-up",
+      "camAmount": 0.25,
+      "focus": [
+        0.5,
+        0.7
+      ],
+      "dof": 0.5,
+      "dofFocus": 0.7,
+      "rack": "in",
+      "transition": {
+        "type": "iris",
+        "dur": 0.6
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "Murder",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "Your Thirst",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "rise",
+        "x": 0.5,
+        "y": 0.3,
+        "align": "center",
+        "delay": 0.2,
+        "behind": false,
+        "upper": true
+      }
+    },
+    {
+      "image": "tallboy",
+      "dur": 2.14,
+      "camera": "push",
+      "camAmount": 0.15,
+      "focus": [
+        0.5,
+        0.5
+      ],
+      "dof": 0.8,
+      "dofFocus": 0.5,
+      "rack": "out",
+      "transition": {
+        "type": "flow",
+        "dur": 0.4
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "Liquid",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "Death",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "carve",
+        "x": 0.5,
+        "y": 0.6,
+        "align": "center",
+        "delay": 0.3,
+        "behind": false,
+        "upper": true
+      }
+    },
+    {
+      "image": "skatepark",
+      "dur": 3.01,
+      "camera": "pan-left",
+      "camAmount": 0.2,
+      "focus": [
+        0.3,
+        0.4
+      ],
+      "dof": 0.4,
+      "dofFocus": 0.4,
+      "rack": "none",
+      "transition": {
+        "type": "glitch",
+        "dur": 0.5
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "333M",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "Retail Revenue",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "pop",
+        "x": 0.4,
+        "y": 0.4,
+        "align": "left",
+        "delay": 0.4,
+        "behind": true,
+        "upper": true
+      }
+    },
+    {
+      "image": "severedlime",
+      "dur": 2.26,
+      "camera": "crane-down",
+      "camAmount": 0.12,
+      "focus": [
+        0.5,
+        0.3
+      ],
+      "dof": 0.6,
+      "dofFocus": 0.3,
+      "rack": "in",
+      "transition": {
+        "type": "liquid",
+        "dur": 0.5
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "Severed",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "Lime Flavour",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "scatter",
+        "x": 0.5,
+        "y": 0.22,
+        "align": "center",
+        "delay": 0.3,
+        "behind": false,
+        "upper": true
+      }
+    },
+    {
+      "image": "mountainwater",
+      "dur": 2.55,
+      "camera": "pan-right",
+      "camAmount": 0.18,
+      "focus": [
+        0.7,
+        0.6
+      ],
+      "dof": 0.7,
+      "dofFocus": 0.6,
+      "rack": "out",
+      "transition": {
+        "type": "zoomthrough",
+        "dur": 0.6
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "Mountain",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "Water",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "drip",
+        "x": 0.6,
+        "y": 0.5,
+        "align": "right",
+        "delay": 0.4,
+        "behind": false,
+        "upper": true
+      }
+    },
+    {
+      "image": "festival",
+      "dur": 2.26,
+      "camera": "handheld",
+      "camAmount": 0.22,
+      "focus": [
+        0.4,
+        0.5
+      ],
+      "dof": 0.5,
+      "dofFocus": 0.5,
+      "rack": "none",
+      "transition": {
+        "type": "shatter",
+        "dur": 0.5
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "100K",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "Retail Doors",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "glitch",
+        "x": 0.5,
+        "y": 0.4,
+        "align": "center",
+        "delay": 0.3,
+        "behind": false,
+        "upper": true
+      }
+    },
+    {
+      "image": "plasticwaste",
+      "dur": 2.9,
+      "camera": "crane-up",
+      "camAmount": 0.25,
+      "focus": [
+        0.5,
+        0.7
+      ],
+      "dof": 0.8,
+      "dofFocus": 0.7,
+      "rack": "in",
+      "transition": {
+        "type": "burst",
+        "dur": 0.6
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "Death",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "To Plastic",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "focus",
+        "x": 0.5,
+        "y": 0.3,
+        "align": "center",
+        "delay": 0.4,
+        "behind": false,
+        "upper": true
+      }
+    },
+    {
+      "image": "liquiddeathcan",
+      "dur": 3.59,
+      "camera": "push",
+      "camAmount": 0.15,
+      "focus": [
+        0.5,
+        0.5
+      ],
+      "dof": 0.9,
+      "dofFocus": 0.5,
+      "rack": "out",
+      "transition": {
+        "type": "ink",
+        "dur": 0.7
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "Liquid",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "Death",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "pop",
+        "x": 0.5,
+        "y": 0.6,
+        "align": "center",
+        "delay": 0.5,
+        "behind": false,
+        "upper": true
+      }
+    },
+    {
+      "image": "darkforest",
+      "dur": 3.24,
+      "camera": "pan-left",
+      "camAmount": 0.2,
+      "focus": [
+        0.3,
+        0.4
+      ],
+      "dof": 0.4,
+      "dofFocus": 0.4,
+      "rack": "none",
+      "transition": {
+        "type": "cut",
+        "dur": 0.3
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "Kill",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "Your Thirst Now",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "rise",
+        "x": 0.4,
+        "y": 0.4,
+        "align": "left",
+        "delay": 0.4,
+        "behind": true,
+        "upper": true
+      }
+    }
+  ],
+  "cues": [
+    {
+      "t": 0.22,
+      "kind": "tick",
+      "gain": 0.28
+    },
+    {
+      "t": 1.8999999999999997,
+      "kind": "whoosh",
+      "dur": 0.85,
+      "gain": 0.5
+    },
+    {
+      "t": 2.8699999999999997,
+      "kind": "tick",
+      "gain": 0.28
+    },
+    {
+      "t": 4.239999999999999,
+      "kind": "whoosh",
+      "dur": 0.65,
+      "gain": 0.5
+    },
+    {
+      "t": 5.109999999999999,
+      "kind": "impact",
+      "gain": 0.55
+    },
+    {
+      "t": 7.1499999999999995,
+      "kind": "whoosh",
+      "dur": 0.75,
+      "gain": 0.5
+    },
+    {
+      "t": 7.475,
+      "kind": "glitch",
+      "gain": 0.7
+    },
+    {
+      "t": 8.02,
+      "kind": "impact",
+      "gain": 0.55
+    },
+    {
+      "t": 9.409999999999998,
+      "kind": "whoosh",
+      "dur": 0.75,
+      "gain": 0.5
+    },
+    {
+      "t": 10.379999999999999,
+      "kind": "impact",
+      "gain": 0.55
+    },
+    {
+      "t": 11.009999999999998,
+      "kind": "riser",
+      "dur": 0.9,
+      "gain": 0.32
+    },
+    {
+      "t": 11.859999999999998,
+      "kind": "whoosh",
+      "dur": 0.85,
+      "gain": 0.5
+    },
+    {
+      "t": 12.239999999999998,
+      "kind": "impact",
+      "gain": 0.7
+    },
+    {
+      "t": 12.829999999999998,
+      "kind": "impact",
+      "gain": 0.55
+    },
+    {
+      "t": 14.219999999999997,
+      "kind": "whoosh",
+      "dur": 0.75,
+      "gain": 0.5
+    },
+    {
+      "t": 14.544999999999998,
+      "kind": "impact",
+      "gain": 0.7
+    },
+    {
+      "t": 15.189999999999998,
+      "kind": "tick",
+      "gain": 0.28
+    },
+    {
+      "t": 16.169999999999998,
+      "kind": "riser",
+      "dur": 0.9,
+      "gain": 0.32
+    },
+    {
+      "t": 17.019999999999996,
+      "kind": "whoosh",
+      "dur": 0.85,
+      "gain": 0.5
+    },
+    {
+      "t": 17.4,
+      "kind": "impact",
+      "gain": 0.7
+    },
+    {
+      "t": 18.189999999999998,
+      "kind": "impact",
+      "gain": 0.55
+    },
+    {
+      "t": 20.509999999999998,
+      "kind": "whoosh",
+      "dur": 0.95,
+      "gain": 0.5
+    },
+    {
+      "t": 21.679999999999996,
+      "kind": "tick",
+      "gain": 0.28
+    },
+    {
+      "t": 22.3,
+      "kind": "riser",
+      "dur": 1.6,
+      "gain": 0.35
+    },
+    {
+      "t": 23.95,
+      "kind": "sub",
+      "gain": 0.75
+    }
+  ],
+  "audio": "audio.wav"
+}

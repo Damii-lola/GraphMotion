@@ -150,7 +150,7 @@ async function record(o, onProgress) {
     srv = await serveDir(dir); url = srv.url;
   }
 
-  let totalFrames = 0, frameIdxs = [];
+  let totalFrames = 0, frameIdxs = [], audioPath = o.audio ? path.resolve(o.audio) : null;
   const browser = await launchChrome();
   try {
     const page = await browser.newPage();
@@ -171,6 +171,9 @@ async function record(o, onProgress) {
       beats: Array.isArray(window.__BEATS) && typeof window.__jumpToProgress === 'function' ? window.__BEATS.slice() : null,
       pace: window.__PACE || null, // where inside a scene the text has finished revealing / the exit-transition begins
       maxScroll: Math.max(0, document.documentElement.scrollHeight - window.innerHeight),
+      seekDur: typeof window.__seek === 'function' && typeof window.__duration === 'number' ? window.__duration : null, // cinema-engine pages: a pure function of time
+      audio: window.__audio || null,
+      calibT: window.__calibT || null,
     }));
 
     let plan, weight; // plan(f): page position 0..1 at timeline frame f.  weight(f): how many timeline frames ONE captured frame may cover there.
@@ -201,13 +204,21 @@ async function record(o, onProgress) {
         const x = (g % fScene) / fScene;
         return x < F[0] ? 1 : x < F[0] + F[1] ? 4 : 1; // text reveal + transition: every frame; the still hold: thinned
       };
+    } else if (info.seekDur) {
+      totalFrames = Math.max(2, Math.round(info.seekDur * fps));
+      plan = (f) => Math.min(info.seekDur, f / fps);
+      // the page reports how busy each moment is; the recorder spends its frames there when it has to thin
+      const en = await page.evaluate((fp, n) => Array.from({ length: n }, (_, f) => window.__energy(f / fp)), fps, totalFrames);
+      weight = (f) => (en[f] >= 0.8 ? 1 : en[f] >= 0.4 ? 2 : 4);
     } else {
       totalFrames = Math.round((+o.duration || 30) * fps);
       plan = (f) => easeFn(Math.min(1, f / Math.max(1, totalFrames - 1)));
       weight = () => 3;
     }
     if (totalFrames > MAX_FRAMES) throw new Error(`That would be a ${(totalFrames / fps).toFixed(0)}s video - the limit is ${(MAX_FRAMES / fps).toFixed(0)}s. Use fewer seconds per scene.`);
-    const apply = info.beats
+    const apply = info.seekDur
+      ? (t) => page.evaluate((x) => window.__seek(x), t)
+      : info.beats
       ? (p) => page.evaluate((x) => window.__jumpToProgress(x), p)
       : (p) => page.evaluate((y) => window.scrollTo(0, y), Math.round(p * info.maxScroll));
 
@@ -218,7 +229,13 @@ async function record(o, onProgress) {
     // the fast-moving transitions.
     const client = await page.createCDPSession();
     const shot = (q) => client.send('Page.captureScreenshot', { format: 'jpeg', quality: q, optimizeForSpeed: true, captureBeyondViewport: false });
-    const heavyP = info.beats ? plan(Math.round(fps * holdStart + sceneSeconds * fps * 0.85)) : 0.5; // mid-transition of the first scene
+    if (!audioPath && info.audio) {
+      try {
+        const buf = o.dir ? fs.readFileSync(path.join(path.resolve(o.dir), info.audio)) : Buffer.from(await (await fetch(new URL(info.audio, url).href)).arrayBuffer());
+        audioPath = path.join(work, 'soundtrack.wav'); fs.writeFileSync(audioPath, buf);
+      } catch (e) { console.warn('[site-video] soundtrack unavailable:', e.message); }
+    }
+    const heavyP = info.seekDur ? plan(Math.round(fps * (info.calibT || 1))) : info.beats ? plan(Math.round(fps * holdStart + sceneSeconds * fps * 0.85)) : 0.5; // mid-transition of the first scene
     for (let k = 0; k < 3; k++) { // warm-up: the first frames pay for shader compilation; not counted
       await apply(heavyP); await page.evaluate((ms) => window.__advance(ms), 16); await shot(40);
       emit('loading', 0.02 + 0.01 * k);
@@ -298,9 +315,9 @@ async function record(o, onProgress) {
     }
     fs.writeFileSync(path.join(work, 'parts.txt'), parts.map((p) => `file '${p.replace(/\\/g, '/')}'`).join('\n'));
     const join = ['-f', 'concat', '-safe', '0', '-i', path.join(work, 'parts.txt')];
-    if (o.audio) join.push('-i', path.resolve(o.audio));
+    if (audioPath) join.push('-i', audioPath);
     join.push('-c:v', 'copy');
-    if (o.audio) join.push('-c:a', 'aac', '-b:a', '192k', '-af', `afade=t=out:st=${Math.max(0, totalFrames / fps - 1.5)}:d=1.5`, '-shortest');
+    if (audioPath) join.push('-c:a', 'aac', '-b:a', '192k', '-af', `afade=t=out:st=${Math.max(0, totalFrames / fps - 1.5)}:d=1.5`, '-shortest');
     join.push('-movflags', '+faststart', out);
     await runFF(join);
   } finally {
