@@ -10,7 +10,7 @@
 const { callCloudflareRaw } = require('./cloudflareClient');
 const { cuesFromSpec } = require('./siteAudio');
 const neurons = require('./neuronBudget');
-const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/mistralai/mistral-small-3.1-24b-instruct'; // ~4x cheaper per token than the 70B and good at structured writing
 
 const CAMERAS = ['push', 'pull', 'pan-left', 'pan-right', 'crane-up', 'crane-down', 'orbit', 'handheld'];
 const TRANSITIONS = ['cut', 'morph', 'fly', 'twist', 'ripple', 'flash', 'iris', 'glitch'];
@@ -36,59 +36,44 @@ function pushContrast(rgb, bg, min) { let c = rgb.slice(); for (let k = 0; k < 4
 const SYSTEM = 'You are an award-winning film director, motion designer and sound designer making a 25-30 second cinematic short for a brand. You reply with ONE JSON object only.';
 
 function directorPrompt(brief) {
-  return `Direct a cinematic vertical short (music-video energy, NOT a website and NOT a slideshow) for this company. Everything must be specific to THIS brand: its attitude, products, numbers and world. Write like an ad-agency creative director: punchy, surprising, never generic.
+  return `Direct a cinematic vertical short for this company (music-video energy, not a website). Be specific to THIS brand: real products, numbers, attitude. Punchy, surprising, never generic.
 
-COMPANY BRIEF:
+BRIEF:
 ${brief}
 
-THE CORE IDEA: every scene has ONE hero object at the centre of the frame (the thing the viewer's eye is locked on). When a scene ends, the camera locks onto its hero object, and THAT OBJECT TRANSFORMS INTO THE HERO OBJECT OF THE NEXT SCENE, which then grows into that whole scene - like a paper plane that flies up and becomes a boat, or a moon that turns into a coin that turns into a can. Each scene has its OWN unique hero object (never the same one twice). Choose heroes that rhyme visually with the next one (round -> round, tall -> tall, bright -> bright) so the transformation feels magical, and that tell the brand's story in order.
+CORE IDEA: every scene has ONE unique hero object at the centre of the frame. When a scene ends the camera locks on its hero and THAT OBJECT TRANSFORMS INTO THE NEXT SCENE'S HERO, which grows into the next scene (like a paper plane that becomes a boat). Pick heroes that rhyme visually with the next one and tell the brand's story in order.
 
-Toolbox (choose with intent):
-camera moves: ${CAMERAS.join(', ')}
-transitions (all of them keep the eye on the hero object; nothing is ever stretched): morph = the hero changes into the next hero and the next scene grows out of it in a ring; fly = fly into the hero until it fills the screen, then pull back out of the next hero; twist = both scenes rotate around the hero while it morphs; ripple = rings pulse out of the hero revealing the next scene; flash = light blooms from the hero and the next hero is standing there; iris = the next scene opens as a circle from the hero; glitch = digital tear (use once at most); cut = hard cut on the beat (use once at most).
-kinetic text effects: ${TEXT_FX.join(', ')}  (rise = emerges from a baseline, carve = revealed by a sweep of light, pop = slams in with a blur, scatter = letters fly together, glitch = digital tear, drip = letters fall and bounce, focus = racks into sharpness)
-particle motif (ONE signature physics for the whole film): ${MOTIFS.join(', ')}
-colour grade mood: ${MOODS.join(', ')}
-typography look: metal (heavy-metal/punk/gothic/dark humour), luxury, tech, playful, clean
-music style: dark drone, pulse, warm pad, tense
+Choices: camera: ${CAMERAS.join(', ')}. transition: morph, fly, twist, ripple, flash, iris (glitch or cut at most once). text fx: ${TEXT_FX.join(', ')}. motif: ${MOTIFS.join(', ')}. mood: ${MOODS.join(', ')}. look: metal, luxury, tech, playful, clean. music: dark drone, pulse, warm pad, tense.
 
-Return ONE JSON object:
-{
- "brand": "", "tagline": "", "cta": "button label, 2-4 words",
- "look": one typography look, "accent": "#RRGGBB one bold signature colour (never grey)", "bg": "#RRGGBB near-black",
- "grade": {"mood": one mood, "contrast": 1.0-1.35, "saturation": 0.6-1.2, "grain": 0.2-0.9},
- "motif": {"type": one motif, "density": 0.2-0.8},
- "music": {"style": one music style, "bpm": 84-140, "key": "A"|"C"|"D"|"E"|"F"|"G"},
- "imageStyle": "6-10 words: ONE consistent photographic look for every image",
- "beats": [ {
-   "hero": {"label": "the hero object, e.g. 'a chrome skull' (specific, physical, one thing)", "r": 0.2-0.4 (its size as a fraction of screen height)},
-   "image": {"prompt": "vivid cinematic shot, 18-26 words: the hero object large and centred in its environment, light, lens, colour. no text, no logos, no faces"},
-   "dur": seconds 1.6-3.4,
-   "camera": one camera move, "camAmount": 0.10-0.34,
-   "focus": [0.35-0.65, 0.35-0.65] (where the hero sits in the frame),
-   "dof": 0-0.9 depth of field strength, "dofFocus": 0-1, "rack": "in" | "out" | "none",
-   "text": {"lines":[{"t":"1-4 WORDS","s":"xl|l|m|s","a":false}], "fx": one text effect, "x":0.5, "y":0.15-0.3 or 0.7-0.85 (keep the words away from the hero), "align":"left"|"center"|"right", "delay":0.1-0.5, "behind": false},
-   "transition": {"type": one transition, "dur": 0.7-1.2}
- } ]
-}
+Reply with ONE compact JSON object:
+{"brand":"","tagline":"","cta":"2-4 words","look":"","accent":"#RRGGBB bold, not grey","bg":"#RRGGBB near-black","mood":"","motif":"","music":"","imageStyle":"6-10 words, one photographic look for every image",
+"beats":[{"hero":"one physical object","size":0.2-0.4,"image":"shot description, 18-26 words: the hero large and centred in its environment, light, lens, colour; no text/logos/faces","dur":2.4-3.6,"camera":"","focus":[0.4-0.6,0.4-0.6],"text":[["HOOK 1-3 WORDS","xl"],["a concrete brand fact, 2-6 words","m"]],"fx":"","y":0.15-0.28 or 0.72-0.85,"align":"left|center|right","transition":["type",0.8-1.2]}]}
 
-DIRECTING RULES (these matter more than anything):
-- 8 to 10 beats, total 24-30 seconds. A short film: hook -> the world and attitude -> product reveals -> proof with real numbers -> mission -> payoff with the brand name and call to action.
-- Every beat has its own image and its own hero. Never repeat a hero, an image idea or a headline.
-- Beat 1 hooks in under 2.6s with the boldest line. Vary the rhythm: some beats short (1.8s), some long holds (3s+).
-- Use at least 4 different transitions and 5 different camera moves, and at least 4 different text effects. Never the same transition twice in a row. Most transitions are morph, fly, twist, ripple, flash or iris.
-- Text is a character: most beats have TWO lines - a huge hook line (1-3 words, size "xl") and a smaller line (size "m" or "s") with a concrete brand fact (product name, flavour, number, mission). Put "behind": true on one or two beats.
-- Use real brand facts from the brief in the text. The last beat = the brand name / call to action; its transition is ignored but must be present.
-Output the JSON object only.`;
+RULES: exactly 7 beats (24-26s total): hook, world/attitude, 2 product reveals, proof with real numbers, mission, payoff (brand name + call to action). Every beat: its own hero, image and text - never repeat one. Use 4+ different transitions, 5+ camera moves, 4+ text fx. Text lines: real brand facts (names, flavours, numbers). Last beat transition is ignored but present. JSON only.`;
 }
 
 // ------------------------------------------------------------- validation / repair
+const parseJson = (txt) => { if (txt && typeof txt === 'object') return txt; const t = String(txt || '').replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, ''); const i = t.indexOf('{'), j = t.lastIndexOf('}'); return JSON.parse(i >= 0 && j > i ? t.slice(i, j + 1) : t); };
+/** Accept both the compact reply format above and the older verbose one. */
+function expand(raw) {
+  const S = raw && typeof raw === 'object' ? { ...raw } : {};
+  if (typeof S.mood === 'string') S.grade = { mood: S.mood }; if (typeof S.motif === 'string') S.motif = { type: S.motif }; if (typeof S.music === 'string') S.music = { style: S.music };
+  S.beats = (Array.isArray(S.beats) ? S.beats : []).map((b, k) => {
+    if (!b || typeof b !== 'object') return b; const o = { ...b };
+    if (typeof o.hero === 'string') o.hero = { label: o.hero, r: o.size }; if (typeof o.image === 'string') o.image = { prompt: o.image };
+    if (Array.isArray(o.text)) o.text = { lines: o.text.map((l) => (Array.isArray(l) ? { t: l[0], s: l[1] } : l)), fx: o.fx, y: o.y, align: o.align, behind: k === 2 || k === 5 };
+    if (Array.isArray(o.transition)) o.transition = { type: o.transition[0], dur: o.transition[1] };
+    if (o.dof === undefined) o.dof = 0.35 + 0.25 * (k % 3) / 2; if (o.rack === undefined) o.rack = ['in', 'none', 'out'][k % 3];
+    return o;
+  });
+  return S;
+}
 const num = (v, lo, hi, d) => { v = +v; return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d; };
 const pick = (v, list, d) => (list.includes(v) ? v : d);
 const str = (v, d = '', n = 60) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : d);
 
 function normalize(raw, brandFallback) {
-  const S = raw && typeof raw === 'object' ? raw : {};
+  const S = expand(raw);
   const look = LOOKS[S.look] ? S.look : 'clean';
   const bgRgb = (hex2rgb(S.bg) || [11, 11, 13]).map((v) => Math.min(v, 34));
   let acc = hex2rgb(S.accent) || [255, 92, 26];
@@ -161,8 +146,8 @@ function normalize(raw, brandFallback) {
 function qualityIssues(spec) {
   const out = [], B = spec.beats;
   const total = B.reduce((t, b) => t + b.dur, 0), used = new Set(B.map((b) => b.image));
-  if (B.length < 8) out.push('only ' + B.length + ' beats - I need 8 to 10');
-  if (total < 23) out.push('the film is only ' + total.toFixed(0) + ' seconds - I need 24 to 32 (lengthen holds, add beats)');
+  if (B.length < 6) out.push('only ' + B.length + ' beats - I need 7');
+
   if (spec.images.length < B.length) out.push('every beat needs its own image and its own hero object (' + spec.images.length + ' images for ' + B.length + ' beats)');
   const heroes = B.map((b) => (b.hero && b.hero.label || '').toLowerCase()); if (heroes.some((h) => !h)) out.push('every beat needs a hero object label'); if (new Set(heroes).size < heroes.length) out.push('hero objects repeat - every scene needs its own unique hero object');
   const words = spec.images.reduce((t, i) => t + i.prompt.split(/\s+/).length, 0) / spec.images.length;
@@ -178,23 +163,28 @@ function qualityIssues(spec) {
   return out;
 }
 
+const SEVERE = /only \d+ beats|hero object|own image/;
 async function directFilm(brief, brandFallback) {
   let best = null, err = null, feedback = '';
-  const MAX_ATTEMPTS = +process.env.SITEGEN_MAX_ATTEMPTS || 2; // each attempt is a full 70B call (~1-3k neurons of a 10k daily free allowance)
+  const MAX_ATTEMPTS = +process.env.SITEGEN_MAX_ATTEMPTS || 2;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
-      const prompt = directorPrompt(String(brief).slice(0, 2600)) + (feedback ? '\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED BY THE CREATIVE DIRECTOR FOR: ' + feedback + '. Fix every point and output the full JSON again.' : '');
-      neurons.charge(neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 3000), 'director call'); // refuses BEFORE spending if it would cross the ceiling
-      const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: 3800, temperature: 0.85, model: SPEC_MODEL, timeoutMs: 150000 });
-      const spec = normalize(typeof txt === 'string' ? JSON.parse(txt) : txt, brandFallback); // throws if unusable
+      const prompt = directorPrompt(String(brief).slice(0, 2600)) + (feedback ? '\n\nYOUR PREVIOUS ATTEMPT WAS UNUSABLE: ' + feedback + '. Fix it and output the full JSON again.' : '');
+      const est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 1700);
+      neurons.charge(est, 'director call', 7 * neurons.estImage()); // refuses BEFORE spending if the film could no longer be finished inside its ceiling
+      let usage = null, txt;
+      try { txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: 1900, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } }); }
+      catch (e) { if (!/response_format|json/i.test(String(e.message))) throw e; txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: false, maxTokens: 1900, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } }); }
+      neurons.settleText(SPEC_MODEL, est, usage, 'director call');
+      const spec = normalize(parseJson(txt), brandFallback); // throws if unusable
       const issues = qualityIssues(spec);
       if (!best || issues.length < best.issues.length) best = { spec, issues };
-      if (!issues.length) break;
-      feedback = issues.join('; ');
-    } catch (e) { err = e; }
+      if (!issues.some((i) => SEVERE.test(i))) break; // minor style notes are kept in directorNotes - never worth another paid call
+      feedback = issues.filter((i) => SEVERE.test(i)).join('; ');
+    } catch (e) { err = e; if (/Neuron guard/.test(String(e.message))) break; }
   }
   if (!best) throw new Error('The AI director could not produce a film plan: ' + (err && err.message));
-  best.spec.directorNotes = best.issues; // whatever the final cut still lacks, for the record
+  best.spec.directorNotes = best.issues;
   return best.spec;
 }
 

@@ -39,7 +39,7 @@ const CLOUDFLARE_TIMEOUT_MS = 30000;
  * validation-retry loop already retries on failure with corrective
  * feedback, matching the same convention callOpenRouterRaw uses.
  */
-async function callCloudflareRaw(systemPrompt, userMessage, { jsonMode = true, maxTokens = 1500, temperature = 0.7, model = CLOUDFLARE_MODEL, timeoutMs = CLOUDFLARE_TIMEOUT_MS } = {}) {
+async function callCloudflareRaw(systemPrompt, userMessage, { jsonMode = true, maxTokens = 1500, temperature = 0.7, model = CLOUDFLARE_MODEL, timeoutMs = CLOUDFLARE_TIMEOUT_MS, onUsage } = {}) {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const apiToken = process.env.CLOUDFLARE_API_TOKEN;
   if (!accountId || !apiToken) throw new Error('CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN is not set');
@@ -82,6 +82,7 @@ async function callCloudflareRaw(systemPrompt, userMessage, { jsonMode = true, m
   }
 
   const data = await res.json();
+  if (typeof onUsage === 'function' && data.result && data.result.usage) onUsage(data.result.usage); // real token counts, so cost can be measured, not guessed
   // Real shape, confirmed directly: {success, result: {choices:[{message:{content}, finish_reason}]}}
   // - an OpenAI-compatible chat-completion envelope nested one level
   // deeper under "result" than OpenRouter/Groq's own top-level shape.

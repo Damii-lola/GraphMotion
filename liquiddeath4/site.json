@@ -1,0 +1,483 @@
+{
+  "brand": "Liquid Death",
+  "tagline": "Murder Your Thirst",
+  "cta": "Join the Killing",
+  "imageStyle": "high contrast, desaturated, dramatic",
+  "theme": {
+    "look": "clean",
+    "displayFont": "Bricolage Grotesque",
+    "displayWeight": 700,
+    "bodyFont": "Inter",
+    "upper": false,
+    "bg": "#212121",
+    "accent": "#ffd700",
+    "accentInk": "#0a0a0a",
+    "accentLight": "#ffd700"
+  },
+  "grade": {
+    "mood": "teal-orange",
+    "contrast": 1.15,
+    "saturation": 0.95,
+    "grain": 0.5
+  },
+  "motif": {
+    "type": "dust",
+    "density": 0.4
+  },
+  "music": {
+    "style": "dark drone",
+    "bpm": 100,
+    "key": "A"
+  },
+  "images": [
+    {
+      "id": "b0",
+      "prompt": "tombstone in desert, low-angle, dusty air, sepia tint",
+      "hero": "tombstone"
+    },
+    {
+      "id": "b1",
+      "prompt": "plane hovering over industrial junkyard, cool blues, shallow depth",
+      "hero": "paper plane"
+    },
+    {
+      "id": "b2",
+      "prompt": "sparkling can of Severed Lime tallboy spinning, black backlight",
+      "hero": "spinning can"
+    },
+    {
+      "id": "b3",
+      "prompt": "DEATH DUST powder pouring into water, closed up, out of focus background",
+      "hero": "pouring powder"
+    },
+    {
+      "id": "b4",
+      "prompt": "bar chart with sky-high 333M, dark background, neon accents",
+      "hero": "bar graph"
+    },
+    {
+      "id": "b5",
+      "prompt": "plastic bottle melting into ocean plastic, grimy, daylight",
+      "hero": "plastic bottle"
+    },
+    {
+      "id": "b6",
+      "prompt": "tallboy with Murder Your Thirst tagline, black and white, crisp focus",
+      "hero": "can with tagline"
+    }
+  ],
+  "beats": [
+    {
+      "image": "b0",
+      "hero": {
+        "label": "tombstone",
+        "r": 0.3
+      },
+      "dur": 2.98,
+      "camera": "push",
+      "camAmount": 0.2,
+      "focus": [
+        0.4,
+        0.5
+      ],
+      "dof": 0.35,
+      "dofFocus": 0.5,
+      "rack": "in",
+      "transition": {
+        "type": "twist",
+        "dur": 1
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "MURDER YOUR THIRST",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "REAL MOUNTAIN WATER",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "focus",
+        "x": 0.5,
+        "y": 0.8,
+        "align": "center",
+        "delay": 0.2,
+        "behind": false,
+        "upper": false
+      }
+    },
+    {
+      "image": "b1",
+      "hero": {
+        "label": "paper plane",
+        "r": 0.3
+      },
+      "dur": 3.21,
+      "camera": "crane-up",
+      "camAmount": 0.2,
+      "focus": [
+        0.6,
+        0.5
+      ],
+      "dof": 0.475,
+      "dofFocus": 0.5,
+      "rack": "none",
+      "transition": {
+        "type": "fly",
+        "dur": 1
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "50 TIMES MORE FUN",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "HEALTH & SUSTAINABILITY",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "carve",
+        "x": 0.5,
+        "y": 0.2,
+        "align": "left",
+        "delay": 0.2,
+        "behind": false,
+        "upper": false
+      }
+    },
+    {
+      "image": "b2",
+      "hero": {
+        "label": "spinning can",
+        "r": 0.42
+      },
+      "dur": 3.32,
+      "camera": "orbit",
+      "camAmount": 0.2,
+      "focus": [
+        0.6,
+        0.4
+      ],
+      "dof": 0.6,
+      "dofFocus": 0.5,
+      "rack": "out",
+      "transition": {
+        "type": "twist",
+        "dur": 0.9
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "SEVERED LIME",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "SODA - ZERO SUGAR",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "drip",
+        "x": 0.5,
+        "y": 0.15,
+        "align": "right",
+        "delay": 0.2,
+        "behind": true,
+        "upper": false
+      }
+    },
+    {
+      "image": "b3",
+      "hero": {
+        "label": "pouring powder",
+        "r": 0.35
+      },
+      "dur": 3.66,
+      "camera": "push",
+      "camAmount": 0.2,
+      "focus": [
+        0.6,
+        0.5
+      ],
+      "dof": 0.35,
+      "dofFocus": 0.5,
+      "rack": "in",
+      "transition": {
+        "type": "ripple",
+        "dur": 1.1
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "DEATH DUST ELECTROLYTES",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "VITAMINS B3, B5, B6, B12",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "glitch",
+        "x": 0.5,
+        "y": 0.8,
+        "align": "right",
+        "delay": 0.2,
+        "behind": false,
+        "upper": false
+      }
+    },
+    {
+      "image": "b4",
+      "hero": {
+        "label": "bar graph",
+        "r": 0.22
+      },
+      "dur": 3.89,
+      "camera": "pan-left",
+      "camAmount": 0.2,
+      "focus": [
+        0.6,
+        0.4
+      ],
+      "dof": 0.475,
+      "dofFocus": 0.5,
+      "rack": "none",
+      "transition": {
+        "type": "flash",
+        "dur": 1
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "333M DOLLARS",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "RETAIL REVENUE IN 2024",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "scatter",
+        "x": 0.5,
+        "y": 0.8,
+        "align": "center",
+        "delay": 0.2,
+        "behind": false,
+        "upper": false
+      }
+    },
+    {
+      "image": "b5",
+      "hero": {
+        "label": "plastic bottle",
+        "r": 0.33
+      },
+      "dur": 3.43,
+      "camera": "handheld",
+      "camAmount": 0.2,
+      "focus": [
+        0.6,
+        0.5
+      ],
+      "dof": 0.6,
+      "dofFocus": 0.5,
+      "rack": "out",
+      "transition": {
+        "type": "fly",
+        "dur": 1.2
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "DEATH TO PLASTIC",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "FIGHTING PLASTIC POLLUTION",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "rise",
+        "x": 0.5,
+        "y": 0.8,
+        "align": "left",
+        "delay": 0.2,
+        "behind": true,
+        "upper": false
+      }
+    },
+    {
+      "image": "b6",
+      "hero": {
+        "label": "can with tagline",
+        "r": 0.28
+      },
+      "dur": 4.01,
+      "camera": "pull",
+      "camAmount": 0.2,
+      "focus": [
+        0.6,
+        0.6
+      ],
+      "dof": 0.35,
+      "dofFocus": 0.5,
+      "rack": "in",
+      "transition": {
+        "type": "morph",
+        "dur": 0.3
+      },
+      "sfx": [],
+      "text": {
+        "lines": [
+          {
+            "t": "LIQUID DEATH",
+            "s": "xl",
+            "a": false
+          },
+          {
+            "t": "JOIN THE KILLING",
+            "s": "m",
+            "a": false
+          }
+        ],
+        "fx": "pop",
+        "x": 0.5,
+        "y": 0.24,
+        "align": "center",
+        "delay": 0.2,
+        "behind": false,
+        "upper": false
+      }
+    }
+  ],
+  "cues": [
+    {
+      "t": 1.94,
+      "kind": "whoosh",
+      "dur": 1.3,
+      "gain": 0.55
+    },
+    {
+      "t": 4.289999999999999,
+      "kind": "riser",
+      "dur": 0.9,
+      "gain": 0.36
+    },
+    {
+      "t": 5.1499999999999995,
+      "kind": "whoosh",
+      "dur": 1.3,
+      "gain": 0.55
+    },
+    {
+      "t": 5.77,
+      "kind": "impact",
+      "gain": 0.75
+    },
+    {
+      "t": 6.43,
+      "kind": "impact",
+      "gain": 0.36
+    },
+    {
+      "t": 8.57,
+      "kind": "whoosh",
+      "dur": 1.2,
+      "gain": 0.55
+    },
+    {
+      "t": 9.749999999999998,
+      "kind": "impact",
+      "gain": 0.36
+    },
+    {
+      "t": 12.030000000000001,
+      "kind": "whoosh",
+      "dur": 1.4000000000000001,
+      "gain": 0.55
+    },
+    {
+      "t": 13.409999999999998,
+      "kind": "impact",
+      "gain": 0.36
+    },
+    {
+      "t": 15.159999999999998,
+      "kind": "riser",
+      "dur": 0.9,
+      "gain": 0.36
+    },
+    {
+      "t": 16.02,
+      "kind": "whoosh",
+      "dur": 1.3,
+      "gain": 0.55
+    },
+    {
+      "t": 16.639999999999997,
+      "kind": "impact",
+      "gain": 0.75
+    },
+    {
+      "t": 18.39,
+      "kind": "riser",
+      "dur": 0.9,
+      "gain": 0.36
+    },
+    {
+      "t": 19.25,
+      "kind": "whoosh",
+      "dur": 1.5,
+      "gain": 0.55
+    },
+    {
+      "t": 19.985999999999997,
+      "kind": "impact",
+      "gain": 0.75
+    },
+    {
+      "t": 20.729999999999997,
+      "kind": "impact",
+      "gain": 0.36
+    },
+    {
+      "t": 22.1,
+      "kind": "riser",
+      "dur": 1.7,
+      "gain": 0.4
+    },
+    {
+      "t": 23.88,
+      "kind": "impact",
+      "gain": 0.85
+    },
+    {
+      "t": 23.88,
+      "kind": "sub",
+      "gain": 0.8
+    }
+  ],
+  "directorNotes": [
+    "image prompts are too short (9 words on average) - write 18-26 word cinematographer shot descriptions"
+  ],
+  "audio": "audio.wav"
+}
