@@ -31,9 +31,6 @@
   #scrimL { opacity: 0; background: linear-gradient(180deg, rgba(250,251,252,.94) 0%, rgba(250,251,252,.86) 38%, rgba(250,251,252,.62) 62%, rgba(250,251,252,0) 88%); }
 
   /* ---------- social overlay: story progress bars + brand chip (both sit clear of the headline safe zone) */
-  #segs { position: fixed; z-index: 6; top: 1.3vh; left: 6vw; right: 6vw; display: flex; gap: 1.4vw; pointer-events: none; }
-  #segs i { flex: 1; height: 3px; border-radius: 3px; background: rgba(255,255,255,.34); overflow: hidden; }
-  #segs b { display: block; height: 100%; width: 0; background: #fff; }
   #chip { position: fixed; z-index: 6; top: 14.2vh; left: 6vw; display: flex; align-items: center; gap: 2.2vw; padding: .9vw 3.4vw .9vw .9vw; border-radius: 99px; background: rgba(10,12,16,.72); pointer-events: none; }
   #chip .av { width: 8.2vw; height: 8.2vw; border-radius: 50%; object-fit: cover; background: var(--accent); color: var(--accent-ink); display: flex; align-items: center; justify-content: center; font: 800 4.2vw/1 var(--dispf); }
   #chip .av.plate { background: #fff; object-fit: contain; padding: .8vw; }
@@ -41,9 +38,8 @@
   #chip .nm { font: 800 3.5vw/1 var(--bodyf); color: #fff; letter-spacing: .01em; max-width: 52vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ---------- scenes */
-  #smooth-wrapper { position: relative; z-index: 2; overflow: hidden; }
-  section.beat { position: relative; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: var(--pt, 22vh) 6vw 0; text-align: center; }
-  section.beat:not(:first-child) { margin-top: -100vh; }  /* each pin engages the moment the previous one ends: no scroll gap */
+  #scenes { position: fixed; inset: 0; z-index: 2; overflow: hidden; }
+  section.beat { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: var(--pt, 22vh) 6vw 0; text-align: center; }
   section.role-hook { --pt: 25vh; } section.role-pain { --pt: 22vh; } section.role-solution { --pt: 23vh; }
   section.role-feature { --pt: 22vh; } section.role-proof { --pt: 24vh; } section.role-cta { --pt: 20vh; }
   section.tone-light { --ink: #0b1420; --ink2: #1b2f42; }
@@ -80,12 +76,9 @@
   <div class="scrim" id="scrimD"></div>
   <div class="scrim" id="scrimL"></div>
 </div>
-<div id="segs"></div>
 <div id="chip"></div>
 
-<div id="smooth-wrapper">
-<div id="smooth-content"></div>
-</div>
+<div id="scenes"></div>
 
 <script>
 window.SITE = /*__SITE_JSON__*/null;
@@ -114,7 +107,6 @@ window.SITE = /*__SITE_JSON__*/null;
   document.getElementById("fallback").style.backgroundImage = "url('images/hook.webp')";
 
   var logo = S.logo && S.logo.file ? S.logo : null;
-  document.getElementById("segs").innerHTML = S.scenes.map(function () { return "<i><b></b></i>"; }).join("");
   document.getElementById("chip").innerHTML = (logo ? '<img class="av plate ' + (logo.plate === "dark" ? "dark" : "") + '" src="' + esc(logo.file) + '" alt="">' : '<span class="av">' + esc(S.brand.charAt(0).toUpperCase()) + "</span>") + '<span class="nm">' + esc(S.brand) + "</span>";
 
   var html = "";
@@ -129,17 +121,15 @@ window.SITE = /*__SITE_JSON__*/null;
     if (last) html += '<div class="cta-pulse"><a class="cta-btn" href="#">' + esc(S.cta) + ' <span aria-hidden="true">&rarr;</span></a></div>' + (S.link ? '<div class="cta-link">' + esc(S.link) + "</div>" : "");
     html += "</div></section>";
   });
-  document.getElementById("smooth-content").innerHTML = html;
+  document.getElementById("scenes").innerHTML = html;
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/gsap.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/ScrollTrigger.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/ScrollSmoother.min.js"></script>
 <script>
 (function () {
   "use strict";
-  gsap.registerPlugin(ScrollTrigger, ScrollSmoother);
   const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const S = window.SITE, N = S.scenes.length;
 
   // ---------- fit: the headline is sized so the longest word fits the safe width and the block stays inside the safe zone
   function fit() {
@@ -159,273 +149,236 @@ window.SITE = /*__SITE_JSON__*/null;
   }
   fit();
   let fitDone = false;
-  const settle = () => { fit(); if (window.ScrollTrigger) ScrollTrigger.refresh(); fitDone = true; };
   window.__fitDone = () => fitDone;
   if (document.fonts) {
     document.fonts.addEventListener("loadingdone", fit);
-    Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 6000))]).then(settle);
+    Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 6000))]).then(() => { fit(); fitDone = true; });
   } else fitDone = true;
   window.addEventListener("load", fit);
 
-  let BEATS = [], totalStart = 0, span = 1;
-  function pushScene(p) {
-    if (BEATS.length < 2 || !window.__sceneUpdate) return;
-    let i = BEATS.length - 2;
-    for (let k = 0; k < BEATS.length - 1; k++) { if (p < BEATS[k + 1]) { i = k; break; } }
-    const t = clamp01((p - BEATS[i]) / (BEATS[i + 1] - BEATS[i]));
-    window.__sceneUpdate(i, t, p);
-  }
-  const smoother = ScrollSmoother.create({
-    wrapper: "#smooth-wrapper", content: "#smooth-content", smooth: 0.9,
-    onUpdate: (self) => pushScene(clamp01((self.scrollTop() - totalStart) / span)),
-  });
-
-  // ---------- one pinned, scrubbed timeline per scene (units = fractions of the scene). Word-by-word reveal, never per letter.
+  // ---------- ONE master timeline, a pure function of film progress p (0..1): scene i owns [i, i+1] in timeline units.
+  // No scrolling, no smoothing, no lag: the recorder and the preview both just call __jumpToProgress(p).
+  const TR = S.transitions || [];
+  const ovOf = (i) => (TR[i] && TR[i].overlap) || 0.4;
+  const master = gsap.timeline({ paused: true });
   gsap.set(".wi", { yPercent: 118, visibility: "visible" });
-  const secs = [...document.querySelectorAll("section.beat[data-beat]")], triggers = [];
-  secs.forEach((sec, idx) => {
-    const last = idx === secs.length - 1, first = idx === 0;
+  const secs = [...document.querySelectorAll("section.beat")];
+  secs.forEach((sec, i) => {
+    const last = i === secs.length - 1, first = i === 0;
     const q = (s) => sec.querySelectorAll(s), one = (s) => sec.querySelector(s);
     const hlw = q(".hl .wi"), subw = q(".sub .wi"), tag = one(".tag"), stk = one(".sticker"), btn = one(".cta-btn"), lnk = one(".cta-link"), lg = one(".cta-logo, .cta-word");
-    const tl = gsap.timeline({ scrollTrigger: { trigger: sec, start: "top top", end: last ? "+=70%" : "+=100%", scrub: 0.5, pin: true, pinSpacing: true } });
-    const t0 = first ? 0 : 0.02;
-    if (tag) tl.fromTo(tag, { opacity: 0, y: 14, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.09, ease: "back.out(2)" }, t0);
-    if (lg) tl.fromTo(lg, { opacity: 0, y: 24, scale: 0.8 }, { opacity: 1, y: 0, scale: 1, duration: 0.14, ease: "back.out(1.7)" }, t0);
-    tl.fromTo(hlw, { yPercent: 118, scale: 0.92 }, { yPercent: 0, scale: 1, duration: 0.12, stagger: first ? 0.035 : 0.045, ease: "back.out(1.5)" }, t0 + (tag ? 0.05 : lg ? 0.06 : 0));
-    if (subw.length) tl.fromTo(subw, { yPercent: 118 }, { yPercent: 0, duration: 0.1, stagger: 0.02, ease: "power3.out" }, 0.2);
-    if (stk) tl.fromTo(stk, { opacity: 0, scale: 0.55, rotation: -14 }, { opacity: 1, scale: 1, rotation: -3, duration: 0.15, ease: "back.out(2.2)" }, 0.29);
-    if (btn) tl.fromTo(btn, { opacity: 0, y: 26, scale: 0.85 }, { opacity: 1, y: 0, scale: 1, duration: 0.14, ease: "back.out(2)" }, 0.3);
-    if (lnk) tl.fromTo(lnk, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.12, ease: "power2.out" }, 0.4);
-    if (!last) tl.to(one(".ad-inner"), { opacity: 0, yPercent: -7, duration: 0.22, ease: "power2.in" }, 0.66);
-    tl.to({}, { duration: 0.001 }, 0.999); // the timeline is exactly one scene long
-    triggers.push(tl.scrollTrigger);
+    const t0 = first ? 0 : i - 0.1;                       // the next scene's caption starts landing while the camera is still arriving
+    if (tag) master.fromTo(tag, { opacity: 0, y: 14, scale: 0.9 }, { opacity: 1, y: 0, scale: 1, duration: 0.09, ease: "back.out(2)" }, t0);
+    if (lg) master.fromTo(lg, { opacity: 0, y: 24, scale: 0.8 }, { opacity: 1, y: 0, scale: 1, duration: 0.14, ease: "back.out(1.7)" }, t0);
+    master.fromTo(hlw, { yPercent: 118, scale: 0.92 }, { yPercent: 0, scale: 1, duration: 0.11, stagger: first ? 0.03 : 0.04, ease: "back.out(1.5)" }, t0 + (tag ? 0.04 : lg ? 0.05 : 0));
+    if (subw.length) master.fromTo(subw, { yPercent: 118 }, { yPercent: 0, duration: 0.09, stagger: 0.018, ease: "power3.out" }, i + 0.2);
+    if (stk) master.fromTo(stk, { opacity: 0, scale: 0.55, rotation: -14 }, { opacity: 1, scale: 1, rotation: -3, duration: 0.14, ease: "back.out(2.2)" }, i + 0.28);
+    if (btn) master.fromTo(btn, { opacity: 0, y: 26, scale: 0.85 }, { opacity: 1, y: 0, scale: 1, duration: 0.14, ease: "back.out(2)" }, i + 0.3);
+    if (lnk) master.fromTo(lnk, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.12, ease: "power2.out" }, i + 0.4);
+    if (!last) {                                          // the caption is carried off by the same dive that takes the picture
+      const ov = ovOf(i), z = Math.min(1, (TR[i] ? TR[i].zoom : 0.8)), bl = TR[i] ? TR[i].blur : 0.4;
+      master.to(one(".ad-inner"), { opacity: 0, scale: 1 + 0.32 * z, filter: `blur(${(2 + 8 * bl).toFixed(1)}px)`, duration: 0.6 * ov, ease: "power2.in" }, i + 1 - ov + 0.03);
+    }
   });
-
-  ScrollTrigger.refresh();
-  totalStart = triggers[0].start;
-  span = triggers[triggers.length - 1].end - totalStart;
-  BEATS = [...triggers.map((t) => (t.start - totalStart) / span), 1];
-  window.__BEATS = BEATS;
-  window.__PACE = { revealEnd: 0.5, holdEnd: 0.62 }; // recorder: the last element is fully in by ~45% of a scene, the exit + background transition start at ~62%
+  master.to({}, { duration: 0.001 }, N);                  // total length = N scene units exactly
+  window.__BEATS = Array.from({ length: N + 1 }, (_, i) => i / N);
+  window.__PACE = { revealEnd: 0.3, holdEnd: 0.7, flat: true }; // linear time: the recorder must not slow the calm part, because there is no calm part
+  let onFrame = null;
+  window.__setFrameHook = (fn) => { onFrame = fn; };
   window.__jumpToProgress = (frac) => {
-    smoother.scrollTop(totalStart + span * frac);
-    pushScene(clamp01(frac));
-    ScrollTrigger.update();
+    const p = clamp01(frac);
+    master.time(p * N);
+    if (onFrame) onFrame(p);
   };
 
-  // ---------- autoplay for people watching the page (the /preview viewer). Same pacing as the recorded video: quick reveal, readable hold, punchy transition.
-  const warp = (u) => (u < 0.3 ? (u / 0.3) * 0.5 : u < 0.7 ? 0.5 + ((u - 0.3) / 0.4) * 0.12 : 0.62 + ((u - 0.7) / 0.3) * 0.38);
+  // ---------- autoplay for people watching the page (the /preview viewer): linear film time, exactly as recorded
   let playId = 0;
   window.__autoplay = (sceneSeconds = 3.5) => {
-    const my = ++playId, n = BEATS.length - 1, t0 = performance.now(), total = n * sceneSeconds * 1000;
+    const my = ++playId, t0 = performance.now(), total = N * sceneSeconds * 1000;
     const tick = () => {
       if (my !== playId) return;
-      const el = Math.min(performance.now() - t0, total - 1), k = Math.min(n - 1, Math.floor(el / (sceneSeconds * 1000))), u = el / (sceneSeconds * 1000) - k;
-      const end = k === n - 1 ? 0.975 : BEATS[k + 1];
-      window.__jumpToProgress(BEATS[k] + (end - BEATS[k]) * warp(u));
-      if (el < total - 1) requestAnimationFrame(tick);
+      const el = Math.min(performance.now() - t0, total);
+      window.__jumpToProgress((el / total) * 0.975);
+      if (el < total) requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
   };
   window.addEventListener("message", (e) => { const d = e.data; if (d && d.type === "smartclips-play") window.__autoplay(3.5); });
   if (/[?&]autoplay=1/.test(location.search)) setTimeout(() => window.__autoplay(3.5), 900);
-  pushScene(0);
+  window.__jumpToProgress(0);
 })();
 </script>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js"}}</script>
 <script type="module">
 import * as THREE from "three";
+/* =====================================================================================================================
+   THE FLOW ENGINE. The picture is not six slides with effects between them; it is ONE camera move.
+     - Every scene has its own camera move (push/pull, drift, roll) that never stops, so there is no calm, plain phase.
+     - A transition is the camera DIVING through the current image while the next one is already opening inside it
+       (think: flying through an aeroplane window and the clouds outside become the next scene). It is described by
+       continuous numbers chosen by the AI for THIS ad - where the camera dives (focus), how far it rushes (zoom), spin,
+       motion blur, liquid warp, glow, colour split, edge softness, how long it lasts - plus an optional AI-written
+       mask expression that shapes the opening. There is no list of transition types anywhere in this file.
+     - Everything is a pure function of film progress p, so frames are identical however they are captured.
+   ===================================================================================================================== */
 const S = window.SITE, N = S.scenes.length;
 const state = { i: 0, t: 0, p: 0 };
-window.__sceneUpdate = (i, t, p) => {
-  state.i = i; state.t = t; state.p = p;
-  segs.forEach((b, k) => { b.style.width = (k < i ? 100 : k === i ? t * 100 : 0) + "%"; });      // story-style progress bars
-  chip.style.opacity = i >= N - 1 ? 0 : i === N - 2 ? 1 - sm((t - 0.62) / 0.3) : 1;               // brand chip hands over to the end card
-  if (pulse) pulse.style.transform = i >= N - 1 ? "scale(" + (1 + 0.035 * Math.sin(t * 30)) + ")" : "none";  // CTA breathes, deterministic in scene time
-};
 const sm = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
-const lerp = (a, b, t) => a + (b - a) * t;
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
 const scrimD = document.getElementById("scrimD"), scrimLt = document.getElementById("scrimL");
-const segs = [...document.querySelectorAll("#segs b")], chip = document.getElementById("chip"), pulse = document.querySelector(".cta-pulse");
+const chip = document.getElementById("chip"), pulse = document.querySelector(".cta-pulse");
 const accRgb = (() => { const m = /^#?([0-9a-f]{6})$/i.exec(S.theme.accent); const n = m ? parseInt(m[1], 16) : 0xff5c1a; return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; })();
-// ===================================================================
-// FLOWING BACKGROUND: six photographs rendered in ONE fragment shader.
-// Each photo is alive on its own (slow dolly toward the camera as you
-// scroll, idle breathing, water ripple / mist / sun-rays / floating
-// motes per scene) and hands over to the next through its own shader
-// transition that warps and flows the pixels - never a plain crossfade:
-//   0 hero  -> lab      iris dive out of the can, camera passes through
-//   1 lab   -> core     liquid surface rises and refracts the new photo
-//   2 core  -> charge   sun burst blooms outward from the horizon
-//   3 charge-> recover  streak pan with directional blur + mist seam
-//   4 recover->cta      ink bleed through domain-warped noise
-// Entering photos start as a cyan blueprint and resolve into colour.
-// ===================================================================
+const TR = S.transitions || [];
+const MV = S.scenes.map((s) => Object.assign({ zoom: 0.14, pan: [0.05, 0], roll: 0 }, s.move || {}));
+const TRD = (i) => Object.assign({ focus: [0.5, 0.42], zoom: 0.9, spin: 0, blur: 0.5, warp: 0.3, glow: 0.3, chroma: 0.15, soft: 0.12, overlap: 0.4 }, TR[i] || {});
+const FILM_S = N * 3.5;
+
 const bgCanvas = document.getElementById("bg");
 const bgr = new THREE.WebGLRenderer({ canvas: bgCanvas, antialias: false, alpha: false });
-let bgScale = 0.6, bgSlow = 0, bgLastT = 0;
-bgr.setPixelRatio(bgScale);
-const bgScene = new THREE.Scene();
-const bgCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-const BG_FILES = S.scenes.map((s) => s.id);
-const bgTex = [], bgAsp = BG_FILES.map(() => 1.5);
+bgr.setPixelRatio(0.62);
+const bgScene = new THREE.Scene(), bgCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const blank = new THREE.DataTexture(new Uint8Array([11, 28, 45, 255]), 1, 1); blank.needsUpdate = true;
-BG_FILES.forEach((n, k) => { bgTex[k] = blank; });
-let bgHeroReady = false, bgLoaded = 0;
-window.__assetsReady = () => bgLoaded >= BG_FILES.length && !!window.__sceneReady && (!window.__fitDone || window.__fitDone()); // lets the video recorder wait for every photo
-BG_FILES.forEach((n, k) => {
-  new THREE.TextureLoader().load("images/" + n + ".webp", (t) => {
+const bgTex = S.scenes.map(() => blank), bgAsp = S.scenes.map(() => 1);
+let bgLoaded = 0, flowReady = false;
+window.__assetsReady = () => bgLoaded >= N && flowReady && (!window.__fitDone || window.__fitDone());
+
+// ---- AI-written mask expressions: sanitised on the server, and compile-tested here in isolation (a bad one falls back to the default opening, it can never break the film)
+const gl = bgr.getContext();
+function compiles(expr) {
+  try {
+    const sh = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(sh, "#version 300 es\nprecision highp float;\nfloat f(vec2 p, float q, float t){ return (" + expr + "); }\nout vec4 o; void main(){ o = vec4(f(vec2(0.1), 0.5, 1.0)); }");
+    gl.compileShader(sh); const ok = !!gl.getShaderParameter(sh, gl.COMPILE_STATUS); gl.deleteShader(sh); return ok;
+  } catch (e) { return false; }
+}
+const cases = TR.map((t, i) => (t && t.mask && compiles(t.mask) ? "if (k == " + i + ") return (" + t.mask + ");" : "")).join("\n  ");
+window.__maskStatus = TR.map((t) => (t && t.mask ? compiles(t.mask) : null));
+
+const FRAG = `
+precision highp float;
+uniform sampler2D uA; uniform sampler2D uB;
+uniform vec2 uRes, uAsp, uLight, uF, uSeed; uniform float uT, uQ, uZoomB;
+uniform vec4 uCamA, uCamB, uTr, uTr2, uFxA, uFxB; uniform vec3 uAcc;
+varying vec2 vUv;
+// uTr = (zoom, blur, warp, glow)   uTr2 = (chroma, spin, softness, transition index)
+float maskExpr(int k, vec2 p, float q, float t){
+  ${cases}
+  return length(p) - (0.12 + 1.5 * q * q * (3.0 - 2.0 * q));
+}
+float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1,0)), f.x), mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y); }
+float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 3; i++){ v += a * vnoise(p); p = p * 2.02 + vec2(17.3, 9.1); a *= 0.5; } return v; }
+vec2 coverUV(vec2 uv, float ia){ float sa = uRes.x / uRes.y; vec2 s = sa > ia ? vec2(1.0, ia / sa) : vec2(sa / ia, 1.0); return (uv - 0.5) * s + 0.5; }
+// screen -> image space for one camera: first the dive (scale + roll about the dive point), then the scene's own resting move about the screen centre
+vec2 camUV(vec2 uv, vec4 c, float sc, float roll){
+  float asp = uRes.x / uRes.y;
+  vec2 p = (uv - uF) * vec2(asp, 1.0); float a = roll, cs = cos(a), sn = sin(a); p = vec2(cs * p.x - sn * p.y, sn * p.x + cs * p.y); p /= sc; p.x /= asp;
+  vec2 q = (p + uF - 0.5) * vec2(asp, 1.0); a = c.w; cs = cos(a); sn = sin(a); q = vec2(cs * q.x - sn * q.y, sn * q.x + cs * q.y); q /= c.x; q.x /= asp;
+  return q + 0.5 - c.yz;
+}
+vec3 tap(sampler2D t, vec2 uvi, float ia){ return texture2D(t, coverUV(uvi, ia)).rgb; }
+vec3 still(sampler2D t, vec2 uvi, float ia, vec4 fx, float seed){   // a resting image: gentle water shimmer if the scene asks for it
+  if (fx.x > 0.0){ vec2 w = vec2(vnoise(uvi * vec2(6.0, 14.0) + vec2(uT * 0.25, seed)), vnoise(uvi * vec2(9.0, 11.0) + vec2(seed, uT * 0.2))) - 0.5; uvi += w * 0.02 * fx.x; }
+  return tap(t, uvi, ia);
+}
+float footprint(vec2 uvi, float ia){ vec2 c = coverUV(uvi, ia); vec2 d = min(c, 1.0 - c); return smoothstep(0.0, 0.03, min(d.x, d.y)); }
+vec3 overlay(vec3 col, vec2 uv, vec4 fx, float seed, float light){
+  float asp = uRes.x / uRes.y;
+  if (fx.y > 0.0){ float m = fbm(uv * vec2(2.2, 3.2) + vec2(uT * 0.035, seed)); col = mix(col, mix(vec3(0.80, 0.90, 0.95), vec3(1.0), light), fx.y * smoothstep(0.38, 0.85, m) * 0.5); }
+  if (fx.z > 0.0){ vec2 d = (uv - vec2(0.53, 0.5)) * vec2(asp, 1.0); float ang = atan(d.y, d.x);
+    float r = vnoise(vec2(ang * 5.0 + uT * 0.10, seed)) * 0.7 + vnoise(vec2(ang * 11.0 - uT * 0.07, seed + 3.0)) * 0.3;
+    col += mix(uAcc, vec3(1.0, 0.7, 0.4), 0.5) * pow(r, 2.2) * exp(-length(d) * 1.5) * fx.z * 0.8; }
+  return col;
+}
+void main(){
+  vec2 uv = vUv; float asp = uRes.x / uRes.y; float q = uQ; vec3 col; float m = 0.0;
+  if (q <= 0.0005){
+    col = still(uA, camUV(uv, uCamA, 1.0, 0.0), uAsp.x, uFxA, uSeed.x);
+    col = overlay(col, uv, uFxA, uSeed.x, uLight.x);
+  } else {
+    float sp = sin(3.14159265 * q);
+    float eo = 1.0 - pow(1.0 - q, 3.0);                                    // the incoming picture decelerates into its own resting move
+    float scA = exp(uTr.x * q * q), scB = exp(-uZoomB * (1.0 - eo));       // the outgoing one accelerates away
+    float rA = uTr2.y * q * q, rB = -uTr2.y * 0.6 * (1.0 - eo);
+    vec2 pf = (uv - uF) * vec2(asp, 1.0);
+    float dm = maskExpr(int(uTr2.w + 0.5), pf / scB, q, uT);
+    dm = mix(max(dm, 0.35), dm, smoothstep(0.0, 0.08, q));                 // whatever the expression says, the opening starts closed...
+    dm = mix(dm, -1.0, smoothstep(0.86, 1.0, q));                          // ...and is completely open by the end: no snap, ever
+    float soft = uTr2.z; m = smoothstep(soft, -soft, dm);
+    float edge = exp(-abs(dm) * 5.0) * sp;
+    vec2 wv = (vec2(vnoise(uv * 5.0 + vec2(uT * 0.6, 0.0)), vnoise(uv * 5.0 + vec2(9.7, -uT * 0.5))) - 0.5) * uTr.z * 0.14 * edge;   // liquid warp, strongest on the edge of the opening
+    float bl = uTr.y * sp, jit = hash(gl_FragCoord.xy);
+    vec3 cA = vec3(0.0), cB = vec3(0.0);
+    for (int k = 0; k < 8; k++){                                            // radial motion blur toward the dive point
+      float f = (float(k) + jit) / 8.0, s = 1.0 - bl * 0.24 * f; vec2 uvs = uF + (uv + wv - uF) * s;
+      cA += tap(uA, camUV(uvs, uCamA, scA, rA), uAsp.x);
+      cB += tap(uB, camUV(uvs, uCamB, scB, rB), uAsp.y);
+    }
+    cA /= 8.0; cB /= 8.0;
+    float box = footprint(camUV(uv + wv, uCamB, scB, rB), uAsp.y);         // while the incoming picture is smaller than the screen it is a window, not a smear
+    m *= mix(1.0, box, 1.0 - smoothstep(0.35, 0.7, q));
+    col = mix(cA, cB, m);
+    if (uTr2.x > 0.0){                                                      // colour split, biggest at the fastest part of the dive
+      vec2 ur = uF + (uv - uF) * (1.0 + uTr2.x * 0.010 * sp), ub = uF + (uv - uF) * (1.0 - uTr2.x * 0.010 * sp);
+      vec3 cr = mix(tap(uA, camUV(ur, uCamA, scA, rA), uAsp.x), tap(uB, camUV(ur, uCamB, scB, rB), uAsp.y), m);
+      vec3 cb = mix(tap(uA, camUV(ub, uCamA, scA, rA), uAsp.x), tap(uB, camUV(ub, uCamB, scB, rB), uAsp.y), m);
+      col = vec3(cr.r, col.g, cb.b);
+    }
+    col += mix(uAcc, vec3(1.0), 0.45) * (edge * uTr.w * 0.9 + sp * sp * uTr.w * 0.10);   // bloom on the opening's edge + a breath of light through the whole dive
+    col = overlay(col, uv, mix(uFxA, uFxB, m), mix(uSeed.x, uSeed.y, m), mix(uLight.x, uLight.y, m));
+  }
+  float lt = mix(uLight.x, uLight.y, m);
+  col *= 1.0 - mix(0.42, 0.08, lt) * pow(length((uv - 0.5) * vec2(1.0, 0.9)) * 1.35, 2.0);
+  gl_FragColor = vec4(col, 1.0);
+}`;
+
+const U = {
+  uA: { value: blank }, uB: { value: blank }, uRes: { value: new THREE.Vector2(1, 1) }, uAsp: { value: new THREE.Vector2(1, 1) }, uLight: { value: new THREE.Vector2() },
+  uF: { value: new THREE.Vector2(0.5, 0.42) }, uSeed: { value: new THREE.Vector2(1, 2) }, uT: { value: 0 }, uQ: { value: 0 }, uZoomB: { value: 0.5 },
+  uCamA: { value: new THREE.Vector4(1, 0, 0, 0) }, uCamB: { value: new THREE.Vector4(1, 0, 0, 0) }, uTr: { value: new THREE.Vector4() }, uTr2: { value: new THREE.Vector4() },
+  uFxA: { value: new THREE.Vector4() }, uFxB: { value: new THREE.Vector4() }, uAcc: { value: new THREE.Vector3(accRgb[0], accRgb[1], accRgb[2]) },
+};
+bgr.debug.onShaderError = (g, prog, vs, fs) => { console.error("flow shader failed:", g.getShaderInfoLog(fs)); };
+bgScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({ uniforms: U, vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }", fragmentShader: FRAG })));
+const FX = S.scenes.map((s) => [s.fx.ripple, s.fx.mist, s.fx.rays, 0]), LIGHT = S.scenes.map((s) => (s.tone === "light" ? 1 : 0));
+
+// a scene's own camera: a slow continuous move (push/pull + drift + roll) that is defined for ALL u, so the incoming scene is already moving while it opens
+function camOf(k, u, T) {
+  const m = MV[k], sway = 0.004 * Math.sin(T * 1.7 + k * 2.1);
+  return [1.26 * Math.exp(1.5 * m.zoom * (u - 0.5)), 1.5 * m.pan[0] * (u - 0.5) + sway, 1.5 * m.pan[1] * (u - 0.5) + sway * 0.6, (1.5 * m.roll * (u - 0.5) * Math.PI) / 180];
+}
+let lastSize = "";
+function draw(p) {
+  const w = bgCanvas.clientWidth || window.innerWidth, h = bgCanvas.clientHeight || window.innerHeight;
+  if (lastSize !== w + "x" + h) { lastSize = w + "x" + h; bgr.setSize(w, h, false); U.uRes.value.set(bgCanvas.width, bgCanvas.height); }
+  p = clamp01(p);
+  const P = Math.min(0.99999, p) * N, i = Math.min(N - 1, Math.floor(P)), u = P - i, last = i >= N - 1, nxt = Math.min(N - 1, i + 1), T = p * FILM_S;
+  const tr = TRD(i), ov = last ? 0.4 : tr.overlap, q = last ? 0 : clamp01((u - (1 - ov)) / ov);
+  const ca = camOf(i, u, T), cb = camOf(nxt, u - 1, T);
+  U.uCamA.value.set(...ca); U.uCamB.value.set(...cb);
+  U.uA.value = bgTex[i]; U.uB.value = bgTex[nxt]; U.uAsp.value.set(bgAsp[i], bgAsp[nxt]);
+  U.uT.value = T; U.uQ.value = q; U.uZoomB.value = tr.zoom * 0.55;
+  U.uF.value.set(tr.focus[0], 1 - tr.focus[1]);                    // spec focus is (x, y-from-top); GL is y-up
+  U.uTr.value.set(tr.zoom, tr.blur, tr.warp, tr.glow); U.uTr2.value.set(tr.chroma, (tr.spin * Math.PI) / 180, tr.soft, i);
+  U.uSeed.value.set(i * 3.7 + 1, nxt * 3.7 + 1); U.uFxA.value.set(...FX[i]); U.uFxB.value.set(...FX[nxt]); U.uLight.value.set(LIGHT[i], LIGHT[nxt]);
+  const L = LIGHT[i] + (LIGHT[nxt] - LIGHT[i]) * sm(q * 1.4 - 0.2);
+  scrimD.style.opacity = 1 - L; scrimLt.style.opacity = L;
+  chip.style.opacity = last ? 0 : i === N - 2 ? 1 - sm((q - 0.2) / 0.6) : 1;                                       // the brand chip hands over to the end card
+  if (pulse) pulse.style.transform = last ? "scale(" + (1 + 0.035 * Math.sin(u * 30)) + ")" : "none";               // the CTA breathes, deterministic in scene time
+  if (window.__sceneUpdate) window.__sceneUpdate(i, u, p);
+  bgr.render(bgScene, bgCam);
+}
+window.__setFrameHook(draw);   // every __jumpToProgress renders the background synchronously: no reliance on requestAnimationFrame
+window.addEventListener("resize", () => draw(state.p));
+S.scenes.forEach((sc, k) => {
+  new THREE.TextureLoader().load("images/" + sc.id + ".webp", (t) => {
     t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = 4;
-    bgTex[k] = t; bgAsp[k] = t.image.width / t.image.height;
-    bgLoaded++; if (k === 0) bgHeroReady = true;
+    bgTex[k] = t; bgAsp[k] = t.image.width / t.image.height; bgLoaded++; draw(state.p);
   });
 });
-const BG_FX = S.scenes.map((s) => [s.fx.ripple, s.fx.mist, s.fx.rays, 0]);
-const BG_LIGHT = S.scenes.map((s) => (s.tone === "light" ? 1 : 0));
-const BG_DRIFT = S.scenes.map((s, k) => [[0.035, -0.012], [-0.03, 0.01], [0.0, 0.03], [-0.02, -0.03], [0.03, 0.012], [-0.025, 0.02]][k % 6]);
-const bgMat = new THREE.ShaderMaterial({
-  uniforms: {
-    uA: { value: blank }, uB: { value: blank }, uRes: { value: new THREE.Vector2(1, 1) }, uTime: { value: 0 }, uE: { value: 0 }, uType: { value: 0 },
-    uAsp: { value: new THREE.Vector2(1.5, 1.5) }, uZoom: { value: new THREE.Vector2(1.1, 1.1) }, uDrift: { value: new THREE.Vector4() },
-    uFxA: { value: new THREE.Vector4() }, uFxB: { value: new THREE.Vector4() }, uLight: { value: new THREE.Vector2() }, uPortal: { value: new THREE.Vector2(0.75, 0.5) }, uSeed: { value: new THREE.Vector2(1, 2) }, uAcc: { value: new THREE.Vector3(accRgb[0], accRgb[1], accRgb[2]) },
-  },
-  vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
-  fragmentShader: `
-    precision highp float;
-    uniform sampler2D uA; uniform sampler2D uB;
-    uniform vec2 uRes; uniform float uTime, uE, uType;
-    uniform vec2 uAsp, uZoom, uLight, uPortal, uSeed; uniform vec4 uDrift, uFxA, uFxB; uniform vec3 uAcc;
-    varying vec2 vUv;
-    float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
-    float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-      return mix(mix(hash(i), hash(i + vec2(1,0)), f.x), mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y); }
-    float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 4; i++){ v += a * vnoise(p); p = p * 2.02 + vec2(17.3, 9.1); a *= 0.5; } return v; }
-    vec2 coverUV(vec2 uv, float ia){ float sa = uRes.x / uRes.y; vec2 s = sa > ia ? vec2(1.0, ia / sa) : vec2(sa / ia, 1.0); return (uv - 0.5) * s + 0.5; }
-    vec3 base(sampler2D t, vec2 uv, float ia, float zoom, vec2 drift, float rip, float seed){
-      float br = 0.012 * sin(uTime * 0.35 + seed * 3.0);
-      vec2 w = vec2(vnoise(uv * vec2(6.0, 14.0) + vec2(uTime * 0.25, seed)), vnoise(uv * vec2(9.0, 11.0) + vec2(seed, uTime * 0.2))) - 0.5;
-      vec2 q = uv + w * 0.022 * rip; q.x += sin(q.y * 70.0 + uTime * 1.4) * 0.0009 * rip;
-      q = (q - 0.5) / (zoom + br) + 0.5 + drift + vec2(sin(uTime * 0.11 + seed), cos(uTime * 0.09 + seed * 2.0)) * 0.006;
-      return texture2D(t, coverUV(q, ia)).rgb;
-    }
-    vec3 overlay(vec3 col, vec2 uv, vec4 fx, float seed, float light){
-      float asp = uRes.x / uRes.y;
-      if (fx.y > 0.0){ float m = fbm(uv * vec2(2.2, 3.2) + vec2(uTime * 0.035, seed)); col = mix(col, mix(vec3(0.80, 0.90, 0.95), vec3(1.0), light), fx.y * smoothstep(0.38, 0.85, m) * 0.5); }
-      if (fx.z > 0.0){ vec2 d = (uv - vec2(0.53, 0.5)) * vec2(asp, 1.0); float ang = atan(d.y, d.x);
-        float r = vnoise(vec2(ang * 5.0 + uTime * 0.10, seed)) * 0.7 + vnoise(vec2(ang * 11.0 - uTime * 0.07, seed + 3.0)) * 0.3;
-        col += vec3(1.0, 0.66, 0.36) * pow(r, 2.2) * exp(-length(d) * 1.5) * fx.z * 0.9; }
-      if (fx.w > 0.0){ for (int k = 0; k < 3; k++){ float sc = 12.0 + float(k) * 9.0;
-        vec2 p = uv * vec2(asp, 1.0) * sc + vec2(uTime * 0.05 * float(k + 1), -uTime * (0.25 + 0.12 * float(k))) + float(k) * 13.7;
-        vec2 id = floor(p), f = fract(p) - 0.5; float h = hash(id + seed); vec2 o = (vec2(hash(id + 1.3), hash(id + 7.9)) - 0.5) * 0.6;
-        float tw = 0.5 + 0.5 * sin(uTime * (1.0 + h * 2.0) + h * 20.0);
-        col += vec3(0.85, 1.0, 1.0) * smoothstep(0.09, 0.0, length(f - o)) * step(0.55, h) * tw * fx.w * (1.0 - 0.25 * float(k)) * (1.0 - 0.6 * light); } }
-      return col;
-    }
-    vec3 blueprint(vec3 c, vec2 uv, float amt, float light){          // the entering photo "scans in" from a monochrome wash of the BRAND colour
-      float g = dot(c, vec3(0.3, 0.59, 0.11));
-      vec3 tint = mix(vec3(1.0), uAcc * 1.25, 0.6);
-      vec3 t = mix(vec3(g) * tint * 1.05 + uAcc * 0.04, vec3(g * 0.55) * tint, light);
-      vec2 gl = abs(fract(uv * vec2(uRes.x / uRes.y, 1.0) * 22.0) - 0.5);
-      t += smoothstep(0.47, 0.5, max(gl.x, gl.y)) * mix(uAcc, vec3(1.0), 0.35) * 0.35 * (1.0 - light * 0.5);
-      return mix(c, t, amt);
-    }
-    void main(){
-      vec2 uv = vUv; float asp = uRes.x / uRes.y; float e = uE; vec3 col; float m = 0.0;
-      if (e <= 0.001){
-        col = base(uA, uv, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); col = overlay(col, uv, uFxA, uSeed.x, uLight.x);
-      } else {
-        vec3 cA, cB, add = vec3(0.0); vec2 uvA = uv, uvB = uv; float bpK = 1.0; float PI = 3.14159265;
-        if (uType < 0.5){                                   // 0: iris dive out of the can
-          vec2 c = uPortal; vec2 d = (uv - c) * vec2(asp, 1.0); float far = length(max(c, 1.0 - c) * vec2(asp, 1.0)) * 1.05;
-          float n = fbm(uv * 3.5 + vec2(uTime * 0.2, 0.0)) - 0.5; float r = e * far * 1.1; float dist = length(d) + n * 0.16 * sin(PI * e);
-          m = smoothstep(r, r - 0.05, dist); add = smoothstep(0.06, 0.0, abs(dist - r)) * sin(PI * e) * mix(uAcc, vec3(1.0), 0.4) * 0.9;
-          uvA = c + (uv - c) / (1.0 + 1.4 * e * e); uvB = c + (uv - c) / (0.55 + 0.45 * e);
-          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y);
-        } else if (uType < 1.5){                            // 1: liquid rises and refracts
-          float wav = sin(uv.x * 7.0 + uTime * 1.6) * 0.018 + sin(uv.x * 17.0 - uTime * 2.3) * 0.008 + (fbm(vec2(uv.x * 3.0, uTime * 0.2)) - 0.5) * 0.07;
-          float surf = e * 1.3 - 0.1 + wav; m = smoothstep(surf + 0.012, surf - 0.012, uv.y);
-          float depth = clamp(surf - uv.y, 0.0, 1.0);
-          uvB = uv + vec2(sin(uv.y * 30.0 + uTime * 2.0), cos(uv.x * 25.0 + uTime * 1.6)) * 0.006 * (1.0 - e) * (0.4 + depth);
-          uvA = uv + vec2(0.0, (1.0 - m) * e * 0.07);
-          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y);
-          cB *= 1.0 + smoothstep(0.18, 0.0, depth) * 0.3; add = smoothstep(0.035, 0.0, abs(uv.y - surf)) * vec3(0.85, 0.95, 1.0) * 0.55 * sin(PI * e); bpK = 0.7;
-        } else if (uType < 2.5){                            // 2: sun burst
-          vec2 s = vec2(0.53, 0.5); vec2 d = (uv - s) * vec2(asp, 1.0); float dist = length(d);
-          float n = fbm(uv * 3.0 + vec2(0.0, uTime * 0.2)) - 0.5; float r = e * 1.7; m = smoothstep(r, r - 0.14, dist + n * 0.22);
-          uvB = s + (uv - s) / (1.0 + 0.6 * (1.0 - e)); uvA = s + (uv - s) / (1.0 + 0.25 * e);
-          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y);
-          add = vec3(1.0, 0.78, 0.5) * exp(-dist * 2.6) * sin(PI * e) * 1.25 + smoothstep(0.08, 0.0, abs(dist + n * 0.22 - r)) * vec3(1.0, 0.85, 0.6) * 0.5 * sin(PI * e);
-        } else if (uType < 3.5){                            // 3: streak pan
-          float edge = 1.06 - e * 1.4 + (fbm(vec2(uv.y * 3.0, uTime * 0.3)) - 0.5) * 0.14; float sh = sin(PI * e);
-          m = 1.0 - smoothstep(edge + 0.02, edge - 0.02, uv.x); // B on the right of the seam, sweeping left
-          cA = vec3(0.0); cB = vec3(0.0);
-          float jit = hash(gl_FragCoord.xy) / 12.0;
-          for (int k = 0; k < 12; k++){ float o = ((float(k) / 12.0 + jit) - 0.5) * 0.16 * sh;
-            cA += base(uA, uv + vec2(e * 0.35 + o, 0.0), uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x);
-            cB += base(uB, uv + vec2(-(1.0 - e) * 0.35 + o, 0.0), uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y); }
-          cA /= 12.0; cB /= 12.0; add = smoothstep(0.2, 0.0, abs(uv.x - edge)) * (0.4 + fbm(uv * 4.0 + uTime * 0.1)) * sh * vec3(0.9, 0.95, 1.0) * 0.32; bpK = 0.0;
-        } else {                                            // 4: ink bleed
-          float nn = fbm(uv * 2.2 + vec2(uTime * 0.05, 0.0)) * 0.8 + fbm(uv * 5.0 + 3.0) * 0.2; float th = e * 1.45 - 0.2;
-          m = 1.0 - smoothstep(th - 0.08, th + 0.08, nn);
-          vec2 g = vec2(fbm(uv * 3.0 + 1.0), fbm(uv * 3.0 + 7.0)) - 0.5;
-          uvA = (uv - 0.5) / (1.0 + 0.3 * e) + 0.5 + g * 0.15 * e; uvB = (uv - 0.5) / (1.0 + 0.25 * (1.0 - e)) + 0.5 - g * 0.15 * (1.0 - e);
-          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y);
-          add = smoothstep(0.1, 0.0, abs(nn - th)) * sin(PI * e) * mix(uAcc, vec3(1.0), 0.3) * 0.7;
-        }
-        float bp = (1.0 - smoothstep(0.45, 1.0, e)) * 0.85 * bpK;
-        cB = blueprint(cB, uv, bp, uLight.y);
-        col = mix(cA, cB, m) + add;
-        col = overlay(col, uv, mix(uFxA, uFxB, m), mix(uSeed.x, uSeed.y, m), mix(uLight.x, uLight.y, m));
-      }
-      float lt = mix(uLight.x, uLight.y, m);
-      col *= 1.0 - mix(0.42, 0.08, lt) * pow(length((uv - 0.5) * vec2(1.0, 0.9)) * 1.35, 2.0);
-      col *= 1.0 - mix(0.30, 0.0, lt) * smoothstep(0.55, 0.0, uv.y);
-      gl_FragColor = vec4(col, 1.0);
-    }`,
-});
-bgScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), bgMat));
-const TYPES = S.scenes.map((s, k) => (S.transitions && S.transitions[k] != null ? S.transitions[k] : k % 5));
-const sm5 = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * t * (t * (t * 6 - 15) + 10); };
-const bgU = bgMat.uniforms;
-const bgLightState = { v: 0 };
-let bgShown = false;
-function bgResize(w, h) { bgr.setSize(w, h, false); bgU.uRes.value.set(bgCanvas.width, bgCanvas.height); }
-function bgAdapt(now) {
-  const dt = now - bgLastT; bgLastT = now;
-  if (dt > 100 || dt <= 0) return;
-  bgSlow += dt > 26 ? 1 : dt < 19 ? -1 : 0; bgSlow = Math.max(-40, Math.min(40, bgSlow));
-  if (bgSlow > 25 && bgScale > 0.34) { bgScale = Math.max(0.34, bgScale - 0.1); bgSlow = 0; bgr.setPixelRatio(bgScale); bgResize(window.innerWidth, window.innerHeight); }
-}
-function bgFrame(now) {
-  bgAdapt(now);
-  const i = Math.min(state.i, N - 1), nxt = Math.min(i + 1, N - 1), t = state.t;
-  const last = i >= N - 1;
-  const e = last ? 0 : sm5((t - 0.6) / 0.4);
-  const dolly = (tt) => 1.06 + 0.14 * tt;
-  bgU.uTime.value = now * 0.001;
-  bgU.uE.value = e; bgU.uType.value = TYPES[i];
-  bgU.uA.value = bgTex[i]; bgU.uB.value = bgTex[nxt];
-  bgU.uAsp.value.set(bgAsp[i], bgAsp[nxt]);
-  bgU.uSeed.value.set(i * 3.7 + 1.0, nxt * 3.7 + 1.0); // per-SCENE seed: the incoming photo must look identical at e=1 and at the next scene's e=0, or the background snaps
-  bgU.uZoom.value.set(dolly(t), dolly(0));
-  bgU.uDrift.value.set(BG_DRIFT[i][0] * t, BG_DRIFT[i][1] * t, 0, 0);
-  bgU.uFxA.value.set(...BG_FX[i]); bgU.uFxB.value.set(...BG_FX[nxt]);
-  bgU.uLight.value.set(BG_LIGHT[i], BG_LIGHT[nxt]);
-  bgU.uPortal.value.set(0.5, 0.4);
-  bgLightState.v = lerp(BG_LIGHT[i], BG_LIGHT[nxt], sm(e * 1.6 - 0.3));
-  bgr.render(bgScene, bgCam);
-  if (bgHeroReady && !bgShown) { bgShown = true; document.documentElement.classList.add("glbg"); }
-}
-function resize() { bgResize(window.innerWidth, window.innerHeight); }
-window.addEventListener("resize", resize); resize();
-function frame(now) {
-  requestAnimationFrame(frame);
-  const i = Math.min(state.i, N - 1), nxt = Math.min(i + 1, N - 1), e = i >= N - 1 ? 0 : sm5((state.t - 0.6) / 0.4);
-  bgFrame(now);
-  const L = bgLightState.v;
-  scrimD.style.opacity = 1 - L; scrimLt.style.opacity = L;
-}
-requestAnimationFrame(frame);
-window.__sceneReady = true;
+window.__sceneUpdate = (i, t, p) => { state.i = i; state.t = t; state.p = p; };
+flowReady = true; window.__sceneReady = true;
+draw(0);
 </script>
 </body></html>

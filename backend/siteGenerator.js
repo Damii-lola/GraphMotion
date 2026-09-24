@@ -20,6 +20,7 @@ const fetch = require('node-fetch');
 const ffmpegPath = require('ffmpeg-static');
 const { callCloudflareRaw } = require('./cloudflareClient');
 const neurons = require('./neuronBudget');
+const flow = require('./flowSpec');
 const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/mistralai/mistral-small-3.1-24b-instruct'; // ~4x cheaper per token than the 70B; one call per ad
 const SCENE_SECONDS = 3.5;
 
@@ -51,23 +52,34 @@ function buildBrief({ name, details, focus, notes }) {
 // ------------------------------------------------------------- the ad script from the model
 const SYSTEM = `You are a performance-marketing creative director who writes vertical social-media video ads (TikTok, Instagram Reels, YouTube Shorts). You reply with ONE JSON object only.`;
 
+const adMixMenu = () => require('./adMix').menu();
+/** The AI picks its own sound effects: it is shown the library of real recordings (id, character, length) and chooses per moment. */
+function soundBlock() {
+  const m = adMixMenu(); if (!m) return '';
+  return `SOUND. Pick REAL sound effects by id from this library (the whooshes play very quietly under the picture - choose the one whose character fits each dive):
+${m}
+Set "sfx" inside each transition to a whoosh id (vary them), and add a top-level "sound": {"music": "warm pad" | "pulse" | "tense" | "dark drone" (the bed that fits the brand), "tick": id (a caption landing), "sparkle": id (sticker pops and the button), "riser": id (into the end card), "impact": id (the end card landing)}.
+
+`;
+}
 function briefPrompt(brief) {
   return `Write a 21-second vertical (9:16) social-media video AD for the company below. It is NOT a website: six scenes of 3.5 seconds, each ONE idea shown as a big caption over a full-screen photograph. Write like a top ad-agency copywriter: specific to THIS company, spoken and punchy, never generic filler. Use only facts, names and numbers that appear in the brief - never invent statistics, awards or prices.
 
 COMPANY BRIEF:
 ${brief}
 
-The six scenes, in this exact order (ids fixed):
-1 "hook" - stops the scroll in the first second: a bold claim, a surprising fact from the brief, a sharp question or a painfully relatable moment. Never a greeting, never just the company name.
-2 "pain" - the problem or desire the viewer has right now.
-3 "solution" - the company's product or service as the answer.
-4 "feature" - the single strongest benefit or how it works.
-5 "proof" - credibility taken from the brief (a number, scale, result, guarantee, ingredient, customer love).
-6 "cta" - the closing call to action. The whole ad is built around the MAIN FOCUS; the cta invites the viewer to act on it.
+SCENES, in this exact order (ids fixed): 1 "hook" - stops the scroll in the first second (a bold claim, a surprising fact from the brief, a sharp question, a relatable moment; never a greeting or just the company name). 2 "pain" - the problem or desire the viewer has. 3 "solution" - the product as the answer. 4 "feature" - the single strongest benefit. 5 "proof" - credibility from the brief (number, scale, result, guarantee). 6 "cta" - the closing call to action, built around the MAIN FOCUS.
 
-Return ONE JSON object with these keys:
-"brand" (company name), "tagline" (max 7 words), "look" (one of: metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour as #RRGGBB - use the brand's own colour if the brief names one, otherwise a vivid colour that suits it; never grey), "bg" (near-black #RRGGBB), "imageStyle" (6-10 words describing ONE consistent photographic look for every image), "cta" (button label, 2-4 words, e.g. "Order now"), "link" (the company's website or @handle ONLY if it appears in the brief, otherwise ""),
-"scenes": an array of EXACTLY 6 objects. Each has: "id", "tag" (1-3 word label in a pill above the headline such as "POV", "Real talk", "Meet it", "The proof"; "" for the cta), "headline" (2-7 words, hard limit; put a | where the line should break; wrap the ONE or TWO most important words in *asterisks* to highlight them), "sub" (optional supporting line, max 9 words, "" if not needed), "sticker" (a proof badge {"n":"big number or word, max 7 chars","l":"tiny label, max 3 words"} for solution, feature and proof when the brief gives a real number or fact; otherwise null), "imagePrompt" (a vivid photographic scene, max 22 words: ONE subject, no text, no logos, no faces), "tone" ("dark" for every scene except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}).
+THE FLOW (the most important part). The ad is ONE continuous camera move through six images, never six slides with effects between them. Study how the best scroll-driven 3D-website shorts do it: an aeroplane window fills the screen, the camera flies INTO the window, the sky outside becomes the whole screen and rushes past, and the next scene emerges out of the clouds - nothing stops, nothing cuts, the end of every scene literally becomes the beginning of the next. Another: a face made of strands dissolves into fibres that swirl into a glowing ring which becomes the next object. Another: one mountain island keeps its shape while the light changes dawn to dusk and the camera never stops gliding. You control the flow with three things:
+(1) CHAIN THE IMAGES. Write every imagePrompt as the continuation of the previous one: same palette and light, and the main subject of image N+1 sits exactly where the camera dives into image N (dive into a bottle's neck -> next image is a macro of the liquid in that same spot; dive into a window -> next image is what is outside it).
+(2) EVERY SCENE HAS A CAMERA MOVE that never rests: "move": {"zoom": -0.24..0.24 (+ pushes in, - pulls out), "pan": [-0.15..0.15, -0.04..0.04], "roll": -3..3 degrees}. Vary it scene to scene.
+(3) EVERY TRANSITION is the camera diving through the current image while the next one is already opening inside it. There are 5 transitions (scene 1->2 ... 5->6) in "transitions": {"focus": [x, y] where in the frame (0..1, y from the top) the camera dives - the thing that should open: a hole, a glow, the product, "zoom": 0.3..1.8 how violently it rushes, "spin": -25..25 degrees, "blur": 0..1 motion blur, "warp": 0..1 liquid distortion of the opening's edge, "glow": 0..1 light bloom, "chroma": 0..1 colour split, "soft": 0.03..0.35 edge softness, "overlap": 0.28..0.5 share of the scene the dive lasts, "mask": "..." optional}. Invent each one for THIS story; never repeat the same numbers or shape twice in a row; calm luxury brands = low blur/warp/spin, aggressive brands = high.
+MASK = a GLSL float expression that shapes the opening. Variables: p (vec2: position relative to the dive point, screen height = 1, x right, y up), q (0..1 progress), t (seconds). The next image shows where the expression is NEGATIVE. Style examples (invent your own, do not copy): "length(p)-1.6*q" a circle opening; "abs(p.y)-2.0*q+0.15*sin(p.x*9.0+t*3.0)" a rippling slit widening; "length(p*vec2(1.0,0.5))-1.7*q" an ellipse; "abs(p.x)+abs(p.y)-1.9*q" a diamond. By q=1 it must cover |p|<=1.8. Allowed: p q t, numbers WITH a decimal point, + - * / ( ) . , and the functions sin cos abs length min max pow smoothstep mix clamp fract atan sqrt exp vec2. Leave "" for the plain circle.
+
+${soundBlock()}Return ONE JSON object with these keys:
+"brand", "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "imageStyle" (6-10 words: ONE consistent photographic look), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
+"scenes": EXACTLY 6 objects, each: "id", "tag" (1-3 word pill label like "POV", "Real talk", "The proof"; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 22 words, ONE subject, no text, no logos, no faces), "move" (see 2), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
+"transitions": EXACTLY 5 objects (see 3)${adMixMenu() ? ', "sound" (see SOUND)' : ''}.
 Output the JSON object only.`;
 }
 
@@ -93,6 +105,7 @@ function cleanHeadline(raw, fallback) {
   return t.slice(0, 80);
 }
 
+const flowSeed = (n) => flow.hashStr(n);
 function normalizeSpec(raw, brand, opts = {}) {
   const S = raw && typeof raw === 'object' ? raw : {};
   const str = (v, d = '', n = 200) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : d);
@@ -108,7 +121,7 @@ function normalizeSpec(raw, brand, opts = {}) {
   let link = str(S.link, '', 60);
   if (link && !briefText.toLowerCase().includes(link.toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, ''))) link = ''; // only a link the client actually gave us
   const spec = {
-    kind: 'ad', brand: name, tagline: str(S.tagline, '', 60), cta: str(S.cta, 'Learn more', 24), link,
+    kind: 'ad', seed: flowSeed(name), brand: name, tagline: str(S.tagline, '', 60), cta: str(S.cta, 'Learn more', 24), link,
     imageStyle: str(S.imageStyle, 'bold vibrant commercial photography', 90),
     theme: {
       look, ...LOOKS[look], bg,
@@ -117,6 +130,7 @@ function normalizeSpec(raw, brand, opts = {}) {
     },
     scenes: [],
   };
+  const seed = flow.hashStr(name);
   let lightUsed = 0;
   IDS.forEach((id, k) => {
     const s = src.find((x) => x && x.id === id) || src[k] || {};
@@ -134,8 +148,13 @@ function normalizeSpec(raw, brand, opts = {}) {
       imagePrompt: str(s.imagePrompt, `${name} atmosphere, ${spec.imageStyle}`, 200),
       tone,
       fx: { ripple: num01(fx.ripple, 0.12), mist: num01(fx.mist, 0.25), rays: num01(fx.rays, 0) },
+      move: flow.normalizeMove(s.move, seed, k),
     });
   });
+  const trs = Array.isArray(S.transitions) ? S.transitions : [];
+  spec.transitions = IDS.slice(1).map((_, i) => flow.normalizeTransition(trs[i], seed, i));
+  const snd = S.sound && typeof S.sound === 'object' ? S.sound : {}, sid = (v) => (typeof v === 'string' ? v.replace(/[^a-z0-9_-]/gi, '').slice(0, 40) : '');
+  spec.sound = { music: ['warm pad', 'pulse', 'tense', 'dark drone'].includes(snd.music) ? snd.music : '', tick: sid(snd.tick), sparkle: sid(snd.sparkle), riser: sid(snd.riser), impact: sid(snd.impact) };
   return spec;
 }
 
@@ -174,19 +193,41 @@ async function logoPlate(file) {
 }
 
 // ------------------------------------------------------------- sound: a bed + a few restrained cues locked to the picture
-function adAudio(spec, dir) {
+async function adAudio(spec, dir) {
   const { synth } = require('./siteAudio');
-  const S = SCENE_SECONDS, n = spec.scenes.length, cues = [];
+  const adMix = require('./adMix'), lib = adMix.library();
+  const S = SCENE_SECONDS, n = spec.scenes.length, end = (n - 1) * S;
+  const sound = spec.sound || {};
+  const music = { style: sound.music || spec.theme.music || 'warm pad', key: 'A', bpm: (sound.music || spec.theme.music) === 'tense' ? 120 : 112 };
+  if (!lib.list.length) {   // no recorded effects installed: the synthesised fallback, with the whooshes kept quiet
+    const cues = [];
+    spec.scenes.forEach((sc, i) => {
+      cues.push({ t: i * S + 0.08, kind: 'tick', gain: 0.5 });
+      if (sc.sticker) cues.push({ t: i * S + 0.72, kind: 'tick', gain: 0.6 });
+      if (i < n - 1) cues.push({ t: (i + 1) * S - 1.0, kind: 'whoosh', dur: 1.0, gain: 0.09 });
+    });
+    cues.push({ t: end - 1.1, kind: 'riser', dur: 1.1, gain: 0.3 }, { t: end + 0.02, kind: 'impact', gain: 0.5 }, { t: end + 0.02, kind: 'sub', gain: 0.4 }, { t: end + 1.1, kind: 'tick', gain: 0.6 });
+    fs.writeFileSync(path.join(dir, 'audio.wav'), synth({ duration: n * S + 1, cues: cues.filter((c) => c.t >= 0), music }));
+    return 'audio.wav';
+  }
+  // real recordings, placed on the picture: the AI chose which one for each moment (spec.sound / spec.transitions[i].sfx); anything it left out or got wrong is filled from the library
+  const pick = (kind, id, salt) => { const l = lib.of(kind); if (!l.length) return null; return lib.byId[id] && lib.byId[id].kind === kind ? lib.byId[id] : l[((spec.seed || 0) + salt) % l.length]; };
+  const G = adMix.GAIN, ev = [], at = (x) => path.join(adMix.LIB, x.file);
+  const tick = pick('tick', sound.tick, 0), spark = pick('sparkle', sound.sparkle, 1), riser = pick('riser', sound.riser, 2), hit = pick('impact', sound.impact, 3);
   spec.scenes.forEach((sc, i) => {
-    cues.push({ t: i * S + 0.08, kind: 'tick', gain: 0.5 });                                    // caption lands
-    if (sc.sticker) cues.push({ t: i * S + 0.72, kind: 'tick', gain: 0.6 });                     // sticker pops
-    if (i < n - 1) cues.push({ t: (i + 1) * S - 1.0, kind: 'whoosh', dur: 1.0, gain: 0.42 });   // scene change
+    if (tick) ev.push({ file: at(tick), at: i * S + 0.08, gain: G.tick });
+    if (sc.sticker && spark) ev.push({ file: at(spark), at: i * S + 0.72, gain: G.sparkle });
+    if (i < n - 1) {
+      const tr = spec.transitions[i], w = pick('whoosh', tr.sfx, i), mid = (i + 1 - tr.overlap / 2) * S, d = w ? w.seconds : 1;
+      if (w) ev.push({ file: at(w), at: Math.max(0, mid - d * 0.45), gain: G.whoosh });   // centred on the dive, at 20 % volume
+    }
   });
-  const end = (n - 1) * S;
-  cues.push({ t: end - 1.1, kind: 'riser', dur: 1.1, gain: 0.32 }, { t: end + 0.02, kind: 'impact', gain: 0.55 }, { t: end + 0.02, kind: 'sub', gain: 0.45 }, { t: end + 1.1, kind: 'tick', gain: 0.6 });
-  const lookMusic = spec.theme.music || 'warm pad';
-  const buf = synth({ duration: n * S + 1, cues: cues.filter((c) => c.t >= 0), music: { style: lookMusic, key: 'A', bpm: lookMusic === 'tense' ? 120 : 112 } });
-  fs.writeFileSync(path.join(dir, 'audio.wav'), buf);
+  if (riser) ev.push({ file: at(riser), at: Math.max(0, end - riser.seconds), gain: G.riser });
+  if (hit) ev.push({ file: at(hit), at: end + 0.02, gain: G.impact });
+  if (spark) ev.push({ file: at(spark), at: end + 1.1, gain: G.sparkle });
+  const bed = adMix.tmpFile('.wav'), out = path.join(dir, 'audio.wav');
+  fs.writeFileSync(bed, synth({ duration: n * S + 1, cues: [], music }));
+  try { await adMix.mix({ bedWav: bed, events: ev, outWav: out }); } finally { fs.rmSync(bed, { force: true }); }
   return 'audio.wav';
 }
 
@@ -213,10 +254,10 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
     let raw = null, lastErr = null;
     for (let attempt = 0; attempt < 2 && !raw; attempt++) {
       try {
-        const prompt = briefPrompt(text.slice(0, 7800)), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 1500);
+        const prompt = briefPrompt(text.slice(0, 7800)), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 1400);
         neurons.charge(est, 'ad script', fluxCount * neurons.estImage()); // refuses BEFORE spending if the ad could not be finished inside its ceiling
         let usage = null;
-        const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: 1700, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
+        const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: 2000, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
         neurons.settleText(SPEC_MODEL, est, usage, 'ad script');
         raw = typeof txt === 'string' ? JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)) : txt;
       } catch (e) { lastErr = e; }
@@ -250,7 +291,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
     }
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   say('Scoring the sound', 0.93);
-  if (audio && process.env.SITE_AUDIO !== '0') { try { spec.audio = adAudio(spec, outDir); } catch (e) { console.warn('[ad] soundtrack skipped:', e.message); } }
+  if (audio && process.env.SITE_AUDIO !== '0') { try { spec.audio = await adAudio(spec, outDir); } catch (e) { console.warn('[ad] soundtrack skipped:', e.message); } }
   say('Building the ad', 0.97);
   fs.writeFileSync(path.join(outDir, 'index.html'), renderPage(spec));
   fs.writeFileSync(path.join(outDir, 'site.json'), JSON.stringify(spec, null, 2));

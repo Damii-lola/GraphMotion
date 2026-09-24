@@ -16,7 +16,7 @@ const crypto = require('crypto');
 
 const FILE = path.join(__dirname, '.neuron_usage.json');
 const DAILY_CEILING = +process.env.NEURON_DAILY_CEILING || 6000;   // hard stop well under the 10,000 allowance
-const PER_RUN_CEILING = +process.env.NEURON_RUN_CEILING || 700;    // ONE FILM MAY NEVER COST MORE THAN THIS (estimated, then settled to the measured figure)
+const PER_RUN_CEILING = +process.env.NEURON_RUN_CEILING || 720;    // ONE FILM MAY NEVER COST MORE THAN THIS (estimated, then settled to the measured figure)
 const SAFETY = 1.15;
 const RATE = { '70b': [26668, 204805], mistral: [31909, 50455], '8b': [4119, 34868] };
 

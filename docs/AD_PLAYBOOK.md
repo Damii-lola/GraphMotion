@@ -45,7 +45,7 @@ Measured against the playbook it failed almost everywhere:
 * **Hook from frame 1.** No frozen intro (`holdStart: 0`), words start revealing at t = 0, brand chip visible immediately, the first scene has the largest type.
 * **Kinetic captions, word by word** (masked slide-up per word, never per letter) with the key word in an accent-colour highlight block – the TikTok caption look – and a hard shadow for legibility.
 * **Safe zones.** Headline block lives between ~19 % and ~62 % of the height, sides 6 %; the bottom third is left to the photo and the platform UI. Type is auto-fitted so the longest word fits and the block stays inside the zone.
-* **Native social chrome.** Story-style progress segments, a brand chip (logo + name) under the top zone, sticker-style proof badges rotated −3°, a pill CTA button that breathes.
+* **Native social chrome.** A brand chip (logo + name) under the top zone, sticker-style proof badges rotated −3°, a pill CTA button that breathes.
 * **Logo + end card.** The client's logo sits in the chip from second one and becomes the big end-card logo on a light/dark plate chosen from the logo's own pixels; the CTA button carries the model's 2–4 word action, plus the client's link/handle if they gave one.
 * **Client photos first.** Uploaded images fill the product scene, then the hook, then the rest; Flux only paints the remaining scenes. That both looks more real and saves Cloudflare neurons (each free scene = 92 neurons saved).
 * **Brand-coloured motion.** The WebGL transition glows / "scan-in" wash use the brand accent instead of cyan; light/dark scrims run top-down under the copy.
@@ -67,3 +67,14 @@ recorder films it → MKV/MP4. The visitor only sees "Cloudflare is generating y
 * Real screen-capture / UGC-style scenes (phone-in-hand, reaction shot) – needs footage the client does not have yet.
 * Per-platform export (safe zone variants: Meta 14/35/6, TikTok right-rail).
 * Learning loop: store hook + retention per job and feed the winners back into the prompt.
+
+## 6. The flow engine (added after the first user review)
+
+The first version had five fixed shader transitions, a frozen "calm" phase in the middle of every scene and a scroll-driven timeline whose smoothing lagged the picture. Reference shorts (an aeroplane window the camera flies *into* until the sky becomes the next scene; a face of strands that swirls into a ring; one mountain island whose light changes while the camera glides) share one idea: **nothing stops and nothing cuts – the end of a scene is the beginning of the next.** `siteTemplate/ad.html` now works like that:
+
+* **One camera, one timeline.** Everything is a pure function of film progress `p` (`__jumpToProgress(p)`), linear in time, rendered synchronously. No scrolling, no smoothing lag. (Verified frame by frame: no frame-to-frame jump anywhere, including the scene boundaries.)
+* **No calm phase.** Each scene has its own AI-chosen camera `move` (push/pull, drift, roll) defined for *all* times, so the next scene is already moving while it opens.
+* **Transitions are points in a continuous space, not a catalogue.** The AI chooses, per transition, where the camera dives (`focus`), how hard it rushes (`zoom`), `spin`, motion `blur`, liquid `warp`, `glow`, colour split (`chroma`), edge `soft`ness, how long it lasts (`overlap`) and optionally writes the opening's *mask expression* itself (a GLSL float expression over `p`, `q`, `t`). `backend/flowSpec.js` only clamps ranges and rejects unsafe expressions; the page compile-tests each expression and falls back to a plain circular opening. Whatever the model writes, the opening starts closed and ends fully open, so it cannot cause a snap.
+* **Chained images.** The prompt tells the model to write every image as the continuation of the previous one so the dive point of scene N is where scene N+1's subject sits.
+* **Captions travel with the camera:** the outgoing caption is carried off by the same dive (scale + blur), the incoming caption starts landing while the camera is still arriving.
+* **Sound:** real CC0 sound-effect recordings (`backend/sfx/`, picked by a person via `audition.html`, installed with `buildLibrary.js`), placed by `adMix.js`. The AI picks which recording to use for each transition and moment from the menu in its prompt. Transition whooshes are fixed at 20 % volume. With no library installed the synthesised fallback is used (whoosh 9 %).

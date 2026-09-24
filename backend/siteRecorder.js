@@ -212,6 +212,7 @@ async function record(o, onProgress) {
         const x = (g % fScene) / fScene;
         return x < F[0] ? 1 : x < F[0] + F[1] ? 4 : 1; // text reveal + transition: every frame; the still hold: thinned
       };
+      if (pc.flat) weight = (f) => (f >= fStart + scenes * fScene ? 6 : 1); // a page whose camera never rests (ad.html): every moment moves, so thin evenly or not at all
     } else if (info.seekDur) {
       totalFrames = Math.max(2, Math.round(Math.min(info.seekDur, +o.maxSeconds || 1e9) * fps));
       plan = (f) => Math.min(info.seekDur, f / fps);

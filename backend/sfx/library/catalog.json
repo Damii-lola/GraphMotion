@@ -1,0 +1,112 @@
+[
+  {
+    "id": "whoosh_01",
+    "kind": "whoosh",
+    "file": "whoosh_01.mp3",
+    "seconds": 0.49,
+    "desc": "airy swish, short and soft",
+    "title": "Swosh swoosh whoosh air sound, free, high quality",
+    "license": "CC0",
+    "creator": "qubodup",
+    "source": "https://freesound.org/people/qubodup/sounds/60026"
+  },
+  {
+    "id": "whoosh_04",
+    "kind": "whoosh",
+    "file": "whoosh_04.mp3",
+    "seconds": 0.33,
+    "desc": "sharp fast cut through air",
+    "title": "swosh-08.flac - 'stick cutting air'",
+    "license": "CC0",
+    "creator": "qubodup",
+    "source": "https://freesound.org/people/qubodup/sounds/59995"
+  },
+  {
+    "id": "whoosh_05",
+    "kind": "whoosh",
+    "file": "whoosh_05.mp3",
+    "seconds": 0.45,
+    "desc": "soft swipe whoosh",
+    "title": "Swipe Whoosh",
+    "license": "CC0",
+    "creator": "qubodup",
+    "source": "https://freesound.org/people/qubodup/sounds/60007"
+  },
+  {
+    "id": "whoosh_08",
+    "kind": "whoosh",
+    "file": "whoosh_08.mp3",
+    "seconds": 0.41,
+    "desc": "windy swoosh",
+    "title": "Swoosh 15 Windy",
+    "license": "CC0",
+    "creator": "qubodup",
+    "source": "https://freesound.org/people/qubodup/sounds/60002"
+  },
+  {
+    "id": "riser_04",
+    "kind": "riser",
+    "file": "riser_04.mp3",
+    "seconds": 0.6,
+    "desc": "short bass swell",
+    "title": "Bass swell fade.wav",
+    "license": "CC0",
+    "creator": "SpeedY",
+    "source": "https://freesound.org/people/SpeedY/sounds/62900"
+  },
+  {
+    "id": "impact_02",
+    "kind": "impact",
+    "file": "impact_02.mp3",
+    "seconds": 0.42,
+    "desc": "punchy boom",
+    "title": "BOOM - 1.wav",
+    "license": "CC0",
+    "creator": "zgump",
+    "source": "https://freesound.org/people/zgump/sounds/86330"
+  },
+  {
+    "id": "tick_06",
+    "kind": "tick",
+    "file": "tick_06.mp3",
+    "seconds": 0.16,
+    "desc": "crisp button click",
+    "title": "SFX UI Button Click",
+    "license": "CC0",
+    "creator": "suntemple",
+    "source": "https://freesound.org/people/suntemple/sounds/253168"
+  },
+  {
+    "id": "tick_07",
+    "kind": "tick",
+    "file": "tick_07.mp3",
+    "seconds": 0.24,
+    "desc": "soft button click",
+    "title": "Soft UI Button Click",
+    "license": "CC0",
+    "creator": "Jummit",
+    "source": "https://freesound.org/people/Jummit/sounds/528561"
+  },
+  {
+    "id": "tick_08",
+    "kind": "tick",
+    "file": "tick_08.mp3",
+    "seconds": 0.24,
+    "desc": "round pop",
+    "title": "Pop Sound",
+    "license": "CC0",
+    "creator": "ConarB13",
+    "source": "https://freesound.org/people/ConarB13/sounds/401542"
+  },
+  {
+    "id": "sparkle_03",
+    "kind": "sparkle",
+    "file": "sparkle_03.mp3",
+    "seconds": 2.16,
+    "desc": "long synth shimmer",
+    "title": "Synth Texture 4",
+    "license": "CC0",
+    "creator": "nomiqbomi",
+    "source": "https://freesound.org/people/nomiqbomi/sounds/578801"
+  }
+]
