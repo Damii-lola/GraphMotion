@@ -76,7 +76,7 @@ CRAFT RULES (a human creative director will judge the result):
 - The client's NOTES are binding. Obey their tone and their "avoid" list over everything else. If they ask you not to use numbers, stats or big claims, use NONE anywhere: no stickers, no counts, no years, no "fast-growing", no "trusted by".
 - ONE story, one emotional thread. hook = a specific, felt moment from the viewer's own world (never generic); pain stays in that same moment and sharpens it; solution resolves exactly that tension; feature SHOWS the product doing its job (hands, a screen glowing, the object in use) - the picture and the words prove one concrete thing; proof = the payoff, what changes for the viewer once it works (a feeling or a result taken from the brief), never "customers love us"; cta = a callback to the hook's words or image, so the ad closes a loop.
 - Copy: concrete, human, a little witty, in the client's own words and voice. Banned: "love us", "so will you", "game-changer", "revolutionary", "next level", "fast-growing", "trusted by", "unlock", "supercharge", "seamless", and any statistic that is not written in the brief.
-- Images: specific to THIS company's world - close-ups of objects, hands, screens, places, materials. NEVER a group of smiling people, an office team, a handshake or generic stock-photo people. Natural, true-to-life colour and lighting (no heavy colour cast).
+- Images: never name the company in an image prompt and avoid subjects that carry writing (sticky notes, signs, screens with text, packaging labels) - the picture AI garbles lettering. Specific to THIS company's world - close-ups of objects, hands, screens, places, materials. NEVER a group of smiling people, an office team, a handshake or generic stock-photo people. Natural, true-to-life colour and lighting (no heavy colour cast).
 
 THE FLOW (the most important part). The ad is ONE continuous camera move through six images, never six slides with effects between them. Study how the best scroll-driven 3D-website shorts do it: an aeroplane window fills the screen, the camera flies INTO the window, the sky outside becomes the whole screen and rushes past, and the next scene emerges out of the clouds - nothing stops, nothing cuts, the end of every scene literally becomes the beginning of the next. You control the flow with three things:
 (1) CHAIN THE IMAGES. Write every imagePrompt as the continuation of the previous one: same palette and light, and the main subject of image N+1 sits exactly where the camera dives into image N (dive into a bottle's neck -> next image is a macro of the liquid in that same spot; dive into a window -> next image is what is outside it).
@@ -86,7 +86,7 @@ MASK = a GLSL float expression that shapes the opening. Variables: p (vec2: posi
 
 ${soundBlock()}Return ONE JSON object with these keys:
 "brand", "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "imageStyle" (6-10 words: ONE consistent photographic look), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
-"scenes": EXACTLY 6 objects, each: "id", "tag" (1-3 word pill label like "POV", "Real talk", "The proof"; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 22 words, ONE subject, no text, no logos, no faces or bodies or bare skin, never a group of people - every image must pass a strict family-friendly safety filter), "move" (see 2), "pos" (where this scene's text sits: "mm" middle, "bm" bottom centre, "bl" bottom left, "br" bottom right - pick the spot that leaves the picture's subject clear, and vary it), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
+"scenes": EXACTLY 6 objects, each: "id", "tag" (a 1-3 word LABEL pill like "POV", "Real talk", "The proof" - a label, not the start of a sentence, never ending in "..."; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 22 words, ONE subject, no text, no logos, no faces or bodies or bare skin, never a group of people - every image must pass a strict family-friendly safety filter), "move" (see 2), "pos" (where this scene's text sits: "mm" middle, "bm" bottom centre, "bl" bottom left, "br" bottom right - pick the spot that leaves the picture's subject clear, and vary it), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
 "transitions": EXACTLY 5 objects (see 3)${adMixMenu() ? ', "sound" (see SOUND)' : ''}.
 Output the JSON object only.`;
 }
@@ -109,7 +109,11 @@ function cleanHeadline(raw, fallback) {
   const toks = t.split(/(\s+)/), out = []; let n = 0;
   for (const tok of toks) { if (/^\s+$/.test(tok)) { out.push(tok); continue; } const w = tok.replace(/[*|]/g, ''); if (!w) { out.push(tok); continue; } if (++n > 7) break; out.push(tok); }
   t = out.join('').trim() || fallback;
-  if (!t.includes('*')) { const ws = words(t); const pick = ws.slice().sort((a, b) => b.length - a.length)[0] || ws[ws.length - 1]; if (pick) t = t.replace(pick, `*${pick}*`); }
+  const STOP = new Set('a an the your you my our we i me it its this that these those to of in on at for with and or but is are be by from as so than then just very not no yes up out'.split(' '));
+  const plain = (w) => w.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const hiWords = (t.match(/\*([^*]+)\*/g) || []).join(' ').replace(/\*/g, '').split(/\s+/).filter(Boolean);
+  if (hiWords.length && hiWords.every((w) => STOP.has(plain(w)))) t = t.replace(/\*/g, '');   // it highlighted only filler: choose again below
+  if (!t.includes('*')) { const ws = words(t); const good = ws.filter((w) => !STOP.has(plain(w))), pool = good.length ? good : ws; const pick = pool.slice().sort((a, b) => b.length - a.length)[0]; if (pick) t = t.replace(pick, `*${pick}*`); }
   return t.slice(0, 80);
 }
 
@@ -157,7 +161,7 @@ function normalizeSpec(raw, brand, opts = {}) {
     const sub = words(str(s.sub, '', 120)).slice(0, 10).join(' ');
     spec.scenes.push({
       id,
-      tag: k === 5 ? '' : clipWords(str(s.tag, '', 80), 22),
+      tag: k === 5 ? '' : clipWords(str(s.tag, '', 80).replace(/[.\u2026\s]+$/g, ''), 22),
       headline: cleanHeadline(s.headline || s.title, k === 5 ? `Try *${name}* today` : `*${name}*`),
       sub, sticker,
       imagePrompt: str(s.imagePrompt, `${name} atmosphere, ${spec.imageStyle}`, 200),
@@ -189,7 +193,9 @@ async function flux(prompt) {
  * nothing, so instead of failing the whole film we retry with gentler wordings under the SAME neuron charge: first a family-friendly still life in the ad's
  * own look, then a plain abstract backdrop (the captions carry the scene anyway).
  */
+const clean = (p, brand) => String(p || '').replace(new RegExp('\\b(' + String(brand || '').split(/\s+/).filter((w) => w.length > 2).map((w) => w.replace(/[^a-z0-9]/gi, '')).filter(Boolean).concat(['logos?', 'wordmarks?', 'lettering', 'typography', 'captions?', 'signage', 'billboards?', 'slogans?']).join('|') + ')\\b', 'gi'), '').replace(/\s{2,}/g, ' ').replace(/\s+,/g, ',').trim();
 async function fluxSafe(sc, spec) {
+  sc = Object.assign({}, sc, { imagePrompt: clean(sc.imagePrompt, spec.brand) });
   const tries = [
     `${sc.imagePrompt}, ${spec.imageStyle}${IMAGE_SUFFIX}`,
     `${spec.imageStyle}, wholesome family-friendly still life photograph of a single simple object, soft studio light, clean neutral background${IMAGE_SUFFIX}`,
