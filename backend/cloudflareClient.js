@@ -39,7 +39,7 @@ const CLOUDFLARE_TIMEOUT_MS = 30000;
  * validation-retry loop already retries on failure with corrective
  * feedback, matching the same convention callOpenRouterRaw uses.
  */
-async function callCloudflareRaw(systemPrompt, userMessage, { jsonMode = true, maxTokens = 1500, temperature = 0.7 } = {}) {
+async function callCloudflareRaw(systemPrompt, userMessage, { jsonMode = true, maxTokens = 1500, temperature = 0.7, model = CLOUDFLARE_MODEL } = {}) {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const apiToken = process.env.CLOUDFLARE_API_TOKEN;
   if (!accountId || !apiToken) throw new Error('CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN is not set');
@@ -49,7 +49,7 @@ async function callCloudflareRaw(systemPrompt, userMessage, { jsonMode = true, m
 
   let res;
   try {
-    res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${CLOUDFLARE_MODEL}`, {
+    res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`, {
       method: 'POST',
       signal: controller.signal,
       headers: {

@@ -1,0 +1,152 @@
+{
+  "brand": "Liquid Death",
+  "tagline": "Murder Your Thirst",
+  "cta": "Join The Murder",
+  "imageStyle": "high contrast monochrome",
+  "theme": {
+    "look": "metal",
+    "displayFont": "Anton",
+    "displayWeight": 400,
+    "bodyFont": "Barlow",
+    "upper": true,
+    "bg": "#111111",
+    "accent": "#ff0000",
+    "accentInk": "#0a0a0a",
+    "accentLight": "#ff7878",
+    "accentDark": "#e00000"
+  },
+  "scenes": [
+    {
+      "id": "hero",
+      "kicker": "Thirst Killer",
+      "title": "Unleash Chaos|Murder Your Thirst",
+      "body": "Drink to destroy",
+      "stats": [],
+      "imagePrompt": "dark forest with skull",
+      "tone": "dark",
+      "align": "left",
+      "valign": "bottom",
+      "fx": {
+        "ripple": 0,
+        "mist": 0.5,
+        "rays": 0.2
+      }
+    },
+    {
+      "id": "story",
+      "kicker": "Our Roots",
+      "title": "Founded By|Misfits Unite",
+      "body": "Punk rock fuels us",
+      "stats": [
+        {
+          "n": "370",
+          "l": "Employees"
+        },
+        {
+          "n": "100k",
+          "l": "Retail Doors"
+        }
+      ],
+      "imagePrompt": "abandoned warehouse at night",
+      "tone": "dark",
+      "align": "right",
+      "valign": "center",
+      "fx": {
+        "ripple": 0,
+        "mist": 0.8,
+        "rays": 0
+      }
+    },
+    {
+      "id": "product1",
+      "kicker": "New Launch",
+      "title": "Sparkling Energy|Fuel Your Chaos",
+      "body": "100mg caffeine",
+      "stats": [
+        {
+          "n": "0",
+          "l": "Sugar"
+        },
+        {
+          "n": "100",
+          "l": "mg Caffeine"
+        }
+      ],
+      "imagePrompt": "neon lit city street",
+      "tone": "dark",
+      "align": "left",
+      "valign": "center",
+      "fx": {
+        "ripple": 0.2,
+        "mist": 0.2,
+        "rays": 0.5
+      }
+    },
+    {
+      "id": "product2",
+      "kicker": "Fan Favorite",
+      "title": "Mountain Water|Pure Destruction",
+      "body": "Natural springs",
+      "stats": [
+        {
+          "n": "50x",
+          "l": "More Fun"
+        },
+        {
+          "n": "Low Cal",
+          "l": "Guaranteed"
+        }
+      ],
+      "imagePrompt": "mountain range at sunset",
+      "tone": "dark",
+      "align": "right",
+      "valign": "center",
+      "fx": {
+        "ripple": 0.5,
+        "mist": 0,
+        "rays": 0.8
+      }
+    },
+    {
+      "id": "proof",
+      "kicker": "The Numbers",
+      "title": "333 Million|Retail Revenue",
+      "body": "Growing fast",
+      "stats": [
+        {
+          "n": "1.4B",
+          "l": "Valuation"
+        },
+        {
+          "n": "333M",
+          "l": "Retail Revenue"
+        }
+      ],
+      "imagePrompt": "skull made of money",
+      "tone": "dark",
+      "align": "left",
+      "valign": "center",
+      "fx": {
+        "ripple": 0,
+        "mist": 0.2,
+        "rays": 0.2
+      }
+    },
+    {
+      "id": "join",
+      "kicker": "Join Now",
+      "title": "Be Part|Of The Murder",
+      "body": "Join the movement",
+      "stats": [],
+      "imagePrompt": "crowd of people with skull masks",
+      "tone": "dark",
+      "align": "left",
+      "valign": "top",
+      "fx": {
+        "ripple": 0.8,
+        "mist": 0.5,
+        "rays": 0.5
+      }
+    }
+  ]
+}

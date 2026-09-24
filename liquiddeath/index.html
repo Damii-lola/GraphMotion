@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Liquid Death</title>
+<link rel="preload" as="image" href="images/hero.webp" fetchpriority="high">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+<style>
+  :root {
+    --forge-deep: #0B1C2D;
+    --aqua-core: #00A8A8;
+    --clean-white: #F8FAFB;
+    --charge-orange: #FF6B35;
+    --mineral-gray: #6B7C8A;
+    --recover-sage: #7BA05B;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; overflow-x: hidden; }
+  body {
+    background: var(--forge-deep);
+    color: var(--clean-white);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .display { font-family: "Bricolage Grotesque", -apple-system, sans-serif; font-weight: 700; }
+
+  nav.top {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 26px clamp(20px, 5vw, 64px);
+    mix-blend-mode: difference;
+  }
+  nav.top .logo { font-family: "Bricolage Grotesque", sans-serif; font-weight: 700; font-size: 16px; letter-spacing: 0.02em; color: #fff; }
+  nav.top .tag { font-size: 11px; color: rgba(255,255,255,0.7); letter-spacing: 0.12em; text-transform: uppercase; }
+  #progress { position: fixed; top: 0; left: 0; height: 2px; width: 0%; background: var(--aqua-core); z-index: 100; }
+
+  /* ---------- The stage: ONE fixed full-viewport layer of real photographs
+     that crossfade into each other, driven purely by scroll PROGRESS, not
+     by scroll POSITION - the viewport itself never moves. This is the
+     actual mechanism behind "feels like a video playing, not a page being
+     scrolled": nothing here ever translates vertically; only opacity,
+     filter and scale change. Each photo also enters through a "blueprint"
+     state (desaturated, cyan-shifted, faint schematic grid) that resolves
+     into full colour as it becomes dominant - a real construction reveal,
+     not just a plain crossfade. */
+  #stage { position: fixed; inset: 0; z-index: 0; overflow: hidden; }
+  .layer { position: absolute; inset: 0; opacity: 0; }
+  .layer[data-img="hero"] { opacity: 1; } /* visible instantly, before any JS loads; JS takes over after */
+  .layer-img {
+    position: absolute; inset: -6%;
+    background-size: cover; background-position: 50% 45%;
+    animation: slowZoom 22s ease-in-out infinite alternate;
+  }
+  .layer[data-img="core"] .layer-img { background-image: url('images/core.webp'); animation-delay: -4s; }
+  .layer[data-img="charge"] .layer-img { background-image: url('images/charge.webp'); background-position: 50% 30%; animation-delay: -9s; }
+  .layer[data-img="recover"] .layer-img { background-image: url('images/recover.webp'); animation-delay: -14s; }
+  .layer[data-img="hero"] .layer-img { background-image: url('images/hero.webp'); }
+  @keyframes slowZoom { from { transform: scale(1.0); } to { transform: scale(1.09); } }
+  /* Bug found via self-check: grayscale+sepia+hue-rotate composed on the
+     photo itself rendered a murky green instead of a technical cyan -
+     filter functions don't combine predictably. A flat cyan wash with
+     mix-blend-mode:color gives direct, reliable control over the hue
+     regardless of the source photo, independent of the desaturation
+     (done on the image itself) and the grid lines (drawn on top of both). */
+  .layer-tint {
+    position: absolute; inset: 0; opacity: 0;
+    background: rgb(70, 205, 205);
+    mix-blend-mode: color;
+  }
+  .layer-grid {
+    position: absolute; inset: 0; opacity: 0;
+    background-image:
+      repeating-linear-gradient(0deg, rgba(180,240,240,0.4) 0px, rgba(180,240,240,0.4) 1px, transparent 1px, transparent 48px),
+      repeating-linear-gradient(90deg, rgba(180,240,240,0.4) 0px, rgba(180,240,240,0.4) 1px, transparent 1px, transparent 48px);
+    mix-blend-mode: screen;
+  }
+  /* WebGL background: 6 photos that flow into each other through per-pair
+     shader transitions (iris dive, liquid rise, sun burst, streak pan, ink
+     bleed). DOM layers above stay as the instant pre-JS hero + fallback. */
+  #bg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  html.glbg .layer, html.glbg .stage-scrim { display: none; }
+  .ghost {
+    position: absolute; left: 0; top: 0; z-index: 1; white-space: nowrap; pointer-events: none; opacity: 0; will-change: transform, opacity;
+    font-family: "Bricolage Grotesque", sans-serif; font-weight: 800; text-transform: uppercase; line-height: 0.8;
+    font-size: clamp(120px, 27vw, 420px); letter-spacing: -0.03em; color: transparent;
+    -webkit-text-stroke: 2px rgba(255,255,255,0.30);
+  }
+  .ghost.ink { -webkit-text-stroke-color: rgba(11,28,45,0.26); }
+  .stage-scrim {
+    position: absolute; inset: 0; z-index: 1;
+    background: linear-gradient(180deg, rgba(6,14,22,0.22) 0%, rgba(6,14,22,0.24) 45%, rgba(6,14,22,0.94) 100%);
+  }
+
+  #smooth-wrapper { position: relative; z-index: 2; overflow: hidden; }
+  section.beat {
+    position: relative; min-height: 100vh;
+    display: flex; align-items: flex-end;
+    padding: 0 clamp(24px, 6vw, 72px) 9vh;
+  }
+  /* Bug found via self-check: each pinned section's own 100vh flow height
+     stacks ON TOP OF its pin-spacer's scroll distance (measured live:
+     mission's pin started at 1800px, not the expected 900px), so scrolling
+     between beats included a real, visible "sliding past a viewport of
+     empty space" phase - precisely the "feels like scrolling" problem
+     this whole rebuild is meant to remove. Pulling every section but the
+     first up by one viewport height cancels that duplicated space, so a
+     section's pin engages the instant the previous one's hold ends, with
+     nothing in between. */
+  section.beat:not(#hero) { margin-top: -100vh; }
+  .beat-inner { max-width: 720px; }
+  .eyebrow, .beat-kicker {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: rgba(255,255,255,0.78); margin-bottom: 18px; opacity: 0;
+  }
+  .eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--aqua-core); }
+  #hero .beat-kicker[data-line="core"], .beat-kicker[data-line="core"] { color: #7FE3E0; }
+  .beat-kicker[data-line="charge"] { color: #FFB088; }
+  .beat-kicker[data-line="recover"] { color: #B7D89A; }
+
+  h1.hero-title { font-size: clamp(40px, 7.4vw, 92px); line-height: 0.98; letter-spacing: -0.02em; margin: 0; color: #fff; }
+  h1.hero-title .word { display: inline-block; overflow: hidden; padding-bottom: 0.08em; margin-bottom: -0.08em; }
+  h2.beat-title { font-size: clamp(28px, 5vw, 58px); line-height: 1.04; color: #fff; margin: 0; opacity: 0; max-width: 680px; }
+  p.beat-body { max-width: 500px; margin: 20px 0 0; font-size: clamp(15px, 1.65vw, 17px); line-height: 1.6; color: rgba(255,255,255,0.85); opacity: 0; }
+  .beat-stats { display: flex; gap: clamp(18px, 4vw, 38px); margin-top: 28px; opacity: 0; flex-wrap: wrap; }
+  .beat-stats .stat .num { font-family: "Bricolage Grotesque", sans-serif; font-size: clamp(19px, 2.4vw, 25px); font-weight: 700; color: #fff; }
+  .beat-stats .stat .lbl { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255,255,255,0.62); margin-top: 3px; }
+  .scroll-cue {
+    position: absolute; right: clamp(24px, 6vw, 72px); bottom: 40px; z-index: 2;
+    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.6);
+    display: flex; align-items: center; gap: 10px; opacity: 0;
+  }
+  .scroll-cue .line { width: 34px; height: 1px; background: rgba(255,255,255,0.5); }
+
+  /* Text changes position beat to beat (side + height), and the 3D can on
+     the stage always moves to the opposite side. */
+  section.beat.pos-right { justify-content: flex-end; }
+  section.beat.v-center { align-items: center; padding-bottom: 0; }
+  section.beat.v-top { align-items: flex-start; padding-top: 17vh; padding-bottom: 0; }
+  .side-scrim { position: absolute; inset: 0; z-index: 1; opacity: 0; }
+  .side-scrim.left { background: linear-gradient(90deg, rgba(6,14,22,0.82) 0%, rgba(6,14,22,0.55) 38%, rgba(6,14,22,0) 68%); }
+  .side-scrim.right { background: linear-gradient(270deg, rgba(6,14,22,0.82) 0%, rgba(6,14,22,0.55) 38%, rgba(6,14,22,0) 68%); }
+  .light-scrim { position: absolute; inset: 0; z-index: 1; opacity: 0; }
+  .light-scrim.left { background: linear-gradient(90deg, rgba(248,250,251,0.92) 0%, rgba(248,250,251,0.82) 45%, rgba(248,250,251,0) 92%); }
+  .light-scrim.right { background: linear-gradient(270deg, rgba(248,250,251,0.92) 0%, rgba(248,250,251,0.82) 45%, rgba(248,250,251,0) 92%); }
+  section.beat.tone-light h2.beat-title, section.beat.tone-light .beat-stats .stat .num { color: #0B1C2D; }
+  section.beat.tone-light p.beat-body { color: #1E3446; }
+  section.beat.tone-light .beat-kicker { color: #075E66; }
+  section.beat.tone-light .beat-stats .stat .lbl { color: #3C5364; }
+  #gl { display: none; }
+  .ghost { display: none !important; }
+  #glOld { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none; }
+  section.beat.center { align-items: center; justify-content: flex-start; text-align: left; padding-bottom: 0; }
+  section.beat.center .beat-inner { max-width: 600px; }
+  .cta-btn {
+    display: inline-block; margin-top: 32px; padding: 15px 34px; border-radius: 999px;
+    background: var(--aqua-core); color: #04252A; font-weight: 700; font-size: 15px; text-decoration: none; opacity: 0;
+  }
+  footer.foot { position: relative; z-index: 2; text-align: center; padding: 36px 24px 56px; color: rgba(248,250,251,0.4); font-size: 12px; background: var(--forge-deep); }
+
+  /* Phones: every beat's text sits in the lower part of the screen at full width, with a bottom scrim (dark or light) instead of side scrims. */
+  @media (max-width: 760px) {
+    section.beat, section.beat.v-center, section.beat.v-top, section.beat.center { align-items: flex-end; justify-content: flex-start; padding: 0 22px 8vh; text-align: left; }
+    section.beat.pos-right { justify-content: flex-start; }
+    .beat-inner, section.beat.center .beat-inner { max-width: 100%; }
+    h1.hero-title { font-size: clamp(38px, 12vw, 56px); }
+    h2.beat-title { font-size: clamp(26px, 8vw, 38px); }
+    p.beat-body { font-size: 15px; margin-top: 14px; }
+    .beat-stats { margin-top: 20px; gap: 22px; }
+    .scroll-cue { display: none; }
+    .side-scrim.left, .side-scrim.right { background: linear-gradient(0deg, rgba(6,14,22,0.9) 0%, rgba(6,14,22,0.72) 40%, rgba(6,14,22,0) 78%); }
+    .light-scrim.left, .light-scrim.right { background: linear-gradient(0deg, rgba(248,250,251,0.95) 0%, rgba(248,250,251,0.85) 45%, rgba(248,250,251,0) 85%); }
+    nav.top { padding: 18px 20px; }
+  }
+</style>
+  html.glbg .layer, html.glbg .stage-scrim { display: none; }
+</style>
+<style id="theme"></style>
+</head>
+<body>
+
+<div id="progress"></div>
+<nav class="top">
+  <div class="logo" id="navLogo"></div>
+  <div class="tag" id="navTag"></div>
+</nav>
+
+<div id="stage">
+  <canvas id="bg"></canvas>
+  <div class="layer" data-img="hero"><div class="layer-img"></div><div class="layer-tint"></div><div class="layer-grid"></div></div>
+  <div class="stage-scrim"></div>
+  <div class="side-scrim left"></div>
+  <div class="side-scrim right"></div>
+  <div class="light-scrim left"></div>
+  <div class="light-scrim right"></div>
+</div>
+
+<div id="smooth-wrapper">
+<div id="smooth-content"></div>
+</div>
+
+<script>
+window.SITE = {"brand":"Liquid Death","tagline":"Murder Your Thirst","cta":"Join The Murder","imageStyle":"high contrast monochrome","theme":{"look":"metal","displayFont":"Anton","displayWeight":400,"bodyFont":"Barlow","upper":true,"bg":"#111111","accent":"#ff0000","accentInk":"#0a0a0a","accentLight":"#ff7878","accentDark":"#e00000"},"scenes":[{"id":"hero","kicker":"Thirst Killer","title":"Unleash Chaos|Murder Your Thirst","body":"Drink to destroy","stats":[],"imagePrompt":"dark forest with skull","tone":"dark","align":"left","valign":"bottom","fx":{"ripple":0,"mist":0.5,"rays":0.2}},{"id":"story","kicker":"Our Roots","title":"Founded By|Misfits Unite","body":"Punk rock fuels us","stats":[{"n":"370","l":"Employees"},{"n":"100k","l":"Retail Doors"}],"imagePrompt":"abandoned warehouse at night","tone":"dark","align":"right","valign":"center","fx":{"ripple":0,"mist":0.8,"rays":0}},{"id":"product1","kicker":"New Launch","title":"Sparkling Energy|Fuel Your Chaos","body":"100mg caffeine","stats":[{"n":"0","l":"Sugar"},{"n":"100","l":"mg Caffeine"}],"imagePrompt":"neon lit city street","tone":"dark","align":"left","valign":"center","fx":{"ripple":0.2,"mist":0.2,"rays":0.5}},{"id":"product2","kicker":"Fan Favorite","title":"Mountain Water|Pure Destruction","body":"Natural springs","stats":[{"n":"50x","l":"More Fun"},{"n":"Low Cal","l":"Guaranteed"}],"imagePrompt":"mountain range at sunset","tone":"dark","align":"right","valign":"center","fx":{"ripple":0.5,"mist":0,"rays":0.8}},{"id":"proof","kicker":"The Numbers","title":"333 Million|Retail Revenue","body":"Growing fast","stats":[{"n":"1.4B","l":"Valuation"},{"n":"333M","l":"Retail Revenue"}],"imagePrompt":"skull made of money","tone":"dark","align":"left","valign":"center","fx":{"ripple":0,"mist":0.2,"rays":0.2}},{"id":"join","kicker":"Join Now","title":"Be Part|Of The Murder","body":"Join the movement","stats":[],"imagePrompt":"crowd of people with skull masks","tone":"dark","align":"left","valign":"top","fx":{"ripple":0.8,"mist":0.5,"rays":0.5}}]};
+(function () {
+  var S = window.SITE, root = document.documentElement;
+  var esc = function (t) { var d = document.createElement("div"); d.textContent = t == null ? "" : String(t); return d.innerHTML; };
+  var lines = function (t) { return String(t == null ? "" : t).split(/\n|\|/).map(esc).join("<br>"); };
+  // fonts + colours from the spec
+  var fams = [S.theme.displayFont, S.theme.bodyFont].filter(Boolean);
+  var link = document.createElement("link"); link.rel = "stylesheet";
+  link.href = "https://fonts.googleapis.com/css2?" + fams.map(function (f) { return "family=" + f.replace(/ /g, "+") + (["Anton","UnifrakturCook","Bebas Neue"].indexOf(f) >= 0 ? "" : ":wght@400;700;800"); }).join("&") + "&display=swap";
+  document.head.appendChild(link);
+  document.getElementById("theme").textContent =
+    ":root{--accent:" + S.theme.accent + ";--accent-ink:" + S.theme.accentInk + ";--bg:" + S.theme.bg + "}" +
+    "body{background:var(--bg)}" +
+    '.display,.nav-display,nav.top .logo,.beat-stats .stat .num,h1.hero-title,h2.beat-title{font-weight:' + (S.theme.displayWeight || 700) + ';font-family:"' + S.theme.displayFont + '",Impact,sans-serif}' +
+    (S.theme.bodyFont ? 'p.beat-body,.beat-kicker,.eyebrow,.cta-btn,.beat-stats .stat .lbl,nav.top .tag{font-family:"' + S.theme.bodyFont + '",-apple-system,sans-serif}' : "") +
+    (S.theme.upper ? "h1.hero-title,h2.beat-title{text-transform:uppercase;letter-spacing:.01em;line-height:1}" : "") +
+    ".cta-btn{background:var(--accent);color:var(--accent-ink)}.eyebrow .dot{background:var(--accent)}#progress{background:var(--accent)}" +
+    ".beat-kicker{color:var(--accent-light,var(--accent))}section.beat.tone-light .beat-kicker{color:var(--accent-dark,#111)}";
+  root.style.setProperty("--accent-light", S.theme.accentLight || S.theme.accent);
+  root.style.setProperty("--accent-dark", S.theme.accentDark || "#111");
+  document.title = S.brand + " — " + S.tagline;
+  document.getElementById("navLogo").textContent = S.brand.toUpperCase();
+  document.getElementById("navTag").textContent = S.tagline;
+  var hero = S.scenes[0], html = "";
+  html += '<section class="beat" id="hero" data-beat data-key="hero"><div class="beat-inner">' +
+    '<span class="eyebrow" data-reveal><span class="dot"></span>' + esc(hero.kicker || S.brand) + "</span>" +
+    '<h1 class="hero-title display" id="heroTitle">' + String(hero.title).split(/\n|\|/).map(function (l) { return '<span class="word">' + esc(l) + "</span>"; }).join("<br>") + "</h1>" +
+    '<p class="beat-body" data-reveal>' + esc(hero.body) + "</p></div>" +
+    '<div class="scroll-cue" data-reveal><span class="line"></span>Scroll</div></section>';
+  S.scenes.slice(1).forEach(function (sc, k, arr) {
+    var last = k === arr.length - 1;
+    var cls = "beat" + (last ? " center" : sc.align === "right" ? " pos-right" : "") + (!last && sc.valign === "center" ? " v-center" : "") + (!last && sc.valign === "top" ? " v-top" : "") + (sc.tone === "light" ? " tone-light" : "");
+    html += '<section class="' + cls + '" data-beat data-key="' + esc(sc.id) + '"><div class="beat-inner">' +
+      (sc.kicker ? '<span class="beat-kicker" data-reveal>' + esc(sc.kicker) + "</span>" : "") +
+      '<h2 class="beat-title display" data-reveal>' + lines(sc.title) + "</h2>" +
+      (sc.body ? '<p class="beat-body" data-reveal>' + esc(sc.body) + "</p>" : "") +
+      (sc.stats && sc.stats.length ? '<div class="beat-stats" data-reveal>' + sc.stats.map(function (s) { return '<div class="stat"><div class="num">' + esc(s.n) + '</div><div class="lbl">' + esc(s.l) + "</div></div>"; }).join("") + "</div>" : "") +
+      (last && S.cta ? '<a href="#" class="cta-btn" data-reveal>' + esc(S.cta) + "</a>" : "") +
+      "</div></section>";
+  });
+  document.getElementById("smooth-content").innerHTML = html;
+  var heroLayer = document.querySelector('.layer[data-img="hero"] .layer-img'); if (heroLayer) heroLayer.style.backgroundImage = "url('images/hero.webp')";
+})();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/gsap.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/ScrollTrigger.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/ScrollSmoother.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.13/dist/SplitText.min.js"></script>
+<script>
+(function () {
+  "use strict";
+  gsap.registerPlugin(ScrollTrigger, ScrollSmoother, SplitText);
+
+  // ---------- The crossfade/blueprint-resolve engine. Pure function of
+  // overall scroll PROGRESS (never position) - this is what makes the
+  // photos morph into each other instead of sliding, and what makes the
+  // viewport read as static while a "film" plays behind it. Declared
+  // BEFORE ScrollSmoother.create() below: a real bug found live was that
+  // ScrollSmoother fires onUpdate synchronously during its own creation,
+  // and that callback calls updateStage() - if updateStage (or the `let
+  // STOPS` it reads) were declared afterward, that first call threw
+  // "Cannot access before initialization" and silently aborted the rest
+  // of this whole script, including the window.__jumpToProgress
+  // assignment at the very end.
+  const SEQUENCE = ["hero", "core", "charge", "recover", "hero"];
+  let STOPS = [0, 0.335, 0.50, 0.665, 1.0]; // placeholder - replaced below with REAL measured section boundaries once the pins exist; guessed fractions here caused a dead zone with no text (mission's text never lined up with the image transition it was guessed against)
+  const TRANSITION_START = 0.72; // hold steady for most of a segment, then morph into the next photo in the last ~28%
+  const layers = {};
+  document.querySelectorAll(".layer").forEach((el) => {
+    layers[el.dataset.img] = { el, img: el.querySelector(".layer-img"), tint: el.querySelector(".layer-tint"), grid: el.querySelector(".layer-grid") };
+  });
+  function smoothstep01(t) { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); }
+  // Interpolate every filter parameter by hand (rather than snapping
+  // between two filter strings) so the blueprint really RESOLVES into the
+  // photo over the transition instead of popping between two states.
+  function blueprintFilter(resolveAmount) {
+    if (resolveAmount >= 1) return "none";
+    const g = 1 - resolveAmount;
+    // Desaturate + harden only; the cyan itself comes from .layer-tint.
+    return `grayscale(${g}) brightness(${1 + 0.12 * g}) contrast(${1 + 0.4 * g})`;
+  }
+
+  let BEATS = []; // progress fractions at which each beat (hero, mission, core, charge, recover, cta) starts, plus 1 at the end
+  function pushScene(p) {
+    if (BEATS.length < 2 || !window.__sceneUpdate) return;
+    let i = BEATS.length - 2;
+    for (let k = 0; k < BEATS.length - 1; k++) { if (p < BEATS[k + 1]) { i = k; break; } }
+    const t = Math.max(0, Math.min(1, (p - BEATS[i]) / (BEATS[i + 1] - BEATS[i])));
+    window.__sceneUpdate(i, t, p);
+  }
+
+  function updateStage(progress) {
+    pushScene(progress);
+    let segIdx = STOPS.length - 2;
+    for (let i = 0; i < STOPS.length - 1; i++) { if (progress <= STOPS[i + 1]) { segIdx = i; break; } }
+    const segLocal = smoothstep01((progress - STOPS[segIdx]) / (STOPS[segIdx + 1] - STOPS[segIdx]));
+    const crossfade = smoothstep01((segLocal - TRANSITION_START) / (1 - TRANSITION_START));
+    const fromKey = SEQUENCE[segIdx], toKey = SEQUENCE[segIdx + 1];
+
+    if (document.documentElement.classList.contains("glbg")) return;
+    Object.entries(layers).forEach(([key, layer]) => {
+      let weight = 0;
+      if (key === fromKey) weight = Math.max(weight, 1 - crossfade);
+      if (key === toKey) weight = Math.max(weight, crossfade);
+      layer.el.style.opacity = weight;
+      if (key === toKey) {
+        // Entering photo resolves from a blueprint/schematic state into
+        // full colour as the crossfade completes - a real construction
+        // reveal, not a plain dissolve.
+        layer.img.style.filter = blueprintFilter(crossfade);
+        layer.tint.style.opacity = Math.max(0, 1 - crossfade * 1.25);
+        layer.grid.style.opacity = Math.max(0, 1 - crossfade * 1.4) * 0.6;
+      } else {
+        layer.img.style.filter = "none";
+        layer.tint.style.opacity = 0;
+        layer.grid.style.opacity = 0;
+      }
+    });
+  }
+
+  // totalStart/span are placeholders, replaced further down once all
+  // pinned sections exist and the document's real length is known -
+  // ScrollSmoother's own onUpdate is used to drive progress rather than a
+  // second ScrollTrigger with numeric start/end, which was found live to
+  // NOT behave as an absolute pixel range (it recomputed its own "end" to
+  // 1008px regardless of the explicit value passed in) - ScrollSmoother's
+  // own scrollTop() reading is the ground truth here instead.
+  let totalStart = 0, span = 1;
+  const smoother = ScrollSmoother.create({
+    wrapper: "#smooth-wrapper", content: "#smooth-content", smooth: 0.9,
+    onUpdate: (self) => {
+      const p = Math.max(0, Math.min(1, (self.scrollTop() - totalStart) / span));
+      gsap.set("#progress", { width: (p * 100) + "%" });
+      updateStage(p);
+    },
+  });
+
+  // ---------- Pinned beats: each section locks in place for a scroll span
+  // and its OWN copy dissolves in/holds/dissolves out via a scrubbed
+  // timeline - the section itself never slides, matching the photo stage.
+  const heroSplit = new SplitText("#heroTitle .word", { type: "lines" });
+  gsap.set(heroSplit.lines, { yPercent: 110, opacity: 0 });
+  gsap.timeline({ delay: 0.3 })
+    .to(heroSplit.lines, { yPercent: 0, opacity: 1, duration: 1.1, stagger: 0.12, ease: "power4.out" })
+    .to("#hero [data-reveal]", { opacity: 1, duration: 0.8, stagger: 0.1, ease: "power2.out" }, "-=0.5");
+
+  const PIN_DIST = "+=100%";
+  const heroTl = gsap.timeline({ scrollTrigger: { trigger: "#hero", start: "top top", end: PIN_DIST, scrub: 0.5, pin: true, pinSpacing: true } })
+    .to("#hero .beat-inner, #hero .scroll-cue", { opacity: 0, y: -40, duration: 0.4 }, 0.62);
+
+  // Real boundaries, keyed by which photo should be fully resolved by the
+  // time that section's pin begins (mission has no image of its own - it
+  // shares hero's hold, so it isn't a key here). Storing the live
+  // ScrollTrigger objects themselves, not their .start/.end read right
+  // now - a real bug found live: reading .start/.end THIS early (before
+  // ScrollTrigger.refresh() below) captured stale pre-refresh numbers,
+  // which silently desynced totalStart/span from the real, final layout
+  // and made every pinned section's own scrub timeline stop tracking the
+  // (correct) scroll position __jumpToProgress was actually setting.
+  const sectionTriggers = {};
+  document.querySelectorAll("section.beat[data-beat]").forEach((sectionEl) => {
+    if (sectionEl.id === "hero") return;
+    const reveals = sectionEl.querySelectorAll("[data-reveal]");
+    const isLast = sectionEl === document.querySelector("section.beat.center");
+    gsap.set(reveals, { opacity: 0, y: 34 });
+    const tl = gsap.timeline({
+      scrollTrigger: { trigger: sectionEl, start: "top top", end: isLast ? "+=70%" : PIN_DIST, scrub: 0.5, pin: true, pinSpacing: true },
+    });
+    tl.to(reveals, { opacity: 1, y: 0, duration: 0.3, stagger: 0.07, ease: "power2.out" }, 0);
+    if (!isLast) {
+      tl.to(reveals, { opacity: 1, duration: 0.34 }, 0.3)
+        .to(reveals, { opacity: 0, y: -34, duration: 0.3, stagger: 0.05, ease: "power2.in" }, 0.66);
+    }
+    const key = sectionEl.dataset.key;
+    sectionTriggers[key] = tl.scrollTrigger;
+  });
+
+  // ---------- Now that every pin exists, measure the REAL document and
+  // derive STOPS from actual section boundaries instead of guessed
+  // fractions - this is what keeps the photo transition lined up with the
+  // text that's supposed to be sitting over the resolved image, instead of
+  // a dead gap with no copy visible (a real bug found via self-check here).
+  // Bug found on the FIRST fix attempt: a trigger on #smooth-content using
+  // "bottom bottom" measured a length (4608px) far shorter than the real
+  // pinned document (9630px) - once children are individually pinned,
+  // that auto-measurement is unreliable. A SECOND attempt using that same
+  // trigger with explicit numeric start/end was also found live to ignore
+  // the numbers given (it recomputed end as 1008px regardless) - so
+  // totalStart/span (declared up top, read by ScrollSmoother's own
+  // onUpdate) are the only source of truth, set here from the real
+  // first/last pinned trigger's own start/end.
+  ScrollTrigger.refresh();
+  totalStart = heroTl.scrollTrigger.start;
+  const KEYS = [...document.querySelectorAll("section.beat[data-beat]")].filter((s) => s.id !== "hero").map((s) => s.dataset.key);
+  span = sectionTriggers[KEYS[KEYS.length - 1]].end - totalStart;
+  STOPS = [0, 0.25, 0.5, 0.75, 1]; // only the (hidden once WebGL is up) DOM fallback layer uses these
+  BEATS = [0, ...KEYS.map((k) => (sectionTriggers[k].start - totalStart) / span), 1];
+  window.__BEATS = BEATS;
+  window.__PACE = { revealEnd: 0.5, holdEnd: 0.62 }; // used by the video recorder: measured - the last text element is fully in at ~50% of a scene, the exit/transition starts at ~62%
+  window.__jumpToProgress = (frac) => {
+    smoother.scrollTop(totalStart + span * frac);
+    const p = Math.max(0, Math.min(1, frac));
+    gsap.set("#progress", { width: (p * 100) + "%" });
+    updateStage(p);
+    ScrollTrigger.update();
+  };
+  updateStage(0);
+})();
+</script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js"}}</script>
+<script type="module">
+import * as THREE from "three";
+const S = window.SITE, N = S.scenes.length;
+const state = { i: 0, t: 0, p: 0 };
+window.__sceneUpdate = (i, t, p) => { state.i = i; state.t = t; state.p = p; };
+const sm = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+const lerp = (a, b, t) => a + (b - a) * t;
+const SIDE = S.scenes.map((s, k) => (k === 0 || k === N - 1 ? -1 : s.align === "right" ? 1 : -1)); // which side the text sits on
+const scrimL = document.querySelector(".side-scrim.left"), scrimR = document.querySelector(".side-scrim.right");
+const lscrimL = document.querySelector(".light-scrim.left"), lscrimR = document.querySelector(".light-scrim.right");
+const curSide = { v: -1 };
+// ===================================================================
+// FLOWING BACKGROUND: six photographs rendered in ONE fragment shader.
+// Each photo is alive on its own (slow dolly toward the camera as you
+// scroll, idle breathing, water ripple / mist / sun-rays / floating
+// motes per scene) and hands over to the next through its own shader
+// transition that warps and flows the pixels - never a plain crossfade:
+//   0 hero  -> lab      iris dive out of the can, camera passes through
+//   1 lab   -> core     liquid surface rises and refracts the new photo
+//   2 core  -> charge   sun burst blooms outward from the horizon
+//   3 charge-> recover  streak pan with directional blur + mist seam
+//   4 recover->cta      ink bleed through domain-warped noise
+// Entering photos start as a cyan blueprint and resolve into colour.
+// ===================================================================
+const bgCanvas = document.getElementById("bg");
+const bgr = new THREE.WebGLRenderer({ canvas: bgCanvas, antialias: false, alpha: false });
+let bgScale = 0.6, bgSlow = 0, bgLastT = 0;
+bgr.setPixelRatio(bgScale);
+const bgScene = new THREE.Scene();
+const bgCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const BG_FILES = S.scenes.map((s) => s.id);
+const bgTex = [], bgAsp = BG_FILES.map(() => 1.5);
+const blank = new THREE.DataTexture(new Uint8Array([11, 28, 45, 255]), 1, 1); blank.needsUpdate = true;
+BG_FILES.forEach((n, k) => { bgTex[k] = blank; });
+let bgHeroReady = false, bgLoaded = 0;
+window.__assetsReady = () => bgLoaded >= BG_FILES.length && !!window.__sceneReady; // lets the video recorder wait for every photo
+BG_FILES.forEach((n, k) => {
+  new THREE.TextureLoader().load("images/" + n + ".webp", (t) => {
+    t.wrapS = t.wrapT = THREE.MirroredRepeatWrapping; t.minFilter = THREE.LinearMipmapLinearFilter; t.anisotropy = 4;
+    bgTex[k] = t; bgAsp[k] = t.image.width / t.image.height;
+    bgLoaded++; if (k === 0) bgHeroReady = true;
+  });
+});
+const BG_FX = S.scenes.map((s) => [s.fx.ripple, s.fx.mist, s.fx.rays, 0]);
+const BG_LIGHT = S.scenes.map((s) => (s.tone === "light" ? 1 : 0));
+const BG_DRIFT = S.scenes.map((s, k) => [[0.035, -0.012], [-0.03, 0.01], [0.0, 0.03], [-0.02, -0.03], [0.03, 0.012], [-0.025, 0.02]][k % 6]);
+const bgMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uA: { value: blank }, uB: { value: blank }, uRes: { value: new THREE.Vector2(1, 1) }, uTime: { value: 0 }, uE: { value: 0 }, uType: { value: 0 },
+    uAsp: { value: new THREE.Vector2(1.5, 1.5) }, uZoom: { value: new THREE.Vector2(1.1, 1.1) }, uDrift: { value: new THREE.Vector4() },
+    uFxA: { value: new THREE.Vector4() }, uFxB: { value: new THREE.Vector4() }, uLight: { value: new THREE.Vector2() }, uPortal: { value: new THREE.Vector2(0.75, 0.5) }, uSeed: { value: new THREE.Vector2(1, 2) },
+  },
+  vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+  fragmentShader: `
+    precision highp float;
+    uniform sampler2D uA; uniform sampler2D uB;
+    uniform vec2 uRes; uniform float uTime, uE, uType;
+    uniform vec2 uAsp, uZoom, uLight, uPortal, uSeed; uniform vec4 uDrift, uFxA, uFxB;
+    varying vec2 vUv;
+    float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+    float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(hash(i), hash(i + vec2(1,0)), f.x), mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y); }
+    float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 4; i++){ v += a * vnoise(p); p = p * 2.02 + vec2(17.3, 9.1); a *= 0.5; } return v; }
+    vec2 coverUV(vec2 uv, float ia){ float sa = uRes.x / uRes.y; vec2 s = sa > ia ? vec2(1.0, ia / sa) : vec2(sa / ia, 1.0); return (uv - 0.5) * s + 0.5; }
+    vec3 base(sampler2D t, vec2 uv, float ia, float zoom, vec2 drift, float rip, float seed){
+      float br = 0.012 * sin(uTime * 0.35 + seed * 3.0);
+      vec2 w = vec2(vnoise(uv * vec2(6.0, 14.0) + vec2(uTime * 0.25, seed)), vnoise(uv * vec2(9.0, 11.0) + vec2(seed, uTime * 0.2))) - 0.5;
+      vec2 q = uv + w * 0.022 * rip; q.x += sin(q.y * 70.0 + uTime * 1.4) * 0.0009 * rip;
+      q = (q - 0.5) / (zoom + br) + 0.5 + drift + vec2(sin(uTime * 0.11 + seed), cos(uTime * 0.09 + seed * 2.0)) * 0.006;
+      return texture2D(t, coverUV(q, ia)).rgb;
+    }
+    vec3 overlay(vec3 col, vec2 uv, vec4 fx, float seed, float light){
+      float asp = uRes.x / uRes.y;
+      if (fx.y > 0.0){ float m = fbm(uv * vec2(2.2, 3.2) + vec2(uTime * 0.035, seed)); col = mix(col, mix(vec3(0.80, 0.90, 0.95), vec3(1.0), light), fx.y * smoothstep(0.38, 0.85, m) * 0.5); }
+      if (fx.z > 0.0){ vec2 d = (uv - vec2(0.53, 0.5)) * vec2(asp, 1.0); float ang = atan(d.y, d.x);
+        float r = vnoise(vec2(ang * 5.0 + uTime * 0.10, seed)) * 0.7 + vnoise(vec2(ang * 11.0 - uTime * 0.07, seed + 3.0)) * 0.3;
+        col += vec3(1.0, 0.66, 0.36) * pow(r, 2.2) * exp(-length(d) * 1.5) * fx.z * 0.9; }
+      if (fx.w > 0.0){ for (int k = 0; k < 3; k++){ float sc = 12.0 + float(k) * 9.0;
+        vec2 p = uv * vec2(asp, 1.0) * sc + vec2(uTime * 0.05 * float(k + 1), -uTime * (0.25 + 0.12 * float(k))) + float(k) * 13.7;
+        vec2 id = floor(p), f = fract(p) - 0.5; float h = hash(id + seed); vec2 o = (vec2(hash(id + 1.3), hash(id + 7.9)) - 0.5) * 0.6;
+        float tw = 0.5 + 0.5 * sin(uTime * (1.0 + h * 2.0) + h * 20.0);
+        col += vec3(0.85, 1.0, 1.0) * smoothstep(0.09, 0.0, length(f - o)) * step(0.55, h) * tw * fx.w * (1.0 - 0.25 * float(k)) * (1.0 - 0.6 * light); } }
+      return col;
+    }
+    vec3 blueprint(vec3 c, vec2 uv, float amt, float light){
+      float g = dot(c, vec3(0.3, 0.59, 0.11));
+      vec3 t = mix(vec3(g) * vec3(0.55, 1.05, 1.1) + vec3(0.0, 0.05, 0.07), vec3(g * 0.55) * vec3(0.6, 1.0, 1.1), light);
+      vec2 gl = abs(fract(uv * vec2(uRes.x / uRes.y, 1.0) * 22.0) - 0.5);
+      t += smoothstep(0.47, 0.5, max(gl.x, gl.y)) * vec3(0.35, 0.9, 0.9) * 0.35 * (1.0 - light * 0.5);
+      return mix(c, t, amt);
+    }
+    void main(){
+      vec2 uv = vUv; float asp = uRes.x / uRes.y; float e = uE; vec3 col; float m = 0.0;
+      if (e <= 0.001){
+        col = base(uA, uv, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); col = overlay(col, uv, uFxA, uSeed.x, uLight.x);
+      } else {
+        vec3 cA, cB, add = vec3(0.0); vec2 uvA = uv, uvB = uv; float bpK = 1.0; float PI = 3.14159265;
+        if (uType < 0.5){                                   // 0: iris dive out of the can
+          vec2 c = uPortal; vec2 d = (uv - c) * vec2(asp, 1.0); float far = length(max(c, 1.0 - c) * vec2(asp, 1.0)) * 1.05;
+          float n = fbm(uv * 3.5 + vec2(uTime * 0.2, 0.0)) - 0.5; float r = e * far * 1.1; float dist = length(d) + n * 0.16 * sin(PI * e);
+          m = smoothstep(r, r - 0.05, dist); add = smoothstep(0.06, 0.0, abs(dist - r)) * sin(PI * e) * vec3(0.45, 1.0, 1.0) * 0.9;
+          uvA = c + (uv - c) / (1.0 + 1.4 * e * e); uvB = c + (uv - c) / (0.55 + 0.45 * e);
+          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y);
+        } else if (uType < 1.5){                            // 1: liquid rises and refracts
+          float wav = sin(uv.x * 7.0 + uTime * 1.6) * 0.018 + sin(uv.x * 17.0 - uTime * 2.3) * 0.008 + (fbm(vec2(uv.x * 3.0, uTime * 0.2)) - 0.5) * 0.07;
+          float surf = e * 1.3 - 0.1 + wav; m = smoothstep(surf + 0.012, surf - 0.012, uv.y);
+          float depth = clamp(surf - uv.y, 0.0, 1.0);
+          uvB = uv + vec2(sin(uv.y * 30.0 + uTime * 2.0), cos(uv.x * 25.0 + uTime * 1.6)) * 0.006 * (1.0 - e) * (0.4 + depth);
+          uvA = uv + vec2(0.0, (1.0 - m) * e * 0.07);
+          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y);
+          cB *= 1.0 + smoothstep(0.18, 0.0, depth) * 0.3; add = smoothstep(0.035, 0.0, abs(uv.y - surf)) * vec3(0.85, 0.95, 1.0) * 0.55 * sin(PI * e); bpK = 0.7;
+        } else if (uType < 2.5){                            // 2: sun burst
+          vec2 s = vec2(0.53, 0.5); vec2 d = (uv - s) * vec2(asp, 1.0); float dist = length(d);
+          float n = fbm(uv * 3.0 + vec2(0.0, uTime * 0.2)) - 0.5; float r = e * 1.7; m = smoothstep(r, r - 0.14, dist + n * 0.22);
+          uvB = s + (uv - s) / (1.0 + 0.6 * (1.0 - e)); uvA = s + (uv - s) / (1.0 + 0.25 * e);
+          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y);
+          add = vec3(1.0, 0.78, 0.5) * exp(-dist * 2.6) * sin(PI * e) * 1.25 + smoothstep(0.08, 0.0, abs(dist + n * 0.22 - r)) * vec3(1.0, 0.85, 0.6) * 0.5 * sin(PI * e);
+        } else if (uType < 3.5){                            // 3: streak pan
+          float edge = 1.06 - e * 1.4 + (fbm(vec2(uv.y * 3.0, uTime * 0.3)) - 0.5) * 0.14; float sh = sin(PI * e);
+          m = 1.0 - smoothstep(edge + 0.02, edge - 0.02, uv.x); // B on the right of the seam, sweeping left
+          cA = vec3(0.0); cB = vec3(0.0);
+          float jit = hash(gl_FragCoord.xy) / 12.0;
+          for (int k = 0; k < 12; k++){ float o = ((float(k) / 12.0 + jit) - 0.5) * 0.16 * sh;
+            cA += base(uA, uv + vec2(e * 0.35 + o, 0.0), uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x);
+            cB += base(uB, uv + vec2(-(1.0 - e) * 0.35 + o, 0.0), uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y); }
+          cA /= 12.0; cB /= 12.0; add = smoothstep(0.2, 0.0, abs(uv.x - edge)) * (0.4 + fbm(uv * 4.0 + uTime * 0.1)) * sh * vec3(0.9, 0.95, 1.0) * 0.32; bpK = 0.0;
+        } else {                                            // 4: ink bleed
+          float nn = fbm(uv * 2.2 + vec2(uTime * 0.05, 0.0)) * 0.8 + fbm(uv * 5.0 + 3.0) * 0.2; float th = e * 1.45 - 0.2;
+          m = 1.0 - smoothstep(th - 0.08, th + 0.08, nn);
+          vec2 g = vec2(fbm(uv * 3.0 + 1.0), fbm(uv * 3.0 + 7.0)) - 0.5;
+          uvA = (uv - 0.5) / (1.0 + 0.3 * e) + 0.5 + g * 0.15 * e; uvB = (uv - 0.5) / (1.0 + 0.25 * (1.0 - e)) + 0.5 - g * 0.15 * (1.0 - e);
+          cA = base(uA, uvA, uAsp.x, uZoom.x, uDrift.xy, uFxA.x, uSeed.x); cB = base(uB, uvB, uAsp.y, uZoom.y, uDrift.zw, uFxB.x, uSeed.y);
+          add = smoothstep(0.1, 0.0, abs(nn - th)) * sin(PI * e) * vec3(0.3, 0.95, 0.95) * 0.7;
+        }
+        float bp = (1.0 - smoothstep(0.45, 1.0, e)) * 0.85 * bpK;
+        cB = blueprint(cB, uv, bp, uLight.y);
+        col = mix(cA, cB, m) + add;
+        col = overlay(col, uv, mix(uFxA, uFxB, m), mix(uSeed.x, uSeed.y, m), mix(uLight.x, uLight.y, m));
+      }
+      float lt = mix(uLight.x, uLight.y, m);
+      col *= 1.0 - mix(0.42, 0.08, lt) * pow(length((uv - 0.5) * vec2(1.0, 0.9)) * 1.35, 2.0);
+      col *= 1.0 - mix(0.30, 0.0, lt) * smoothstep(0.55, 0.0, uv.y);
+      gl_FragColor = vec4(col, 1.0);
+    }`,
+});
+bgScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), bgMat));
+const TYPES = S.scenes.map((s, k) => (S.transitions && S.transitions[k] != null ? S.transitions[k] : k % 5));
+const sm5 = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * t * (t * (t * 6 - 15) + 10); };
+const bgU = bgMat.uniforms;
+const bgLightState = { v: 0 };
+let bgShown = false;
+function bgResize(w, h) { bgr.setSize(w, h, false); bgU.uRes.value.set(bgCanvas.width, bgCanvas.height); }
+function bgAdapt(now) {
+  const dt = now - bgLastT; bgLastT = now;
+  if (dt > 100 || dt <= 0) return;
+  bgSlow += dt > 26 ? 1 : dt < 19 ? -1 : 0; bgSlow = Math.max(-40, Math.min(40, bgSlow));
+  if (bgSlow > 25 && bgScale > 0.34) { bgScale = Math.max(0.34, bgScale - 0.1); bgSlow = 0; bgr.setPixelRatio(bgScale); bgResize(window.innerWidth, window.innerHeight); }
+}
+function bgFrame(now) {
+  bgAdapt(now);
+  const i = Math.min(state.i, N - 1), nxt = Math.min(i + 1, N - 1), t = state.t;
+  const last = i >= N - 1;
+  const e = last ? 0 : sm5((t - 0.6) / 0.4);
+  const dolly = (tt) => 1.06 + 0.14 * tt;
+  bgU.uTime.value = now * 0.001;
+  bgU.uE.value = e; bgU.uType.value = TYPES[i];
+  bgU.uA.value = bgTex[i]; bgU.uB.value = bgTex[nxt];
+  bgU.uAsp.value.set(bgAsp[i], bgAsp[nxt]);
+  bgU.uSeed.value.set(i * 3.7 + 1.0, nxt * 3.7 + 1.0); // per-SCENE seed: the incoming photo must look identical at e=1 and at the next scene's e=0, or the background snaps
+  bgU.uZoom.value.set(dolly(t), dolly(0));
+  bgU.uDrift.value.set(BG_DRIFT[i][0] * t, BG_DRIFT[i][1] * t, 0, 0);
+  bgU.uFxA.value.set(...BG_FX[i]); bgU.uFxB.value.set(...BG_FX[nxt]);
+  bgU.uLight.value.set(BG_LIGHT[i], BG_LIGHT[nxt]);
+  bgU.uPortal.value.set(0.5, 0.5);
+  bgLightState.v = lerp(BG_LIGHT[i], BG_LIGHT[nxt], sm(e * 1.6 - 0.3));
+  bgr.render(bgScene, bgCam);
+  if (bgHeroReady && !bgShown) { bgShown = true; document.documentElement.classList.add("glbg"); }
+}
+function resize() { bgResize(window.innerWidth, window.innerHeight); }
+window.addEventListener("resize", resize); resize();
+function frame(now) {
+  requestAnimationFrame(frame);
+  const i = Math.min(state.i, N - 1), nxt = Math.min(i + 1, N - 1), e = i >= N - 1 ? 0 : sm5((state.t - 0.6) / 0.4);
+  curSide.v += (lerp(SIDE[i], SIDE[nxt], sm(e)) - curSide.v) * 0.2;
+  bgFrame(now);
+  const L = bgLightState.v, side = curSide.v;
+  if (scrimL) scrimL.style.opacity = Math.max(0, -side) * (1 - L);
+  if (scrimR) scrimR.style.opacity = Math.max(0, side) * (1 - L);
+  if (lscrimL) lscrimL.style.opacity = Math.max(0, -side) * L;
+  if (lscrimR) lscrimR.style.opacity = Math.max(0, side) * L;
+}
+requestAnimationFrame(frame);
+window.__sceneReady = true;
+</script>
+</body></html>
