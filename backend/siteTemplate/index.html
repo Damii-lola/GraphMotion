@@ -183,10 +183,6 @@
 <body>
 
 <div id="progress"></div>
-<nav class="top">
-  <div class="logo" id="navLogo"></div>
-  <div class="tag" id="navTag"></div>
-</nav>
 
 <div id="stage">
   <canvas id="bg"></canvas>
@@ -224,8 +220,6 @@ window.SITE = /*__SITE_JSON__*/null;
   root.style.setProperty("--accent-light", S.theme.accentLight || S.theme.accent);
   root.style.setProperty("--accent-dark", S.theme.accentDark || "#111");
   document.title = S.brand + " — " + S.tagline;
-  document.getElementById("navLogo").textContent = S.brand.toUpperCase();
-  document.getElementById("navTag").textContent = S.tagline;
   var hero = S.scenes[0], html = "";
   html += '<section class="beat" id="hero" data-beat data-key="hero"><div class="beat-inner">' +
     '<span class="eyebrow" data-reveal><span class="dot"></span>' + esc(hero.kicker || S.brand) + "</span>" +
