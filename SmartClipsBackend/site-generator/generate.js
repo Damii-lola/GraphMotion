@@ -20,6 +20,12 @@ run({
   onProgress: (e) => console.log(`${String(Math.round(e.progress * 100)).padStart(3)}%  ${e.stage}`),
 }).then((r) => {
   console.log("\nSite written to", r.outDir);
-  const s = r.spec; console.log(`${s.brand} | ${s.theme.look} | motif ${s.motif.type} | grade ${s.grade.mood} | ${s.beats.length} beats, ${s.beats.reduce((t, b) => t + b.dur, 0).toFixed(1)}s`);
-  s.beats.forEach((b, i) => console.log(`${String(i + 1).padStart(2)}. ${b.dur.toFixed(1)}s ${b.image.padEnd(10)} ${b.camera.padEnd(10)} ${(b.text ? b.text.lines.map((l) => l.t).join(" / ") : "-").padEnd(34)} ${b.text ? b.text.fx.padEnd(8) : "        "} -> ${b.transition.type}`));
+  const s = r.spec;
+  if (s.beats) {                                    // cinema engine
+    console.log(`${s.brand} | ${s.theme.look} | motif ${s.motif.type} | grade ${s.grade.mood} | ${s.beats.length} beats, ${s.beats.reduce((t, b) => t + b.dur, 0).toFixed(1)}s`);
+    s.beats.forEach((b, i) => console.log(`${String(i + 1).padStart(2)}. ${b.dur.toFixed(1)}s ${b.image.padEnd(10)} ${b.camera.padEnd(10)} ${(b.text ? b.text.lines.map((l) => l.t).join(" / ") : "-").padEnd(34)} ${b.text ? b.text.fx.padEnd(8) : "        "} -> ${b.transition.type}`));
+  } else {                                          // section-based engine
+    console.log(`${s.brand} | ${s.theme.look} | accent ${s.theme.accent} | ${s.scenes.length} scenes`);
+    s.scenes.forEach((sc, i) => console.log(`${String(i + 1).padStart(2)}. ${sc.id.padEnd(9)} ${sc.tone.padEnd(5)} ${sc.align.padEnd(5)} ${sc.title.replace(/|/g, " / ")}`));
+  }
 }).catch((e) => { console.error("\nFAILED:", e.message); process.exit(1); });
