@@ -50,7 +50,8 @@ function validate(b) {
 
 const friendly = (e) => {
   const m = String((e && e.message) || e);
-  if (/Neuron guard|daily free allocation|10,?000 neurons|4006|429/i.test(m)) return "We've used up today's free AI capacity. Please try again tomorrow.";
+  if (/Neuron guard/i.test(m)) return "SmartClips' own daily safety limit for AI usage was reached. Please try again tomorrow.";
+  if (/daily free allocation|10,?000 neurons|4006|status.{0,6}429|rate limit/i.test(m)) return "Cloudflare says the free AI allowance of the account this server uses is used up. Please try again tomorrow.";
   if (/could not write the ad script/i.test(m)) return 'The AI could not write the video this time. Please try again.';
   return m.length > 220 ? m.slice(0, 220) + '…' : m;
 };
@@ -65,7 +66,7 @@ function register(app, { siteVideo }) {
 
   function view(j) {
     const r = j.render && siteVideo.view(j.render);
-    const out = { id: j.id, status: j.phase, label: label(j), progress: 0, eta: null, error: j.error || null, position: 0, videoUrl: null, downloadUrl: null, mp4Url: null };
+    const out = { id: j.id, status: j.phase, label: label(j), progress: 0, eta: null, error: j.error || null, errorDetail: j.errorDetail || null, position: 0, videoUrl: null, downloadUrl: null, mp4Url: null };
     if (j.phase === 'generating') {
       let gp = j.genProgress;
       if (/^Writing the ad script/.test(j.genStage || '')) gp = 0.05 + 0.05 * (1 - Math.exp(-(Date.now() - j.stageAt) / 40000));   // the single AI call has no sub-steps: creep gently so the bar never looks frozen
@@ -118,7 +119,7 @@ function register(app, { siteVideo }) {
 
   function fail(j, e) {
     if (e && e.message === 'cancelled') j.phase = 'cancelled';
-    else { j.phase = 'error'; j.error = friendly(e); console.error(`[generate-video] job ${j.id} failed:`, e && e.message); }
+    else { j.phase = 'error'; j.error = friendly(e); j.errorDetail = String((e && e.message) || e).slice(0, 300); console.error(`[generate-video] job ${j.id} failed:`, e && e.message); }
     setTimeout(() => { jobs.delete(j.id); }, KEEP_MS).unref();
   }
 

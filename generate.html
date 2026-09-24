@@ -234,8 +234,8 @@
     } catch (err) { fail(err.message); }
   });
 
-  function backToForm() { busy = false; clearInterval(timer); currentId = null; $("go").disabled = false; $("job").style.display = "none"; $("formCard").querySelector("form").style.display = "block"; }
-  function fail(msg) { clearInterval(timer); currentId = null; $("stage").textContent = "Something went wrong"; $("err").textContent = msg; $("err").style.display = "block"; $("cancel").textContent = "Back"; $("cancel").disabled = false; $("cancel").onclick = () => { $("cancel").textContent = "Cancel"; $("cancel").onclick = null; backToForm(); }; }
+  function backToForm() { $("pct").style.display = ""; $("what").style.display = ""; $("steps").style.display = ""; busy = false; clearInterval(timer); currentId = null; $("go").disabled = false; $("job").style.display = "none"; $("formCard").querySelector("form").style.display = "block"; }
+  function fail(msg, detail) { clearInterval(timer); currentId = null; $("stage").textContent = "Something went wrong"; $("pct").style.display = "none"; $("what").style.display = "none"; $("steps").style.display = "none"; $("fill").style.width = "0%"; $("err").textContent = msg + (detail ? "  [" + detail + "]" : ""); $("err").style.display = "block"; $("cancel").textContent = "Back"; $("cancel").disabled = false; $("cancel").onclick = () => { $("cancel").textContent = "Cancel"; $("cancel").onclick = null; backToForm(); }; }
   $("cancel").addEventListener("click", async () => {
     if ($("cancel").onclick) return; if (!currentId) return; $("cancel").disabled = true; $("stage").textContent = "Cancelling…";
     try { await fetch(API + "/api/generate-video/" + currentId + "/cancel", { method: "POST" }); } catch (_) {}
@@ -255,7 +255,7 @@
         $("pos").textContent = j.position ? "Waiting in line (" + j.position + ")…" : "";
         $("eta").textContent = j.eta != null && j.status === "rendering" ? "about " + (j.eta >= 60 ? Math.ceil(j.eta / 60) + " min" : j.eta + " s") + " left" : "";
         if (j.status === "cancelled") return backToForm();
-        if (j.status === "error") return fail(j.error || "The video could not be made.");
+        if (j.status === "error") return fail(j.error || "The video could not be made.", j.errorDetail);
         if (j.status === "done") {
           clearInterval(timer); busy = false; currentId = null; $("fill").style.width = "100%"; $("pct").textContent = "100%"; $("eta").textContent = ""; $("job").style.display = "none";
           $("vid").src = abs(j.videoUrl); $("dl").href = abs(j.downloadUrl); $("result").style.display = "block";
