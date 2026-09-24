@@ -55,6 +55,12 @@
   .job h3 { margin: 0 0 16px; font-size: 22px; letter-spacing: -.01em; }
   .bar { height: 12px; border-radius: 999px; background: var(--cream-soft); overflow: hidden; border: 1px solid var(--border); }
   .bar > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--orange), #FF9A5C); border-radius: 999px; transition: width .35s ease; }
+  .pct { font-size: 34px; font-weight: 800; letter-spacing: -.02em; color: var(--orange-dark); margin: 0 0 10px; font-variant-numeric: tabular-nums; }
+  .what { font-size: 15px; color: var(--text); margin: 0 0 16px; min-height: 22px; }
+  .steps { display: flex; justify-content: space-between; gap: 6px; margin: 16px 0 2px; font-size: 12px; color: #a8917a; }
+  .steps span { flex: 1; text-align: center; padding-top: 8px; border-top: 3px solid var(--border); }
+  .steps span.on { color: var(--orange-dark); font-weight: 700; border-color: var(--orange); }
+  .steps span.done { color: var(--ok); border-color: var(--ok); }
   .jobline { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; margin-top: 10px; color: var(--muted); }
   .err { color: var(--bad); font-weight: 600; margin-top: 12px; display: none; }
   .result { display: none; text-align: center; }
@@ -127,7 +133,10 @@
 
     <div class="job" id="job">
       <h3 id="stage">Cloudflare is generating your video</h3>
+      <div class="pct" id="pct">0%</div>
+      <p class="what" id="what">Getting started…</p>
       <div class="bar"><i id="fill"></i></div>
+      <div class="steps" id="steps"><span data-s="0">Writing the script</span><span data-s="1">Making the visuals</span><span data-s="2">Filming</span><span data-s="3">Encoding</span></div>
       <div class="jobline"><span id="pos"></span><span id="eta"></span></div>
       <div class="jobline"><span></span><button class="ghost" id="cancel" style="padding:8px 16px;font-size:14px">Cancel</button></div>
       <div class="err" id="err"></div>
@@ -214,7 +223,7 @@
     e.preventDefault(); if (busy || !check()) return;
     await ping(); // wakes a sleeping server; the request below waits for it either way
     busy = true; $("go").disabled = true; $("err").style.display = "none";
-    $("formCard").querySelector("form").style.display = "none"; $("job").style.display = "block"; $("fill").style.width = "2%"; $("stage").textContent = "Cloudflare is generating your video"; $("eta").textContent = ""; $("pos").textContent = "";
+    $("formCard").querySelector("form").style.display = "none"; $("job").style.display = "block"; $("fill").style.width = "2%"; $("pct").textContent = "2%"; $("what").textContent = "Getting started…"; $("stage").textContent = "Cloudflare is generating your video"; $("eta").textContent = ""; $("pos").textContent = "";
     try {
       const r = await fetch(API + "/api/generate-video", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -239,14 +248,17 @@
     timer = setInterval(async () => {
       try {
         const j = await (await fetch(API + "/api/generate-video/" + id, { cache: "no-store" })).json();
-        $("fill").style.width = Math.max(2, Math.round(j.progress * 100)) + "%";
+        const pct = Math.max(1, Math.min(99, Math.round(j.progress * 100)));
+        $("fill").style.width = pct + "%"; $("pct").textContent = pct + "%"; $("what").textContent = (j.detail || "Working") + (/%$/.test(j.detail || "") ? "" : "…");
+        const step = j.status === "generating" ? (/script|Getting started|Waiting for the AI/i.test(j.detail || "") ? 0 : 1) : /Encoding/i.test(j.detail || "") ? 3 : 2;
+        document.querySelectorAll("#steps span").forEach((s) => { const n = +s.dataset.s; s.className = n < step ? "done" : n === step ? "on" : ""; });
         $("stage").textContent = j.status === "generating" ? "Cloudflare is generating your video" : j.status === "rendering" ? "Rendering video" : j.label;
         $("pos").textContent = j.position ? "Waiting in line (" + j.position + ")…" : "";
         $("eta").textContent = j.eta != null && j.status === "rendering" ? "about " + (j.eta >= 60 ? Math.ceil(j.eta / 60) + " min" : j.eta + " s") + " left" : "";
         if (j.status === "cancelled") return backToForm();
         if (j.status === "error") return fail(j.error || "The video could not be made.");
         if (j.status === "done") {
-          clearInterval(timer); busy = false; currentId = null; $("fill").style.width = "100%"; $("eta").textContent = ""; $("job").style.display = "none";
+          clearInterval(timer); busy = false; currentId = null; $("fill").style.width = "100%"; $("pct").textContent = "100%"; $("eta").textContent = ""; $("job").style.display = "none";
           $("vid").src = abs(j.videoUrl); $("dl").href = abs(j.downloadUrl); $("dl2").href = abs(j.mp4Url); $("result").style.display = "block";
           $("result").scrollIntoView({ behavior: "smooth", block: "center" }); $("vid").play().catch(() => {});
         }

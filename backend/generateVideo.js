@@ -66,24 +66,34 @@ function register(app, { siteVideo }) {
   function view(j) {
     const r = j.render && siteVideo.view(j.render);
     const out = { id: j.id, status: j.phase, label: label(j), progress: 0, eta: null, error: j.error || null, position: 0, videoUrl: null, downloadUrl: null, mp4Url: null };
-    if (j.phase === 'generating') { out.progress = 0.02 + 0.33 * j.genProgress; out.position = [...jobs.values()].filter((x) => x.phase === 'generating' && !x.started && x.created < j.created).length; }
-    else if (j.phase === 'rendering' && r) { out.progress = 0.35 + 0.65 * r.progress; out.eta = r.eta; out.position = r.position; out.detail = r.detail; }
+    if (j.phase === 'generating') {
+      let gp = j.genProgress;
+      if (/^Writing the ad script/.test(j.genStage || '')) gp = 0.05 + 0.05 * (1 - Math.exp(-(Date.now() - j.stageAt) / 40000));   // the single AI call has no sub-steps: creep gently so the bar never looks frozen
+      out.progress = 0.02 + 0.38 * gp;
+      out.position = [...jobs.values()].filter((x) => x.phase === 'generating' && !x.started && x.created < j.created).length;
+      out.detail = out.position ? 'Waiting for the AI - ' + out.position + ' ahead of you' : j.genStage || 'Getting started';
+    } else if (j.phase === 'rendering' && r) {
+      out.progress = 0.4 + 0.6 * r.progress; out.eta = r.eta; out.position = r.position;
+      out.detail = r.status === 'queued' ? 'Waiting for the video recorder' + (r.position > 1 ? ' - ' + (r.position - 1) + ' ahead of you' : '')
+        : r.status === 'loading' ? 'Opening your ad in a phone-sized browser' : r.status === 'recording' ? 'Filming your ad frame by frame (60 fps)' : /^Encoding the video: /.test(r.detail || '') ? r.detail : 'Encoding the video';
+    }
     else if (j.phase === 'done' && r) { out.progress = 1; out.videoUrl = r.videoUrl; out.downloadUrl = r.downloadUrl; out.mp4Url = r.mp4Url; }
     return out;
   }
 
   /** Phase 1 (serialised): the AI writes and paints the ad. Resolves true when the page is ready to be filmed. */
   async function generate(j, input) {
-    j.started = true;
+    j.started = true; j.genStage = 'Getting started'; j.stageAt = Date.now();
+    const seen = (e) => { if (j.cancelled) throw new Error('cancelled'); if (e.stage !== j.genStage) { j.genStage = e.stage; j.stageAt = Date.now(); } j.genProgress = e.progress; };
     try {
       if (j.cancelled) throw new Error('cancelled');
       const dir = store.dirFor(j.id);
       let result;
-      if (process.env.GENERATE_MOCK === '1') result = await require('./mockGenerate')(input, dir, (e) => { j.genProgress = e.progress; });   // local testing only: no Cloudflare
+      if (process.env.GENERATE_MOCK === '1') result = await require('./mockGenerate')(input, dir, seen);   // local testing only: no Cloudflare
       else {
         result = await generateSite({
           company: { name: input.company, details: input.details, focus: input.focus, notes: input.notes }, logo: input.logo, images: input.images, outDir: dir,
-          onProgress: (e) => { if (j.cancelled) throw new Error('cancelled'); j.genProgress = e.progress; },
+          onProgress: seen,
         });
       }
       j.genProgress = 1;
