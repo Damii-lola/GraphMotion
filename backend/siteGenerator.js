@@ -45,7 +45,7 @@ const USER_IMAGE_ORDER = [2, 0, 3, 4, 5, 1]; // where the client's own photos go
 // ------------------------------------------------------------- the brief
 const clip = (v, n) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n);
 function buildBrief({ name, details, focus, notes }) {
-  return [`Company: ${clip(name, 60)}`, `Company details: ${String(details || '').trim().slice(0, 2400)}`, `MAIN FOCUS of this ad: ${clip(focus, 240)}`, notes ? `Notes from the client: ${clip(notes, 600)}` : ''].filter(Boolean).join('\n');
+  return [`Company: ${clip(name, 60)}`, `Company details: ${String(details || '').trim().slice(0, 2400)}`, `MAIN FOCUS of this ad: ${clip(focus, 2400)}`, notes ? `Notes from the client: ${clip(notes, 2400)}` : ''].filter(Boolean).join('\n');
 }
 
 // ------------------------------------------------------------- the ad script from the model
@@ -213,7 +213,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
     let raw = null, lastErr = null;
     for (let attempt = 0; attempt < 2 && !raw; attempt++) {
       try {
-        const prompt = briefPrompt(text.slice(0, 3200)), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 1500);
+        const prompt = briefPrompt(text.slice(0, 7800)), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 1500);
         neurons.charge(est, 'ad script', fluxCount * neurons.estImage()); // refuses BEFORE spending if the ad could not be finished inside its ceiling
         let usage = null;
         const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: 1700, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });

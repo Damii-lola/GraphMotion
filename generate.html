@@ -90,12 +90,14 @@
 
       <div class="field" data-f="focus">
         <label class="f" for="focus">Main focus <span class="req">*</span> <em>what should this video sell or promote?</em></label>
-        <input id="focus" type="text" maxlength="240" placeholder="e.g. Our new AquaForge Charge energy drink launching this month" />
+        <textarea id="focus" rows="4" maxlength="2400" placeholder="e.g. Our new AquaForge Charge energy drink launching this month"></textarea>
+        <div class="count"><span id="focusN">0</span> / 2400</div>
       </div>
 
       <div class="field">
         <label class="f" for="notes">Notes for the AI <em>optional · tone, colours, things to include or avoid</em></label>
-        <input id="notes" type="text" maxlength="600" placeholder="e.g. Bold and energetic, use our orange, don't mention competitors" />
+        <textarea id="notes" rows="4" maxlength="2400" placeholder="e.g. Bold and energetic, use our orange, don't mention competitors"></textarea>
+        <div class="count"><span id="notesN">0</span> / 2400</div>
       </div>
 
       <div class="field">
@@ -150,7 +152,7 @@
   const MAX_IMAGES = 6;
   let logoData = null, images = [], timer = null, busy = false, currentId = null;
 
-  $("details").addEventListener("input", () => { $("detailsN").textContent = $("details").value.length; });
+  ["details", "focus", "notes"].forEach((k) => $(k).addEventListener("input", () => { $(k + "N").textContent = $(k).value.length; }));
 
   // ---------- images: downscaled in the browser so a phone photo never becomes a 12 MB upload
   function toDataUrl(file, maxEdge, type, q) {

@@ -37,7 +37,7 @@ function decodeImage(v) {
 }
 
 function validate(b) {
-  const company = text(b.company, 60), details = text(b.details, 2400), focus = text(b.focus, 240), notes = text(b.notes, 600);
+  const company = text(b.company, 60), details = text(b.details, 2400), focus = text(b.focus, 2400), notes = text(b.notes, 2400);
   if (!company) throw new Error('Please enter your company name.');
   if (details.length < 20) throw new Error("Please describe your company in a few sentences (Company's Details).");
   if (!focus) throw new Error('Please tell us the main focus of the video.');
