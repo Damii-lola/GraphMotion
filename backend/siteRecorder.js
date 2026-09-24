@@ -93,7 +93,7 @@ async function launchChrome() {
   let puppeteer;
   try { puppeteer = require('puppeteer-core'); } catch (_) { throw new Error('puppeteer-core is not installed on this server.'); }
   const lean = ['--hide-scrollbars', '--force-color-profile=srgb', '--disable-extensions', '--disable-dev-shm-usage', '--disable-background-networking',
-    '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--mute-audio', '--js-flags=--max-old-space-size=128'];
+    '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-frame-rate-limit', '--disable-gpu-vsync', '--mute-audio', '--js-flags=--max-old-space-size=128'];
   if (process.platform === 'linux') {
     // Serverless-style Chromium build: no system libraries needed, ships its own SwiftShader for WebGL.
     let chromium = null, loadErr = null;
