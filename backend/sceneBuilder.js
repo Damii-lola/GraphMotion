@@ -342,13 +342,6 @@ function buildTextDraw(layerDef, beatContext) {
     fontSize: layerDef.fontSize || 48,
     lineHeight: layerDef.lineHeight || (layerDef.fontSize || 48) * 1.15,
     fillStyle: layerDef.fillStyle || '#ffffff',
-    // Real, direct user reference (2026-09-22, A8.mp4 - this template's
-    // OWN original reference video): the digits use a vertical blue-to-
-    // green gradient, not a flat fill - confirmed missing when compared
-    // directly against that reference. Optional (undefined for every
-    // other text layer in this codebase, which all use a flat fillStyle
-    // exactly as before) - only counter's own digit layer sets this.
-    fillGradient: layerDef.fillGradient || null,
     textAlign: layerDef.textAlign || 'center',
     animators,
     highlights,

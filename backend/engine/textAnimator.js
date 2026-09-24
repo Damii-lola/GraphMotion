@@ -198,7 +198,7 @@ function drawHighlights(ctx, chars, fontSize, highlights, t, totalChars, totalWo
 function renderAnimatedText(ctx, text, t, opts) {
   const {
     fontFamily, fontWeight, fontSize, lineHeight, maxWidth, centerX, centerY, textAlign = 'center',
-    fillStyle = '#FFFFFF', fillGradient = null, animators = [], highlights = [],
+    fillStyle = '#FFFFFF', animators = [], highlights = [],
   } = opts;
 
   const {
@@ -213,24 +213,6 @@ function renderAnimatedText(ctx, text, t, opts) {
   ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-
-  // Real, direct user reference (counter's own A8.mp4): a vertical
-  // gradient across the digits, not a flat fill. Built ONCE, spanning
-  // the real top/bottom of the laid-out text block (from the actual
-  // `chars` Y positions, so it works correctly whether the text is one
-  // line or several) - every character then paints with this SAME
-  // gradient object, which is what makes it read as one continuous
-  // blend across the whole string rather than each character having
-  // its own independent top-to-bottom repeat.
-  let gradientFill = null;
-  if (fillGradient && chars.length > 0) {
-    const ys = chars.map((c) => c.y);
-    const top = Math.min(...ys) - fontSize / 2;
-    const bottom = Math.max(...ys) + fontSize / 2;
-    gradientFill = ctx.createLinearGradient(0, top, 0, bottom);
-    gradientFill.addColorStop(0, fillGradient.from);
-    gradientFill.addColorStop(1, fillGradient.to);
-  }
 
   for (const c of chars) {
     let dx = 0, dy = 0, scaleMul = 1, dRotation = 0, opacityDelta = 0;
@@ -282,7 +264,7 @@ function renderAnimatedText(ctx, text, t, opts) {
     // fromTRS (see its doc comment for the full story).
     ctx.rotate((dRotation * Math.PI) / 180);
     ctx.scale(scaleMul, scaleMul);
-    ctx.fillStyle = colorMix || gradientFill || fillStyle;
+    ctx.fillStyle = colorMix || fillStyle;
     ctx.fillText(c.ch, 0, 0);
     ctx.restore();
   }
