@@ -251,18 +251,25 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   let spec = given;
   if (!spec) {
     say('Writing the ad script', 0.05);
-    let raw = null, lastErr = null;
-    for (let attempt = 0; attempt < 2 && !raw; attempt++) {
+    let raw = null, lastErr = null, keep = 7800, outEst = 1400, maxTok = 2000;
+    // Up to 3 tries (the first + 2 retries). When the film would not fit the per-film neuron ceiling the guard refuses BEFORE spending anything,
+    // and each retry then asks for a smaller job (shorter brief, tighter answer) instead of giving up.
+    for (let attempt = 0; attempt < 3 && !raw; attempt++) {
       try {
-        // a long brief is trimmed until the whole film (script + the images still to paint) fits the per-film neuron ceiling
-        let keep = 7800, prompt = briefPrompt(text.slice(0, keep)), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 1400);
-        while (keep > 2200 && est + fluxCount * neurons.estImage() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep)); est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 1400); }
+        let prompt = briefPrompt(text.slice(0, keep)), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst);
+        while (keep > 1200 && est + fluxCount * neurons.estImage() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep)); est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst); }
         neurons.charge(est, 'ad script', fluxCount * neurons.estImage()); // refuses BEFORE spending if the ad could not be finished inside its ceiling
         let usage = null;
-        const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: 2000, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
+        const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: maxTok, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
         neurons.settleText(SPEC_MODEL, est, usage, 'ad script');
         raw = typeof txt === 'string' ? JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)) : txt;
-      } catch (e) { lastErr = e; }
+      } catch (e) {
+        lastErr = e;
+        if (/Neuron guard/i.test(String(e && e.message))) {   // over the ceiling: nothing was spent, so try again with a smaller job
+          keep = Math.max(1200, Math.floor(keep * 0.7)); outEst = Math.max(900, outEst - 250); maxTok = Math.max(1500, maxTok - 250);
+          say(`Making the job smaller (try ${attempt + 2} of 3)`, 0.05);
+        }
+      }
     }
     if (!raw) throw new Error('The AI could not write the ad script: ' + (lastErr && lastErr.message));
     spec = normalizeSpec(raw, slug, { brand: company && company.name, brief: text });
