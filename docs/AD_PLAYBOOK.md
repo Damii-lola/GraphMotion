@@ -51,7 +51,7 @@ Measured against the playbook it failed almost everywhere:
 * **Brand-coloured motion.** The WebGL transition glows / "scan-in" wash use the brand accent instead of cyan; light/dark scrims run top-down under the copy.
 * **Sound on and off.** Every caption lands with a soft tick, stickers pop, scene changes get a filtered whoosh, the end card gets riser + impact + sub; a bed picked from the brand's look (`tense` metal, `pulse` tech/playful, `warm pad` luxury/clean). Everything is readable muted.
 * **Contrast.** Text is white with shadow on a dark top scrim, or dark on a light scrim for the one optional light scene; accent blocks always use the WCAG-best ink colour (`accentInk`).
-* **Constants.** 720×1280, 60 fps, 3.5 s per scene; the user has no options.
+* **Constants.** 1080×1920, 60 fps, 3.5 s per scene; the user has no options.
 
 ## 4. Product flow
 

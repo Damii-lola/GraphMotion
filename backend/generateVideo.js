@@ -109,7 +109,7 @@ function register(app, { siteVideo }) {
     try {
       const dir = store.dirFor(j.id);
       j.phase = 'rendering';
-      j.render = siteVideo.submit({ dir }, { sceneSeconds: 3.5, fps: 60, preset: 'tiktok', holdStart: 0, holdEnd: 1, captureBudgetSeconds: +process.env.AD_CAPTURE_BUDGET_S || 420 });   // constants: 720x1280, 60 fps, 3.5 s per scene; no dead intro (the hook is on screen from frame 1), 1 s to linger on the CTA card
+      j.render = siteVideo.submit({ dir }, { sceneSeconds: 3.5, fps: 60, preset: 'hd', holdStart: 0, holdEnd: 1, captureBudgetSeconds: +process.env.AD_CAPTURE_BUDGET_S || 420 });   // constants: 1080x1920 (same as the original videos), 60 fps, 3.5 s per scene; no dead intro (the hook is on screen from frame 1), 1 s to linger on the CTA card
       while (!['done', 'error', 'cancelled'].includes(j.render.status)) { if (j.cancelled) siteVideo.cancel(j.render); await new Promise((r) => setTimeout(r, 1000)); }
       if (j.render.status === 'done') { j.phase = 'done'; store.setStatus(j.id, { status: 'done', video_url: j.render.publicUrl || null }); }
       else if (j.render.status === 'cancelled') j.phase = 'cancelled';
