@@ -154,7 +154,7 @@ async function record(o, onProgress) {
     srv = await serveDir(dir); url = srv.url;
   }
 
-  let totalFrames = 0, frameIdxs = [], audioPath = o.audio ? path.resolve(o.audio) : null;
+  let noBlendAt = null, totalFrames = 0, frameIdxs = [], audioPath = o.audio ? path.resolve(o.audio) : null;
   log(`start: ${url || o.dir}`);
   emit('loading', 0.01, null, null, 'Starting the browser');
   const browser = await launchChrome();
@@ -212,7 +212,12 @@ async function record(o, onProgress) {
         const x = (g % fScene) / fScene;
         return x < F[0] ? 1 : x < F[0] + F[1] ? 4 : 1; // text reveal + transition: every frame; the still hold: thinned
       };
-      if (pc.flat) weight = (f) => (f >= fStart + scenes * fScene ? 6 : 1); // a page whose camera never rests (ad.html): every moment moves, so thin evenly or not at all
+      // A page whose camera never rests (ad.html). Thinned stretches are BLENDED, which is invisible on a slowly moving picture but shows up as a ghost double image
+      // on fast-moving captions. So: never thin while captions are landing (first half of a scene, and the last tenth where the next scene's caption starts) -
+      // every frame is captured there; only the camera-only middle (and the dive, which is motion-blurred anyway) may be thinned when the server is slow.
+      if (pc.flat) weight = (f) => { if (f < fStart) return 1; const g = f - fStart; if (g >= scenes * fScene) return 6; const x = (g % fScene) / fScene; return x < 0.5 || x > 0.9 ? 1 : 2; };
+      // ...and if a stretch that covers a caption reveal still ends up thinned, hold frames there instead of blending them: crisp beats a ghost double image
+      if (pc.flat) noBlendAt = (f) => { const g = f - fStart; if (g < 0 || g >= scenes * fScene) return false; const x = (g % fScene) / fScene; return x < 0.5 || x > 0.9; };
     } else if (info.seekDur) {
       totalFrames = Math.max(2, Math.round(Math.min(info.seekDur, +o.maxSeconds || 1e9) * fps));
       plan = (f) => Math.min(info.seekDur, f / fps);
@@ -340,7 +345,7 @@ async function record(o, onProgress) {
     for (let i = 0; i < runs.length; i++) {
       const r = runs[i], part = path.join(work, `part${String(i).padStart(3, '0')}.mp4`), outFrames = r.count * r.gap;
       const anchor = r.gap > 1 && i < runs.length - 1 ? 1 : 0; // also feed the next stretch's first frame so the last blended frames glide into it instead of holding and then jumping
-      const blend = r.gap > 1 ? `,framerate=fps=${fps}:interp_start=0:interp_end=255:scene=100` : '';
+      const blend = r.gap > 1 && !(noBlendAt && noBlendAt(frameIdxs[r.start])) ? `,framerate=fps=${fps}:interp_start=0:interp_end=255:scene=100` : '';
       await runFF(['-framerate', String(fps / r.gap), '-start_number', String(r.start), '-t', String(((r.count + anchor) * r.gap) / fps), '-i', path.join(work, 'f%05d.jpg'),
         '-vf', `scale=${W}:${H}:flags=${r.gap > 1 || sparse ? 'bilinear' : 'lanczos'},setsar=1${blend},tpad=stop_mode=clone:stop_duration=2,format=yuv420p`,
         '-frames:v', String(outFrames), ...vcodec, part]);
