@@ -29,7 +29,8 @@ const estText = (model, inChars, outTokens) => {
   const r = /70b/i.test(model) ? RATE['70b'] : /mistral/i.test(model) ? RATE.mistral : RATE['8b'];
   return Math.ceil(((inChars / 3.2) * r[0] + outTokens * r[1]) / 1e6 * SAFETY);
 };
-const estImage = () => 50;   // 1024-class image, 3-4 steps is ~40-60 neurons
+const FLUX_STEPS = +process.env.FLUX_STEPS || 2;
+const estImage = (steps = FLUX_STEPS) => Math.ceil(44.8 * steps + 2);   // MEASURED on a real dashboard: 7 images x 3 steps = 940.8 neurons -> 44.8 per step
 
 let runSpent = 0;
 function used() { const u = load(); return (u[who()] && u[who()].day === day()) ? u[who()].n : 0; }
@@ -55,4 +56,4 @@ function settleText(model, estimated, usage, what) {
   console.log(`[neurons] ${what}: measured ${real} (${usage.prompt_tokens} in / ${usage.completion_tokens} out tokens); run now ~${runSpent}`);
 }
 const runTotal = () => runSpent;
-module.exports = { charge, settleText, estText, estImage, used, resetRun, runTotal, DAILY_CEILING, PER_RUN_CEILING };
+module.exports = { FLUX_STEPS, charge, settleText, estText, estImage, used, resetRun, runTotal, DAILY_CEILING, PER_RUN_CEILING };

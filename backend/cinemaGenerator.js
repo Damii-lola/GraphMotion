@@ -20,11 +20,11 @@ async function flux(prompt) {
   const acct = process.env.CLOUDFLARE_ACCOUNT_ID, tok = process.env.CLOUDFLARE_API_TOKEN;
   if (!acct || !tok) throw new Error('CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN not set');
   const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acct}/ai/run/@cf/black-forest-labs/flux-1-schnell`, {
-    method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: prompt.slice(0, 900), steps: 3, width: 576, height: 1024 }), // portrait, fewer pixels + steps = fewer neurons
+    method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: prompt.slice(0, 900), steps: neurons.FLUX_STEPS, width: 576, height: 1024 }), // cost is ~44.8 neurons per STEP per image (measured), so steps are the lever
   });
   let j = await r.json();
   if ((!j.result || !j.result.image) && /width|height|invalid|unexpected|schema/i.test(JSON.stringify(j.errors || j)) && !/allocation|neurons/i.test(JSON.stringify(j.errors || j))) { // size parameters not accepted: rejected calls cost nothing, so just retry without them
-    const r2 = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acct}/ai/run/@cf/black-forest-labs/flux-1-schnell`, { method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: prompt.slice(0, 900), steps: 3 }) });
+    const r2 = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acct}/ai/run/@cf/black-forest-labs/flux-1-schnell`, { method: 'POST', headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: prompt.slice(0, 900), steps: neurons.FLUX_STEPS }) });
     j = await r2.json();
   }
   if (!j.result || !j.result.image) throw new Error('image generation failed: ' + JSON.stringify(j.errors || j).slice(0, 220));

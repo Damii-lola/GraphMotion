@@ -47,9 +47,9 @@ Choices: camera: ${CAMERAS.join(', ')}. transition: morph, fly, twist, ripple, f
 
 Reply with ONE compact JSON object:
 {"brand":"","tagline":"","cta":"2-4 words","look":"","accent":"#RRGGBB bold, not grey","bg":"#RRGGBB near-black","mood":"","motif":"","music":"","imageStyle":"6-10 words, one photographic look for every image",
-"beats":[{"hero":"one physical object","size":0.2-0.4,"image":"shot description, 18-26 words: the hero large and centred in its environment, light, lens, colour; no text/logos/faces","dur":2.4-3.6,"camera":"","focus":[0.4-0.6,0.4-0.6],"text":[["HOOK 1-3 WORDS","xl"],["a concrete brand fact, 2-6 words","m"]],"fx":"","y":0.15-0.28 or 0.72-0.85,"align":"left|center|right","transition":["type",0.8-1.2]}]}
+"beats":[{"hero":"one physical object","size":0.2-0.4,"image":"shot description, 18-26 words: the hero large and centred in its environment, light, lens, colour; no text/logos/faces","dur":3.6-4.4,"camera":"","focus":[0.4-0.6,0.4-0.6],"text":[["HOOK 1-3 WORDS","xl"],["a concrete brand fact, 2-6 words","m"]],"fx":"","y":0.15-0.28 or 0.72-0.85,"align":"left|center|right","transition":["type",0.8-1.2]}]}
 
-RULES: exactly 7 beats (24-26s total): hook, world/attitude, 2 product reveals, proof with real numbers, mission, payoff (brand name + call to action). Every beat: its own hero, image and text - never repeat one. Use 4+ different transitions, 5+ camera moves, 4+ text fx. Text lines: real brand facts (names, flavours, numbers). Last beat transition is ignored but present. JSON only.`;
+RULES: exactly 6 beats (24-26s total): hook, world/attitude, product reveal, proof with real numbers, mission, payoff (brand name + call to action). Every beat: its own hero, image and text - never repeat one. Use 4+ different transitions, 5+ camera moves, 4+ text fx. Text lines: real brand facts (names, flavours, numbers). Last beat transition is ignored but present. JSON only.`;
 }
 
 // ------------------------------------------------------------- validation / repair
@@ -120,7 +120,7 @@ function normalize(raw, brandFallback) {
     const beat = {
       image: b.image && typeof b.image === 'object' ? 'b' + k : (allIds.includes(b.image) ? b.image : allIds[k % allIds.length]),
       hero: { label: str(b.hero && b.hero.label, '', 80), r: num(b.hero && b.hero.r, 0.14, 0.42, 0.28) },
-      dur: Math.min(3.8, Math.max(num(b.dur, 1.2, 3.6, 2.2), minDur)),
+      dur: Math.min(4.6, Math.max(num(b.dur, 1.2, 4.4, 3.4), minDur)),
       camera: pick(b.camera, CAMERAS, CAMERAS[k % CAMERAS.length]), camAmount: num(b.camAmount, 0.08, 0.36, 0.2),
       focus: [num(b.focus && b.focus[0], 0.36, 0.64, 0.5), num(b.focus && b.focus[1], 0.36, 0.64, 0.5)], // the hero sits near the middle, where the image generator puts it
       dof: num(b.dof, 0, 0.95, 0.4), dofFocus: num(b.dofFocus, 0, 1, 0.5), rack: pick(b.rack, ['in', 'out', 'none'], 'none'),
@@ -133,7 +133,7 @@ function normalize(raw, brandFallback) {
     }
     spec.beats.push(beat);
   });
-  if (spec.beats.length < 6) throw new Error('The director returned too few beats (' + spec.beats.length + ')');
+  if (spec.beats.length < 5) throw new Error('The director returned too few beats (' + spec.beats.length + ')');
   const lastB = spec.beats[spec.beats.length - 1]; lastB.dur = Math.max(lastB.dur, 2.8);
   // a short film needs room to breathe: if the plan came out under ~24s, stretch every beat proportionally (max +30%)
   const total = spec.beats.reduce((t, b) => t + b.dur, 0);
@@ -146,7 +146,7 @@ function normalize(raw, brandFallback) {
 function qualityIssues(spec) {
   const out = [], B = spec.beats;
   const total = B.reduce((t, b) => t + b.dur, 0), used = new Set(B.map((b) => b.image));
-  if (B.length < 6) out.push('only ' + B.length + ' beats - I need 7');
+  if (B.length < 5) out.push('only ' + B.length + ' beats - I need 6');
 
   if (spec.images.length < B.length) out.push('every beat needs its own image and its own hero object (' + spec.images.length + ' images for ' + B.length + ' beats)');
   const heroes = B.map((b) => (b.hero && b.hero.label || '').toLowerCase()); if (heroes.some((h) => !h)) out.push('every beat needs a hero object label'); if (new Set(heroes).size < heroes.length) out.push('hero objects repeat - every scene needs its own unique hero object');
@@ -171,7 +171,7 @@ async function directFilm(brief, brandFallback) {
     try {
       const prompt = directorPrompt(String(brief).slice(0, 2600)) + (feedback ? '\n\nYOUR PREVIOUS ATTEMPT WAS UNUSABLE: ' + feedback + '. Fix it and output the full JSON again.' : '');
       const est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, 1700);
-      neurons.charge(est, 'director call', 7 * neurons.estImage()); // refuses BEFORE spending if the film could no longer be finished inside its ceiling
+      neurons.charge(est, 'director call', 6 * neurons.estImage()); // refuses BEFORE spending if the film could no longer be finished inside its ceiling
       let usage = null, txt;
       try { txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: 1900, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } }); }
       catch (e) { if (!/response_format|json/i.test(String(e.message))) throw e; txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: false, maxTokens: 1900, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } }); }
