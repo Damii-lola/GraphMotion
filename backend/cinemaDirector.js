@@ -179,10 +179,11 @@ function qualityIssues(spec) {
 
 async function directFilm(brief, brandFallback) {
   let best = null, err = null, feedback = '';
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const MAX_ATTEMPTS = +process.env.SITEGEN_MAX_ATTEMPTS || 2; // each attempt is a full 70B call (~1-3k neurons of a 10k daily free allowance)
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
       const prompt = directorPrompt(String(brief).slice(0, 2600)) + (feedback ? '\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED BY THE CREATIVE DIRECTOR FOR: ' + feedback + '. Fix every point and output the full JSON again.' : '');
-      const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: 4600, temperature: 0.85, model: SPEC_MODEL, timeoutMs: 150000 });
+      const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: 3800, temperature: 0.85, model: SPEC_MODEL, timeoutMs: 150000 });
       const spec = normalize(typeof txt === 'string' ? JSON.parse(txt) : txt, brandFallback); // throws if unusable
       const issues = qualityIssues(spec);
       if (!best || issues.length < best.issues.length) best = { spec, issues };
