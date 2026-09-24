@@ -180,7 +180,7 @@ async function record(o, onProgress) {
       // Video pacing != scroll pacing. A scroll-driven scene is linear in scroll distance, which as video reads as
       // slow drifting. Instead spend the scene's time like an editor would: quick reveal, a readable hold, then a
       // short punchy transition. revealEnd / holdEnd are the scene positions (0..1) where those phases end.
-      const pc = info.pace || {}, rEnd = pc.revealEnd || 0.3, hEnd = pc.holdEnd || 0.6, F = [0.22, 0.48, 0.30];
+      const pc = info.pace || {}, rEnd = pc.revealEnd || 0.5, hEnd = pc.holdEnd || 0.62, F = [0.30, 0.40, 0.30];
       const shape = (x) => (x < F[0] ? rEnd * (x / F[0]) : x < F[0] + F[1] ? rEnd + (hEnd - rEnd) * ((x - F[0]) / F[1]) : hEnd + (1 - hEnd) * ((x - F[0] - F[1]) / F[2]));
       const fStart = Math.round(holdStart * fps), fScene = Math.round(sceneSeconds * fps), fEnd = Math.round(holdEnd * fps);
       totalFrames = fStart + scenes * fScene + fEnd;
@@ -195,11 +195,11 @@ async function record(o, onProgress) {
       // (readable holds, the final hold) a captured frame can stand in for several. Only used when the
       // server is too slow to capture every frame.
       weight = (f) => {
-        if (f < fStart) return 2;
+        if (f < fStart) return 1; // intro text animation
         const g = f - fStart;
         if (g >= scenes * fScene) return 6;
         const x = (g % fScene) / fScene;
-        return x < F[0] ? 3 : x < F[0] + F[1] ? 4 : 1;
+        return x < F[0] ? 1 : x < F[0] + F[1] ? 4 : 1; // text reveal + transition: every frame; the still hold: thinned
       };
     } else {
       totalFrames = Math.round((+o.duration || 30) * fps);
