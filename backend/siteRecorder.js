@@ -339,7 +339,7 @@ async function record(o, onProgress) {
         '-frames:v', String(outFrames), ...vcodec, part]);
       parts.push(part);
       const frac = (i + 1) / runs.length, el = (Date.now() - encStart) / 1000;
-      emit('encoding', 0.76 + 0.22 * frac, frac > 0.05 ? el / frac - el : null);
+      emit('encoding', 0.76 + 0.22 * frac, frac > 0.05 ? el / frac - el : null, null, 'Encoding the video: ' + Math.round(frac * 100) + '%');
     }
     fs.writeFileSync(path.join(work, 'parts.txt'), parts.map((p) => `file '${p.replace(/\\/g, '/')}'`).join('\n'));
     const join = ['-f', 'concat', '-safe', '0', '-i', path.join(work, 'parts.txt')];
