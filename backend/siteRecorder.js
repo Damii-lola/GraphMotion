@@ -325,7 +325,7 @@ async function record(o, onProgress) {
       if (r && r.gap === gaps[k]) r.count++; else runs.push({ start: k, count: 1, gap: gaps[k] });
     }
     const sparse = frameIdxs.length < totalFrames * 0.6;
-    const vcodec = ['-c:v', 'libx264', '-preset', o.encode || (sparse ? 'ultrafast' : 'veryfast'), '-crf', String(o.crf || 20), '-threads', String(o.threads || 2),
+    const vcodec = ['-c:v', 'libx264', '-preset', o.encode || (sparse ? 'ultrafast' : 'veryfast'), '-crf', String(o.crf || 25), '-threads', String(o.threads || 2),
       '-x264-params', 'rc-lookahead=10:ref=2', '-profile:v', 'high', '-level', '4.2', '-r', String(fps), '-g', String(fps * 2)];
     const runFF = (args) => new Promise((resolve, reject) => {
       const ff = spawn(ffmpegPath, ['-y', '-loglevel', 'error', ...args], { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -338,8 +338,9 @@ async function record(o, onProgress) {
     const encStart = Date.now();
     for (let i = 0; i < runs.length; i++) {
       const r = runs[i], part = path.join(work, `part${String(i).padStart(3, '0')}.mp4`), outFrames = r.count * r.gap;
+      const anchor = r.gap > 1 && i < runs.length - 1 ? 1 : 0; // also feed the next stretch's first frame so the last blended frames glide into it instead of holding and then jumping
       const blend = r.gap > 1 ? `,framerate=fps=${fps}:interp_start=0:interp_end=255:scene=100` : '';
-      await runFF(['-framerate', String(fps / r.gap), '-start_number', String(r.start), '-t', String(outFrames / fps), '-i', path.join(work, 'f%05d.jpg'),
+      await runFF(['-framerate', String(fps / r.gap), '-start_number', String(r.start), '-t', String(((r.count + anchor) * r.gap) / fps), '-i', path.join(work, 'f%05d.jpg'),
         '-vf', `scale=${W}:${H}:flags=${r.gap > 1 || sparse ? 'bilinear' : 'lanczos'},setsar=1${blend},tpad=stop_mode=clone:stop_duration=2,format=yuv420p`,
         '-frames:v', String(outFrames), ...vcodec, part]);
       parts.push(part);
@@ -353,12 +354,13 @@ async function record(o, onProgress) {
     if (audioPath) join.push('-c:a', 'aac', '-b:a', '192k', '-af', `afade=t=out:st=${Math.max(0, totalFrames / fps - 1.5)}:d=1.5`, '-shortest');
     join.push('-movflags', '+faststart', out);
     await runFF(join);
+    await runFF(['-i', out, '-c', 'copy', out.replace(/\.mp4$/i, '.mkv')]); // Matroska copy of the same stream (dimensions untouched)
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
   }
   log(`finished in ${Math.round((Date.now() - t00) / 1000)}s: ${totalFrames / fps}s video ${W}x${H}`);
   emit('done', 1, 0);
-  return { out, seconds: totalFrames / fps, width: W, height: H };
+  return { out, mkv: out.replace(/\.mp4$/i, '.mkv'), seconds: totalFrames / fps, width: W, height: H };
 }
 
 module.exports = { record, resolveTarget, PRESETS, SITE_BASE };

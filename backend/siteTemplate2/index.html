@@ -426,7 +426,7 @@ function render(T) {
 }
 // energy: how much the picture is changing at time t (0 calm .. 1 busy) - the recorder spends its frames where this is high
 window.__energy = (t) => {
-  const L = locate(t), b = L.b; let en = 0.15 + b.camAmount * 0.6;
+  const L = locate(t), b = L.b; let en = 0.5 + b.camAmount * 0.6; // the camera is always moving, so nothing here is 'safe' to thin hard
   if (L.e > 0 && L.e < 1) en = 1;
   if (b.text && L.u > b.text.delay - 0.05 && L.u < b.text.delay + 0.9) en = Math.max(en, 0.85);
   if (b.text && L.u > b.dur - (L.i < N - 1 ? b.transition.dur : 0) - 0.35) en = Math.max(en, 0.8);

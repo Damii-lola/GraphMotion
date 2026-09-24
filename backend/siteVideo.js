@@ -39,7 +39,8 @@ function register(app, hooks = {}) {
       id: j.id, status: j.status, progress: +j.progress.toFixed(3), eta: j.eta == null ? null : Math.round(j.eta),
       error: j.error || null, note: j.note || null, detail: j.detail || null, position: j.status === 'queued' ? queue.indexOf(j) + 1 : 0,
       videoUrl: j.status === 'done' ? (j.publicUrl || `/api/site-video/${j.id}/file`) : null,
-      downloadUrl: j.status === 'done' ? `/api/site-video/${j.id}/file?download=1` : null,
+      downloadUrl: j.status === 'done' ? `/api/site-video/${j.id}/file.mkv?download=1` : null,       // the compact MKV the user asked for
+      mp4Url: j.status === 'done' ? `/api/site-video/${j.id}/file?download=1` : null,                 // same stream in an MP4 wrapper (uploads to TikTok/Instagram)
     };
   }
 
@@ -62,7 +63,7 @@ function register(app, hooks = {}) {
       if (status === 'done') { job.progress = 1; job.eta = 0; }
       current = null;
       try { child.kill(); } catch (_) { /* already gone */ }
-      setTimeout(() => { jobs.delete(job.id); fs.rm(job.file, { force: true }, () => {}); }, KEEP_MS).unref();
+      setTimeout(() => { jobs.delete(job.id); fs.rm(job.file, { force: true }, () => {}); fs.rm(job.file.replace(/\.mp4$/i, '.mkv'), { force: true }, () => {}); }, KEEP_MS).unref();
       if (hooks.onIdle) hooks.onIdle();
       setImmediate(pump);
     };
@@ -112,20 +113,23 @@ function register(app, hooks = {}) {
     res.json(view(j));
   });
 
-  app.get('/api/site-video/:id/file', (req, res) => {
+  const sendFile = (kind) => (req, res) => {
     const j = jobs.get(req.params.id);
-    if (!j || j.status !== 'done' || !fs.existsSync(j.file)) return res.status(404).end();
-    const size = fs.statSync(j.file).size, m = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
-    const head = { 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes' };
-    if (req.query.download) head['Content-Disposition'] = `attachment; filename="smartclips-${j.id}.mp4"`;
+    const file = j && (kind === 'mkv' ? j.file.replace(/\.mp4$/i, '.mkv') : j.file);
+    if (!j || j.status !== 'done' || !fs.existsSync(file)) return res.status(404).end();
+    const size = fs.statSync(file).size, m = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
+    const head = { 'Content-Type': kind === 'mkv' ? 'video/x-matroska' : 'video/mp4', 'Accept-Ranges': 'bytes' };
+    if (req.query.download) head['Content-Disposition'] = `attachment; filename="smartclips-${j.id}.${kind}"`;
     if (m) {
       const a = m[1] ? +m[1] : 0, e = m[2] ? Math.min(+m[2], size - 1) : size - 1;
       res.writeHead(206, { ...head, 'Content-Range': `bytes ${a}-${e}/${size}`, 'Content-Length': e - a + 1 });
-      return fs.createReadStream(j.file, { start: a, end: e }).pipe(res);
+      return fs.createReadStream(file, { start: a, end: e }).pipe(res);
     }
     res.writeHead(200, { ...head, 'Content-Length': size });
-    fs.createReadStream(j.file).pipe(res);
-  });
+    fs.createReadStream(file).pipe(res);
+  };
+  app.get('/api/site-video/:id/file', sendFile('mp4'));
+  app.get('/api/site-video/:id/file.mkv', sendFile('mkv'));
 
   return { isActive };
 }

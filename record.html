@@ -117,7 +117,8 @@
     <div class="result" id="result">
       <div class="phone"><video id="vid" controls playsinline loop></video></div>
       <div class="actions">
-        <a id="dl" href="#"><button>Download MP4</button></a>
+        <a id="dl" href="#"><button>Download MKV (compact)</button></a>
+        <a id="dl2" href="#"><button class="ghost">Download MP4</button></a>
         <button class="ghost" id="again">Make another</button>
       </div>
     </div>
@@ -195,7 +196,7 @@
         if (j.status === "error") { currentId = null; return fail(j.error || "The recording failed."); }
         if (j.status === "done") {
           clearInterval(timer); busy = false; currentId = null; $("go").disabled = false; $("fill").style.width = "100%"; $("eta").textContent = "";
-          $("vid").src = abs(j.videoUrl); $("dl").href = abs(j.downloadUrl); $("result").style.display = "block";
+          $("vid").src = abs(j.videoUrl); $("dl").href = abs(j.downloadUrl); $("dl2").href = abs(j.mp4Url); $("result").style.display = "block";
           $("result").scrollIntoView({ behavior: "smooth", block: "center" }); $("vid").play().catch(() => {});
         }
       } catch (_) { fail("Lost connection to the recorder."); }
