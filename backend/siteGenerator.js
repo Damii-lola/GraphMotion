@@ -21,7 +21,6 @@ const ffmpegPath = require('ffmpeg-static');
 const { callCloudflareRaw } = require('./cloudflareClient');
 const neurons = require('./neuronBudget');
 const flow = require('./flowSpec');
-const textSpec = require('./textSpec');
 const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/mistralai/mistral-small-3.1-24b-instruct'; // ~4x cheaper per token than the 70B; one call per ad
 const SCENE_SECONDS = 3.5;
 
@@ -42,7 +41,7 @@ const LOOKS = {
 // Vertical, single-subject, bold and bright: what performs in a phone feed. The shader crops the (square) render to 9:16, so the subject must sit in the middle.
 const IMAGE_SUFFIX = ', bold commercial photograph for a social media ad, ONE clear subject in the centre, vertical composition, vibrant saturated colour, crisp dramatic lighting, shallow depth of field, clean uncluttered background, no text, no letters, no logos, no watermark';
 const IDS = ['hook', 'pain', 'solution', 'feature', 'proof', 'cta'];
-const USER_IMAGE_ORDER = [2, 0, 3, 4, 1, 5]; // where the client's own photos go first: product scene, then the hook, then the rest
+const USER_IMAGE_ORDER = [2, 0, 3, 4, 5, 1]; // where the client's own photos go first: product scene, then the hook, then the rest
 
 // ------------------------------------------------------------- the brief
 const clip = (v, n) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n);
@@ -77,16 +76,9 @@ THE FLOW (the most important part). The ad is ONE continuous camera move through
 (3) EVERY TRANSITION is the camera diving through the current image while the next one is already opening inside it. There are 5 transitions (scene 1->2 ... 5->6) in "transitions": {"focus": [x, y] where in the frame (0..1, y from the top) the camera dives - the thing that should open: a hole, a glow, the product, "zoom": 0.3..1.8 how violently it rushes, "spin": -25..25 degrees, "blur": 0..1 motion blur, "warp": 0..1 liquid distortion of the opening's edge, "glow": 0..1 light bloom, "chroma": 0..1 colour split, "soft": 0.03..0.35 edge softness, "overlap": 0.28..0.5 share of the scene the dive lasts, "mask": "..." optional}. Invent each one for THIS story; never repeat the same numbers or shape twice in a row; calm luxury brands = low blur/warp/spin, aggressive brands = high.
 MASK = a GLSL float expression that shapes the opening. Variables: p (vec2: position relative to the dive point, screen height = 1, x right, y up), q (0..1 progress), t (seconds). The next image shows where the expression is NEGATIVE. Style examples (invent your own, do not copy): "length(p)-1.6*q" a circle opening; "abs(p.y)-2.0*q+0.15*sin(p.x*9.0+t*3.0)" a rippling slit widening; "length(p*vec2(1.0,0.5))-1.7*q" an ellipse; "abs(p.x)+abs(p.y)-1.9*q" a diamond. By q=1 it must cover |p|<=1.8. Allowed: p q t, numbers WITH a decimal point, + - * / ( ) . , and the functions sin cos abs length min max pow smoothstep mix clamp fract atan sqrt exp vec2. Leave "" for the plain circle.
 
-${soundBlock()}TEXT DESIGN. You also art-direct the text of every scene - nothing is a template, invent it for THIS brand and THIS line. Per scene, "text" (every key optional: what you omit gets a plain default, so write only what you want to change):
-{"pos":[x,y] (block centre-x 0.2-0.8 and block top 0.17-0.5, as screen fractions; the safe zone ends at 0.66), "w": 0.5-0.88 block width, "align": "l"|"c"|"r", "size": 0.6-1.5 headline size multiplier,
-"hl": {"font":"d"|"b", "w":400|700|800, "case":"u"|"n", "trk": letter spacing -0.05..0.2 em, "lead": 0.85-1.4, "rot": -10..10, "col": "#hex" (must stay readable on the scene), "out": [outline width 0-0.1 em, "#hex"], "sh": [shadow blur em, dy em, alpha], "hi": {"s":"block"|"under"|"glow"|"none", "c":"#hex"} = how the *highlighted* words look, "in": ANIMATION},
-"sub": {"size","font","col","case","trk","in"}, "tag": {"s":"pill"|"plain"|"outline"|"tape","in"}, "stk": {"rot","s":"block"|"outline"|"round","in"}, "btn": {"in"} (cta button only),
-"out": {"s": 1-1.9 scale, "r", "b": blur px, "x", "y": percent} = how the whole block is carried off by the next dive}.
-ANIMATION - you WRITE it as keyframes; words animate one by one, never letter by letter: {"at": start in scene units (-0.15..0.5, 0 = scene start), "dur": 0.03-0.45 per word, "stag": 0-0.12 delay between words, "order": "fwd"|"rev"|"mid"|"rand", "clip": true masks every word in a slot so it slides out of nothing, false lets it fly free, "ease": e.g. "back.out(1.7)" "elastic.out(1,0.4)" "expo.out" "power3.out" "sine.inOut", "kf": [2-5 poses {"t":0..1, "y"/"x": offset in line-heights, "s": scale, "r": degrees, "o": opacity, "b": blur px}; the first is the start pose, the last (t=1) the resting pose]}. Choose motion that fits the brand and the line - a punchy claim can slam in from huge scale, a calm luxury line can drift up out of blur, a playful one can tumble in spinning - and vary it from scene to scene. Be economical: 2-3 poses, override only what matters.
-
-Return ONE JSON object with these keys:
+${soundBlock()}Return ONE JSON object with these keys:
 "brand", "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "imageStyle" (6-10 words: ONE consistent photographic look), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
-"scenes": EXACTLY 6 objects, each: "id", "tag" (1-3 word pill label like "POV", "Real talk", "The proof"; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 22 words, ONE subject, no text, no logos, no faces or bodies or bare skin - every image must pass a strict family-friendly safety filter), "move" (see 2), "text" (see TEXT DESIGN), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
+"scenes": EXACTLY 6 objects, each: "id", "tag" (1-3 word pill label like "POV", "Real talk", "The proof"; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 22 words, ONE subject, no text, no logos, no faces or bodies or bare skin - every image must pass a strict family-friendly safety filter), "move" (see 2), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
 "transitions": EXACTLY 5 objects (see 3)${adMixMenu() ? ', "sound" (see SOUND)' : ''}.
 Output the JSON object only.`;
 }
@@ -157,7 +149,6 @@ function normalizeSpec(raw, brand, opts = {}) {
       tone,
       fx: { ripple: num01(fx.ripple, 0.12), mist: num01(fx.mist, 0.25), rays: num01(fx.rays, 0) },
       move: flow.normalizeMove(s.move, seed, k),
-      text: textSpec.normalizeText(s.text, { k, tone, upper: LOOKS[look].upper, accent: rgb2hex(accRgb) }),
     });
   });
   const trs = Array.isArray(S.transitions) ? S.transitions : [];
@@ -263,7 +254,6 @@ async function adAudio(spec, dir) {
 
 // ------------------------------------------------------------- the page
 function renderPage(spec) {
-  spec.scenes.forEach((sc, k) => { if (!sc.text) sc.text = textSpec.normalizeText(null, { k, tone: sc.tone, upper: !!spec.theme.upper, accent: spec.theme.accent }); }); // pages saved before text design existed
   const tpl = fs.readFileSync(path.join(__dirname, 'siteTemplate', 'ad.html'), 'utf8');
   return tpl.replace('/*__SITE_JSON__*/null', () => JSON.stringify(spec).replace(/</g, '\\u003c')).replace('{{TITLE}}', () => spec.brand.replace(/[<>&]/g, ''));
 }
@@ -278,12 +268,11 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   const say = (stage, progress) => { if (onProgress) onProgress({ stage, progress }); };
   const text = brief || buildBrief(company || {});
   const userImgs = images.slice(0, IDS.length);
-  // 5 pictures are painted; the end card reuses the hook picture (a loop back to the start), unless the client supplied a 6th photo
-  const fluxCount = given ? 0 : Math.max(0, IDS.length - 1 - userImgs.slice(0, IDS.length - 1).length);
+  const fluxCount = given ? 0 : IDS.length - userImgs.length;
   let spec = given;
   if (!spec) {
     say('Writing the ad script', 0.05);
-    let raw = null, lastErr = null, keep = 7800, outEst = 2400, maxTok = 3400;
+    let raw = null, lastErr = null, keep = 7800, outEst = 1400, maxTok = 2000;
     // Up to 3 tries (the first + 2 retries). When the film would not fit the per-film neuron ceiling the guard refuses BEFORE spending anything,
     // and each retry then asks for a smaller job (shorter brief, tighter answer) instead of giving up.
     for (let attempt = 0; attempt < 3 && !raw; attempt++) {
@@ -298,7 +287,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
       } catch (e) {
         lastErr = e;
         if (/Neuron guard/i.test(String(e && e.message))) {   // over the ceiling: nothing was spent, so try again with a smaller job
-          keep = Math.max(1200, Math.floor(keep * 0.7)); outEst = Math.max(1900, outEst - 200); maxTok = Math.max(2900, maxTok - 200);
+          keep = Math.max(1200, Math.floor(keep * 0.7)); outEst = Math.max(900, outEst - 250); maxTok = Math.max(1500, maxTok - 250);
           say(`Making the job smaller (try ${attempt + 2} of 3)`, 0.05);
         }
       }
@@ -322,7 +311,6 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
       const sc = spec.scenes[k], webp = path.join(outDir, 'images', sc.id + '.webp'), progress = 0.1 + 0.8 * (k / spec.scenes.length);
       if (fs.existsSync(webp) && given) { say(`Scene ${k + 1}/${spec.scenes.length} image (kept)`, progress); continue; }
       const f = path.join(tmp, sc.id + '.in');
-      if (k === spec.scenes.length - 1 && !own[k]) { fs.copyFileSync(path.join(outDir, 'images', spec.scenes[0].id + '.webp'), webp); continue; }   // end card: the hook picture again
       if (own[k]) { say(`Preparing your photo for scene ${k + 1}`, progress); fs.writeFileSync(f, own[k]); }
       else {
         say(`Painting scene ${k + 1} of ${spec.scenes.length}`, progress);

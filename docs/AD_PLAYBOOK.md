@@ -51,7 +51,7 @@ Measured against the playbook it failed almost everywhere:
 * **Brand-coloured motion.** The WebGL transition glows / "scan-in" wash use the brand accent instead of cyan; light/dark scrims run top-down under the copy.
 * **Sound on and off.** Every caption lands with a soft tick, stickers pop, scene changes get a filtered whoosh, the end card gets riser + impact + sub; a bed picked from the brand's look (`tense` metal, `pulse` tech/playful, `warm pad` luxury/clean). Everything is readable muted.
 * **Contrast.** Text is white with shadow on a dark top scrim, or dark on a light scrim for the one optional light scene; accent blocks always use the WCAG-best ink colour (`accentInk`).
-* **Constants.** 1080×1920, 60 fps, 3.5 s per scene; the user has no options.
+* **Constants.** 720×1280, 30 fps, 3.5 s per scene; the user has no options.
 
 ## 4. Product flow
 
@@ -78,7 +78,3 @@ The first version had five fixed shader transitions, a frozen "calm" phase in th
 * **Chained images.** The prompt tells the model to write every image as the continuation of the previous one so the dive point of scene N is where scene N+1's subject sits.
 * **Captions travel with the camera:** the outgoing caption is carried off by the same dive (scale + blur), the incoming caption starts landing while the camera is still arriving.
 * **Sound:** real CC0 sound-effect recordings (`backend/sfx/`, picked by a person via `audition.html`, installed with `buildLibrary.js`), placed by `adMix.js`. The AI picks which recording to use for each transition and moment from the menu in its prompt. Transition whooshes are fixed at 20 % volume. With no library installed the synthesised fallback is used (whoosh 9 %).
-
-## 7. AI-authored text design
-
-Size, position, outline, shadow, highlight style and the **animation of every text element** are chosen by the AI per scene (`scene.text`, validated by `backend/textSpec.js`). An animation is written as keyframes (`x, y` in line-heights, scale, rotation, opacity, blur) plus timing numbers (`at`, `dur`, `stag`, `order` fwd/rev/mid/rand, `clip` masked or free, `ease`); words always animate one by one, never per letter. The code only clamps ranges, whitelists ease names, drops colours that fail WCAG contrast against the scrim, and forces the resting pose to be opaque and sharp. Anything the AI omits gets the plain house default. To stay inside the neuron ceiling the end card reuses the hook picture (5 images are painted, not 6).
