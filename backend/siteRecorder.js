@@ -242,8 +242,21 @@ async function record(o, onProgress) {
     }
     const tc = Date.now();
     for (let k = 0; k < 4; k++) { await apply(heavyP + k * 1e-4); await page.evaluate((ms) => window.__advance(ms), 16); await shot(quality); }
-    const perFrameMs = (Date.now() - tc) / 4;
+    let perFrameMs = (Date.now() - tc) / 4, sceneQuality = null;
     const budgetMs = (+o.captureBudgetSeconds || +process.env.SITE_VIDEO_CAPTURE_BUDGET_S || 300) * 1000;
+    // Cinema pages render their heavy 3D-ish scene at a fraction of the output resolution (the typography stays razor sharp in a
+    // separate full-resolution pass). Pick the sharpest scene resolution whose full-rate capture still fits the time budget; only
+    // if even the lowest one doesn't fit do we start dropping frames below.
+    if (info.seekDur && (await page.evaluate(() => typeof window.__setQuality === 'function'))) {
+      for (const q of [1, 0.75, 0.6, 0.45, 0.35, 0.28]) {
+        await page.evaluate((v) => window.__setQuality(v), q);
+        for (let k = 0; k < 2; k++) { await apply(heavyP + k * 1e-4); await page.evaluate((ms) => window.__advance(ms), 16); await shot(40); }
+        const t0q = Date.now();
+        for (let k = 0; k < 3; k++) { await apply(heavyP + (k + 3) * 1e-4); await page.evaluate((ms) => window.__advance(ms), 16); await shot(quality); }
+        perFrameMs = (Date.now() - t0q) / 3; sceneQuality = q;
+        if (perFrameMs * totalFrames <= budgetMs * 0.8) break;
+      }
+    }
     // pick(calm, trans): thin the calm parts by factor `calm` (0 = keep every frame) and capture every
     // `trans`-th frame of the fast-moving transitions (weight 1). Calm parts are thinned to the limit
     // BEFORE transitions lose a single frame.
@@ -260,7 +273,7 @@ async function record(o, onProgress) {
     const STEPS = [[0, 1], [0.5, 1], [1, 1], [2, 1], [3, 1], [5, 1], [5, 2], [5, 3], [6, 4]];
     let idxs = pick(...STEPS[STEPS.length - 1]);
     for (const st of STEPS) { const cand = pick(...st); if (cand.length * perFrameMs <= budgetMs * 0.8) { idxs = cand; break; } }
-    const note = idxs.length < totalFrames * 0.6 ? 'This server is slow, so calm parts of the video use fewer frames; transitions keep full smoothness where possible.' : null;
+    const note = sceneQuality !== null && sceneQuality < 0.5 && idxs.length >= totalFrames * 0.6 ? 'This server is slow, so the moving scene is rendered at reduced resolution (text stays sharp).' : idxs.length < totalFrames * 0.6 ? 'This server is slow, so calm parts of the video use fewer frames; transitions keep full smoothness where possible.' : null;
     const started = Date.now();
     let ema = perFrameMs, prev = -1;
     for (let k = 0; k < idxs.length; k++) {

@@ -95,7 +95,7 @@ const dofOf = (b, p) => {
 const canvas = document.getElementById("gl");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, preserveDrawingBuffer: false });
 const dprCap = () => Math.min(window.devicePixelRatio || 1, 2);
-renderer.setPixelRatio(Math.min(dprCap(), 1.5));
+renderer.setPixelRatio(dprCap());
 const scene = new THREE.Scene(), cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const IDS = S.images.map((im) => im.id);
 const blankTex = new THREE.DataTexture(new Uint8Array([8, 8, 10, 255]), 1, 1); blankTex.needsUpdate = true;
@@ -185,8 +185,8 @@ vec3 layer(sampler2D tx, sampler2D dx, vec2 uv, float ia, vec4 cm, vec4 f, float
   vec3 col;
   if (r > 0.0007){
     col = vec3(0.0); float ga = 2.39996;
-    for (int i = 0; i < 9; i++){ float fi = float(i); float rr = r * sqrt((fi + 0.5) / 9.0); float a = fi * ga; col += texture2D(tx, cuv + vec2(cos(a), sin(a)) * rr * vec2(uRes.y / uRes.x, 1.0)).rgb; }
-    col /= 9.0;
+    for (int i = 0; i < 6; i++){ float fi = float(i); float rr = r * sqrt((fi + 0.5) / 6.0); float a = fi * ga; col += texture2D(tx, cuv + vec2(cos(a), sin(a)) * rr * vec2(uRes.y / uRes.x, 1.0)).rgb; }
+    col /= 6.0;
   } else col = texture2D(tx, cuv).rgb;
   if (ca > 0.001){ vec2 o = normalize(q - fc + 1e-4) * ca * 0.006; col.r = texture2D(tx, cuv + o).r; col.b = texture2D(tx, cuv - o).b; }
   return col;
@@ -266,15 +266,36 @@ void main(){
   col = (col - 0.5) * uGrade.x + 0.5; float g = dot(col, vec3(0.299, 0.587, 0.114)); col = mix(vec3(g), col, uGrade.y);
   col += uTintS * (1.0 - smoothstep(0.0, 0.55, g)) * 0.16 + uTintH * smoothstep(0.45, 1.0, g) * 0.12;
   // text, composited into the scene: foreground depth can pass in front of it
-  vec4 tx = texture2D(uText, uv); float occ = smoothstep(0.62, 0.9, dm) * mix(uBehind.x, uBehind.y, m);
-  col = mix(col, tx.rgb, tx.a * (1.0 - occ * 0.93));
-  // vignette + film grain
-  float v = length((uv - 0.5) * vec2(1.0, 0.85)); col *= 1.0 - 0.5 * smoothstep(0.35, 0.95, v);
-  col += (hash(uv * uRes + floor(uT * 24.0)) - 0.5) * uGrade.z * 0.16;
-  gl_FragColor = vec4(max(col, 0.0), 1.0);
+  float occ = smoothstep(0.62, 0.9, dm) * mix(uBehind.x, uBehind.y, m);   // how much foreground stands in front of the text here
+  gl_FragColor = vec4(clamp(col, 0.0, 1.0), occ);
 }`,
 });
 scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+
+// The expensive part (parallax, depth of field, transitions, particles) is drawn into a render target at a fraction of the output
+// resolution - the photographs are soft anyway. A second, trivial pass upsamples it to full resolution and adds the things that must be
+// razor sharp: the typography (occluded by foreground where the scene says so), vignette and film grain.
+const sceneRT = new THREE.WebGLRenderTarget(2, 2, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false });
+const FU = { uScene: { value: sceneRT.texture }, uText: { value: textTex }, uRes: { value: new THREE.Vector2(1, 1) }, uT: { value: 0 }, uGrain: { value: S.grade.grain }, uTexel: { value: new THREE.Vector2(1, 1) } };
+const finalScene = new THREE.Scene();
+finalScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+  uniforms: FU, vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }",
+  fragmentShader: `
+precision highp float;
+uniform sampler2D uScene, uText; uniform vec2 uRes, uTexel; uniform float uT, uGrain; varying vec2 vUv;
+float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+void main(){
+  vec4 s = texture2D(uScene, vUv);
+  vec3 blur = (texture2D(uScene, vUv + vec2(uTexel.x, 0.0)).rgb + texture2D(uScene, vUv - vec2(uTexel.x, 0.0)).rgb + texture2D(uScene, vUv + vec2(0.0, uTexel.y)).rgb + texture2D(uScene, vUv - vec2(0.0, uTexel.y)).rgb) * 0.25;
+  vec3 col = s.rgb + (s.rgb - blur) * 0.6;                       // gentle sharpen after the upsample
+  vec4 tx = texture2D(uText, vUv);
+  col = mix(col, tx.rgb, tx.a * (1.0 - s.a * 0.93));
+  float v = length((vUv - 0.5) * vec2(1.0, 0.85)); col *= 1.0 - 0.5 * smoothstep(0.35, 0.95, v);
+  col += (hash(vUv * uRes + floor(uT * 24.0)) - 0.5) * uGrain * 0.16;
+  gl_FragColor = vec4(max(col, 0.0), 1.0);
+}`,
+})));
+let QUALITY = 0.6;
 
 // ---------------------------------------------------------------- kinetic typography (Canvas2D, one glyph at a time)
 const easeOutCubic = (x) => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 3);
@@ -343,9 +364,14 @@ function drawBeatText(b, bi, u, alphaMul) {
 let Tcur = 0, Ttarget = 0, seekMode = false, dirtyRender = true;
 function sizeAll() {
   const w = Math.max(2, window.innerWidth), h = Math.max(2, window.innerHeight);
-  renderer.setSize(w, h, false); U.uRes.value.set(canvas.width, canvas.height);
+  renderer.setSize(w, h, false); applyQuality();
   textCanvas.width = Math.min(1440, Math.round(w * dprCap())); textCanvas.height = Math.round(textCanvas.width * h / w); textDirty = true; dirtyRender = true;
 }
+function applyQuality() {
+  const rw = Math.max(2, Math.round(canvas.width * QUALITY)), rh = Math.max(2, Math.round(canvas.height * QUALITY));
+  sceneRT.setSize(rw, rh); U.uRes.value.set(rw, rh); FU.uRes.value.set(canvas.width, canvas.height); FU.uTexel.value.set(1 / rw, 1 / rh); dirtyRender = true;
+}
+window.__setQuality = (q) => { QUALITY = Math.max(0.2, Math.min(1, q)); applyQuality(); };
 const PX_PER_SEC = 230;
 function layoutSpacer() { document.getElementById("spacer").style.height = Math.round(TOTAL * PX_PER_SEC + window.innerHeight) + "px"; }
 function render(T) {
@@ -370,7 +396,9 @@ function render(T) {
   }
   const last = L.i === N - 1;
   const ctaEl = document.getElementById("cta"); if (S.cta) { ctaEl.textContent = S.cta; ctaEl.classList.toggle("on", last && L.u > 0.9); }
-  renderer.render(scene, cam);
+  FU.uT.value = T;
+  renderer.setRenderTarget(sceneRT); renderer.render(scene, cam);
+  renderer.setRenderTarget(null); renderer.render(finalScene, cam);
 }
 // energy: how much the picture is changing at time t (0 calm .. 1 busy) - the recorder spends its frames where this is high
 window.__energy = (t) => {
@@ -384,13 +412,15 @@ window.__energy = (t) => {
 window.__seek = (t) => { seekMode = true; document.getElementById("hint").style.opacity = 0; Ttarget = Tcur = Math.max(0, Math.min(TOTAL, t)); window.__ready = true; render(Tcur); };
 window.addEventListener("resize", () => { sizeAll(); layoutSpacer(); });
 sizeAll(); layoutSpacer(); render(0); window.__ready = true;
-let lastNow = performance.now();
+let lastNow = performance.now(), slow = 0;
 function loop(now) {
   requestAnimationFrame(loop);
   if (seekMode) return;
   const dt = Math.max(0, Math.min(0.1, (now - lastNow) / 1000)); lastNow = now;
   Ttarget = Math.max(0, Math.min(TOTAL, (window.scrollY || 0) / PX_PER_SEC));
   Tcur += (Ttarget - Tcur) * (1 - Math.exp(-dt * 7));
+  slow += dt > 0.03 ? 1 : dt < 0.02 ? -1 : 0; slow = Math.max(-60, Math.min(60, slow));
+  if (slow > 30 && QUALITY > 0.34) { slow = 0; QUALITY = Math.max(0.34, QUALITY - 0.1); applyQuality(); }
   if (Math.abs(Ttarget - Tcur) < 1e-4) Tcur = Ttarget;
   document.getElementById("hint").style.opacity = Ttarget > 0.3 ? 0 : 0.7;
   render(Tcur);
