@@ -12,17 +12,19 @@
 const fs = require('fs');
 const path = require('path');
 
-const NODE_FLOW = `MOTION-GRAPHICS FILM (the most important part). The picture of this ad is NOT photographs. It is a designed 3D motion-graphics film in the style of the best product-launch videos and scroll-driven 3D websites: every scene is a colourful gradient WORLD with ONE hero object - the NODE - floating in front of it. No photos, no people, no rooms, no offices.
-(1) THE NODES. Write 3 nodes (ids 1, 2 and 3; node 0 is the company's own logo mark, which the code makes). Each node is ONE simple, iconic, instantly recognisable object described as a FLAT 2D illustration: what it is, drawn with bold simple shapes and 2-4 RICH SATURATED flat colours (never white, grey or black), like a sticker or a modern app icon. It must be about THIS company: its product itself, what it makes or does, or a bold physical symbol of its promise (a rocket for launching, a key for access, a lightning bolt for speed, a sprout for growth, a shield for safety, a coin for saving, a paper plane for sending). Never a generic laptop, phone, desk, person or office. NO text, letters, numbers or logos on a node, and never a whole scene: one object, floating.
-(2) THE WORLDS. Write 3 background PICTURES that an image AI will paint behind the hero: {"prompt": ..., "a": near-black #RRGGBB, "b": dark tone #RRGGBB, "c": a glow colour #RRGGBB}. Each "prompt" describes a wide, atmospheric, cinematic ENVIRONMENT that belongs to THIS company's own world and to the mood of the scenes that use it (for a coffee brand a misty roastery at dawn; for an app builder a softly lit creative studio with glowing screens far out of focus; for a shoe brand a dawn trail through trees; for a bank a calm glass lobby at dusk), 25-35 words: the place, the light, the colour palette, the mood. Deep soft focus, no people, NO text or signs, nothing sharp or specific in the centre (the hero object sits there). Three clearly different places or moods, so a change of world is felt. a, b, c are fallback colours in the same palette.
+const NODE_FLOW = `RELEVANCE IS EVERYTHING. A viewer must know within one second what THIS company is from the pictures, the objects and the words alone. So before anything else you READ THE BRIEF and write "motifs": 6 short, concrete things that belong to THIS client's real world, each taken from words or facts in the brief: the product itself, what it is made of or does, the place where it is made or used, the tools of the trade, the customer's moment, the result. Example for a coffee roaster: green coffee beans, a copper roasting drum, a steaming espresso cup, a burlap sack, a barista's hands pouring, morning light in a cafe window. Example for an app builder that turns typed descriptions into working apps: a chat box typing a prompt, an app tile, a phone showing a finished app, code brackets, a publish button, a founder's desk at night. EVERYTHING that follows - every node, every world picture, every headline - must be built from these motifs and the client's own words. Generic decoration that has nothing to do with the client (rockets, planets, stars, galaxies, microphones, globes, trophies, lightbulbs, lightning bolts, brains, robots, diamonds, crowns) is FORBIDDEN unless the brief itself is about it.
+
+MOTION-GRAPHICS FILM (the most important part). The picture of this ad is NOT photographs. It is a designed 3D motion-graphics film in the style of the best product-launch videos and scroll-driven 3D websites: every scene is a colourful gradient WORLD with ONE hero object - the NODE - floating in front of it. No photos, no people, no rooms, no offices.
+(1) THE NODES. Each node is ONE of your motifs, drawn as an icon. Write 3 nodes (ids 1, 2 and 3; node 0 is the company's own logo mark, which the code makes). Each node is ONE simple, iconic, instantly recognisable object described as a FLAT 2D illustration: what it is, drawn with bold simple shapes and 2-4 RICH SATURATED flat colours (never white, grey or black), like a sticker or a modern app icon. It must be about THIS company: its product itself, what it makes or does, or a bold physical symbol of its promise (a rocket for launching, a key for access, a lightning bolt for speed, a sprout for growth, a shield for safety, a coin for saving, a paper plane for sending). Never a generic laptop, phone, desk, person or office. NO text, letters, numbers or logos on a node, and never a whole scene: one object, floating.
+(2) THE WORLDS. Write 3 background PICTURES that an image AI will paint behind the hero: {"prompt": ..., "a": near-black #RRGGBB, "b": dark tone #RRGGBB, "c": a glow colour #RRGGBB}. Each "prompt" describes the wide, atmospheric ENVIRONMENT where one or two of your motifs are made, used or lived with (a coffee brand: a rustic roastery at dawn with steam and burlap sacks; an app builder: a founder's desk by a city window at night with a softly glowing laptop; a shoe brand: a dawn trail through trees; a bank: a calm glass lobby at dusk), so the place itself says what the company is, 25-35 words: the place, the light, the colour palette, the mood. Deep soft focus, no people, NO text or signs, nothing sharp or specific in the centre (the hero object sits there). Three clearly different places or moods, so a change of world is felt. a, b, c are fallback colours in the same palette.
 (3) SIX SCENES, each with a node ("node": 0-3) and a world ("bg": 0-2). The hook uses node 0 or your most striking node. Across the 5 transitions use ALL THREE kinds of change: SAME node in a NEW world (the node glides across the frame while the world turns to a wireframe and re-forms); SAME world with a DIFFERENT node (the node spins 720 degrees and turns into the next node through a wireframe); EVERYTHING different (the whole frame morphs). Never the same kind twice in a row. Order the nodes so they tell the story: the problem, the product, the payoff.
 (4) PLACEMENT. Each scene gives "s" (the node's size as a fraction of the frame width, 0.45-0.75; the hook and the end card are the biggest) and "r" (a tilt in degrees, -14 to 14). The caption sits at "pos" and the code keeps the node clear of it.`;
 
 const NODE_KEYS = `Return ONE JSON object with these keys:
-"brand", "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
+"brand", "motifs": EXACTLY 6 short strings (see RELEVANCE IS EVERYTHING - write these first), "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
 "nodes": EXACTLY 3 objects {"name": "the object in 2-3 words, e.g. paper plane", "prompt": "THE OBJECT FIRST, then material and colour, max 22 words, e.g. a paper plane, polished chrome with a blue tint"},
 "bgs": EXACTLY 3 objects {"prompt","a","b","c"} (see THE WORLDS),
-"scenes": EXACTLY 6 objects, each: "id", "tag" (a 1-3 word LABEL pill like "POV", "Real talk", "The proof" - a label, not the start of a sentence, never ending in "..."; "" for cta), "headline" (an ARRAY of 2-6 word strings, ONE WORD PER ELEMENT, e.g. ["Your","*idea*","starts","|","to","glow"]; a lone "|" element is a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 8 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "node" (0-3), "bg" (0-2), "s", "r", "pos" ("bm" bottom centre, "bl" bottom left, "br" bottom right, "tl" top left, "tm" top centre - never the middle; vary it), "tone" ("dark"),
+"scenes": EXACTLY 6 objects, each: "id", "tag" (a 1-3 word LABEL pill like "POV", "Real talk", "The proof" - a label, not the start of a sentence, never ending in "..."; "" for cta), "headline" (an ARRAY of 2-6 word strings, ONE WORD PER ELEMENT, using the client's own product words - a headline a stranger could not tie to THIS company is a failure, e.g. ["Your","*idea*","starts","|","to","glow"]; a lone "|" element is a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 8 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "node" (0-3), "bg" (0-2), "s", "r", "pos" ("bm" bottom centre, "bl" bottom left, "br" bottom right, "tl" top left, "tm" top centre - never the middle; vary it), "tone" ("dark"),
 "transitions": EXACTLY 5 objects, each just {"sfx": a whoosh id from SOUND}@@SND@@.
 Output the JSON object only.`;
 
@@ -35,17 +37,45 @@ const mixC = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
 const NODE_POS_Y = { t: 0.62, b: 0.38 };
 
 /** Validate the AI's nodes / worlds / per-scene picks (never trust the model with indices, colours or placement). */
-function applyNodePlan(spec, S) {
+const STOP = new Set('with that this from have your they will what when them then than into over also just make made more most such only very about would could their there which while where being been were does done each other some these those after before because under again against between through during without within like onto upon ours mine here'.split(' '));
+const BANNED = ['rocket', 'planet', 'galaxy', 'star', 'stars', 'microphone', 'mic', 'globe', 'trophy', 'lightbulb', 'lightning', 'bolt', 'brain', 'robot', 'unicorn', 'diamond', 'crown', 'moon', 'cosmic', 'universe', 'constellation', 'sun'];
+const flat = (t) => ' ' + String(t || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).join(' ') + ' ';
+const stems = (t) => new Set(flat(t).split(' ').filter((w) => w.length >= 4 && !STOP.has(w)).map((w) => w.slice(0, 5)));
+
+/** A prompt is grounded when it shares vocabulary with the brief (or the client's motifs) and does not use generic decoration the client never mentioned. */
+function grounded(prompt, briefText, motifStems) {
+  const p = flat(prompt), b = flat(briefText);
+  if (p.trim() === '') return false;
+  for (const w of BANNED) { if (p.includes(' ' + w + ' ') && !b.includes(' ' + w + ' ')) return false; }
+  const bs = stems(b);
+  for (const s of stems(p)) { if (bs.has(s) || motifStems.has(s)) return true; }
+  return false;
+}
+
+function applyNodePlan(spec, S, briefText) {
   const acc = rgb(spec.theme.accent);
+  const motifs = (Array.isArray(S.motifs) ? S.motifs : []).map((m) => String(m || '').replace(/["<>]/g, '').trim().slice(0, 90)).filter(Boolean).slice(0, 6);
+  spec.motifs = motifs;
+  const mStems = stems(motifs.join(' '));
   const nodesIn = Array.isArray(S.nodes) ? S.nodes : [];
   spec.nodePrompts = [0, 1, 2].map((i) => {
     const n = nodesIn[i] && typeof nodesIn[i] === 'object' ? nodesIn[i] : {};
-    return { name: String(n.name || '').slice(0, 30), prompt: String(n.prompt || '').replace(/["<>]/g, '').slice(0, 220) };
+    let name = String(n.name || '').slice(0, 30), prompt = String(n.prompt || '').replace(/["<>]/g, '').slice(0, 220);
+    if (!grounded(name + ' ' + prompt, briefText, mStems) && motifs.length) {           // the model drifted to generic decoration: the client's own motif takes its place
+      const m = motifs[i % motifs.length]; name = m.split(' ').slice(0, 3).join(' '); prompt = m + ', flat 2D icon';
+      console.warn('[relevance] node ' + (i + 1) + ' was not about this company: using the motif "' + m + '"');
+    }
+    return { name, prompt };
   });
   const bgsIn = Array.isArray(S.bgs) ? S.bgs : [];
   spec.bgs = [0, 1, 2].map((i) => {
     const b = bgsIn[i] && typeof bgsIn[i] === 'object' ? bgsIn[i] : {};
-    const bgPrompt = String(b.prompt || '').replace(/["<>]/g, '').slice(0, 320);
+    let bgPrompt = String(b.prompt || '').replace(/["<>]/g, '').slice(0, 320);
+    if (!grounded(bgPrompt, briefText, mStems) && motifs.length) {
+      const m1 = motifs[(i * 2) % motifs.length], m2 = motifs[(i * 2 + 1) % motifs.length];
+      bgPrompt = 'a softly lit, atmospheric place where ' + m1 + ' is used, with ' + m2 + ' nearby, deep soft focus, the kind of place a stranger would connect with ' + spec.brand;
+      console.warn('[relevance] world ' + (i + 1) + ' was not about this company: rebuilt from the motifs');
+    }
     // three worlds always exist and are always usable: a dark base, a mid tone, a bright light - derived from the accent when the AI gave nothing valid
     const hue = (k) => mixC(acc, k === 0 ? [255, 255, 255] : [0, 0, 0], k === 0 ? 0.0 : 0.0);
     let a = isHex(b.a) ? rgb(fixHex(b.a)) : mixC(acc, [8, 8, 16], 0.82 - i * 0.05);

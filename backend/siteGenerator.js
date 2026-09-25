@@ -30,7 +30,7 @@ const nodeOn = () => NODE;
 const movieOn = () => !nodeOn() && MOVIE && videoGen.available();            // a notebook worker that is not running simply means: pictures joined by dives, as before
 const videoGen = require('./videoGen');
 const WORLD = process.env.IMAGE_ENGINE !== 'flux';   // default: ONE WORLD, six shots (FLUX.2 klein generate + edit); IMAGE_ENGINE=flux keeps the old six-separate-pictures path
-const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/mistralai/mistral-small-3.1-24b-instruct'; // ~4x cheaper per token than the 70B; one call per ad
+const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast'; // the 70B writes far more on-brief copy and motifs than the 24B did (~280 neurons per script vs ~120)
 const SCENE_SECONDS = 3.5;
 
 // ------------------------------------------------------------- colour helpers (WCAG)
@@ -179,7 +179,7 @@ function normalizeSpec(raw, brand, opts = {}) {
   const trs = Array.isArray(S.transitions) ? S.transitions : [];
   spec.transitions = IDS.slice(1).map((_, i) => flow.normalizeTransition(trs[i], seed, i));
   const snd = S.sound && typeof S.sound === 'object' ? S.sound : {}, sid = (v) => (typeof v === 'string' ? v.replace(/[^a-z0-9_-]/gi, '').slice(0, 40) : '');
-  if (opts.node) nodeFilm.applyNodePlan(spec, S);
+  if (opts.node) nodeFilm.applyNodePlan(spec, S, briefText);
   spec.sound = { music: ['warm pad', 'pulse', 'tense', 'dark drone'].includes(snd.music) ? snd.music : '', tick: sid(snd.tick), sparkle: sid(snd.sparkle), riser: sid(snd.riser), impact: sid(snd.impact) };
   return spec;
 }
