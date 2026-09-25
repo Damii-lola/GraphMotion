@@ -55,5 +55,8 @@ function settleText(model, estimated, usage, what) {
   runSpent = Math.max(0, runSpent - diff);
   console.log(`[neurons] ${what}: measured ${real} (${usage.prompt_tokens} in / ${usage.completion_tokens} out tokens); run now ~${runSpent}`);
 }
+// FLUX.2 [klein]: billed per 512-px tile - output $0.000287/tile, each input (reference) tile $0.000059; 1 neuron = $0.000011. Rounded UP with the same safety factor.
+const KLEIN_TILES = Math.ceil((+process.env.KLEIN_W || 512) / 512) * Math.ceil((+process.env.KLEIN_H || 1024) / 512);
+const estKlein = (isEdit) => Math.ceil(KLEIN_TILES * (0.000287 + (isEdit ? 0.000059 : 0)) / 0.000011 * SAFETY);
 const runTotal = () => runSpent;
-module.exports = { FLUX_STEPS, charge, settleText, estText, estImage, used, resetRun, runTotal, DAILY_CEILING, PER_RUN_CEILING };
+module.exports = { estKlein, FLUX_STEPS, charge, settleText, estText, estImage, used, resetRun, runTotal, DAILY_CEILING, PER_RUN_CEILING };

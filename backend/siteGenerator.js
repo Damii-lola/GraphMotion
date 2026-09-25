@@ -21,6 +21,8 @@ const ffmpegPath = require('ffmpeg-static');
 const { callCloudflareRaw } = require('./cloudflareClient');
 const neurons = require('./neuronBudget');
 const flow = require('./flowSpec');
+const klein = require('./kleinClient');
+const WORLD = process.env.IMAGE_ENGINE !== 'flux';   // default: ONE WORLD, six shots (FLUX.2 klein generate + edit); IMAGE_ENGINE=flux keeps the old six-separate-pictures path
 const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/mistralai/mistral-small-3.1-24b-instruct'; // ~4x cheaper per token than the 70B; one call per ad
 const SCENE_SECONDS = 3.5;
 
@@ -78,14 +80,14 @@ CRAFT RULES (a human creative director will judge the result):
 - Copy: concrete, human, a little witty, in the client's own words and voice. Banned: "love us", "so will you", "game-changer", "revolutionary", "next level", "fast-growing", "trusted by", "unlock", "supercharge", "seamless", and any statistic that is not written in the brief.
 
 THE FLOW (the most important part). The ad is ONE continuous camera move through six images, never six slides with effects between them. Study how the best scroll-driven 3D-website shorts do it: an aeroplane window fills the screen, the camera flies INTO the window, the sky outside becomes the whole screen and rushes past, and the next scene emerges out of the clouds - nothing stops, nothing cuts, the end of every scene literally becomes the beginning of the next. You control the flow with three things:
-(1) CHAIN THE IMAGES. Write every imagePrompt as the continuation of the previous one: same palette and light, and the main subject of image N+1 sits exactly where the camera dives into image N (dive into a bottle's neck -> next image is a macro of the liquid in that same spot; dive into a window -> next image is what is outside it).
+(1) ONE WORLD, SIX SHOTS. The six pictures are six shots of ONE continuous scene in ONE place, as if a single camera filmed it - never six locations. imagePrompt of scene 1 paints the world once, richly: the place, the time of day and light, and ONE hero object that matters to THIS company. Each later imagePrompt is a director's note about only WHAT CHANGES from the previous shot: the camera move (push in to a macro detail, pull back to a wide, orbit), what the hero object DOES (it comes alive, it transforms, the light shifts) and the story beat. A picture editor keeps the same place, objects and light, so never re-describe them, never change the location and never add people, faces, crowds or offices - hands or the hero object only. Example for a note-taking app - shot 1: "a cozy wooden desk at golden hour, an open laptop with a softly glowing screen, a hand-drawn sketch of a phone on paper, a steaming mug"; shot 2: "the camera pushes in to a macro of the sketch; its pencil lines begin to glow gold"; shot 3: "the sketch comes alive as a real glowing phone with a colourful screen, sparks of light"; shot 4: "the camera pulls far back to the whole desk, the phone floating above the paper lighting the room". The point the camera dives into in scene N is what scene N+1 moves into.
 (2) EVERY SCENE HAS A CAMERA MOVE that never rests: "move": {"zoom": -0.24..0.24 (+ pushes in, - pulls out), "pan": [-0.15..0.15, -0.04..0.04], "roll": -3..3 degrees}. Vary it scene to scene.
 (3) EVERY TRANSITION is the camera diving through the current image while the next one is already opening inside it. There are 5 transitions (scene 1->2 ... 5->6) in "transitions": {"focus": [x, y] where in the frame (0..1, y from the top) the camera dives - the thing that should open: a hole, a glow, the product, "zoom": 0.3..1.8 how violently it rushes, "spin": -25..25 degrees, "blur": 0..1 motion blur, "warp": 0..1 liquid distortion of the opening's edge, "glow": 0..1 light bloom, "soft": 0.03..0.35 edge softness, "overlap": 0.28..0.5 share of the scene the dive lasts, "mask": "..." optional}. Invent each one for THIS story; never repeat the same numbers or shape twice in a row; calm luxury brands = low blur/warp/spin, aggressive brands = high.
 MASK = a GLSL float expression that shapes the opening. Variables: p (vec2: position relative to the dive point, screen height = 1, x right, y up), q (0..1 progress), t (seconds). The next image shows where the expression is NEGATIVE. Style examples (invent your own, do not copy): "length(p)-1.6*q" a circle opening; "abs(p.y)-2.0*q+0.15*sin(p.x*9.0+t*3.0)" a rippling slit widening; "length(p*vec2(1.0,0.5))-1.7*q" an ellipse; "abs(p.x)+abs(p.y)-1.9*q" a diamond. By q=1 it must cover |p|<=1.8. Allowed: p q t, numbers WITH a decimal point, + - * / ( ) . , and the functions sin cos abs length min max pow smoothstep mix clamp fract atan sqrt exp vec2. Leave "" for the plain circle.
 
 ${soundBlock()}Return ONE JSON object with these keys:
 "brand", "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "imageStyle" (6-10 words: ONE consistent photographic look), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
-"scenes": EXACTLY 6 objects, each: "id", "tag" (a 1-3 word LABEL pill like "POV", "Real talk", "The proof" - a label, not the start of a sentence, never ending in "..."; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 22 words, ONE subject, no text, no logos, no faces or bodies or bare skin - every image must pass a strict family-friendly safety filter), "move" (see 2), "pos" (where this scene's text sits: "mm" middle, "bm" bottom centre, "bl" bottom left, "br" bottom right - pick the spot that leaves the picture's subject clear, and vary it), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
+"scenes": EXACTLY 6 objects, each: "id", "tag" (a 1-3 word LABEL pill like "POV", "Real talk", "The proof" - a label, not the start of a sentence, never ending in "..."; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 32 words; scene 1 = the world and hero subject, scenes 2-6 = what changes from the previous shot: camera move, action, light; ONE subject, no text, no logos, no faces or bodies or bare skin - every image must pass a strict family-friendly safety filter), "move" (see 2), "pos" (where this scene's text sits: "mm" middle, "bm" bottom centre, "bl" bottom left, "br" bottom right - pick the spot that leaves the picture's subject clear, and vary it), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
 "transitions": EXACTLY 5 objects (see 3)${adMixMenu() ? ', "sound" (see SOUND)' : ''}.
 Output the JSON object only.`;
 }
@@ -287,6 +289,8 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   const text = brief || buildBrief(company || {});
   const userImgs = images.slice(0, IDS.length);
   const fluxCount = given ? 0 : IDS.length - userImgs.length;
+  // ONE WORLD: shot 1 is generated (or is the client's own photo), the other five are edits of the previous shot
+  const imgReserve = given ? 0 : WORLD ? (userImgs.length ? 0 : neurons.estKlein(false)) + (IDS.length - 1) * neurons.estKlein(true) : fluxCount * neurons.estImage();
   let spec = given;
   if (!spec) {
     say('Writing the ad script', 0.05);
@@ -296,8 +300,8 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
     for (let attempt = 0; attempt < 3 && !raw; attempt++) {
       try {
         let prompt = briefPrompt(text.slice(0, keep)), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst);
-        while (keep > 1200 && est + fluxCount * neurons.estImage() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep)); est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst); }
-        neurons.charge(est, 'ad script', fluxCount * neurons.estImage()); // refuses BEFORE spending if the ad could not be finished inside its ceiling
+        while (keep > 1200 && est + imgReserve + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep)); est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst); }
+        neurons.charge(est, 'ad script', imgReserve); // refuses BEFORE spending if the ad could not be finished inside its ceiling
         let usage = null;
         const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: maxTok, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
         neurons.settleText(SPEC_MODEL, est, usage, 'ad script');
@@ -324,18 +328,56 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
       await toWebp(f, out, 640);
       spec.logo = { file: 'images/logo.webp', plate: await logoPlate(f) };
     }
-    const own = {}; userImgs.forEach((b, k) => { own[USER_IMAGE_ORDER[k]] = b; });
-    for (let k = 0; k < spec.scenes.length; k++) {
-      const sc = spec.scenes[k], webp = path.join(outDir, 'images', sc.id + '.webp'), progress = 0.1 + 0.8 * (k / spec.scenes.length);
-      if (fs.existsSync(webp) && given) { say(`Scene ${k + 1}/${spec.scenes.length} image (kept)`, progress); continue; }
-      const f = path.join(tmp, sc.id + '.in');
-      if (own[k]) { say(`Preparing your photo for scene ${k + 1}`, progress); fs.writeFileSync(f, own[k]); }
-      else {
-        say(`Painting scene ${k + 1} of ${spec.scenes.length}`, progress);
-        neurons.charge(neurons.estImage(), `image ${k + 1}`);
-        fs.writeFileSync(f, await fluxSafe(sc, spec));
+    let worldDone = false;
+    if (WORLD && !given) {
+      // ONE WORLD, SIX SHOTS: shot 1 = text -> picture (or the client's own photo); every next shot = an EDIT of the previous one, so place, objects and light stay the same
+      const gentle = (sc) => `Same scene as the reference image, a calm and wholesome view of the main object, soft light. ${spec.imageStyle}. No text, no letters, no logos.`;
+      let prev = null, made = 0;
+      try {
+        for (let k = 0; k < spec.scenes.length; k++) {
+          const sc = spec.scenes[k], progress = 0.1 + 0.8 * (k / spec.scenes.length);
+          let buf;
+          if (k === 0) {
+            if (userImgs[0]) {
+              say('Preparing your photo', progress); const src = path.join(tmp, 'hero.src'), dst = path.join(tmp, 'hero.png'); fs.writeFileSync(src, userImgs[0]);
+              await runFfmpeg(['-i', src, '-vf', `scale=${klein.W}:${klein.H}:force_original_aspect_ratio=increase,crop=${klein.W}:${klein.H}`, dst]); buf = fs.readFileSync(dst);
+            } else {
+              say('Building the world of your ad', progress); neurons.charge(neurons.estKlein(false), 'shot 1');
+              try { buf = await klein.generate(`${sc.imagePrompt}, ${spec.imageStyle}${IMAGE_SUFFIX}`); }
+              catch (e) { if (!/8007|NSFW/i.test(String(e.message))) throw e; buf = await klein.generate(`${spec.imageStyle}, a calm wholesome still life of a single simple object, soft light${IMAGE_SUFFIX}`); }
+            }
+          } else {
+            say(`Filming shot ${k + 1} of ${spec.scenes.length}`, progress); neurons.charge(neurons.estKlein(true), `shot ${k + 1}`);
+            const ask = `Same scene: keep exactly the same place, objects, materials and lighting as the reference image. ${sc.imagePrompt}. ${spec.imageStyle}. No text, no letters, no logos.`;
+            try { buf = await klein.edit(ask, prev); }
+            catch (e) {
+              if (!/8007|NSFW/i.test(String(e.message))) throw e;
+              try { buf = await klein.edit(gentle(sc), prev); } catch (_) { buf = prev; console.warn(`[image] shot ${k + 1} refused by the safety filter twice: holding the previous shot`); }   // never fail the film over one shot
+            }
+          }
+          const f = path.join(tmp, sc.id + '.in'); fs.writeFileSync(f, buf); await toWebp(f, path.join(outDir, 'images', sc.id + '.webp'));
+          prev = buf; made++;
+        }
+        worldDone = true;
+      } catch (e) {
+        if (made > 0 || /Neuron guard|daily free allocation|4006|429|cancelled/i.test(String(e.message))) throw e;   // only a model that is unavailable BEFORE anything was made falls back
+        console.warn('[image] FLUX.2 klein unavailable (' + e.message + ') - falling back to separate FLUX schnell pictures');
       }
-      await toWebp(f, webp);
+    }
+    if (!worldDone) {
+      const own = {}; userImgs.forEach((b, k) => { own[USER_IMAGE_ORDER[k]] = b; });
+      for (let k = 0; k < spec.scenes.length; k++) {
+        const sc = spec.scenes[k], webp = path.join(outDir, 'images', sc.id + '.webp'), progress = 0.1 + 0.8 * (k / spec.scenes.length);
+        if (fs.existsSync(webp) && given) { say(`Scene ${k + 1}/${spec.scenes.length} image (kept)`, progress); continue; }
+        const f = path.join(tmp, sc.id + '.in');
+        if (own[k]) { say(`Preparing your photo for scene ${k + 1}`, progress); fs.writeFileSync(f, own[k]); }
+        else {
+          say(`Painting scene ${k + 1} of ${spec.scenes.length}`, progress);
+          neurons.charge(neurons.estImage(), `image ${k + 1}`);
+          fs.writeFileSync(f, await fluxSafe(sc, spec));
+        }
+        await toWebp(f, webp);
+      }
     }
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   say('Scoring the sound', 0.93);
