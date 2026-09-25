@@ -28,6 +28,8 @@
   html.glbg #fallback { display: none; }
   #mv { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; background: #000; }
   html.movie #scrimD { opacity: .55 !important; }
+  html.nodes #scrimD, html.nodes #scrimL { display: none; }   /* node mode is a designed world: the captions get their own halo, the picture stays vivid */
+  html.nodes #fallback { display: none; }
   html.movie #mv { display: block; } html.movie #bg, html.movie #fallback { display: none; }
   .scrim { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
   #scrimD { opacity: 1; background: linear-gradient(180deg, rgba(6,9,14,.80) 0%, rgba(6,9,14,.72) 38%, rgba(6,9,14,.50) 62%, rgba(6,9,14,0) 88%); }
@@ -55,7 +57,7 @@
 
   .tag { display: inline-block; padding: 1.2vw 3vw; border-radius: 99px; background: #fff; color: #0a0c10; font: 800 2.5vw/1 var(--bodyf); letter-spacing: .14em; text-transform: uppercase; margin-bottom: 2.4vh; opacity: 0; box-shadow: 0 .8vw 0 rgba(0,0,0,.28); }
   .hl { margin: 0; font-family: var(--dispf); font-weight: var(--dispw); font-size: var(--hs); line-height: 1.04; letter-spacing: -.01em; color: var(--ink); text-shadow: 0 .05em 0 rgba(0,0,0,.30), 0 0 .55em rgba(0,0,0,.42); }
-  html.movie .hl, html.movie .sub { text-shadow: 0 .04em 0 rgba(0,0,0,.42), 0 0 .38em rgba(0,0,0,.8), 0 0 1.2em rgba(0,0,0,.6); }   /* real footage is often bright: the caption needs its own dark halo to stay readable */
+  html.movie .hl, html.movie .sub, html.nodes .hl, html.nodes .sub { text-shadow: 0 .04em 0 rgba(0,0,0,.42), 0 0 .38em rgba(0,0,0,.8), 0 0 1.2em rgba(0,0,0,.6); }   /* real footage is often bright: the caption needs its own dark halo to stay readable */
   section.tone-light .hl, section.tone-light .sub { text-shadow: 0 0 .5em rgba(255,255,255,.75); }
   /* every text is revealed WORD BY WORD as one flowing wave: each word rises, un-blurs and settles (no hard-edged masks); a highlighted word gets its accent block WIPED in behind it */
   .w { display: inline-block; vertical-align: top; }
@@ -147,13 +149,13 @@ window.SITE = /*__SITE_JSON__*/null;
     document.querySelectorAll(".hl").forEach((h) => {
       const sec = h.closest("section"), inner = h.closest(".ad-inner");
       const hook = sec.classList.contains("role-hook"), cta = sec.classList.contains("role-cta");
-      let fs = vw * (S.movie ? (hook ? 0.086 : cta ? 0.07 : 0.066) : (hook ? 0.125 : cta ? 0.095 : 0.105));   // movie mode: captions are the SECOND centre of attention, the film is the first
+      let fs = vw * ((S.movie || S.nodes) ? (hook ? 0.086 : cta ? 0.07 : 0.066) : (hook ? 0.125 : cta ? 0.095 : 0.105));   // movie mode: captions are the SECOND centre of attention, the film is the first
       const avail = inner.clientWidth, maxH = sec.clientHeight * (hook ? 0.62 : cta ? 0.36 : 0.56), maxBlock = sec.clientHeight;
       for (let k = 0; k < 40; k++) {
         h.style.fontSize = fs + "px";
         const widest = Math.max(0, ...[...h.querySelectorAll(".w")].map((w) => w.getBoundingClientRect().width));
         if (widest <= avail && h.offsetHeight <= maxH && inner.offsetHeight <= maxBlock) break;
-        fs *= 0.94; if (fs < vw * (S.movie ? 0.038 : 0.055)) break;
+        fs *= 0.94; if (fs < vw * ((S.movie || S.nodes) ? 0.038 : 0.055)) break;
       }
     });
   }
@@ -177,7 +179,7 @@ window.SITE = /*__SITE_JSON__*/null;
     const last = i === secs.length - 1, first = i === 0;
     const q = (s) => [...sec.querySelectorAll(s)], one = (s) => sec.querySelector(s);
     const inner = one(".ad-inner"), hlw = q(".hl .wi"), subw = q(".sub .wi"), tag = one(".tag"), stk = one(".sticker"), btn = one(".cta-btn"), lnk = one(".cta-link"), lg = one(".cta-logo, .cta-word");
-    const MV = !!S.movie;
+    const MV = !!(S.movie || S.nodes);
     const t0 = first ? 0 : MV ? i + 0.16 : i - 0.14;   // the words start rising while the camera is still arriving, so the text is part of the same motion (not a separate event after it)
 
     // ONE continuous wave: every word rises out of a soft blur, overlapping its neighbours, decelerating into place (power4.out: fast start, long soft settle)
@@ -282,6 +284,207 @@ if (S.movie) {
     });
   });
   window.__jumpToProgress(0);
+} else if (S.nodes && S.nodes.length) {
+/* ===== NODE MODE: a designed motion-graphics film. A gradient world + ONE hero "node" (an object / the brand's mark) that lives in the frame and travels between scenes.
+   A change of scene is one of three things (chosen from which node / background each scene uses):
+     move : the same node glides to its new place while the BACKGROUND goes normal -> wireframe -> next background
+     spin : same background, a different node: the node spins 720deg and, during the spin, goes normal -> wireframe -> next node, overshoots and settles
+     all  : everything changes: background and node both do normal -> wireframe -> next
+   Everything is a pure function of film progress p, so the recorder and the preview show identical frames. ===== */
+{
+  const root = document.documentElement; root.classList.add("nodes");
+  const canvas = document.getElementById("bg");
+  const gl = canvas.getContext("webgl2", { antialias: false, alpha: false, premultipliedAlpha: true, preserveDrawingBuffer: true });
+  const chip = document.getElementById("chip"), pulse = document.querySelector(".cta-pulse");
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const sm = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+  const hex = (h, d) => { const m = /^#?([0-9a-f]{6})$/i.exec(String(h || "")); const n = m ? parseInt(m[1], 16) : d; return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; };
+  const ACC = hex(S.theme.accent, 0xff5c1a);
+  const eob = (t) => { const c1 = 1.35, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };   // ease-out-back: overshoot then settle
+  const eio = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  const bell = (t, a, b) => sm(a, (a + b) / 2, t) * (1 - sm((a + b) / 2, b, t));                         // 0 -> 1 -> 0 between a and b
+
+  const NODES = S.nodes, BGS = S.bgs && S.bgs.length ? S.bgs : [{ a: "#101828", b: "#1d3557", c: S.theme.accent }];
+  const PAL = BGS.map((b) => [hex(b.a, 0x101828), hex(b.b, 0x1d3557), hex(b.c, 0xff5c1a)]);
+  // per-scene placement of the node: x,y = its centre in the frame (0..1, y from the top), s = width as a fraction of the frame width, r = roll in degrees
+  const PL = S.scenes.map((sc, i) => {
+    const top = /^t/.test(sc.pos || ""), d = { x: 0.5, y: top ? 0.6 : 0.4, s: 0.6, r: 0 };
+    return Object.assign(d, sc.np || {});
+  });
+
+  const compile = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s)); return s; };
+  const program = (vs, fs) => { const p = gl.createProgram(); gl.attachShader(p, compile(gl.VERTEX_SHADER, vs)); gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(p)); return p; };
+
+  // ---------- background: a designed gradient world that can go wireframe
+  const BG_VS = `#version 300 es
+in vec2 aP; out vec2 vUv; void main(){ vUv = aP * 0.5 + 0.5; gl_Position = vec4(aP, 0.0, 1.0); }`;
+  const BG_FS = `#version 300 es
+precision highp float;
+in vec2 vUv; out vec4 o;
+uniform vec2 uRes; uniform float uT, uMb, uWb, uSeedA, uSeedB;
+uniform vec3 uA0, uA1, uA2, uB0, uB1, uB2, uAcc; uniform vec3 uGlow;   // uGlow = (x, y from bottom, strength) of the light under the node
+float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(hash(i), hash(i + vec2(1,0)), f.x), mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y); }
+float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 4; i++){ v += a * vn(p); p = p * 2.03 + vec2(11.7, 5.3); a *= 0.5; } return v; }
+vec3 world(vec2 uv, vec3 c0, vec3 c1, vec3 c2, float seed){
+  float asp = uRes.x / uRes.y;
+  float t = clamp(uv.y * 0.9 + 0.12 * uv.x + 0.32 * (fbm(uv * vec2(1.3, 1.3 / asp * 1.0) + seed + uT * 0.035) - 0.5), 0.0, 1.0);
+  vec3 col = mix(c0, c1, smoothstep(0.0, 1.0, t));
+  vec2 b1 = vec2(0.22 + 0.12 * sin(uT * 0.31 + seed), 0.72 + 0.08 * cos(uT * 0.27 + seed));
+  vec2 b2 = vec2(0.82 + 0.08 * cos(uT * 0.23 + seed), 0.22 + 0.1 * sin(uT * 0.37 + seed));
+  col = mix(col, c2, smoothstep(0.62, 0.0, length((uv - b1) * vec2(1.0, 1.0 / asp))) * 0.55);
+  col = mix(col, mix(c2, c1, 0.5), smoothstep(0.55, 0.0, length((uv - b2) * vec2(1.0, 1.0 / asp))) * 0.4);
+  return col;
+}
+void main(){
+  vec2 uv = vUv; float asp = uRes.x / uRes.y;
+  // wireframe stage: the whole world warps like a cloth and shows its grid
+  vec2 w = vec2(fbm(uv * 3.0 + uT * 0.4), fbm(uv * 3.0 + 7.0 - uT * 0.4)) - 0.5;
+  vec2 uvw = uv + w * 0.06 * uWb;
+  vec3 col = mix(world(uvw, uA0, uA1, uA2, uSeedA), world(uvw, uB0, uB1, uB2, uSeedB), uMb);
+  vec2 g = uvw * vec2(16.0, 16.0 / asp) ;
+  vec2 gf = abs(fract(g - 0.5) - 0.5) / fwidth(g);
+  float line = 1.0 - min(min(gf.x, gf.y), 1.0);
+  vec2 fq = fract(g); float dd = min(min(length(fq), length(fq - vec2(1.0, 0.0))), min(length(fq - vec2(0.0, 1.0)), length(fq - vec2(1.0, 1.0))));
+  float dots = 1.0 - smoothstep(0.0, 0.09, dd);
+  vec3 wc = mix(uAcc, vec3(1.0), 0.6);
+  col = col * (1.0 - 0.6 * uWb) + wc * (line * 0.55 + dots * 0.9) * uWb;
+  // the light under the node
+  float d = length((uv - uGlow.xy) * vec2(1.0, 1.0 / asp));
+  col += mix(uAcc, vec3(1.0), 0.25) * exp(-d * d * 9.0) * uGlow.z * (1.0 - 0.5 * uWb);
+  // grain + vignette: it should look designed, not like a flat gradient
+  col += (hash(gl_FragCoord.xy + fract(uT) * 91.0) - 0.5) * 0.035;
+  col *= 1.0 - 0.34 * smoothstep(0.35, 1.05, length((uv - 0.5) * vec2(1.0, 0.72)));
+  o = vec4(col, 1.0);
+}`;
+
+  // ---------- node: a textured MESH (so it can rotate in perspective and show its wireframe)
+  const ND_VS = `#version 300 es
+in vec2 aUV;
+uniform sampler2D uA, uB;
+uniform vec4 uPlA, uPlB;              // x, y (0..1, from the top), width (fraction of the frame width), roll (radians)
+uniform float uAspA, uAspB, uMove, uM, uW, uSpin, uSway, uBob, uDepth, uRatio;   // uRatio = frame width / height
+out vec2 vUV;
+void main(){
+  vUV = aUV;
+  vec4 pl = mix(uPlA, uPlB, uMove);
+  float asp = mix(uAspA, uAspB, uM);
+  vec4 ta = textureLod(uA, aUV, 0.0), tb = textureLod(uB, aUV, 0.0);
+  float hA = dot(ta.rgb, vec3(0.299, 0.587, 0.114)), hB = dot(tb.rgb, vec3(0.299, 0.587, 0.114));
+  vec2 c = aUV - 0.5;
+  vec2 loc = vec2(c.x, c.y / asp) * pl.z;
+  float relief = (mix(hA, hB, uM) - 0.35) * 0.22 + (1.0 - 4.0 * dot(c, c)) * 0.10;              // brightness becomes height, plus a dome: a 3D surface in the wireframe stage
+  float z = relief * pl.z * uDepth * uW;
+  float th = uSpin + uSway, cy = cos(th), sy = sin(th);
+  vec3 p = vec3(loc, z);
+  p = vec3(p.x * cy + p.z * sy, p.y, -p.x * sy + p.z * cy);
+  p.xy *= 1.0 / (1.0 - p.z * 0.9);                                                                // perspective
+  float cz = cos(pl.w), sz = sin(pl.w); p.xy = vec2(cz * p.x - sz * p.y, sz * p.x + cz * p.y);
+  vec2 scr = vec2(pl.x + p.x, pl.y - p.y * uRatio + uBob);
+  gl_Position = vec4(scr.x * 2.0 - 1.0, 1.0 - scr.y * 2.0, 0.0, 1.0);
+}`;
+  const ND_FS = `#version 300 es
+precision highp float;
+in vec2 vUV; out vec4 o;
+uniform sampler2D uA, uB; uniform float uM, uW, uAspA, uAspB; uniform vec3 uAcc;
+void main(){
+  vec4 col = mix(texture(uA, vUV), texture(uB, vUV), uM);                      // premultiplied colour
+  float lodA = mix(textureLod(uA, vUV, 2.0).a, textureLod(uB, vUV, 2.0).a, uM);
+  float edge = clamp(lodA * (1.0 - lodA) * 4.0, 0.0, 1.0);                      // a band right at the silhouette
+  float asp = mix(uAspA, uAspB, uM);
+  vec2 g = vUV * vec2(22.0, 22.0 / asp);
+  vec2 gf = abs(fract(g - 0.5) - 0.5) / fwidth(g);
+  float line = 1.0 - min(min(gf.x, gf.y), 1.0);
+  float inside = smoothstep(0.04, 0.3, col.a);
+  vec3 wc = mix(uAcc, vec3(1.0), 0.55);
+  float fill = 1.0 - 0.93 * uW;
+  float wa = clamp(line * inside * 0.95 + edge * 1.2, 0.0, 1.0) * uW;
+  vec3 rgb = col.rgb * fill + wc * wa;
+  o = vec4(rgb, clamp(col.a * fill + wa, 0.0, 1.0));
+}`;
+
+  const bgP = program(BG_VS, BG_FS), ndP = program(ND_VS, ND_FS);
+  const quad = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, quad); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+  const GX = 44, GY = 44, verts = [], idx = [];
+  for (let y = 0; y <= GY; y++) for (let x = 0; x <= GX; x++) verts.push(x / GX, y / GY);
+  for (let y = 0; y < GY; y++) for (let x = 0; x < GX; x++) { const a = y * (GX + 1) + x, b = a + 1, c = a + GX + 1, d = c + 1; idx.push(a, b, c, b, d, c); }
+  const meshVb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, meshVb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
+  const meshIb = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, meshIb); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
+
+  // ---------- node textures
+  const tex = NODES.map(() => null), asp = NODES.map(() => 1); let loaded = 0;
+  const blank = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, blank); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
+  NODES.forEach((n, i) => {
+    const im = new Image();
+    im.onload = () => {
+      const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, im); gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      tex[i] = t; asp[i] = im.naturalWidth / Math.max(1, im.naturalHeight); loaded++;
+    };
+    im.onerror = () => { loaded++; };
+    im.src = n.file;
+  });
+  window.__assetsReady = () => loaded >= NODES.length && (!window.__fitDone || window.__fitDone());
+  window.__sceneReady = true;
+
+  const resize = () => { const dpr = Math.min(2, window.devicePixelRatio || 1), w = Math.round(window.innerWidth * dpr), h = Math.round(window.innerHeight * dpr); if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; } };
+  const U = (p, n) => gl.getUniformLocation(p, n);
+
+  // ---------- one frame
+  function draw(p) {
+    resize(); const P = clamp01(p) * N, tSec = clamp01(p) * N * 3.5;
+    let k = -1; for (let j = 0; j < N - 1; j++) if (P >= j + 0.8 && P <= j + 1.2) { k = j; break; }
+    const cur = Math.max(0, Math.min(N - 1, Math.floor(P - 0.2)));
+    const ia = k >= 0 ? k : cur, ib = k >= 0 ? k + 1 : cur;
+    const A = S.scenes[ia], B = S.scenes[ib], tq = k >= 0 ? (P - (k + 0.8)) / 0.4 : 0;
+    const sameNode = A.node === B.node, sameBg = (A.bg | 0) === (B.bg | 0);
+    let move = 0, m = 0, w = 0, spin = 0, mb = 0, wb = 0;
+    if (k >= 0) {
+      if (sameNode) { move = eio(tq); mb = sm(0.35, 0.65, tq); wb = sameBg ? 0 : bell(tq, 0.0, 1.0); }          // move: the node glides, the world goes wireframe
+      else if (sameBg) { const e = eob(clamp01(tq / 0.92)); move = eio(clamp01(tq / 0.9)); spin = 4 * Math.PI * e; w = bell(tq, 0.04, 0.9); m = sm(0.4, 0.6, tq); }   // spin: 720deg with overshoot, wireframe in the middle
+      else { move = eio(tq); w = bell(tq, 0.05, 0.95); m = sm(0.4, 0.6, tq); mb = sm(0.35, 0.65, tq); wb = bell(tq, 0.0, 1.0); }   // all
+    }
+    const nsc = k >= 0 ? (tq < 0.5 ? ia : ib) : cur;
+    const sway = 0.2 * Math.sin(tSec * 1.35 + nsc) + (k >= 0 && sameNode ? 0.5 * Math.sin(Math.PI * tq) * (ib % 2 ? 1 : -1) : 0);
+    const bob = 0.012 * Math.sin(tSec * 1.9 + nsc * 1.3);
+
+    gl.viewport(0, 0, canvas.width, canvas.height); gl.disable(gl.DEPTH_TEST);
+    // background
+    const pa = PAL[(A.bg | 0) % PAL.length], pb = PAL[(B.bg | 0) % PAL.length];
+    gl.useProgram(bgP); gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+    const ap = gl.getAttribLocation(bgP, "aP"); gl.enableVertexAttribArray(ap); gl.vertexAttribPointer(ap, 2, gl.FLOAT, false, 0, 0);
+    gl.uniform2f(U(bgP, "uRes"), canvas.width, canvas.height); gl.uniform1f(U(bgP, "uT"), tSec); gl.uniform1f(U(bgP, "uMb"), mb); gl.uniform1f(U(bgP, "uWb"), wb);
+    gl.uniform1f(U(bgP, "uSeedA"), (A.bg | 0) * 3.1); gl.uniform1f(U(bgP, "uSeedB"), (B.bg | 0) * 3.1);
+    [["uA0", pa[0]], ["uA1", pa[1]], ["uA2", pa[2]], ["uB0", pb[0]], ["uB1", pb[1]], ["uB2", pb[2]], ["uAcc", ACC]].forEach(([n, v]) => gl.uniform3f(U(bgP, n), v[0], v[1], v[2]));
+    const plA = PL[ia], plB = PL[ib], gx = plA.x + (plB.x - plA.x) * move, gy = plA.y + (plB.y - plA.y) * move;
+    gl.uniform3f(U(bgP, "uGlow"), gx, 1 - gy, 0.5);
+    gl.disable(gl.BLEND); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    // node
+    gl.useProgram(ndP); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.bindBuffer(gl.ARRAY_BUFFER, meshVb); const au = gl.getAttribLocation(ndP, "aUV"); gl.enableVertexAttribArray(au); gl.vertexAttribPointer(au, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, meshIb);
+    const na = (A.node | 0) % NODES.length, nb = (B.node | 0) % NODES.length;
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex[na] || blank); gl.uniform1i(U(ndP, "uA"), 0);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, tex[nb] || blank); gl.uniform1i(U(ndP, "uB"), 1);
+    const R = canvas.width / canvas.height;
+    gl.uniform4f(U(ndP, "uPlA"), plA.x, plA.y, plA.s, plA.r * Math.PI / 180); gl.uniform4f(U(ndP, "uPlB"), plB.x, plB.y, plB.s, plB.r * Math.PI / 180);
+    gl.uniform1f(U(ndP, "uAspA"), asp[na]); gl.uniform1f(U(ndP, "uAspB"), asp[nb]);
+    gl.uniform1f(U(ndP, "uMove"), move); gl.uniform1f(U(ndP, "uM"), m); gl.uniform1f(U(ndP, "uW"), w);
+    gl.uniform1f(U(ndP, "uSpin"), spin); gl.uniform1f(U(ndP, "uSway"), sway); gl.uniform1f(U(ndP, "uBob"), bob); gl.uniform1f(U(ndP, "uDepth"), 1.6); gl.uniform1f(U(ndP, "uRatio"), R);
+    gl.uniform3f(U(ndP, "uAcc"), ACC[0], ACC[1], ACC[2]);
+    gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_SHORT, 0);
+    // chip + end-card pulse, as in the other modes
+    const i = Math.min(N - 1, Math.floor(Math.min(0.99999, p) * N)), u = Math.min(0.99999, p) * N - i;
+    chip.style.opacity = i >= N - 1 ? 0 : i === N - 2 ? 1 - sm(0.7, 1, u) : 1;
+    if (pulse) pulse.style.transform = i >= N - 1 ? "scale(" + (1 + 0.035 * Math.sin(u * 30)) + ")" : "none";
+  }
+  window.__setFrameHook((p) => { draw(p); });
+  window.__jumpToProgress(0);
+}
+
 } else {
 const state = { i: 0, t: 0, p: 0 };
 const sm = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
