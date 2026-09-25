@@ -336,7 +336,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   const brandRefs = [logo && logo.length ? logo : null, ...userImgs.slice(1)].filter(Boolean).slice(0, 3), refCost = () => brandRefs.length * 13;   // shrinks below if the film would not fit the neuron ceiling
   const siteImg = company && company.siteImage && company.siteImage.length ? company.siteImage : null;
   const heroCost = userImgs[0] ? 0 : logo && logo.length || siteImg ? neurons.estKlein(true) : neurons.estKlein(false);
-  const reserveNow = () => (given ? 0 : nodeOn() ? 3 * neurons.estKlein(false) : movieOn() ? IDS.length * neurons.estKlein(true) : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
+  const reserveNow = () => (given ? 0 : nodeOn() ? 2 * neurons.estKlein(false) : movieOn() ? IDS.length * neurons.estKlein(true) : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
   let spec = given;
   if (!spec) {
     say('Writing the ad script', 0.05);
@@ -405,7 +405,8 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
         if (!buf) { console.warn(`[node] ${i}: using a procedural object`); buf = nodeFilm.proceduralNode(i - 1, spec.theme.accent, spec.seed % 3); }   // a refused or failed picture never costs the film
         write(i, buf);
       };
-      const jobs = [1, 2, 3].map((i) => gate(() => makeNode(i)));
+      const used = new Set(spec.scenes.map((sc) => sc.node));                              // only the nodes some scene actually shows are painted (and paid for)
+      const jobs = [1, 2, 3].map((i) => gate(() => (used.has(i) ? makeNode(i) : Promise.resolve(write(i, nodeFilm.proceduralNode(i - 1, spec.theme.accent, spec.seed % 3))))));
       await Promise.all(jobs);
       spec.nodes = out;
       nodeDone = true;

@@ -13,8 +13,8 @@ const fs = require('fs');
 const path = require('path');
 
 const NODE_FLOW = `MOTION-GRAPHICS FILM (the most important part). The picture of this ad is NOT photographs. It is a designed 3D motion-graphics film in the style of the best product-launch videos and scroll-driven 3D websites: every scene is a colourful gradient WORLD with ONE hero object - the NODE - floating in front of it. No photos, no people, no rooms, no offices.
-(1) THE NODES. Write 3 nodes (ids 1, 2 and 3; node 0 is the company's own logo mark, which the code makes). Each node is ONE simple, iconic, instantly recognisable object described for a 3D render: what it is, its material (glossy plastic, glass, brushed metal, soft clay) and its colour. It must be about THIS company: its product itself, what it makes or does, or a bold physical symbol of its promise (a rocket for launching, a key for access, a lightning bolt for speed, a sprout for growth, a shield for safety, a coin for saving, a paper plane for sending). Never a generic laptop, phone, desk, person or office. NO text, letters, numbers or logos on a node, and never a whole scene: one object, floating.
-(2) THE WORLDS. Write 3 backgrounds {"a": dark #RRGGBB, "b": mid-tone #RRGGBB, "c": bright light #RRGGBB} built from the brand's own colours and their neighbours on the colour wheel. Make the three clearly different moods, so a change of world is felt.
+(1) THE NODES. Write 3 nodes (ids 1, 2 and 3; node 0 is the company's own logo mark, which the code makes). Each node is ONE simple, iconic, instantly recognisable object described for a 3D render: what it is, its material (polished metal, tinted glass, glossy coloured plastic) and a RICH SATURATED colour that will glow against a near-black stage - never white, grey or black. It must be about THIS company: its product itself, what it makes or does, or a bold physical symbol of its promise (a rocket for launching, a key for access, a lightning bolt for speed, a sprout for growth, a shield for safety, a coin for saving, a paper plane for sending). Never a generic laptop, phone, desk, person or office. NO text, letters, numbers or logos on a node, and never a whole scene: one object, floating.
+(2) THE WORLDS. Write 3 backgrounds {"a": near-black #RRGGBB, "b": dark tone #RRGGBB, "c": the colour of ONE luminous glow behind the hero #RRGGBB (bright, saturated)}. Restrained and premium like a product reveal: a near-black stage lit by one coloured glow, never a rainbow or a wash of colour. Use three different glow colours (the brand's own and its neighbours on the colour wheel) so a change of world is felt.
 (3) SIX SCENES, each with a node ("node": 0-3) and a world ("bg": 0-2). The hook uses node 0 or your most striking node. Across the 5 transitions use ALL THREE kinds of change: SAME node in a NEW world (the node glides across the frame while the world turns to a wireframe and re-forms); SAME world with a DIFFERENT node (the node spins 720 degrees and turns into the next node through a wireframe); EVERYTHING different (the whole frame morphs). Never the same kind twice in a row. Order the nodes so they tell the story: the problem, the product, the payoff.
 (4) PLACEMENT. Each scene gives "s" (the node's size as a fraction of the frame width, 0.45-0.75; the hook and the end card are the biggest) and "r" (a tilt in degrees, -14 to 14). The caption sits at "pos" and the code keeps the node clear of it.`;
 
@@ -50,9 +50,9 @@ function applyNodePlan(spec, S) {
     let a = isHex(b.a) ? rgb(fixHex(b.a)) : mixC(acc, [8, 8, 16], 0.82 - i * 0.05);
     let m = isHex(b.b) ? rgb(fixHex(b.b)) : mixC(acc, [16, 16, 40], 0.5 - i * 0.08);
     let c = isHex(b.c) ? rgb(fixHex(b.c)) : mixC(acc, [255, 255, 255], 0.15 + i * 0.12);
-    if (lum(a) > 0.28) a = mixC(a, [6, 8, 16], 0.7);                 // the base is dark: white captions must read on it
-    if (lum(m) > 0.5) m = mixC(m, [10, 12, 24], 0.45);
-    if (lum(c) < 0.35) c = mixC(c, [255, 255, 255], 0.35);          // the light is bright, or it is not a light
+    a = mixC(a, [5, 6, 12], lum(a) > 0.09 ? 0.86 : 0.55);              // a near-black base: the hero is the light, the stage is dark (captions read, the object pops)
+    m = mixC(m, [8, 10, 20], lum(m) > 0.16 ? 0.72 : 0.4);
+    if (lum(c) < 0.4) c = mixC(c, [255, 255, 255], 0.4);            // the glow is bright, or it is not a light
     return { a: toHex(a), b: toHex(m), c: toHex(c) };
   });
   const sceneIn = Array.isArray(S.scenes) ? S.scenes : [];
@@ -123,7 +123,7 @@ function proceduralNode(kind, accentHex, seed = 0) {
  * Cut an object out of a plain background: the border colour is sampled, then a flood fill from every border pixel removes everything connected to it
  * (anything inside the object - a white heart on a pink icon - is kept). The result is cropped to the object, edges softened, returned as PNG + aspect.
  */
-async function cutout(buf, tol = 46) {
+async function cutout(buf, tol = 70) {
   const { loadImage, createCanvas } = cv();
   const img = await loadImage(buf), W = img.width, H = img.height;
   const c = createCanvas(W, H), g = c.getContext('2d'); g.drawImage(img, 0, 0);
@@ -137,6 +137,11 @@ async function cutout(buf, tol = 46) {
   const push = (p) => { if (!gone[p] && near(p)) { gone[p] = 1; stack.push(p); } };
   for (let x = 0; x < W; x++) { push(x); push((H - 1) * W + x); } for (let y = 0; y < H; y++) { push(y * W); push(y * W + W - 1); }
   while (stack.length) { const p = stack.pop(), x = p % W, y = (p / W) | 0; if (x > 0) push(p - 1); if (x < W - 1) push(p + 1); if (y > 0) push(p - W); if (y < H - 1) push(p + W); }
+  // the key colour also disappears where the flood could not reach (the hole of a ring, the gap in a handle), and its spill is cleaned off the edges
+  const strict = tol * 0.62;
+  for (let p = 0; p < W * H; p++) { if (gone[p]) continue; const dr = d[p * 4] - bg[0], dg = d[p * 4 + 1] - bg[1], db = d[p * 4 + 2] - bg[2]; if (Math.sqrt(dr * dr + dg * dg + db * db) < strict) gone[p] = 1; }
+  const greenBg = bg[1] > bg[0] + 40 && bg[1] > bg[2] + 40;
+  if (greenBg) for (let p = 0; p < W * H; p++) { if (gone[p]) continue; const r = d[p * 4], g2 = d[p * 4 + 1], b2 = d[p * 4 + 2], cap = Math.max(r, b2); if (g2 > cap) d[p * 4 + 1] = cap + (g2 - cap) * 0.15; }
   // soften the rim: object pixels touching removed pixels get half alpha (removes the halo of the old background)
   let minX = W, minY = H, maxX = 0, maxY = 0;
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -152,6 +157,6 @@ async function cutout(buf, tol = 46) {
   return { buf: out.toBuffer('image/png'), aspect: cw / ch };
 }
 
-const NODE_LOOK = 'single object, centered, floating in the air, 3D render, glossy soft studio lighting, vivid saturated colour, isolated on a plain pure white background, no shadow, no ground, no text, no letters, no logo';
+const NODE_LOOK = 'single object, centered, floating in the air, premium 3D render, dramatic studio lighting with a bright rim light, rich saturated colour or polished metal or glass with colour, high contrast, NOT white and NOT grey and NOT green, isolated on a plain flat pure bright green chroma-key background (#00ff00), no shadow, no ground, no text, no letters, no logo';
 
 module.exports = { NODE_FLOW, NODE_KEYS, applyNodePlan, brandBadge, proceduralNode, cutout, NODE_LOOK };

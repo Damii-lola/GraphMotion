@@ -332,8 +332,8 @@ vec3 world(vec2 uv, vec3 c0, vec3 c1, vec3 c2, float seed){
   vec3 col = mix(c0, c1, smoothstep(0.0, 1.0, t));
   vec2 b1 = vec2(0.22 + 0.12 * sin(uT * 0.31 + seed), 0.72 + 0.08 * cos(uT * 0.27 + seed));
   vec2 b2 = vec2(0.82 + 0.08 * cos(uT * 0.23 + seed), 0.22 + 0.1 * sin(uT * 0.37 + seed));
-  col = mix(col, c2, smoothstep(0.62, 0.0, length((uv - b1) * vec2(1.0, 1.0 / asp))) * 0.55);
-  col = mix(col, mix(c2, c1, 0.5), smoothstep(0.55, 0.0, length((uv - b2) * vec2(1.0, 1.0 / asp))) * 0.4);
+  col = mix(col, c2, smoothstep(0.62, 0.0, length((uv - b1) * vec2(1.0, 1.0 / asp))) * 0.16);
+  col = mix(col, mix(c2, c1, 0.5), smoothstep(0.55, 0.0, length((uv - b2) * vec2(1.0, 1.0 / asp))) * 0.10);
   return col;
 }
 void main(){
@@ -351,9 +351,10 @@ void main(){
   col = col * (1.0 - 0.6 * uWb) + wc * (line * 0.55 + dots * 0.9) * uWb;
   // the light under the node
   float d = length((uv - uGlow.xy) * vec2(1.0, 1.0 / asp));
-  col += mix(uAcc, vec3(1.0), 0.25) * exp(-d * d * 9.0) * uGlow.z * (1.0 - 0.5 * uWb);
+  vec3 gcol = mix(mix(uA2, uB2, uMb), vec3(1.0), 0.18);
+  col += gcol * (exp(-d * d * 6.5) * 0.85 + exp(-d * d * 30.0) * 0.35) * uGlow.z * (1.0 - 0.45 * uWb);           // the light behind the hero
   // grain + vignette: it should look designed, not like a flat gradient
-  col += (hash(gl_FragCoord.xy + fract(uT) * 91.0) - 0.5) * 0.035;
+  col += (hash(gl_FragCoord.xy) - 0.5) * 0.02;
   col *= 1.0 - 0.34 * smoothstep(0.35, 1.05, length((uv - 0.5) * vec2(1.0, 0.72)));
   o = vec4(col, 1.0);
 }`;
@@ -403,7 +404,46 @@ void main(){
   o = vec4(rgb, clamp(col.a * fill + wa, 0.0, 1.0));
 }`;
 
-  const bgP = program(BG_VS, BG_FS), ndP = program(ND_VS, ND_FS);
+  // the dissolve: every point of the node flies out along its own strand and glows, then the strands gather into the next node (as in the reference sites)
+  const PT_VS = `#version 300 es
+in vec3 aV;                                   // uv.x, uv.y, side (0 = the strand's root, 1 = its tip)
+uniform sampler2D uA, uB;
+uniform vec4 uPlA, uPlB;
+uniform float uAspA, uAspB, uMove, uM, uSpin, uSway, uBob, uRatio, uDis, uT, uPx;
+out vec3 vCol; out float vA; out float vSide;
+float h1(vec2 p){ p = fract(p * vec2(233.34, 851.73)); p += dot(p, p + 23.45); return fract(p.x * p.y); }
+void main(){
+  vec2 uv = aV.xy; vSide = aV.z;
+  vec4 pl = mix(uPlA, uPlB, uMove);
+  float asp = mix(uAspA, uAspB, uM);
+  vec4 ta = textureLod(uA, uv, 0.0), tb = textureLod(uB, uv, 0.0);
+  vec4 tc = mix(ta, tb, uM);
+  vA = tc.a; vCol = tc.rgb / max(tc.a, 0.001);
+  vec2 c = uv - 0.5;
+  vec2 loc = vec2(c.x, c.y / asp) * pl.z;
+  float ang = h1(uv) * 6.2832 + uT * 0.5 + h1(uv.yx) * 2.0, rad = (0.10 + 0.85 * h1(uv + 3.7)) * pl.z * uDis;
+  vec3 tip = vec3(cos(ang) * rad, sin(ang) * rad * 0.9, (h1(uv + 9.1) - 0.5) * rad * 1.2) + vec3(loc * 0.55 * uDis, 0.0);
+  vec3 p = vec3(loc, 0.0) + tip * aV.z;
+  float th = uSpin + uSway, cy = cos(th), sy = sin(th);
+  p = vec3(p.x * cy + p.z * sy, p.y, -p.x * sy + p.z * cy);
+  p.xy *= 1.0 / (1.0 - p.z * 0.9);
+  float cz = cos(pl.w), sz = sin(pl.w); p.xy = vec2(cz * p.x - sz * p.y, sz * p.x + cz * p.y);
+  vec2 scr = vec2(pl.x + p.x, pl.y - p.y * uRatio + uBob);
+  gl_Position = vec4(scr.x * 2.0 - 1.0, 1.0 - scr.y * 2.0, 0.0, 1.0);
+  gl_PointSize = uPx * (1.0 + 1.6 * uDis);
+}`;
+  const PT_FS = `#version 300 es
+precision highp float;
+in vec3 vCol; in float vA; in float vSide; out vec4 o;
+uniform float uDis, uPoint; uniform vec3 uAcc;
+void main(){
+  if (vA < 0.2) discard;
+  vec3 hot = mix(vCol, mix(uAcc, vec3(1.0), 0.4), 0.45 * vSide);           // the tips glow
+  float k = uDis * (uPoint > 0.5 ? 0.42 : 0.2 * mix(0.1, 1.0, vSide));
+  if (uPoint > 0.5) { vec2 q = gl_PointCoord - 0.5; float d = length(q); if (d > 0.5) discard; k *= smoothstep(0.5, 0.05, d); }
+  o = vec4(hot * k, k);
+}`;
+  const bgP = program(BG_VS, BG_FS), ndP = program(ND_VS, ND_FS), ptP = program(PT_VS, PT_FS);
   const quad = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, quad); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
   const GX = 44, GY = 44, verts = [], idx = [];
   for (let y = 0; y <= GY; y++) for (let x = 0; x <= GX; x++) verts.push(x / GX, y / GY);
@@ -411,6 +451,10 @@ void main(){
   const meshVb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, meshVb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
   const meshIb = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, meshIb); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
 
+  const PG = 64, lineV = [], pointV = [];
+  for (let y = 0; y <= PG; y++) for (let x = 0; x <= PG; x++) { const u = x / PG, v = y / PG; lineV.push(u, v, 0, u, v, 1); pointV.push(u, v, 1); }
+  const lineVb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, lineVb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lineV), gl.STATIC_DRAW);
+  const pointVb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, pointVb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pointV), gl.STATIC_DRAW);
   // ---------- node textures
   const tex = NODES.map(() => null), asp = NODES.map(() => 1); let loaded = 0;
   const blank = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, blank); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 0]));
@@ -441,11 +485,11 @@ void main(){
     const ia = k >= 0 ? k : cur, ib = k >= 0 ? k + 1 : cur;
     const A = S.scenes[ia], B = S.scenes[ib], tq = k >= 0 ? (P - (k + 0.8)) / 0.4 : 0;
     const sameNode = A.node === B.node, sameBg = (A.bg | 0) === (B.bg | 0);
-    let move = 0, m = 0, w = 0, spin = 0, mb = 0, wb = 0;
+    let move = 0, m = 0, w = 0, spin = 0, mb = 0, wb = 0, dis = 0;
     if (k >= 0) {
       if (sameNode) { move = eio(tq); mb = sm(0.35, 0.65, tq); wb = sameBg ? 0 : bell(tq, 0.0, 1.0); }          // move: the node glides, the world goes wireframe
-      else if (sameBg) { const e = eob(clamp01(tq / 0.92)); move = eio(clamp01(tq / 0.9)); spin = 4 * Math.PI * e; w = bell(tq, 0.04, 0.9); m = sm(0.4, 0.6, tq); }   // spin: 720deg with overshoot, wireframe in the middle
-      else { move = eio(tq); w = bell(tq, 0.05, 0.95); m = sm(0.4, 0.6, tq); mb = sm(0.35, 0.65, tq); wb = bell(tq, 0.0, 1.0); }   // all
+      else if (sameBg) { const e = eob(clamp01(tq / 0.92)); move = eio(clamp01(tq / 0.9)); spin = 4 * Math.PI * e; w = bell(tq, 0.04, 0.9); dis = Math.pow(bell(tq, 0.1, 0.85), 0.8); m = sm(0.4, 0.6, tq); }   // spin: 720deg with overshoot, wireframe in the middle
+      else { move = eio(tq); w = bell(tq, 0.05, 0.95); dis = Math.pow(bell(tq, 0.12, 0.88), 0.8); m = sm(0.4, 0.6, tq); mb = sm(0.35, 0.65, tq); wb = bell(tq, 0.0, 1.0); }   // all
     }
     const nsc = k >= 0 ? (tq < 0.5 ? ia : ib) : cur;
     const sway = 0.2 * Math.sin(tSec * 1.35 + nsc) + (k >= 0 && sameNode ? 0.5 * Math.sin(Math.PI * tq) * (ib % 2 ? 1 : -1) : 0);
@@ -460,7 +504,7 @@ void main(){
     gl.uniform1f(U(bgP, "uSeedA"), (A.bg | 0) * 3.1); gl.uniform1f(U(bgP, "uSeedB"), (B.bg | 0) * 3.1);
     [["uA0", pa[0]], ["uA1", pa[1]], ["uA2", pa[2]], ["uB0", pb[0]], ["uB1", pb[1]], ["uB2", pb[2]], ["uAcc", ACC]].forEach(([n, v]) => gl.uniform3f(U(bgP, n), v[0], v[1], v[2]));
     const plA = PL[ia], plB = PL[ib], gx = plA.x + (plB.x - plA.x) * move, gy = plA.y + (plB.y - plA.y) * move;
-    gl.uniform3f(U(bgP, "uGlow"), gx, 1 - gy, 0.5);
+    gl.uniform3f(U(bgP, "uGlow"), gx, 1 - gy, 1.0);
     gl.disable(gl.BLEND); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     // node
     gl.useProgram(ndP); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -476,6 +520,19 @@ void main(){
     gl.uniform1f(U(ndP, "uSpin"), spin); gl.uniform1f(U(ndP, "uSway"), sway); gl.uniform1f(U(ndP, "uBob"), bob); gl.uniform1f(U(ndP, "uDepth"), 1.6); gl.uniform1f(U(ndP, "uRatio"), R);
     gl.uniform3f(U(ndP, "uAcc"), ACC[0], ACC[1], ACC[2]);
     gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_SHORT, 0);
+    if (dis > 0.01) {                                                            // the dissolve: strands + glowing points, additive
+      gl.useProgram(ptP); gl.blendFunc(gl.ONE, gl.ONE);
+      const bind = (buf) => { gl.bindBuffer(gl.ARRAY_BUFFER, buf); const a = gl.getAttribLocation(ptP, "aV"); gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a, 3, gl.FLOAT, false, 0, 0); };
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex[na] || blank); gl.uniform1i(U(ptP, "uA"), 0);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, tex[nb] || blank); gl.uniform1i(U(ptP, "uB"), 1);
+      gl.uniform4f(U(ptP, "uPlA"), plA.x, plA.y, plA.s, plA.r * Math.PI / 180); gl.uniform4f(U(ptP, "uPlB"), plB.x, plB.y, plB.s, plB.r * Math.PI / 180);
+      gl.uniform1f(U(ptP, "uAspA"), asp[na]); gl.uniform1f(U(ptP, "uAspB"), asp[nb]); gl.uniform1f(U(ptP, "uMove"), move); gl.uniform1f(U(ptP, "uM"), m);
+      gl.uniform1f(U(ptP, "uSpin"), spin); gl.uniform1f(U(ptP, "uSway"), sway); gl.uniform1f(U(ptP, "uBob"), bob); gl.uniform1f(U(ptP, "uRatio"), R);
+      gl.uniform1f(U(ptP, "uDis"), dis); gl.uniform1f(U(ptP, "uT"), tSec); gl.uniform3f(U(ptP, "uAcc"), ACC[0], ACC[1], ACC[2]);
+      const dpr = canvas.width / window.innerWidth;
+      gl.uniform1f(U(ptP, "uPoint"), 0); bind(lineVb); gl.drawArrays(gl.LINES, 0, (PG + 1) * (PG + 1) * 2);
+      gl.uniform1f(U(ptP, "uPoint"), 1); gl.uniform1f(U(ptP, "uPx"), 2.4 * dpr); bind(pointVb); gl.drawArrays(gl.POINTS, 0, (PG + 1) * (PG + 1));
+    }
     // chip + end-card pulse, as in the other modes
     const i = Math.min(N - 1, Math.floor(Math.min(0.99999, p) * N)), u = Math.min(0.99999, p) * N - i;
     chip.style.opacity = i >= N - 1 ? 0 : i === N - 2 ? 1 - sm(0.7, 1, u) : 1;
