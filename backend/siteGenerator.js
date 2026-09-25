@@ -22,7 +22,8 @@ const { callCloudflareRaw } = require('./cloudflareClient');
 const neurons = require('./neuronBudget');
 const flow = require('./flowSpec');
 const klein = require('./kleinClient');
-const MOVIE = process.env.MOVIE === '1' || (process.env.MOVIE !== '0' && !!process.env.HF_TOKEN);                    // default: ONE CONTINUOUS FILM - shot 1 is a picture, then chained image-to-video clips (no cuts, no transitions)
+const MOVIE = process.env.MOVIE === '1' || (process.env.MOVIE !== '0' && (!!process.env.HF_TOKEN || !!process.env.FAL_KEY || !!process.env.VIDEO_WORKER_SECRET));                    // default: ONE CONTINUOUS FILM - shot 1 is a picture, then chained image-to-video clips (no cuts, no transitions)
+const movieOn = () => MOVIE && videoGen.available();            // a notebook worker that is not running simply means: pictures joined by dives, as before
 const videoGen = require('./videoGen');
 const WORLD = process.env.IMAGE_ENGINE !== 'flux';   // default: ONE WORLD, six shots (FLUX.2 klein generate + edit); IMAGE_ENGINE=flux keeps the old six-separate-pictures path
 const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/mistralai/mistral-small-3.1-24b-instruct'; // ~4x cheaper per token than the 70B; one call per ad
@@ -297,7 +298,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   const brandRefs = [logo && logo.length ? logo : null, ...userImgs.slice(1)].filter(Boolean).slice(0, 3), refCost = () => brandRefs.length * 13;   // shrinks below if the film would not fit the neuron ceiling
   const siteImg = company && company.siteImage && company.siteImage.length ? company.siteImage : null;
   const heroCost = userImgs[0] ? 0 : logo && logo.length || siteImg ? neurons.estKlein(true) : neurons.estKlein(false);
-  const reserveNow = () => (given ? 0 : MOVIE ? heroCost : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
+  const reserveNow = () => (given ? 0 : movieOn() ? heroCost : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
   let spec = given;
   if (!spec) {
     say('Writing the ad script', 0.05);
@@ -337,7 +338,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
       spec.logo = { file: 'images/logo.webp', plate: await logoPlate(f) };
     }
     let movieDone = false, heroPre = null;   // heroPre: the movie's hero picture, reused if the video model turns out to be unavailable
-    if (MOVIE && !given) {
+    if (movieOn() && !given) {
       // ===== ONE CONTINUOUS FILM =====
       // shot 1 is a picture (the only picture that costs neurons); each scene is then an image-to-video clip that STARTS on the last frame of the previous one,
       // guided by that scene's director's note. Joined and slowed to exactly 3.5 s per scene, it is one camera in one world with nothing cut or crossfaded.

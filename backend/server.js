@@ -564,6 +564,7 @@ app.post('/api/waitlist', waitlistLimiter, async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 siteVideo = require('./siteVideo').register(app, { rendersActive: () => activeRenders > 0, onIdle: drainQueue });
+require('./videoWorker').register(app);                  // free GPU worker (Kaggle/Colab notebook) pulls image->video jobs from here
 require('./generateVideo').register(app, { siteVideo }); // company details -> AI-written ad page (/preview/<job-id>) -> recorded MKV
 
 app.listen(PORT, () => {
