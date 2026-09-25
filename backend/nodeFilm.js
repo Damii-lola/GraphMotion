@@ -20,7 +20,7 @@ const NODE_FLOW = `MOTION-GRAPHICS FILM (the most important part). The picture o
 
 const NODE_KEYS = `Return ONE JSON object with these keys:
 "brand", "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
-"nodes": EXACTLY 3 objects {"name": "2-3 words", "prompt": "the object, its material and colour, max 22 words"},
+"nodes": EXACTLY 3 objects {"name": "the object in 2-3 words, e.g. paper plane", "prompt": "THE OBJECT FIRST, then material and colour, max 22 words, e.g. a paper plane, polished chrome with a blue tint"},
 "bgs": EXACTLY 3 objects {"a","b","c"} (see THE WORLDS),
 "scenes": EXACTLY 6 objects, each: "id", "tag" (a 1-3 word LABEL pill like "POV", "Real talk", "The proof" - a label, not the start of a sentence, never ending in "..."; "" for cta), "headline" (an ARRAY of 2-6 word strings, ONE WORD PER ELEMENT, e.g. ["Your","*idea*","starts","|","to","glow"]; a lone "|" element is a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 8 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "node" (0-3), "bg" (0-2), "s", "r", "pos" ("bm" bottom centre, "bl" bottom left, "br" bottom right, "tl" top left, "tm" top centre - never the middle; vary it), "tone" ("dark"),
 "transitions": EXACTLY 5 objects, each just {"sfx": a whoosh id from SOUND}@@SND@@.
@@ -55,6 +55,11 @@ function applyNodePlan(spec, S) {
     if (lum(c) < 0.4) c = mixC(c, [255, 255, 255], 0.4);            // the glow is bright, or it is not a light
     return { a: toHex(a), b: toHex(m), c: toHex(c) };
   });
+  // three glow colours that really differ: if two are within ~35 degrees of hue, the code rotates them apart (a change of world must be SEEN)
+  const hueOf = (c) => { const [r, g, b] = c.map((v) => v / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; if (!d) return 0; const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; return (h * 60 + 360) % 360; };
+  const fromHue = (h, s, l) => { const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l), f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); return [f(0) * 255, f(8) * 255, f(4) * 255]; };
+  const base = hueOf(rgb(spec.bgs[0].c));
+  for (let i = 1; i < 3; i++) { const h = hueOf(rgb(spec.bgs[i].c)), diff = Math.min(Math.abs(h - hueOf(rgb(spec.bgs[i - 1].c))), 360 - Math.abs(h - hueOf(rgb(spec.bgs[i - 1].c)))); if (diff < 35 || Math.min(Math.abs(h - base), 360 - Math.abs(h - base)) < 35) { spec.bgs[i].c = toHex(fromHue((base + (i === 1 ? 45 : -55) + 360) % 360, 0.85, 0.6)); } }
   const sceneIn = Array.isArray(S.scenes) ? S.scenes : [];
   spec.scenes.forEach((sc, k) => {
     const s = sceneIn.find((x) => x && x.id === sc.id) || sceneIn[k] || {};
@@ -63,7 +68,7 @@ function applyNodePlan(spec, S) {
     const size = Math.max(0.42, Math.min(0.78, Number.isFinite(+s.s) ? +s.s : 0.6));
     const top = /^t/.test(sc.pos || '');
     sc.np = { x: 0.5, y: top ? NODE_POS_Y.t : NODE_POS_Y.b, s: k === 0 || k === spec.scenes.length - 1 ? Math.max(size, 0.56) : size, r: Math.max(-14, Math.min(14, Number.isFinite(+s.r) ? +s.r : (k % 2 ? 6 : -6))) };
-    if (k === spec.scenes.length - 1) { sc.np.y = 0.36; }             // the end card: the caption + button sit under the node
+    if (k === spec.scenes.length - 1) { sc.np.y = 0.27; sc.np.s = Math.min(sc.np.s, 0.4); }   // the end card: the caption, logo pill and button sit under a smaller node
   });
   // the film must contain all three kinds of change; if the AI repeated itself, the code varies the plan (a plan that is the same six times is a slideshow)
   const kind = (a, b) => (a.node === b.node ? (a.bg === b.bg ? 'move' : 'move') : a.bg === b.bg ? 'spin' : 'all');
