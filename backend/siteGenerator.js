@@ -397,7 +397,8 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
         if (base) {
           neurons.charge(neurons.estKlein(false), `node ${i}`);
           const named = np.name && !base.toLowerCase().includes(np.name.split(' ').slice(-1)[0].toLowerCase()) ? `${np.name}, ${base}` : base;   // the object's NAME always leads: an answer that only said "polished metal, blue" once produced an anonymous blue capsule
-          const tries = [named, `${np.name || base.split(' ').slice(0, 4).join(' ')}`];
+          const generic = (spec.motifs && spec.motifs[i - 1]) || 'a simple symbol';   // a brand or app name ("TikTok") can trip the safety filter: the last try uses the client's own generic motif
+          const tries = [named, `${np.name || base.split(' ').slice(0, 4).join(' ')}`, `a simple friendly flat icon of ${generic}`];
           for (let t = 0; t < tries.length && !buf; t++) {
             try { const png = await klein.generate(`${tries[t]}, ${nodeFilm.NODE_LOOK}`, { width: 512, height: 512 }); buf = (await nodeFilm.cutout(png)).buf; }
             catch (e) { console.warn(`[node] ${i} attempt ${t + 1} failed: ${String(e.message).slice(0, 110)}`); }
