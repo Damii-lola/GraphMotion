@@ -18,34 +18,19 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const store = require('./previewStore');
 const { generateSite, renderPage } = require('./siteGenerator');
+const scanner = require('./siteScanner');
 
 const MAX_PENDING = 6;
 const KEEP_MS = 2 * 60 * 60 * 1000;
-const MAX_IMAGES = 6, MAX_IMAGE_BYTES = 5 * 1024 * 1024, MAX_TOTAL_BYTES = 16 * 1024 * 1024;
 
 const text = (v, n) => String(v == null ? '' : v).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim().slice(0, n);
 
-/** data URL -> Buffer, only real JPEG / PNG / WebP (checked by magic bytes, never by the claimed type). */
-function decodeImage(v) {
-  const m = /^data:image\/(?:png|jpe?g|webp);base64,([A-Za-z0-9+/=\s]+)$/.exec(String(v || ''));
-  if (!m) throw new Error('Images must be JPG, PNG or WebP.');
-  const b = Buffer.from(m[1], 'base64');
-  const ok = (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) || (b[0] === 0x89 && b.toString('latin1', 1, 4) === 'PNG') || (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP');
-  if (!ok) throw new Error('One of the images is not a valid JPG, PNG or WebP file.');
-  if (b.length > MAX_IMAGE_BYTES) throw new Error('One of the images is too large (max 5 MB each).');
-  return b;
-}
-
 function validate(b) {
-  const company = text(b.company, 60), details = text(b.details, 2400), focus = text(b.focus, 2400), notes = text(b.notes, 2400);
+  const company = text(b.company, 60), details = text(b.details, 2400), focus = text(b.focus, 2400), notes = text(b.notes, 2400), website = text(b.website, 200);
   if (!company) throw new Error('Please enter your company name.');
   if (details.length < 20) throw new Error("Please describe your company in a few sentences (Company's Details).");
   if (!focus) throw new Error('Please tell us the main focus of the video.');
-  let logo = null, images = [], total = 0;
-  if (b.logo) { logo = decodeImage(b.logo); total += logo.length; }
-  if (Array.isArray(b.images)) for (const v of b.images.slice(0, MAX_IMAGES)) { const im = decodeImage(v); total += im.length; images.push(im); }
-  if (total > MAX_TOTAL_BYTES) throw new Error('The images are too large in total.');
-  return { company, details, focus, notes, logo, images };
+  return { company, details, focus, notes, website };
 }
 
 const friendly = (e) => {
@@ -60,7 +45,7 @@ function register(app, { siteVideo }) {
   const jobs = new Map();
   let chain = Promise.resolve();
   const limiter = rateLimit({ windowMs: 60 * 1000, max: 3, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests - please wait a minute.' } });
-  const bigJson = express.json({ limit: '24mb' });
+  const bigJson = express.json({ limit: '100kb' });
 
   const label = (j) => (j.phase === 'generating' ? 'Cloudflare is generating your video' : j.phase === 'rendering' ? 'Rendering video' : j.phase === 'done' ? 'Your video is ready' : j.phase === 'cancelled' ? 'Cancelled' : 'Something went wrong');
 
@@ -89,11 +74,16 @@ function register(app, { siteVideo }) {
     try {
       if (j.cancelled) throw new Error('cancelled');
       const dir = store.dirFor(j.id);
-      let result;
+      let result, siteText = '', siteHost = '';
+      if (input.website) {                               // optional: read the company's own site so the ad is written from real facts
+        j.genStage = 'Reading your website'; j.stageAt = Date.now();
+        try { const r = await scanner.scan(input.website); siteText = r.text; siteHost = r.host; console.log(`[generate-video] job ${j.id}: read ${r.host} (${r.text.length} chars)`); }
+        catch (e) { console.warn(`[generate-video] job ${j.id}: could not read the website (${e.message}) - continuing without it`); }
+      }
       if (process.env.GENERATE_MOCK === '1') result = await require('./mockGenerate')(input, dir, seen);   // local testing only: no Cloudflare
       else {
         result = await generateSite({
-          company: { name: input.company, details: input.details, focus: input.focus, notes: input.notes }, logo: input.logo, images: input.images, outDir: dir,
+          company: { name: input.company, details: input.details, focus: input.focus, notes: input.notes, siteText, siteHost }, outDir: dir,
           onProgress: seen,
         });
       }
@@ -130,7 +120,7 @@ function register(app, { siteVideo }) {
     if (busy >= MAX_PENDING) return res.status(429).json({ error: 'We are busy right now - please try again in a few minutes.' });
     const j = { id: store.newId(), phase: 'generating', genProgress: 0, created: Date.now() };
     jobs.set(j.id, j);
-    console.log(`[generate-video] job ${j.id}: "${input.company}" (${input.images.length} images${input.logo ? ', logo' : ''})`);
+    console.log(`[generate-video] job ${j.id}: "${input.company}"${input.website ? ' + website' : ''}`);
     chain = chain.then(async () => { if (await generate(j, input)) render(j); });   // one generation at a time (neuron accounting is process-wide); rendering runs on in the background
     res.status(202).json({ id: j.id });
   });

@@ -37,15 +37,6 @@
   button:disabled { opacity: .55; cursor: not-allowed; }
   button.ghost { background: var(--orange-soft); color: var(--orange-dark); }
   button.go { width: 100%; font-size: 18px; padding: 17px 22px; margin-top: 6px; }
-  .drop { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  .drop input[type=file] { display: none; }
-  .pick { display: inline-flex; align-items: center; gap: 8px; padding: 11px 16px; border-radius: 12px; border: 1.5px dashed #d9c3a5; background: #fff; color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer; }
-  .pick:hover { border-color: var(--orange); color: var(--orange-dark); }
-  .thumbs { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
-  .thumb { position: relative; width: 74px; height: 74px; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); background: #fff; }
-  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .thumb.logo img { object-fit: contain; padding: 6px; background: repeating-conic-gradient(#eee 0% 25%, #fff 0% 50%) 50% / 14px 14px; }
-  .thumb button { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; padding: 0; border-radius: 50%; font-size: 14px; line-height: 22px; background: rgba(0,0,0,.65); }
   .hint { font-size: 13px; color: #a8917a; margin-top: 6px; }
   .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin-top: 16px; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: #bbb; }
@@ -107,22 +98,8 @@
       </div>
 
       <div class="field">
-        <label class="f">Logo <em>optional · one image</em></label>
-        <div class="drop">
-          <label class="pick" for="logoIn">＋ Add logo</label>
-          <input id="logoIn" type="file" accept="image/png,image/jpeg,image/webp" />
-        </div>
-        <div class="thumbs" id="logoThumb"></div>
-      </div>
-
-      <div class="field">
-        <label class="f">Other images <em>optional · up to 6, product shots work best</em></label>
-        <div class="drop">
-          <label class="pick" for="imgIn">＋ Add images</label>
-          <input id="imgIn" type="file" accept="image/png,image/jpeg,image/webp" multiple />
-        </div>
-        <div class="thumbs" id="imgThumbs"></div>
-        <div class="hint">Photos you add are used in your video. Scenes without a photo are illustrated by the AI.</div>
+        <label class="f" for="website">Website <em>optional · we read it to learn about your company</em></label>
+        <input id="website" type="text" maxlength="200" inputmode="url" autocomplete="url" placeholder="e.g. yourcompany.com" />
       </div>
 
       <div class="err" id="formErr"></div>
@@ -157,44 +134,9 @@
   const $ = (id) => document.getElementById(id);
   const API = "https://graphmotion.onrender.com"; // same backend as ai.html
   const abs = (u) => (u && u.charAt(0) === "/" ? API + u : u);
-  const MAX_IMAGES = 6;
-  let logoData = null, images = [], timer = null, busy = false, currentId = null;
+  let timer = null, busy = false, currentId = null;
 
   ["details", "focus", "notes"].forEach((k) => $(k).addEventListener("input", () => { $(k + "N").textContent = $(k).value.length; }));
-
-  // ---------- images: downscaled in the browser so a phone photo never becomes a 12 MB upload
-  function toDataUrl(file, maxEdge, type, q) {
-    return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file), img = new Image();
-      img.onload = () => {
-        const k = Math.min(1, maxEdge / Math.max(img.naturalWidth, img.naturalHeight)), c = document.createElement("canvas");
-        c.width = Math.max(1, Math.round(img.naturalWidth * k)); c.height = Math.max(1, Math.round(img.naturalHeight * k));
-        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
-        resolve(c.toDataURL(type, q));
-      };
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Couldn't read \"" + file.name + "\" - use a JPG, PNG or WebP."));  };
-      img.src = url;
-    });
-  }
-  function thumb(src, cls, onRemove) {
-    const d = document.createElement("div"); d.className = "thumb " + (cls || "");
-    d.innerHTML = '<img alt=""><button type="button" aria-label="Remove">×</button>'; d.firstChild.src = src; d.lastChild.addEventListener("click", onRemove);
-    return d;
-  }
-  function drawLogo() { $("logoThumb").innerHTML = ""; if (logoData) $("logoThumb").appendChild(thumb(logoData, "logo", () => { logoData = null; $("logoIn").value = ""; drawLogo(); })); }
-  function drawImages() { $("imgThumbs").innerHTML = ""; images.forEach((s, k) => $("imgThumbs").appendChild(thumb(s, "", () => { images.splice(k, 1); drawImages(); }))); }
-  $("logoIn").addEventListener("change", async () => {
-    const f = $("logoIn").files[0]; if (!f) return;
-    try { logoData = await toDataUrl(f, 512, "image/png"); drawLogo(); } catch (e) { showFormErr(e.message); }
-  });
-  $("imgIn").addEventListener("change", async () => {
-    try {
-      const picked = [...$("imgIn").files], room = MAX_IMAGES - images.length;
-      for (const f of picked.slice(0, room)) images.push(await toDataUrl(f, 1280, "image/jpeg", 0.86));
-      if (picked.length > room) showFormErr("Only " + MAX_IMAGES + " images are used - the extra ones were skipped.");
-    } catch (e) { showFormErr(e.message); }
-    $("imgIn").value = ""; drawImages();
-  });
 
   // ---------- server connection
   async function ping() {
@@ -226,7 +168,7 @@
     try {
       const r = await fetch(API + "/api/generate-video", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company: $("company").value.trim(), details: $("details").value.trim(), focus: $("focus").value.trim(), notes: $("notes").value.trim(), logo: logoData, images }),
+        body: JSON.stringify({ company: $("company").value.trim(), details: $("details").value.trim(), focus: $("focus").value.trim(), notes: $("notes").value.trim(), website: $("website").value.trim() }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || "Couldn't start - please try again.");
