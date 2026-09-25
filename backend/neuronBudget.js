@@ -18,7 +18,7 @@ const FILE = path.join(__dirname, '.neuron_usage.json');
 const DAILY_CEILING = +process.env.NEURON_DAILY_CEILING || 9000;   // hard stop well under the 10,000 allowance
 const PER_RUN_CEILING = +process.env.NEURON_RUN_CEILING || 2300;   // a one-world film is 6 klein pictures (~1440) + the script (~170); the old six-schnell film was ~730    // ONE FILM MAY NEVER COST MORE THAN THIS (estimated, then settled to the measured figure)
 const SAFETY = 1.15;
-const RATE = { '70b': [26668, 204805], mistral: [31909, 50455], '8b': [4119, 34868] };
+const RATE = { '70b': [26668, 204805], mistral: [31909, 50455], '8b': [4119, 34868], oss: [31819, 68182] };   // oss = gpt-oss-120b: $0.35 / $0.75 per M tokens at $0.000011 per neuron
 
 const day = () => new Date().toISOString().slice(0, 10);
 const who = () => crypto.createHash('sha1').update(String(process.env.CLOUDFLARE_ACCOUNT_ID || '')).digest('hex').slice(0, 10);
@@ -26,7 +26,7 @@ const load = () => { try { return JSON.parse(fs.readFileSync(FILE, 'utf8')); } c
 const save = (o) => { try { fs.writeFileSync(FILE, JSON.stringify(o)); } catch (_) { /* best effort */ } };
 
 const estText = (model, inChars, outTokens) => {
-  const r = /70b/i.test(model) ? RATE['70b'] : /mistral/i.test(model) ? RATE.mistral : RATE['8b'];
+  const r = /gpt-oss/i.test(model) ? RATE.oss : /70b/i.test(model) ? RATE['70b'] : /mistral/i.test(model) ? RATE.mistral : RATE['8b'];
   return Math.ceil(((inChars / 3.2) * r[0] + outTokens * r[1]) / 1e6 * SAFETY);
 };
 const FLUX_STEPS = +process.env.FLUX_STEPS || 2;
@@ -48,7 +48,7 @@ const resetRun = () => { runSpent = 0; };
 /** After a text call: replace the estimate with what the API says it really used (tokens in / out). */
 function settleText(model, estimated, usage, what) {
   if (!usage) return;
-  const r = /70b/i.test(model) ? RATE['70b'] : /mistral/i.test(model) ? RATE.mistral : RATE['8b'];
+  const r = /gpt-oss/i.test(model) ? RATE.oss : /70b/i.test(model) ? RATE['70b'] : /mistral/i.test(model) ? RATE.mistral : RATE['8b'];
   const real = Math.ceil(((usage.prompt_tokens || 0) * r[0] + (usage.completion_tokens || 0) * r[1]) / 1e6);
   const diff = estimated - real, u = load(), k = who();
   if (u[k]) { u[k].n = Math.max(0, u[k].n - diff); save(u); }

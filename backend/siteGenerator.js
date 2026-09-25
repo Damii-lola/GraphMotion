@@ -26,7 +26,9 @@ const MOVIE = process.env.MOVIE === '1' || (process.env.MOVIE !== '0' && (!!proc
 const movieOn = () => MOVIE && videoGen.available();            // a notebook worker that is not running simply means: pictures joined by dives, as before
 const videoGen = require('./videoGen');
 const WORLD = process.env.IMAGE_ENGINE !== 'flux';   // default: ONE WORLD, six shots (FLUX.2 klein generate + edit); IMAGE_ENGINE=flux keeps the old six-separate-pictures path
-const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/mistralai/mistral-small-3.1-24b-instruct'; // ~4x cheaper per token than the 70B; one call per ad
+const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/openai/gpt-oss-120b';                 // a much stronger writer than the 24B, same account, ~200 neurons per script
+const SPEC_FALLBACK = '@cf/mistralai/mistral-small-3.1-24b-instruct';   // used if the big model errors
+const OSS = /gpt-oss/i.test(SPEC_MODEL); // ~4x cheaper per token than the 70B; one call per ad
 const SCENE_SECONDS = 3.5;
 
 // ------------------------------------------------------------- colour helpers (WCAG)
@@ -331,15 +333,16 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   let spec = given;
   if (!spec) {
     say('Writing the ad script', 0.05);
-    let raw = null, lastErr = null, keep = 7800, outEst = 1400, maxTok = movieOn() ? 1900 : 2600, temp = 0.8;   // a keyframe script is ~1000-1200 tokens: a runaway answer is cut off early (and cheaply)
+    let scriptModel = SPEC_MODEL;
+    let raw = null, lastErr = null, keep = 7800, outEst = OSS ? 2100 : 1400, maxTok = movieOn() ? 1900 : 2600, temp = 0.8;   // a keyframe script is ~1000-1200 tokens: a runaway answer is cut off early (and cheaply)
     // Up to 3 tries (the first + 2 retries). When the film would not fit the per-film neuron ceiling the guard refuses BEFORE spending anything,
     // and each retry then asks for a smaller job (shorter brief, tighter answer) instead of giving up.
     let useExt = scriptClient.enabled();                          // the stronger writer first; any failure drops to Cloudflare for the remaining tries
     for (let attempt = 0; attempt < 3 && !raw; attempt++) {
       try {
-        let prompt = briefPrompt(text.slice(0, keep), movieOn()), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst);
+        let prompt = briefPrompt(text.slice(0, keep), movieOn()), est = neurons.estText(scriptModel, prompt.length + SYSTEM.length, outEst);
         while (brandRefs.length > 1 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) brandRefs.pop();   // keep the logo (first), give up extra photos before anything else
-        while (keep > 1200 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep), movieOn()); est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst); }
+        while (keep > 1200 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep), movieOn()); est = neurons.estText(scriptModel, prompt.length + SYSTEM.length, outEst); }
         let txt = null;
         if (useExt) {
           try { txt = await scriptClient.chatJson(SYSTEM, prompt, { maxTokens: 2800, temperature: temp }); console.log('[script] written by ' + scriptClient.label()); raw = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)); continue; }
@@ -347,10 +350,11 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
         }
         neurons.charge(est, 'ad script', reserveNow()); // refuses BEFORE spending if the ad could not be finished inside its ceiling
         let usage = null;
-        txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: maxTok, temperature: temp, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
-        neurons.settleText(SPEC_MODEL, est, usage, 'ad script');
+        txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: maxTok, temperature: temp, model: scriptModel, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
+        neurons.settleText(scriptModel, est, usage, 'ad script');
         raw = typeof txt === 'string' ? JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)) : txt;
       } catch (e) {
+        if (OSS && scriptModel === SPEC_MODEL && !/Neuron guard|429/i.test(String(e && e.message))) { scriptModel = SPEC_FALLBACK; outEst = 1400; maxTok = 2600; console.warn('[script] ' + SPEC_MODEL + ' failed; the remaining tries use ' + SPEC_FALLBACK); }
         lastErr = e; console.warn(`[script] try ${attempt + 1} failed: ${String(e.message).slice(0, 200)}`);
         if (/truncated|max_tokens|JSON/i.test(String(e && e.message))) temp = Math.max(0.4, temp - 0.2);   // a runaway or broken answer: retry calmer
         if (/Neuron guard/i.test(String(e && e.message))) {   // over the ceiling: nothing was spent, so try again with a smaller job

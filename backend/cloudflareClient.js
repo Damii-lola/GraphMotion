@@ -67,6 +67,8 @@ async function callCloudflareRaw(systemPrompt, userMessage, { jsonMode = true, m
         // see this file's own top doc comment for the direct before/
         // after test that found this.
         ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+        // gpt-oss is a reasoning model: its thinking counts as output tokens. Low effort keeps the thinking short so the JSON answer is never cut off.
+        ...(/gpt-oss/i.test(model) ? { reasoning_effort: 'low' } : {}),
       }),
     });
   } catch (err) {
