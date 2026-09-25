@@ -14,14 +14,14 @@ const path = require('path');
 
 const NODE_FLOW = `MOTION-GRAPHICS FILM (the most important part). The picture of this ad is NOT photographs. It is a designed 3D motion-graphics film in the style of the best product-launch videos and scroll-driven 3D websites: every scene is a colourful gradient WORLD with ONE hero object - the NODE - floating in front of it. No photos, no people, no rooms, no offices.
 (1) THE NODES. Write 3 nodes (ids 1, 2 and 3; node 0 is the company's own logo mark, which the code makes). Each node is ONE simple, iconic, instantly recognisable object described for a 3D render: what it is, its material (polished metal, tinted glass, glossy coloured plastic) and a RICH SATURATED colour that will glow against a near-black stage - never white, grey or black. It must be about THIS company: its product itself, what it makes or does, or a bold physical symbol of its promise (a rocket for launching, a key for access, a lightning bolt for speed, a sprout for growth, a shield for safety, a coin for saving, a paper plane for sending). Never a generic laptop, phone, desk, person or office. NO text, letters, numbers or logos on a node, and never a whole scene: one object, floating.
-(2) THE WORLDS. Write 3 backgrounds {"a": near-black #RRGGBB, "b": dark tone #RRGGBB, "c": the colour of ONE luminous glow behind the hero #RRGGBB (bright, saturated)}. Restrained and premium like a product reveal: a near-black stage lit by one coloured glow, never a rainbow or a wash of colour. Use three different glow colours (the brand's own and its neighbours on the colour wheel) so a change of world is felt.
+(2) THE WORLDS. Write 3 background PICTURES that an image AI will paint behind the hero: {"prompt": ..., "a": near-black #RRGGBB, "b": dark tone #RRGGBB, "c": a glow colour #RRGGBB}. Each "prompt" describes a wide, atmospheric, cinematic ENVIRONMENT that belongs to THIS company's own world and to the mood of the scenes that use it (for a coffee brand a misty roastery at dawn; for an app builder a softly lit creative studio with glowing screens far out of focus; for a shoe brand a dawn trail through trees; for a bank a calm glass lobby at dusk), 25-35 words: the place, the light, the colour palette, the mood. Deep soft focus, no people, NO text or signs, nothing sharp or specific in the centre (the hero object sits there). Three clearly different places or moods, so a change of world is felt. a, b, c are fallback colours in the same palette.
 (3) SIX SCENES, each with a node ("node": 0-3) and a world ("bg": 0-2). The hook uses node 0 or your most striking node. Across the 5 transitions use ALL THREE kinds of change: SAME node in a NEW world (the node glides across the frame while the world turns to a wireframe and re-forms); SAME world with a DIFFERENT node (the node spins 720 degrees and turns into the next node through a wireframe); EVERYTHING different (the whole frame morphs). Never the same kind twice in a row. Order the nodes so they tell the story: the problem, the product, the payoff.
 (4) PLACEMENT. Each scene gives "s" (the node's size as a fraction of the frame width, 0.45-0.75; the hook and the end card are the biggest) and "r" (a tilt in degrees, -14 to 14). The caption sits at "pos" and the code keeps the node clear of it.`;
 
 const NODE_KEYS = `Return ONE JSON object with these keys:
 "brand", "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
 "nodes": EXACTLY 3 objects {"name": "the object in 2-3 words, e.g. paper plane", "prompt": "THE OBJECT FIRST, then material and colour, max 22 words, e.g. a paper plane, polished chrome with a blue tint"},
-"bgs": EXACTLY 3 objects {"a","b","c"} (see THE WORLDS),
+"bgs": EXACTLY 3 objects {"prompt","a","b","c"} (see THE WORLDS),
 "scenes": EXACTLY 6 objects, each: "id", "tag" (a 1-3 word LABEL pill like "POV", "Real talk", "The proof" - a label, not the start of a sentence, never ending in "..."; "" for cta), "headline" (an ARRAY of 2-6 word strings, ONE WORD PER ELEMENT, e.g. ["Your","*idea*","starts","|","to","glow"]; a lone "|" element is a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 8 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "node" (0-3), "bg" (0-2), "s", "r", "pos" ("bm" bottom centre, "bl" bottom left, "br" bottom right, "tl" top left, "tm" top centre - never the middle; vary it), "tone" ("dark"),
 "transitions": EXACTLY 5 objects, each just {"sfx": a whoosh id from SOUND}@@SND@@.
 Output the JSON object only.`;
@@ -45,6 +45,7 @@ function applyNodePlan(spec, S) {
   const bgsIn = Array.isArray(S.bgs) ? S.bgs : [];
   spec.bgs = [0, 1, 2].map((i) => {
     const b = bgsIn[i] && typeof bgsIn[i] === 'object' ? bgsIn[i] : {};
+    const bgPrompt = String(b.prompt || '').replace(/["<>]/g, '').slice(0, 320);
     // three worlds always exist and are always usable: a dark base, a mid tone, a bright light - derived from the accent when the AI gave nothing valid
     const hue = (k) => mixC(acc, k === 0 ? [255, 255, 255] : [0, 0, 0], k === 0 ? 0.0 : 0.0);
     let a = isHex(b.a) ? rgb(fixHex(b.a)) : mixC(acc, [8, 8, 16], 0.82 - i * 0.05);
@@ -53,7 +54,7 @@ function applyNodePlan(spec, S) {
     a = mixC(a, [5, 6, 12], lum(a) > 0.09 ? 0.86 : 0.55);              // a near-black base: the hero is the light, the stage is dark (captions read, the object pops)
     m = mixC(m, [8, 10, 20], lum(m) > 0.16 ? 0.72 : 0.4);
     if (lum(c) < 0.4) c = mixC(c, [255, 255, 255], 0.4);            // the glow is bright, or it is not a light
-    return { a: toHex(a), b: toHex(m), c: toHex(c) };
+    return { a: toHex(a), b: toHex(m), c: toHex(c), prompt: bgPrompt };
   });
   // three glow colours that really differ: if two are within ~35 degrees of hue, the code rotates them apart (a change of world must be SEEN)
   const hueOf = (c) => { const [r, g, b] = c.map((v) => v / 255), mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; if (!d) return 0; const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; return (h * 60 + 360) % 360; };
@@ -162,6 +163,7 @@ async function cutout(buf, tol = 70) {
   return { buf: out.toBuffer('image/png'), aspect: cw / ch };
 }
 
+const BG_LOOK = 'cinematic wide atmospheric background photograph, vertical 9:16 composition, deep soft focus and shallow depth of field, moody premium lighting, rich colour, no people, no text, no letters, no signs, no logos, nothing sharp in the centre, calm uncluttered space in the middle';
 const NODE_LOOK = 'single object, centered, floating in the air, premium 3D render, dramatic studio lighting with a bright rim light, rich saturated colour or polished metal or glass with colour, high contrast, NOT white and NOT grey and NOT green, isolated on a plain flat pure bright green chroma-key background (#00ff00), no shadow, no ground, no text, no letters, no logo';
 
-module.exports = { NODE_FLOW, NODE_KEYS, applyNodePlan, brandBadge, proceduralNode, cutout, NODE_LOOK };
+module.exports = { BG_LOOK, NODE_FLOW, NODE_KEYS, applyNodePlan, brandBadge, proceduralNode, cutout, NODE_LOOK };

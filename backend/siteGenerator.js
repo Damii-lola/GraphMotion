@@ -336,7 +336,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   const brandRefs = [logo && logo.length ? logo : null, ...userImgs.slice(1)].filter(Boolean).slice(0, 3), refCost = () => brandRefs.length * 13;   // shrinks below if the film would not fit the neuron ceiling
   const siteImg = company && company.siteImage && company.siteImage.length ? company.siteImage : null;
   const heroCost = userImgs[0] ? 0 : logo && logo.length || siteImg ? neurons.estKlein(true) : neurons.estKlein(false);
-  const reserveNow = () => (given ? 0 : nodeOn() ? 2 * neurons.estKlein(false) : movieOn() ? IDS.length * neurons.estKlein(true) : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
+  const reserveNow = () => (given ? 0 : nodeOn() ? 4 * neurons.estKlein(false) : movieOn() ? IDS.length * neurons.estKlein(true) : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
   let spec = given;
   if (!spec) {
     say('Writing the ad script', 0.05);
@@ -407,8 +407,20 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
         write(i, buf);
       };
       const used = new Set(spec.scenes.map((sc) => sc.node));                              // only the nodes some scene actually shows are painted (and paid for)
+      // the three world PICTURES (AI-painted, about this company's world); a picture that fails or is refused simply leaves that world as the coloured gradient
+      const usedBg = new Set(spec.scenes.map((sc) => sc.bg));
+      const makeBg = async (i) => {
+        const p = String(spec.bgs[i].prompt || '').trim(); if (!p) return;
+        neurons.charge(neurons.estKlein(false), `world ${i + 1}`);
+        const tries = [`${p}, ${nodeFilm.BG_LOOK}`, `${p.split(/[,.;]/)[0]}, ${nodeFilm.BG_LOOK}`];
+        for (let t = 0; t < tries.length; t++) {
+          try { const png = await klein.generate(tries[t]); const f = path.join(tmp, `bg${i}.png`); fs.writeFileSync(f, png); await toWebp(f, path.join(imgDir, `bg${i}.webp`)); spec.bgs[i].file = `images/bg${i}.webp`; return; }
+          catch (e) { console.warn(`[world] ${i + 1} attempt ${t + 1} failed: ${String(e.message).slice(0, 110)}`); }
+        }
+      };
+      const bgJobs = [0, 1, 2].map((i) => gate(() => (usedBg.has(i) ? makeBg(i) : Promise.resolve())));
       const jobs = [1, 2, 3].map((i) => gate(() => (used.has(i) ? makeNode(i) : Promise.resolve(write(i, nodeFilm.proceduralNode(i - 1, spec.theme.accent, spec.seed % 3))))));
-      await Promise.all(jobs);
+      await Promise.all([...jobs, ...bgJobs]);
       spec.nodes = out;
       nodeDone = true;
     }
