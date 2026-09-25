@@ -180,23 +180,24 @@ window.SITE = /*__SITE_JSON__*/null;
     const t0 = first ? 0 : MV ? i + 0.16 : i - 0.14;   // the words start rising while the camera is still arriving, so the text is part of the same motion (not a separate event after it)
 
     // ONE continuous wave: every word rises out of a soft blur, overlapping its neighbours, decelerating into place (power4.out: fast start, long soft settle)
-    const wave = (words, start, dur, stag, rise) => {
+    const wave = (words, start, dur, stag, rise, pre) => {
       if (words.length) {                               // ONE soft blur over the whole line (a single layer, cheap), clearing as the last word lands; removed entirely once it has
         const el = words[0].closest(".hl, .sub"), end = start + (words.length - 1) * stag + dur;
-        master.fromTo(el, { filter: "blur(7px)" }, { filter: "blur(0px)", duration: (end - start) * 0.8, ease: "power2.out" }, start);
+        master.fromTo(el, { filter: pre ? "blur(1.5px)" : "blur(7px)" }, { filter: "blur(0px)", duration: (end - start) * 0.8, ease: "power2.out" }, start);
         master.set(el, { filter: "none" }, end + 0.001);
       }
       words.forEach((w, n) => {
         const at = start + n * stag;
-        master.fromTo(w, { opacity: 0, yPercent: rise, scale: 0.94, rotation: n % 2 ? 2.2 : -2.2 }, { opacity: 1, yPercent: 0, scale: 1, rotation: 0, duration: dur, ease: "power4.out" }, at);
+        // the hook is already on screen in the very first frame (a thumbnail with no words on it does not stop anyone): its words only settle into place
+        master.fromTo(w, pre ? { opacity: 0.94, yPercent: rise * 0.12, scale: 0.985, rotation: 0 } : { opacity: 0, yPercent: rise, scale: 0.94, rotation: n % 2 ? 2.2 : -2.2 }, { opacity: 1, yPercent: 0, scale: 1, rotation: 0, duration: dur, ease: "power4.out" }, at);
         if (w.parentElement.classList.contains("hi")) {   // the accent block is wiped in behind the word once it has landed, and the ink flips to the block's readable colour
           master.fromTo(w, { backgroundSize: "0% 100%" }, { backgroundSize: "100% 100%", color: INK_ON_ACCENT, duration: dur * 0.9, ease: "power3.out" }, at + dur * 0.45);
         }
       });
     };
-    if (tag) master.fromTo(tag, { opacity: 0, y: 14, filter: "blur(5px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.09, ease: "power3.out" }, t0);
+    if (tag) master.fromTo(tag, first ? { opacity: 1, y: 2, filter: "blur(0px)" } : { opacity: 0, y: 14, filter: "blur(5px)" }, { opacity: 1, y: 0, filter: "blur(0px)", duration: 0.09, ease: "power3.out" }, t0);
     if (lg) master.fromTo(lg, { opacity: 0, y: 24, scale: 0.86, filter: "blur(6px)" }, { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", duration: 0.16, ease: "power4.out" }, t0);
-    wave(hlw, t0 + (tag ? 0.03 : lg ? 0.05 : 0), 0.1, first ? 0.017 : 0.022, 42);
+    wave(hlw, t0 + (tag ? 0.03 : lg ? 0.05 : 0), 0.1, first ? 0.017 : 0.022, 42, first);
     if (subw.length) wave(subw, i + 0.1, 0.08, 0.011, 30);
     if (stk) master.fromTo(stk, { opacity: 0, scale: 0.6, rotation: -14, y: 18 }, { opacity: 1, scale: 1, rotation: -3, y: 0, duration: 0.16, ease: "back.out(1.6)" }, i + 0.24);
     if (btn) master.fromTo(btn, { opacity: 0, y: 26, scale: 0.88, filter: "blur(5px)" }, { opacity: 1, y: 0, scale: 1, filter: "blur(0px)", duration: 0.14, ease: "power4.out" }, i + 0.22);

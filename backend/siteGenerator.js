@@ -280,9 +280,20 @@ async function adAudio(spec, dir) {
   if (riser) ev.push({ file: at(riser), at: Math.max(0, end - riser.seconds), gain: G.riser });
   if (hit) ev.push({ file: at(hit), at: end + 0.02, gain: G.impact });
   if (spark) ev.push({ file: at(spark), at: end + 1.1, gain: G.sparkle });
+  // a human voice says the hook and the closing line: a spoken hook stops a scroll far more often than text alone (free Edge neural voice; skipped quietly if unavailable)
+  const voiceFiles = [];
+  if (process.env.VOICE !== '0') {
+    try {
+      const { generateSpeech } = require('./ttsGen');
+      const say = (sc) => String(sc.headline || '').replace(/[*|]/g, ' ').replace(/s+/g, ' ').trim();
+      const lines = [{ text: say(spec.scenes[0]), at: 0.12 }, { text: say(spec.scenes[n - 1]), at: (n - 1) * S + 0.35 }].filter((l) => l.text);
+      const clips = await Promise.all(lines.map((l) => generateSpeech(l.text.replace(/([^.!?])$/, '$1.')).catch(() => null)));
+      lines.forEach((l, i) => { if (!clips[i] || clips[i].length < 800) return; const f = adMix.tmpFile('.mp3'); fs.writeFileSync(f, clips[i]); voiceFiles.push(f); ev.push({ file: f, at: l.at, gain: 1.0 }); });
+    } catch (e) { console.warn('[ad] voice-over skipped:', e.message); }
+  }
   const bed = adMix.tmpFile('.wav'), out = path.join(dir, 'audio.wav');
   fs.writeFileSync(bed, synth({ duration: n * S + 1, cues: [], music }));
-  try { await adMix.mix({ bedWav: bed, events: ev, outWav: out, end }); } finally { fs.rmSync(bed, { force: true }); }
+  try { await adMix.mix({ bedWav: bed, events: ev, outWav: out, end }); } finally { fs.rmSync(bed, { force: true }); voiceFiles.forEach((f) => fs.rmSync(f, { force: true })); }
   return 'audio.wav';
 }
 
