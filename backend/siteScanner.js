@@ -45,7 +45,24 @@ async function scan(input) {
   for (const m of body.matchAll(/<(p|li)[^>]*>([\s\S]*?)<\/\1>/gi)) { const t = clean(m[2]); if (t.length >= 40 && t.length <= 320) add(t, 40); if (parts.length > 30) break; }
   let text = ''; for (const p of parts) { if ((text + ' | ' + p).length > MAX_CHARS) break; text += (text ? ' | ' : '') + p; }
   if (text.length < 20) throw new Error('nothing readable on that page (it may need JavaScript to show its content)');
-  return { url, host: new URL(url).hostname.replace(/^www\./, ''), text };
+  let image = null;                                                          // the site's own share picture: the real product / brand look, used as a reference by the picture model
+  try { const u = meta('og:image') || meta('twitter:image') || meta('twitter:image:src'); if (u) image = await getImage(new URL(u, url).href); } catch (_) { /* optional */ }
+  return { url, host: new URL(url).hostname.replace(/^www\./, ''), text, image };
+}
+
+/** Download one picture (same public-address rule and redirect checks, 6 MB cap, must really be an image). */
+async function getImage(start) {
+  let url = start;
+  for (let hop = 0; hop < 3; hop++) {
+    const safe = await resolveTarget(url);
+    const r = await fetch(safe, { redirect: 'manual', timeout: TIMEOUT_MS, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SmartClipsBot/1.0)', Accept: 'image/*' } });
+    if (r.status >= 300 && r.status < 400 && r.headers.get('location')) { url = new URL(r.headers.get('location'), safe).href; continue; }
+    if (!r.ok || !/^image\/(png|jpe?g|webp)/i.test(r.headers.get('content-type') || '')) return null;
+    const chunks = []; let n = 0;
+    for await (const c of r.body) { chunks.push(c); n += c.length; if (n > 6 * 1024 * 1024) return null; }
+    return Buffer.concat(chunks);
+  }
+  return null;
 }
 
 module.exports = { scan };

@@ -74,16 +74,16 @@ function register(app, { siteVideo }) {
     try {
       if (j.cancelled) throw new Error('cancelled');
       const dir = store.dirFor(j.id);
-      let result, siteText = '', siteHost = '';
+      let result, siteText = '', siteHost = '', siteImage = null;
       if (input.website) {                               // optional: read the company's own site so the ad is written from real facts
         j.genStage = 'Reading your website'; j.stageAt = Date.now();
-        try { const r = await scanner.scan(input.website); siteText = r.text; siteHost = r.host; console.log(`[generate-video] job ${j.id}: read ${r.host} (${r.text.length} chars)`); }
+        try { const r = await scanner.scan(input.website); siteText = r.text; siteHost = r.host; siteImage = r.image; console.log(`[generate-video] job ${j.id}: read ${r.host} (${r.text.length} chars)`); }
         catch (e) { console.warn(`[generate-video] job ${j.id}: could not read the website (${e.message}) - continuing without it`); }
       }
       if (process.env.GENERATE_MOCK === '1') result = await require('./mockGenerate')(input, dir, seen);   // local testing only: no Cloudflare
       else {
         result = await generateSite({
-          company: { name: input.company, details: input.details, focus: input.focus, notes: input.notes, siteText, siteHost }, outDir: dir,
+          company: { name: input.company, details: input.details, focus: input.focus, notes: input.notes, siteText, siteHost, siteImage }, outDir: dir,
           onProgress: seen,
         });
       }

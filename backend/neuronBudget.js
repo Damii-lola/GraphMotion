@@ -15,8 +15,8 @@ const path = require('path');
 const crypto = require('crypto');
 
 const FILE = path.join(__dirname, '.neuron_usage.json');
-const DAILY_CEILING = +process.env.NEURON_DAILY_CEILING || 6000;   // hard stop well under the 10,000 allowance
-const PER_RUN_CEILING = +process.env.NEURON_RUN_CEILING || 745;    // ONE FILM MAY NEVER COST MORE THAN THIS (estimated, then settled to the measured figure)
+const DAILY_CEILING = +process.env.NEURON_DAILY_CEILING || 9000;   // hard stop well under the 10,000 allowance
+const PER_RUN_CEILING = +process.env.NEURON_RUN_CEILING || 1750;   // a one-world film is 6 klein pictures (~1440) + the script (~170); the old six-schnell film was ~730    // ONE FILM MAY NEVER COST MORE THAN THIS (estimated, then settled to the measured figure)
 const SAFETY = 1.15;
 const RATE = { '70b': [26668, 204805], mistral: [31909, 50455], '8b': [4119, 34868] };
 
@@ -56,7 +56,8 @@ function settleText(model, estimated, usage, what) {
   console.log(`[neurons] ${what}: measured ${real} (${usage.prompt_tokens} in / ${usage.completion_tokens} out tokens); run now ~${runSpent}`);
 }
 // FLUX.2 [klein]: billed per 512-px tile - output $0.000287/tile, each input (reference) tile $0.000059; 1 neuron = $0.000011. Rounded UP with the same safety factor.
-const KLEIN_TILES = Math.ceil((+process.env.KLEIN_W || 512) / 512) * Math.ceil((+process.env.KLEIN_H || 1024) / 512);
-const estKlein = (isEdit) => Math.ceil(KLEIN_TILES * (0.000287 + (isEdit ? 0.000059 : 0)) / 0.000011 * SAFETY);
+// MEASURED, not the price list: over ~40 klein pictures the dashboard rose ~230 neurons per picture (generate or edit, whatever the size tested), about 3x what the per-tile price implies.
+const KLEIN_PER_IMAGE = +process.env.KLEIN_NEURONS || 240;
+const estKlein = (isEdit) => KLEIN_PER_IMAGE;
 const runTotal = () => runSpent;
 module.exports = { estKlein, FLUX_STEPS, charge, settleText, estText, estImage, used, resetRun, runTotal, DAILY_CEILING, PER_RUN_CEILING };

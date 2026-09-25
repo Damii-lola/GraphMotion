@@ -6,7 +6,7 @@
  * The API takes multipart/form-data (prompt, width, height, input_image_0..3) and returns { result: { image: base64 } }.
  */
 const MODEL = process.env.KLEIN_MODEL || '@cf/black-forest-labs/flux-2-klein-4b';
-const W = +process.env.KLEIN_W || 512, H = +process.env.KLEIN_H || 1024;   // 2 x 512-px tiles per picture: 768x1344 is 6 tiles and costs ~3x
+const W = +process.env.KLEIN_W || 512, H = +process.env.KLEIN_H || 1024;   // billing turned out to be per picture, not per tile (see neuronBudget.js)
 
 async function runOnce(fields, files) {
   const acct = process.env.CLOUDFLARE_ACCOUNT_ID, tok = process.env.CLOUDFLARE_API_TOKEN;
@@ -25,7 +25,7 @@ async function run(fields, files) {
   let last;
   for (let k = 0; k < 3; k++) {
     try { return await runOnce(fields, files); }
-    catch (e) { last = e; if (/8007|NSFW|4006|429|allocation|Neuron guard|not set/i.test(String(e.message))) throw e; console.warn(`[klein] attempt ${k + 1} failed: ${String(e.message).slice(0, 160)}`); await new Promise((r) => setTimeout(r, 1500 * (k + 1))); }
+    catch (e) { last = e; if (/8007|NSFW|flagged|4006|429|allocation|Neuron guard|not set/i.test(String(e.message))) throw e; console.warn(`[klein] attempt ${k + 1} failed: ${String(e.message).slice(0, 160)}`); await new Promise((r) => setTimeout(r, 1500 * (k + 1))); }
   }
   throw last;
 }
