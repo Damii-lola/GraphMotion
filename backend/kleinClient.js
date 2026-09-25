@@ -31,7 +31,7 @@ async function run(fields, files) {
 }
 
 /** shot 1: text -> picture */
-const generate = (prompt, o = {}) => run({ prompt: String(prompt).slice(0, 1800), width: o.width || W, height: o.height || H });
+const generate = (prompt) => run({ prompt: String(prompt).slice(0, 1800), width: W, height: H });
 /** every later shot: an edit of a reference picture (the previous shot, or the client's own photo) */
 /** reference = the picture to edit; extra = up to 3 more reference images (the client's logo / product photos) so the brand stays in every shot */
 const edit = (prompt, reference, extra = []) => { const files = { input_image_0: reference }; extra.slice(0, 3).forEach((b, k) => { files['input_image_' + (k + 1)] = b; }); return run({ prompt: String(prompt).slice(0, 1800), width: W, height: H }, files); };
