@@ -8,7 +8,7 @@
 const MODEL = process.env.KLEIN_MODEL || '@cf/black-forest-labs/flux-2-klein-4b';
 const W = +process.env.KLEIN_W || 512, H = +process.env.KLEIN_H || 1024;   // 2 x 512-px tiles per picture: 768x1344 is 6 tiles and costs ~3x
 
-async function run(fields, files) {
+async function runOnce(fields, files) {
   const acct = process.env.CLOUDFLARE_ACCOUNT_ID, tok = process.env.CLOUDFLARE_API_TOKEN;
   if (!acct || !tok) throw new Error('CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN not set');
   const fd = new FormData();
@@ -20,9 +20,20 @@ async function run(fields, files) {
   return Buffer.from(j.result.image, 'base64');
 }
 
+/** A hiccup (network, 5xx, busy) is retried twice; a safety-filter refusal or a quota error is not, those are answers. */
+async function run(fields, files) {
+  let last;
+  for (let k = 0; k < 3; k++) {
+    try { return await runOnce(fields, files); }
+    catch (e) { last = e; if (/8007|NSFW|4006|429|allocation|Neuron guard|not set/i.test(String(e.message))) throw e; console.warn(`[klein] attempt ${k + 1} failed: ${String(e.message).slice(0, 160)}`); await new Promise((r) => setTimeout(r, 1500 * (k + 1))); }
+  }
+  throw last;
+}
+
 /** shot 1: text -> picture */
 const generate = (prompt) => run({ prompt: String(prompt).slice(0, 1800), width: W, height: H });
 /** every later shot: an edit of a reference picture (the previous shot, or the client's own photo) */
-const edit = (prompt, reference) => run({ prompt: String(prompt).slice(0, 1800), width: W, height: H }, { input_image_0: reference });
+/** reference = the picture to edit; extra = up to 3 more reference images (the client's logo / product photos) so the brand stays in every shot */
+const edit = (prompt, reference, extra = []) => { const files = { input_image_0: reference }; extra.slice(0, 3).forEach((b, k) => { files['input_image_' + (k + 1)] = b; }); return run({ prompt: String(prompt).slice(0, 1800), width: W, height: H }, files); };
 
 module.exports = { generate, edit, W, H, MODEL };

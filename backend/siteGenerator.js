@@ -80,14 +80,14 @@ CRAFT RULES (a human creative director will judge the result):
 - Copy: concrete, human, a little witty, in the client's own words and voice. Banned: "love us", "so will you", "game-changer", "revolutionary", "next level", "fast-growing", "trusted by", "unlock", "supercharge", "seamless", and any statistic that is not written in the brief.
 
 THE FLOW (the most important part). The ad is ONE continuous camera move through six images, never six slides with effects between them. Study how the best scroll-driven 3D-website shorts do it: an aeroplane window fills the screen, the camera flies INTO the window, the sky outside becomes the whole screen and rushes past, and the next scene emerges out of the clouds - nothing stops, nothing cuts, the end of every scene literally becomes the beginning of the next. You control the flow with three things:
-(1) ONE WORLD, SIX SHOTS. The six pictures are six shots of ONE continuous scene in ONE place, as if a single camera filmed it - never six locations. imagePrompt of scene 1 paints the world once, richly: the place, the time of day and light, and ONE hero object that matters to THIS company. Each later imagePrompt is a director's note about only WHAT CHANGES from the previous shot: the camera move (push in to a macro detail, pull back to a wide, orbit), what the hero object DOES (it comes alive, it transforms, the light shifts) and the story beat. A picture editor keeps the same place, objects and light, so never re-describe them, never change the location and never add people, faces, crowds or offices - hands or the hero object only. Example for a note-taking app - shot 1: "a cozy wooden desk at golden hour, an open laptop with a softly glowing screen, a hand-drawn sketch of a phone on paper, a steaming mug"; shot 2: "the camera pushes in to a macro of the sketch; its pencil lines begin to glow gold"; shot 3: "the sketch comes alive as a real glowing phone with a colourful screen, sparks of light"; shot 4: "the camera pulls far back to the whole desk, the phone floating above the paper lighting the room". The point the camera dives into in scene N is what scene N+1 moves into.
+(1) ONE WORLD, SIX SHOTS. The six pictures are six shots of ONE continuous scene in ONE place, as if a single camera filmed it - never six locations. imagePrompt of scene 1 paints the world once, richly: the place, the time of day and light, and ONE hero object that IS this company's own product (or its most direct real-world stand-in: what the company sells, makes or does) - the pictures must be about THIS brand, never about generic gadgets, desks or offices. Each later imagePrompt is a director's note about only WHAT CHANGES from the previous shot: the camera move (push in to a macro detail, pull back to a wide, orbit), what the hero object DOES (it comes alive, it transforms, the light shifts) and the story beat. A picture editor keeps the same place, objects and light, so never re-describe them, never change the location and never add people, faces, crowds or offices - hands or the hero object only. Example for a note-taking app - shot 1: "a cozy wooden desk at golden hour, an open laptop with a softly glowing screen, a hand-drawn sketch of a phone on paper, a steaming mug"; shot 2: "the camera pushes in to a macro of the sketch; its pencil lines begin to glow gold"; shot 3: "the sketch comes alive as a real glowing phone with a colourful screen, sparks of light"; shot 4: "the camera pulls far back to the whole desk, the phone floating above the paper lighting the room". The point the camera dives into in scene N is what scene N+1 moves into.
 (2) EVERY SCENE HAS A CAMERA MOVE that never rests: "move": {"zoom": -0.24..0.24 (+ pushes in, - pulls out), "pan": [-0.15..0.15, -0.04..0.04], "roll": -3..3 degrees}. Vary it scene to scene.
 (3) EVERY TRANSITION is the camera diving through the current image while the next one is already opening inside it. There are 5 transitions (scene 1->2 ... 5->6) in "transitions": {"focus": [x, y] where in the frame (0..1, y from the top) the camera dives - the thing that should open: a hole, a glow, the product, "zoom": 0.3..1.8 how violently it rushes, "spin": -25..25 degrees, "blur": 0..1 motion blur, "warp": 0..1 liquid distortion of the opening's edge, "glow": 0..1 light bloom, "soft": 0.03..0.35 edge softness, "overlap": 0.28..0.5 share of the scene the dive lasts, "mask": "..." optional}. Invent each one for THIS story; never repeat the same numbers or shape twice in a row; calm luxury brands = low blur/warp/spin, aggressive brands = high.
 MASK = a GLSL float expression that shapes the opening. Variables: p (vec2: position relative to the dive point, screen height = 1, x right, y up), q (0..1 progress), t (seconds). The next image shows where the expression is NEGATIVE. Style examples (invent your own, do not copy): "length(p)-1.6*q" a circle opening; "abs(p.y)-2.0*q+0.15*sin(p.x*9.0+t*3.0)" a rippling slit widening; "length(p*vec2(1.0,0.5))-1.7*q" an ellipse; "abs(p.x)+abs(p.y)-1.9*q" a diamond. By q=1 it must cover |p|<=1.8. Allowed: p q t, numbers WITH a decimal point, + - * / ( ) . , and the functions sin cos abs length min max pow smoothstep mix clamp fract atan sqrt exp vec2. Leave "" for the plain circle.
 
 ${soundBlock()}Return ONE JSON object with these keys:
 "brand", "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "imageStyle" (6-10 words: ONE consistent photographic look), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
-"scenes": EXACTLY 6 objects, each: "id", "tag" (a 1-3 word LABEL pill like "POV", "Real talk", "The proof" - a label, not the start of a sentence, never ending in "..."; "" for cta), "headline" (2-7 words, hard limit; | for a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 32 words; scene 1 = the world and hero subject, scenes 2-6 = what changes from the previous shot: camera move, action, light; ONE subject, no text, no logos, no faces or bodies or bare skin - every image must pass a strict family-friendly safety filter), "move" (see 2), "pos" (where this scene's text sits: "mm" middle, "bm" bottom centre, "bl" bottom left, "br" bottom right - pick the spot that leaves the picture's subject clear, and vary it), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
+"scenes": EXACTLY 6 objects, each: "id", "tag" (a 1-3 word LABEL pill like "POV", "Real talk", "The proof" - a label, not the start of a sentence, never ending in "..."; "" for cta), "headline" (an ARRAY of 2-7 word strings, ONE WORD PER ELEMENT, e.g. ["Your","*idea*","starts","|","to","glow"]; a lone "|" element is a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 32 words; scene 1 = the world and hero subject, scenes 2-6 = what changes from the previous shot: camera move, action, light; ONE subject, no text, no logos, no faces or bodies or bare skin - every image must pass a strict family-friendly safety filter), "move" (see 2), "pos" (where this scene's text sits: "mm" middle, "bm" bottom centre, "bl" bottom left, "br" bottom right - pick the spot that leaves the picture's subject clear, and vary it), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
 "transitions": EXACTLY 5 objects (see 3)${adMixMenu() ? ', "sound" (see SOUND)' : ''}.
 Output the JSON object only.`;
 }
@@ -163,7 +163,7 @@ function normalizeSpec(raw, brand, opts = {}) {
     spec.scenes.push({
       id,
       tag: k === 5 ? '' : (() => { const t = clipWords(str(s.tag, '', 80).replace(/[*_()[\]<>]/g, '').replace(/[.\u2026\s]+$/g, '').trim(), 22); return IDS.includes(t.toLowerCase()) ? '' : t; })(),   // never the scene's own role name ("SOLUTION"), never markup
-      headline: cleanHeadline(s.headline || s.title, k === 5 ? `Try *${name}* today` : `*${name}*`),
+      headline: cleanHeadline(Array.isArray(s.headline) ? s.headline.map((w) => String(w)).join(' ').replace(/ \| /g, '|') : (s.headline || s.title), k === 5 ? `Try *${name}* today` : `*${name}*`),
       sub, sticker,
       imagePrompt: str(s.imagePrompt, `${name} atmosphere, ${spec.imageStyle}`, 200),
       tone, pos: TEXT_POS.includes(s.pos) ? s.pos : DEFAULT_POS[k],
@@ -290,7 +290,10 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   const userImgs = images.slice(0, IDS.length);
   const fluxCount = given ? 0 : IDS.length - userImgs.length;
   // ONE WORLD: shot 1 is generated (or is the client's own photo), the other five are edits of the previous shot
-  const imgReserve = given ? 0 : WORLD ? (userImgs.length ? 0 : neurons.estKlein(false)) + (IDS.length - 1) * neurons.estKlein(true) : fluxCount * neurons.estImage();
+  // the client's logo and product photos travel with every edit as extra references, so the BRAND is in the pictures (each extra reference costs ~13 neurons per edit)
+  const brandRefs = [logo && logo.length ? logo : null, ...userImgs.slice(1)].filter(Boolean).slice(0, 3), refCost = () => brandRefs.length * 13;   // shrinks below if the film would not fit the neuron ceiling
+  const heroCost = userImgs[0] ? 0 : logo && logo.length ? neurons.estKlein(true) : neurons.estKlein(false);
+  const reserveNow = () => (given ? 0 : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
   let spec = given;
   if (!spec) {
     say('Writing the ad script', 0.05);
@@ -300,8 +303,9 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
     for (let attempt = 0; attempt < 3 && !raw; attempt++) {
       try {
         let prompt = briefPrompt(text.slice(0, keep)), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst);
-        while (keep > 1200 && est + imgReserve + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep)); est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst); }
-        neurons.charge(est, 'ad script', imgReserve); // refuses BEFORE spending if the ad could not be finished inside its ceiling
+        while (brandRefs.length > 1 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) brandRefs.pop();   // keep the logo (first), give up extra photos before anything else
+        while (keep > 1200 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep)); est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst); }
+        neurons.charge(est, 'ad script', reserveNow()); // refuses BEFORE spending if the ad could not be finished inside its ceiling
         let usage = null;
         const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: maxTok, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
         neurons.settleText(SPEC_MODEL, est, usage, 'ad script');
@@ -342,17 +346,21 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
               say('Preparing your photo', progress); const src = path.join(tmp, 'hero.src'), dst = path.join(tmp, 'hero.png'); fs.writeFileSync(src, userImgs[0]);
               await runFfmpeg(['-i', src, '-vf', `scale=${klein.W}:${klein.H}:force_original_aspect_ratio=increase,crop=${klein.W}:${klein.H}`, dst]); buf = fs.readFileSync(dst);
             } else {
-              say('Building the world of your ad', progress); neurons.charge(neurons.estKlein(false), 'shot 1');
-              try { buf = await klein.generate(`${sc.imagePrompt}, ${spec.imageStyle}${IMAGE_SUFFIX}`); }
-              catch (e) { if (!/8007|NSFW/i.test(String(e.message))) throw e; buf = await klein.generate(`${spec.imageStyle}, a calm wholesome still life of a single simple object, soft light${IMAGE_SUFFIX}`); }
+              say('Building the world of your ad', progress);
+              const first = `${sc.imagePrompt}, ${spec.imageStyle}${IMAGE_SUFFIX}`;
+              const gen = (p) => (logo && logo.length ? klein.edit(`${p} The reference image is the company's logo: show exactly this logo, clearly and undistorted, on the main object in the scene (its screen, packaging or surface).`, logo) : klein.generate(p));
+              neurons.charge(logo && logo.length ? neurons.estKlein(true) : neurons.estKlein(false), 'shot 1');
+              try { buf = await gen(first); }
+              catch (e) { if (!/8007|NSFW/i.test(String(e.message))) throw e; buf = await gen(`${spec.imageStyle}, a calm wholesome still life of a single simple object, soft light${IMAGE_SUFFIX}`); }
             }
           } else {
-            say(`Filming shot ${k + 1} of ${spec.scenes.length}`, progress); neurons.charge(neurons.estKlein(true), `shot ${k + 1}`);
-            const ask = `Same scene: keep exactly the same place, objects, materials and lighting as the reference image. ${sc.imagePrompt}. ${spec.imageStyle}. No text, no letters, no logos.`;
-            try { buf = await klein.edit(ask, prev); }
+            say(`Filming shot ${k + 1} of ${spec.scenes.length}`, progress); neurons.charge(neurons.estKlein(true) + refCost(), `shot ${k + 1}`);
+            // the change comes FIRST and must be visible (with reference images attached the model otherwise clings to the old composition); place, objects and light stay
+            const ask = `NEW CAMERA POSITION AND FRAMING, clearly different from the first reference image: ${sc.imagePrompt}. Keep exactly the same place, objects, materials and lighting.${brandRefs.length ? " The other reference images are the company's own logo / product: show them faithfully wherever the hero object is in view." : ' No text, no letters, no logos.'} ${spec.imageStyle}.`;
+            try { buf = await klein.edit(ask, prev, brandRefs); }
             catch (e) {
               if (!/8007|NSFW/i.test(String(e.message))) throw e;
-              try { buf = await klein.edit(gentle(sc), prev); } catch (_) { buf = prev; console.warn(`[image] shot ${k + 1} refused by the safety filter twice: holding the previous shot`); }   // never fail the film over one shot
+              try { buf = await klein.edit(gentle(sc), prev, brandRefs); } catch (_) { buf = prev; console.warn(`[image] shot ${k + 1} refused by the safety filter twice: holding the previous shot`); }   // never fail the film over one shot
             }
           }
           const f = path.join(tmp, sc.id + '.in'); fs.writeFileSync(f, buf); await toWebp(f, path.join(outDir, 'images', sc.id + '.webp'));
@@ -360,7 +368,8 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
         }
         worldDone = true;
       } catch (e) {
-        if (made > 0 || /Neuron guard|daily free allocation|4006|429|cancelled/i.test(String(e.message))) throw e;   // only a model that is unavailable BEFORE anything was made falls back
+        // only a model that does not exist / is not enabled for this account falls back to the old path; a hiccup or a refusal must never silently switch to (and spend on) another engine
+        if (made > 0 || !/no such model|not found|unknown model|5007|3040|model.{0,30}(unavailable|not enabled)/i.test(String(e.message))) throw e;
         console.warn('[image] FLUX.2 klein unavailable (' + e.message + ') - falling back to separate FLUX schnell pictures');
       }
     }

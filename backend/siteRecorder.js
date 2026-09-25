@@ -36,7 +36,7 @@ const { spawn } = require('child_process');
 const ffmpegPath = require('ffmpeg-static');
 
 const SITE_BASE = (process.env.SITE_BASE || 'https://smartclips.org').replace(/\/$/, '');
-const PRESETS = { tiktok: '720x1280', reels: '720x1280', shorts: '720x1280', hd: '1080x1920', small: '540x960' };
+const PRESETS = { tiktok: '720x1280', reels: '720x1280', shorts: '720x1280', hd: '1080x1920', small: '540x960', film: '512x1024' };
 const MAX_FRAMES = +process.env.SITE_VIDEO_MAX_FRAMES || 4800; // hard ceiling (80 s @ 60 fps)
 
 // ------------------------------------------------------------- target check

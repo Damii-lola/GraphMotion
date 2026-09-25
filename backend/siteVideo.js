@@ -91,7 +91,7 @@ function register(app, hooks = {}) {
     const id = crypto.randomBytes(6).toString('hex');
     const job = {
       id, url: target.url || null, dir: target.dir || null, status: 'queued', progress: 0, eta: null, created: Date.now(), file: path.join(dir, id + '.mp4'),
-      opts: { sceneSeconds: clamp(o.sceneSeconds, 2, 10, 3.5), fps: clamp(o.fps, 24, 60, 60), preset: ['small', 'hd'].includes(o.preset) ? o.preset : 'tiktok', duration: 30,
+      opts: { sceneSeconds: clamp(o.sceneSeconds, 2, 10, 3.5), fps: clamp(o.fps, 24, 60, 60), preset: ['small', 'hd', 'film'].includes(o.preset) ? o.preset : 'tiktok', duration: 30,
         ...(o.crf ? { crf: clamp(o.crf, 16, 32, 25) } : {}), ...(o.captureBudgetSeconds ? { captureBudgetSeconds: clamp(o.captureBudgetSeconds, 60, 900, 300) } : {}), ...(o.holdStart !== undefined ? { holdStart: clamp(o.holdStart, 0, 3, 1.2) } : {}), ...(o.holdEnd !== undefined ? { holdEnd: clamp(o.holdEnd, 0, 4, 2) } : {}) },
     };
     console.log(`[site-video] job ${id} queued: ${job.url || job.dir} (${job.opts.preset}, ${job.opts.fps}fps)`);
