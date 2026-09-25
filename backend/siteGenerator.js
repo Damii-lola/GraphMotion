@@ -22,6 +22,8 @@ const { callCloudflareRaw } = require('./cloudflareClient');
 const neurons = require('./neuronBudget');
 const flow = require('./flowSpec');
 const klein = require('./kleinClient');
+const MOVIE = process.env.MOVIE === '1' || (process.env.MOVIE !== '0' && !!process.env.HF_TOKEN);                    // default: ONE CONTINUOUS FILM - shot 1 is a picture, then chained image-to-video clips (no cuts, no transitions)
+const videoGen = require('./videoGen');
 const WORLD = process.env.IMAGE_ENGINE !== 'flux';   // default: ONE WORLD, six shots (FLUX.2 klein generate + edit); IMAGE_ENGINE=flux keeps the old six-separate-pictures path
 const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/mistralai/mistral-small-3.1-24b-instruct'; // ~4x cheaper per token than the 70B; one call per ad
 const SCENE_SECONDS = 3.5;
@@ -295,7 +297,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   const brandRefs = [logo && logo.length ? logo : null, ...userImgs.slice(1)].filter(Boolean).slice(0, 3), refCost = () => brandRefs.length * 13;   // shrinks below if the film would not fit the neuron ceiling
   const siteImg = company && company.siteImage && company.siteImage.length ? company.siteImage : null;
   const heroCost = userImgs[0] ? 0 : logo && logo.length || siteImg ? neurons.estKlein(true) : neurons.estKlein(false);
-  const reserveNow = () => (given ? 0 : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
+  const reserveNow = () => (given ? 0 : MOVIE ? heroCost : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
   let spec = given;
   if (!spec) {
     say('Writing the ad script', 0.05);
@@ -334,8 +336,53 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
       await toWebp(f, out, 640);
       spec.logo = { file: 'images/logo.webp', plate: await logoPlate(f) };
     }
-    let worldDone = false;
-    if (WORLD && !given) {
+    let movieDone = false, heroPre = null;   // heroPre: the movie's hero picture, reused if the video model turns out to be unavailable
+    if (MOVIE && !given) {
+      // ===== ONE CONTINUOUS FILM =====
+      // shot 1 is a picture (the only picture that costs neurons); each scene is then an image-to-video clip that STARTS on the last frame of the previous one,
+      // guided by that scene's director's note. Joined and slowed to exactly 3.5 s per scene, it is one camera in one world with nothing cut or crossfaded.
+      const clips = []; let start = null, madeHero = false;
+      try {
+        say('Building the world of your ad', 0.1);
+        const heroFile = path.join(tmp, 'hero.png');
+        if (userImgs[0]) { const src = path.join(tmp, 'hero.src'); fs.writeFileSync(src, userImgs[0]); await runFfmpeg(['-i', src, '-vf', `scale=${klein.W}:${klein.H}:force_original_aspect_ratio=increase,crop=${klein.W}:${klein.H}`, heroFile]); }
+        else {
+          const first = `${spec.scenes[0].imagePrompt}, ${spec.imageStyle}${IMAGE_SUFFIX}`;
+          const viaSite = (p) => klein.edit(`${p} The reference image is the company's own brand image (its logo, mascot or product). Show that brand element clearly, accurately and undistorted on the hero object in this scene (on the product, its packaging, a sign or a screen), photographed naturally; add no other text.`, siteImg);
+          const gen = (p) => (siteImg ? viaSite(p) : klein.generate(p));
+          neurons.charge(neurons.estKlein(!!siteImg), 'hero picture');
+          let buf; try { buf = await gen(first); } catch (e) { if (!/8007|NSFW|flagged/i.test(String(e.message))) throw e; buf = await gen(`${spec.imageStyle}, a calm wholesome still life of a single simple object, soft light${IMAGE_SUFFIX}`); }
+          fs.writeFileSync(heroFile, buf);
+        }
+        madeHero = true; start = heroFile; heroPre = fs.readFileSync(heroFile);
+        await toWebp(heroFile, path.join(outDir, 'images', spec.scenes[0].id + '.webp'));        // poster / fallback picture
+        for (let k = 0; k < spec.scenes.length; k++) {
+          const sc = spec.scenes[k], note = k === 0 ? 'the camera slowly pushes in, subtle natural motion in the scene: ' + String(sc.imagePrompt).slice(0, 160) : sc.imagePrompt;
+          say(`Filming scene ${k + 1} of ${spec.scenes.length}`, 0.1 + 0.8 * (k / spec.scenes.length));
+          const f = path.join(tmp, `clip${k}.mp4`);
+          try { await videoGen.clip({ startImage: start, prompt: note, seconds: SCENE_SECONDS, seed: 100 + k * 7, out: f }); }
+          catch (e) {
+            if (k === 0) throw e;                                    // nothing yet: the caller falls back to the stills engine
+            console.warn('[movie] clip ' + (k + 1) + ' failed (' + String(e.message).slice(0, 120) + '): the last picture is held with a slow push-in'); // never fail a film over one clip
+            const hold = path.join(tmp, `hold${k}.mp4`);
+            await runFfmpeg(['-loop', '1', '-i', start, '-t', '3', '-vf', `zoompan=z='1+0.0016*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=90:s=${videoGen.W}x${videoGen.H}:fps=30`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', hold]);
+            clips.push({ file: hold, seconds: 3 }); continue;
+          }
+          clips.push({ file: f, seconds: await videoGen.probeSeconds(f) });
+          start = await videoGen.lastFrame(f, path.join(tmp, `last${k}.png`));
+        }
+        say('Editing the film', 0.92);
+        await videoGen.assemble(clips, SCENE_SECONDS, path.join(outDir, 'movie.webm'));
+        spec.movie = { file: 'movie.webm', seconds: SCENE_SECONDS * spec.scenes.length };
+        movieDone = true;
+      } catch (e) {
+        if (madeHero && clips.length === 0) console.warn('[movie] the video model is unavailable (' + String(e.message).slice(0, 200) + ') - falling back to pictures joined by dives');
+        else if (!madeHero) throw e;                                  // the hero picture itself failed (quota, filter...): a real error
+        else throw e;
+      }
+    }
+    let worldDone = movieDone;
+    if (WORLD && !given && !movieDone) {
       // ONE WORLD, SIX SHOTS: shot 1 = text -> picture (or the client's own photo); every next shot = an EDIT of the previous one, so place, objects and light stay the same
       const gentle = (sc) => `Same scene as the reference image, a calm and wholesome view of the main object, soft light. ${spec.imageStyle}. No text, no letters, no logos.`;
       let prev = null, made = 0;
@@ -344,7 +391,8 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
           const sc = spec.scenes[k], progress = 0.1 + 0.8 * (k / spec.scenes.length);
           let buf;
           if (k === 0) {
-            if (userImgs[0]) {
+            if (heroPre) { buf = heroPre; }
+            else if (userImgs[0]) {
               say('Preparing your photo', progress); const src = path.join(tmp, 'hero.src'), dst = path.join(tmp, 'hero.png'); fs.writeFileSync(src, userImgs[0]);
               await runFfmpeg(['-i', src, '-vf', `scale=${klein.W}:${klein.H}:force_original_aspect_ratio=increase,crop=${klein.W}:${klein.H}`, dst]); buf = fs.readFileSync(dst);
             } else {

@@ -15,8 +15,8 @@ const crypto = require('crypto');
 
 const ROOT = process.env.PREVIEW_DIR || path.join(os.tmpdir(), 'smartclips-previews');
 const ID_RE = /^\d{10,20}$/;
-const FILE_RE = /^(images\/[A-Za-z0-9_-]+\.(webp|png)|audio\.wav|site\.json)$/;
-const MIME = { '.webp': 'image/webp', '.png': 'image/png', '.wav': 'audio/wav', '.json': 'application/json' };
+const FILE_RE = /^(images\/[A-Za-z0-9_-]+\.(webp|png)|audio\.wav|movie\.webm|site\.json)$/;
+const MIME = { '.webp': 'image/webp', '.png': 'image/png', '.wav': 'audio/wav', '.webm': 'video/webm', '.json': 'application/json' };
 fs.mkdirSync(ROOT, { recursive: true });
 
 let sb = null, bucket = null, warned = false;
@@ -41,6 +41,7 @@ async function persist(id, { company, spec, dir }) {
     if (error) throw new Error(error.message);
     const files = [];
     for (const sub of ['images']) { const d = path.join(dir, sub); if (fs.existsSync(d)) for (const f of fs.readdirSync(d)) files.push(`${sub}/${f}`); }
+    if (fs.existsSync(path.join(dir, 'movie.webm'))) files.push('movie.webm');
     for (const rel of files) {
       if (!FILE_RE.test(rel)) continue;
       const { error: e2 } = await c.storage.from(bucket).upload(`previews/${id}/${rel}`, fs.readFileSync(path.join(dir, rel)), { contentType: MIME[path.extname(rel)] || 'application/octet-stream', upsert: true });
@@ -76,7 +77,7 @@ function register(app, renderPage) {
     const id = req.params[0], rel = req.params[1];
     if (!FILE_RE.test(rel)) return res.status(404).end();
     const f = path.join(dirFor(id), rel);
-    if (fs.existsSync(f)) { res.set({ 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=3600' }); return fs.createReadStream(f).pipe(res); }
+    if (fs.existsSync(f)) return res.sendFile(f, { headers: { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=3600' } });   // sendFile answers Range requests: a <video> can seek
     const url = remoteImageUrl(id, rel);
     if (url) return res.redirect(302, url);
     res.status(404).end();

@@ -26,6 +26,9 @@
   #fallback { position: absolute; inset: 0; background: center / cover no-repeat; }
   #bg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   html.glbg #fallback { display: none; }
+  #mv { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; background: #000; }
+  html.movie #scrimD { opacity: .55 !important; }
+  html.movie #mv { display: block; } html.movie #bg, html.movie #fallback { display: none; }
   .scrim { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
   #scrimD { opacity: 1; background: linear-gradient(180deg, rgba(6,9,14,.80) 0%, rgba(6,9,14,.72) 38%, rgba(6,9,14,.50) 62%, rgba(6,9,14,0) 88%); }
   #scrimL { opacity: 0; background: linear-gradient(180deg, rgba(250,251,252,.94) 0%, rgba(250,251,252,.86) 38%, rgba(250,251,252,.62) 62%, rgba(250,251,252,0) 88%); }
@@ -75,6 +78,7 @@
 
 <div id="stage">
   <div id="fallback"></div>
+  <video id="mv" muted playsinline preload="auto"></video>
   <canvas id="bg"></canvas>
   <div class="scrim" id="scrimD"></div>
   <div class="scrim" id="scrimL"></div>
@@ -209,12 +213,17 @@ window.SITE = /*__SITE_JSON__*/null;
   window.__jumpToProgress = (frac) => {
     const p = clamp01(frac);
     master.time(p * N);
-    if (onFrame) onFrame(p);
+    return onFrame ? onFrame(p) : undefined;
   };
 
   // ---------- autoplay for people watching the page (the /preview viewer): linear film time, exactly as recorded
   let playId = 0;
   window.__autoplay = (sceneSeconds = 3.5) => {
+    if (window.__movie) {                                    // movie mode: the film plays natively, the captions follow its clock
+      const v = window.__movie.video, my = ++playId; v.currentTime = 0; v.play().catch(() => {});
+      const tk = () => { if (my !== playId) return; const p = Math.min(0.975, v.currentTime / (v.duration || 21)); master.time(p * N); window.__movie.ui(p); if (!v.ended) requestAnimationFrame(tk); };
+      requestAnimationFrame(tk); return;
+    }
     const my = ++playId, t0 = performance.now(), total = N * sceneSeconds * 1000;
     const tick = () => {
       if (my !== playId) return;
@@ -243,6 +252,30 @@ import * as THREE from "three";
      - Everything is a pure function of film progress p, so frames are identical however they are captured.
    ===================================================================================================================== */
 const S = window.SITE, N = S.scenes.length;
+if (S.movie) {
+  /* ===== MOVIE MODE: the picture is one continuous generated film (chained image-to-video clips), seeked frame by frame. No transitions exist. ===== */
+  const mv = document.getElementById("mv"), root = document.documentElement;
+  root.classList.add("movie"); mv.src = S.movie.file;
+  const chip = document.getElementById("chip"), pulse = document.querySelector(".cta-pulse"), sm = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+  const ui = (p) => {
+    const P = Math.min(0.99999, p) * N, i = Math.min(N - 1, Math.floor(P)), u = P - i;
+    chip.style.opacity = i >= N - 1 ? 0 : i === N - 2 ? 1 - sm((u - 0.7) / 0.3) : 1;
+    if (pulse) pulse.style.transform = i >= N - 1 ? "scale(" + (1 + 0.035 * Math.sin(u * 30)) + ")" : "none";
+  };
+  window.__movie = { video: mv, ui };
+  window.__assetsReady = () => mv.readyState >= 3 && (!window.__fitDone || window.__fitDone());
+  window.__sceneReady = true;
+  window.__setFrameHook((p) => {
+    ui(p);
+    const t = Math.max(0, Math.min((mv.duration || 21) - 0.04, p * (mv.duration || 21)));
+    return new Promise((res) => {
+      if (!mv.seeking && Math.abs(mv.currentTime - t) < 0.004) return res();
+      const done = () => { mv.removeEventListener("seeked", done); setTimeout(res, 20); };   // a real timer: the virtual clock only advances when the recorder says so
+      mv.addEventListener("seeked", done); mv.currentTime = t; setTimeout(res, 2500);
+    });
+  });
+  window.__jumpToProgress(0);
+} else {
 const state = { i: 0, t: 0, p: 0 };
 const sm = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
@@ -401,5 +434,6 @@ S.scenes.forEach((sc, k) => {
 window.__sceneUpdate = (i, t, p) => { state.i = i; state.t = t; state.p = p; };
 flowReady = true; window.__sceneReady = true;
 draw(0);
+}
 </script>
 </body></html>
