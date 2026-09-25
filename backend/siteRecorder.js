@@ -72,16 +72,25 @@ async function resolveTarget(input, { allowPrivate = false } = {}) {
 }
 
 // ------------------------------------------------------------- local static server (CLI --dir)
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webp': 'image/webp', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webp': 'image/webp', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.webm': 'video/webm', '.mp4': 'video/mp4', '.wav': 'audio/wav' };
 function serveDir(dir) {
   return new Promise((resolve) => {
     const s = http.createServer((req, res) => {
       let p = decodeURIComponent(req.url.split('?')[0]); if (p.endsWith('/')) p += 'index.html';
       const fp = path.join(dir, p);
       if (!fp.startsWith(dir)) { res.writeHead(403); return res.end(); }
-      fs.readFile(fp, (e, d) => {
-        if (e) { res.writeHead(404); return res.end(); }
-        res.writeHead(200, { 'Content-Type': MIME[path.extname(fp).toLowerCase()] || 'application/octet-stream' }); res.end(d);
+      fs.stat(fp, (e, st) => {
+        if (e || !st.isFile()) { res.writeHead(404); return res.end(); }
+        const type = MIME[path.extname(fp).toLowerCase()] || 'application/octet-stream', m = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
+        // Range support: a <video> can only seek (the movie-mode films are seeked frame by frame) when the server answers byte ranges
+        if (m && (m[1] || m[2])) {
+          const a = m[1] ? +m[1] : Math.max(0, st.size - +m[2]), z = m[1] && m[2] ? Math.min(+m[2], st.size - 1) : st.size - 1;
+          if (a > z || a >= st.size) { res.writeHead(416, { 'Content-Range': 'bytes */' + st.size }); return res.end(); }
+          res.writeHead(206, { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${a}-${z}/${st.size}`, 'Content-Length': z - a + 1 });
+          return fs.createReadStream(fp, { start: a, end: z }).pipe(res);
+        }
+        res.writeHead(200, { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Length': st.size });
+        fs.createReadStream(fp).pipe(res);
       });
     });
     s.listen(0, '127.0.0.1', () => resolve({ server: s, url: `http://127.0.0.1:${s.address().port}/index.html` }));
