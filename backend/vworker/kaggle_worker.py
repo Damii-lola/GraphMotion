@@ -52,7 +52,12 @@ print("model ready", flush=True)
 TIMESTEPS = [1000, 993, 987, 981, 975, 909, 725, 0.03]
 
 
-def make_clip(job):
+LOADER_VERSION = 2
+LAST_FRAME = None
+import numpy as np
+
+
+def _fallback_make_clip(job):
     w, h = int(job.get("width", 512)) // 32 * 32, int(job.get("height", 1024)) // 32 * 32
     n = (int(job.get("frames", 81)) - 1) // 8 * 8 + 1
     img = Image.open(io.BytesIO(base64.b64decode(job["image"]))).convert("RGB").resize((w, h))
@@ -68,8 +73,6 @@ def make_clip(job):
         generator=torch.Generator().manual_seed(int(job.get("seed", 1))), output_type="pil",
     ).frames[0]
     export_to_video(frames, "/tmp/clip.mp4", fps=24)
-    global LAST_FRAME
-    LAST_FRAME = frames[-1]
     return open("/tmp/clip.mp4", "rb").read()
 
 
@@ -84,17 +87,30 @@ if not S:                                              # no server secret: just 
     os.makedirs("/kaggle/working", exist_ok=True)
     for k, p in enumerate(prompts):                    # chained: the last frame of one clip starts the next
         t = time.time()
-        data = make_clip({"image": b64, "prompt": p, "frames": 81, "seed": 100 + k})
+        data = _fallback_make_clip({"image": b64, "prompt": p, "frames": 81, "seed": 100 + k})
         open("/kaggle/working/test%d.mp4" % k, "wb").write(data)
         buf = io.BytesIO(); LAST_FRAME.convert("RGB").save(buf, "PNG"); b64 = base64.b64encode(buf.getvalue()).decode()
         print("self-test clip", k, "ok:", len(data), "bytes in", round(time.time() - t), "s", flush=True)
     raise SystemExit
 
 H = {"Authorization": "Bearer " + S}
+def live_handler():
+    """The clip-making code is downloaded from the server for every job: a redeploy of the server updates the notebook instantly."""
+    try:
+        r = requests.get(SERVER + "/api/vworker/handler", headers=H, timeout=30)
+        r.raise_for_status()
+        ns = dict(globals())
+        exec(compile(r.text, "handler.py", "exec"), ns)
+        return ns
+    except Exception as e:
+        print("handler download failed, using the built-in one:", str(e)[:120], flush=True)
+        return None
+
+
 print("worker running, waiting for jobs from", SERVER, flush=True)
 while True:
     try:
-        r = requests.post(SERVER + "/api/vworker/next", headers=H, timeout=90)
+        r = requests.post(SERVER + "/api/vworker/next", headers={**H, "X-Worker-Loader": str(LOADER_VERSION)}, timeout=90)
         if r.status_code == 204:
             continue
         if r.status_code != 200:
@@ -104,8 +120,9 @@ while True:
         job = r.json()
         t = time.time()
         try:
-            data = make_clip(job)
-            requests.post(SERVER + "/api/vworker/done/" + job["id"], headers={**H, "Content-Type": "application/octet-stream"}, data=data, timeout=120)
+            ns = live_handler() or {}
+            data = ns.get("make_clip", _fallback_make_clip)(job)
+            requests.post(SERVER + "/api/vworker/done/" + job["id"], headers={**H, "Content-Type": "application/octet-stream", "X-Handler": str(ns.get("HANDLER_VERSION", 0))}, data=data, timeout=120)
             print("clip", job["id"], "done in", round(time.time() - t), "s,", len(data) // 1024, "KB", flush=True)
         except Exception as e:
             traceback.print_exc()
