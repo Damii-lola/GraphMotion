@@ -26,11 +26,20 @@ const MORPH_KEYS = `Return ONE JSON object with these keys:
 "transitions": EXACTLY 5 objects, each just {"sfx": a whoosh id from SOUND}@@SND@@.
 Output the JSON object only.`;
 
+const CINE_FLOW = `${RELEVANCE}
+
+FILM (the most important part). The ad is ONE continuous AI-filmed take: six keyframe pictures, and an AI video model films the camera travelling from each keyframe into the next, so the whole ad is one unbroken shot with real camera movement and nothing cut. Each keyframe is ONE clear HERO in ONE WORLD seen from a SHOT.
+(1) THE HEROES. Write 3 heroes {"name": "2-3 words", "prompt": "what it is and how it looks, max 22 words"}. Each hero is one of your motifs as a real, recognisable thing a camera could photograph: the client's product in use, what it makes, a tool of the trade, or the result it creates. For SOFTWARE, apps, websites and AI tools the hero is the product shown on a SCREEN (a phone or laptop whose screen glows with a colourful, bright interface made of blocks and shapes, no readable words, never a blank grey screen) or the real-world RESULT it produces - NEVER a physical box, package, gift or parcel, and never the company name printed on an object. No text, no letters, no logos anywhere.
+(2) THE WORLDS. Write 3 worlds {"name": "2-3 words", "prompt": "the place, the light, the mood, max 25 words"}: real, specific, beautiful environments where the client's things are made, used or lived with (a coffee brand: a rustic roastery at dawn with steam and burlap sacks; an app builder: a founder's desk by a city window at golden hour; a shoe brand: a dawn trail through trees). Cinematic light: golden hour, blue hour, neon at night, soft window light.
+(3) SIX SCENES, each with "hero" (0-2), "world" (0-2), a "shot" (camera distance, angle and small action, max 14 words: "extreme close-up, finger tapping the screen", "wide, low angle, light streaming in") and a "motion": ONE sentence (max 24 words) filming the move from THIS keyframe into the NEXT: the camera move (dolly in, orbit, crane up, push through the screen, pull back, whip pan) plus what physically happens (the screen lights up, steam rises, the hand slides in, the light shifts). CONSECUTIVE SCENES MUST SHARE EITHER THE HERO OR THE WORLD (never both different): a video model can film a believable move between two views of the same thing, and cannot film one between two unrelated pictures. Vary it: keep the hero and change the world; keep the world and change the hero; or keep both and change only the shot. The hook (scene 1) is bold, tight and high-contrast. The last scene is a calm, clean shot with empty space, and its "motion" is a slow push in.`;
+
+const CINE_KEYS = null;   // built from MORPH_KEYS below
+
 const PIC_STYLE = 'cinematic vertical 9:16 photograph, bright natural light, shallow depth of field, rich colour, sharp focus, no text, no letters, no logos, no watermark';
 const MORE_BANNED = ['box', 'boxes', 'package', 'packaging', 'parcel', 'gift', 'crate'];
 
 /** Validate the plan: 3 heroes, 3 worlds (grounded in the client's motifs), and per scene a hero / world / shot with all three kinds of change. */
-function applyMorphPlan(spec, S, briefText) {
+function applyMorphPlan(spec, S, briefText, opts = {}) {
   const motifs = (Array.isArray(S.motifs) ? S.motifs : []).map((m) => String(m || '').replace(/["<>]/g, '').trim().slice(0, 90)).filter(Boolean).slice(0, 6);
   spec.motifs = motifs;
   const mStems = nodeFilm.stems(motifs.join(' '));
@@ -51,14 +60,20 @@ function applyMorphPlan(spec, S, briefText) {
   spec.scenes.forEach((sc, k) => {
     const s = sceneIn.find((x) => x && x.id === sc.id) || sceneIn[k] || {};
     sc.hero = Math.max(0, Math.min(2, Number.isInteger(+s.hero) ? +s.hero : k % 3)); sc.world = Math.max(0, Math.min(2, Number.isInteger(+s.world) ? +s.world : k % 3));
+    sc.motion = clean(s.motion, 200) || (k === spec.scenes.length - 1 ? 'the camera slowly pushes in on the scene' : 'the camera glides smoothly toward the next view as the light shifts');
     sc.shot = clean(s.shot, 120) || ['tight bold close-up', 'medium shot, slight angle', 'wide shot, low angle', 'over the shoulder, shallow depth', 'macro detail, glowing light', 'calm wide shot, empty space'][k];
   });
   const kind = (a, b) => (a.hero === b.hero && a.world !== b.world ? 'move' : a.hero !== b.hero && a.world === b.world ? 'sweep' : 'all');
   const kinds = spec.scenes.slice(1).map((sc, i) => kind(spec.scenes[i], sc));
-  if (new Set(kinds).size < 3 || kinds.some((k, i) => i && k === kinds[i - 1])) {   // the plan must contain all three kinds of change and never repeat one: the code varies it
+  if (opts.cine) {
+    // a video model can only film a believable move between two views of the SAME hero or the SAME world: no 'all new' cut is allowed, and the plan must not be static
+    const bad = kinds.some((k) => k === 'all') || new Set(spec.scenes.map((sc) => sc.hero + '-' + sc.world)).size < 4;
+    if (bad) { const plan = [[0, 0], [0, 1], [1, 1], [1, 2], [2, 2], [2, 0]]; spec.scenes.forEach((sc, k) => { sc.hero = plan[k][0]; sc.world = plan[k][1]; }); }
+  } else if (new Set(kinds).size < 3 || kinds.some((k, i) => i && k === kinds[i - 1])) {   // the plan must contain all three kinds of change and never repeat one: the code varies it
     const plan = [[0, 0], [0, 1], [1, 1], [2, 2], [2, 0], [0, 0]];
     spec.scenes.forEach((sc, k) => { sc.hero = plan[k][0]; sc.world = plan[k][1]; });
   }
+  spec.scenes.forEach((sc, k) => { sc.imagePrompt = pictureAsk(spec, k).fresh || pictureAsk(spec, k).prompt; });     // the plain picture prompt of every scene (also used if the film has to fall back to still pictures)
   return spec;
 }
 
@@ -77,4 +92,6 @@ function pictureAsk(spec, k) {
   return { mode: 'fresh', prompt: fresh };
 }
 
-module.exports = { MORPH_FLOW, MORPH_KEYS, applyMorphPlan, pictureAsk, PIC_STYLE };
+const CINE_KEYS_TEXT = MORPH_KEYS.replace('"shot" (max 14 words),', '"shot" (max 14 words), "motion" (max 24 words, see FILM),');
+
+module.exports = { MORPH_FLOW, MORPH_KEYS, CINE_FLOW, CINE_KEYS: CINE_KEYS_TEXT, applyMorphPlan, pictureAsk, PIC_STYLE };

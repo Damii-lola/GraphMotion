@@ -115,13 +115,22 @@ async function lastFrame(clipPath, out) { await ff(['-sseof', '-0.08', '-i', cli
  * Join clips into ONE continuous film. Each clip is stretched to exactly `sceneSeconds` (slow, cinematic; the model makes ~3 s clips),
  * then encoded as VP9 WebM - the codec headless Chrome can decode - at the same size as the pictures.
  */
+/**
+ * The cinematic finish, applied per clip: a slow push-in on even scenes and a slow pull-out on odd ones (so the zoom never jumps at a scene boundary),
+ * a gentle sharpen (the video model is soft), contrast + colour, warm highlights / cool shadows, a vignette and a whisper of film grain.
+ */
+const grade = (i, T) => {
+  const z = i % 2 === 0 ? `1+0.06*t/${T}` : `1.06-0.06*t/${T}`;
+  return `scale=w='trunc(iw*(${z})/2)*2':h='trunc(ih*(${z})/2)*2':eval=frame:flags=bicubic,crop=${W}:${H},unsharp=5:5:0.8:3:3:0.3,eq=contrast=1.07:saturation=1.12:gamma=0.98,colorbalance=rs=-0.02:bs=0.03:rh=0.03:bh=-0.03,vignette=PI/5,noise=alls=4:allf=t`;
+};
+
 async function assemble(clips, sceneSeconds, out) {
   // ONE small ffmpeg at a time (a single 6-input command peaked at ~245 MB, which OOM-killed the 512 MB server): every clip is
   // stretched + encoded on its own, then the pieces are joined by stream copy (no re-encode, ~no memory).
   const dir = path.dirname(out), parts = [];
   for (let i = 0; i < clips.length; i++) {
     const p = path.join(dir, `part${i}.webm`); parts.push(p);
-    await ff(['-i', clips[i].file, '-vf', `setpts=PTS*${(sceneSeconds / Math.max(0.5, clips[i].seconds)).toFixed(4)},fps=30,scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W}:${H},setsar=1`,
+    await ff(['-i', clips[i].file, '-vf', `setpts=PTS*${(sceneSeconds / Math.max(0.5, clips[i].seconds)).toFixed(4)},fps=30,scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W}:${H},${grade(i, sceneSeconds)},setsar=1`,
       '-t', String(sceneSeconds), '-c:v', 'libvpx-vp9', '-crf', '30', '-b:v', '0', '-deadline', 'realtime', '-cpu-used', '6', '-threads', '2', '-g', '15', '-pix_fmt', 'yuv420p', '-an', p]);
   }
   const list = path.join(dir, 'parts.txt');
