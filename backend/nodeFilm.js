@@ -47,8 +47,9 @@ function grounded(prompt, briefText, motifStems) {
   const p = flat(prompt), b = flat(briefText);
   if (p.trim() === '') return false;
   for (const w of BANNED) { if (p.includes(' ' + w + ' ') && !b.includes(' ' + w + ' ')) return false; }
-  const bs = stems(b);
-  for (const s of stems(p)) { if (bs.has(s) || motifStems.has(s)) return true; }
+  // with motifs, the test is strict: the picture must share vocabulary with the client's own motifs (the whole brief also contains scraped site text with incidental words)
+  const ref = motifStems.size ? motifStems : stems(b);
+  for (const s of stems(p)) { if (ref.has(s)) return true; }
   return false;
 }
 
