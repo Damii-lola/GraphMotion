@@ -370,10 +370,12 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
             clips.push({ file: hold, seconds: 3 }); continue;
           }
           clips.push({ file: f, seconds: await videoGen.probeSeconds(f) });
+          console.log(`[movie] clip ${k + 1}/${spec.scenes.length} done (server memory ${Math.round(process.memoryUsage().rss / 1048576)} MB)`);
           start = await videoGen.lastFrame(f, path.join(tmp, `last${k}.png`));
         }
         say('Editing the film', 0.92);
         await videoGen.assemble(clips, SCENE_SECONDS, path.join(outDir, 'movie.webm'));
+        console.log(`[movie] film assembled (server memory ${Math.round(process.memoryUsage().rss / 1048576)} MB)`);
         spec.movie = { file: 'movie.webm', seconds: SCENE_SECONDS * spec.scenes.length };
         movieDone = true;
       } catch (e) {
