@@ -17,11 +17,14 @@ async function getHtml(start) {
   let url = start;
   for (let hop = 0; hop < 4; hop++) {
     const safe = await resolveTarget(url);                                  // public http(s) only: no localhost / private networks, on every hop
-    const r = await fetch(safe, { redirect: 'manual', timeout: TIMEOUT_MS, size: MAX_BYTES, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SmartClipsBot/1.0)', Accept: 'text/html' } });
+    const r = await fetch(safe, { redirect: 'manual', timeout: TIMEOUT_MS, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SmartClipsBot/1.0)', Accept: 'text/html' } });
     if (r.status >= 300 && r.status < 400 && r.headers.get('location')) { url = new URL(r.headers.get('location'), safe).href; continue; }
     if (!r.ok) throw new Error('the website answered ' + r.status);
     if (!/html|xml/i.test(r.headers.get('content-type') || '')) throw new Error('that link is not a web page');
-    return { html: (await r.buffer()).toString('utf8').slice(0, MAX_BYTES), url: safe };
+    const chunks = []; let n = 0;                                          // read only the first MAX_BYTES: a huge page is truncated, not refused
+    for await (const c of r.body) { chunks.push(c); n += c.length; if (n >= MAX_BYTES) break; }
+    try { r.body.destroy(); } catch (_) { /* already closed */ }
+    return { html: Buffer.concat(chunks).toString('utf8').slice(0, MAX_BYTES), url: safe };
   }
   throw new Error('too many redirects');
 }
@@ -33,7 +36,7 @@ async function scan(input) {
   if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
   const { html, url } = await getHtml(s);
   const body = html.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<(script|style|noscript|svg|template|iframe)[\s\S]*?<\/\1>/gi, ' ');
-  const meta = (name) => { const m = new RegExp('<meta[^>]+(?:name|property)=["\']' + name + '["\'][^>]*>', 'i').exec(html); const c = m && /content=["']([^"']*)["']/i.exec(m[0]); return c ? clean(c[1]) : ''; };
+  const meta = (name) => { const m = new RegExp('<meta[^>]*(?:name|property)=.' + name + '.[^>]*>', 'i').exec(html); const c = m && /content=(["'])([\s\S]*?)\1/i.exec(m[0]); return c ? clean(c[2]) : ''; };   // the value may contain the OTHER kind of quote (world's)
   const title = clean((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || [])[1] || '');
   const parts = [];
   const add = (t, min = 3) => { t = clean(t); if (t.length >= min && !parts.some((p) => p.toLowerCase() === t.toLowerCase())) parts.push(t); };
