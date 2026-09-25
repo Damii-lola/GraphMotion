@@ -25,6 +25,7 @@ const klein = require('./kleinClient');
 const MOVIE = process.env.MOVIE === '1' || (process.env.MOVIE !== '0' && (!!process.env.HF_TOKEN || !!process.env.FAL_KEY || !!process.env.VIDEO_WORKER_SECRET));                    // default: ONE CONTINUOUS FILM - shot 1 is a picture, then chained image-to-video clips (no cuts, no transitions)
 const NODE = process.env.NODE_FILM !== '0';                       // default: a designed motion-graphics film (gradient worlds + a hero node + wireframe morphs) - not photographs
 const nodeFilm = require('./nodeFilm');
+const scriptClient = require('./scriptClient');   // optional stronger script writer (GitHub Models, Cerebras, Mistral, Groq...) - Cloudflare is the fallback
 const nodeOn = () => NODE;
 const movieOn = () => !nodeOn() && MOVIE && videoGen.available();            // a notebook worker that is not running simply means: pictures joined by dives, as before
 const videoGen = require('./videoGen');
@@ -342,14 +343,20 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
     let raw = null, lastErr = null, keep = 7800, outEst = 1400, maxTok = nodeOn() || movieOn() ? 1900 : 2600, temp = 0.8;   // a keyframe script is ~1000-1200 tokens: a runaway answer is cut off early (and cheaply)
     // Up to 3 tries (the first + 2 retries). When the film would not fit the per-film neuron ceiling the guard refuses BEFORE spending anything,
     // and each retry then asks for a smaller job (shorter brief, tighter answer) instead of giving up.
+    let useExt = scriptClient.enabled();                          // the stronger writer first; any failure drops to Cloudflare for the remaining tries
     for (let attempt = 0; attempt < 3 && !raw; attempt++) {
       try {
         let prompt = briefPrompt(text.slice(0, keep), nodeOn() ? 'node' : movieOn()), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst);
         while (brandRefs.length > 1 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) brandRefs.pop();   // keep the logo (first), give up extra photos before anything else
-        while (keep > 1200 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep), movieOn()); est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst); }
+        while (keep > 1200 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep), nodeOn() ? 'node' : movieOn()); est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst); }
+        let txt = null;
+        if (useExt) {
+          try { txt = await scriptClient.chatJson(SYSTEM, prompt, { maxTokens: 2800, temperature: temp }); console.log('[script] written by ' + scriptClient.label()); raw = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)); continue; }
+          catch (e) { useExt = false; raw = null; txt = null; console.warn('[script] ' + scriptClient.label() + ' failed (' + String(e.message).slice(0, 160) + '): falling back to Cloudflare'); }
+        }
         neurons.charge(est, 'ad script', reserveNow()); // refuses BEFORE spending if the ad could not be finished inside its ceiling
         let usage = null;
-        const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: maxTok, temperature: temp, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
+        txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: maxTok, temperature: temp, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
         neurons.settleText(SPEC_MODEL, est, usage, 'ad script');
         raw = typeof txt === 'string' ? JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)) : txt;
       } catch (e) {
