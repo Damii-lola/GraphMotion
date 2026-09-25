@@ -117,6 +117,7 @@ function cleanHeadline(raw, fallback) {
   const plain = (w) => w.toLowerCase().replace(/[^a-z0-9]/g, '');
   const hiWords = (t.match(/\*([^*]+)\*/g) || []).join(' ').replace(/\*/g, '').split(/\s+/).filter(Boolean);
   if (hiWords.length && hiWords.every((w) => STOP.has(plain(w)))) t = t.replace(/\*/g, '');   // it highlighted only filler: choose again below
+  if ((t.match(/\*[^*]+\*/g) || []).length > 2) { let seen = 0; t = t.replace(/\*([^*]+)\*/g, (m, w) => (++seen <= 2 ? m : w)); }   // the model sometimes stars every word: only the first two highlights stay
   if (!t.includes('*')) { const ws = words(t); const good = ws.filter((w) => !STOP.has(plain(w))), pool = good.length ? good : ws; const pick = pool.slice().sort((a, b) => b.length - a.length)[0]; if (pick) t = t.replace(pick, `*${pick}*`); }
   return t.slice(0, 80);
 }
@@ -169,7 +170,7 @@ function normalizeSpec(raw, brand, opts = {}) {
       tag: k === 5 ? '' : (() => { const t = clipWords(str(s.tag, '', 80).replace(/[*_()[\]<>]/g, '').replace(/[.\u2026\s]+$/g, '').trim(), 22); return IDS.includes(t.toLowerCase()) ? '' : t; })(),   // never the scene's own role name ("SOLUTION"), never markup
       headline: cleanHeadline(Array.isArray(s.headline) ? s.headline.map((w) => String(w)).join(' ').replace(/ \| /g, '|') : (s.headline || s.title), k === 5 ? `Try *${name}* today` : `*${name}*`),
       sub, sticker,
-      imagePrompt: str(s.imagePrompt, `${name} atmosphere, ${spec.imageStyle}`, 380).replace(/(the word\s+)["“”']?\s*(name|brand|brand name|company|company name|your brand|logo)\s*["“”']?/gi, (m, a) => a + '"' + name + '" '), motion: str(s.motion, '', 200),
+      imagePrompt: str(s.imagePrompt, `${name} atmosphere, ${spec.imageStyle}`, 380).replace(/(the word\s+)["“”']?\s*(name|brand|brand name|company|company name|your brand|logo)\s*["“”']?/gi, (m, a) => a + '"' + name + '" '), motion: relevance.cleanMotion(str(s.motion, '', 260)),
       tone, pos: TEXT_POS.includes(s.pos) && !(opts.movie && s.pos === 'mm') ? s.pos : (opts.movie ? MOVIE_POS : DEFAULT_POS)[k],
       fx: { ripple: num01(fx.ripple, 0.12), mist: num01(fx.mist, 0.25), rays: num01(fx.rays, 0) },
       move: flow.normalizeMove(s.move, seed, k),

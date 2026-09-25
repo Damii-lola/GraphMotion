@@ -14,7 +14,7 @@ const MOVIE_FLOW = `${RELEVANCE}
 KEYFRAME FILM. The picture of this ad is ONE continuous AI-made film. You are its director and you write SIX KEYFRAMES, one per scene. An image AI paints each keyframe from your text; then a video AI films the camera travelling from each keyframe INTO the next one, so the whole ad is a single unbroken shot. Nothing is cut, nothing is a slide.
 (1) EVERY KEYFRAME IS ABOUT THIS COMPANY, built from your motifs: the product itself, the exact moment it is used, the tool of the trade, or the result it creates. For SOFTWARE, apps, websites and AI tools show real screens (a phone, a laptop or a monitor) whose screen glows with a colourful, bright interface made of blocks and shapes with no readable words, or the real-world result it produces - never a blank grey screen. NEVER show a physical box, package, gift, mug or parcel for a software company, and never print the company name on an object; if a brand name appears at all it is only on the top bar of a screen. For a company that sells physical goods, show the goods themselves. No text, letters, logos, code or numbers anywhere else (image AIs draw them as gibberish).
 (2) SIX DIFFERENT SCENES, ONE FILM. Every keyframe is a different picture (a new shot type: extreme close-up of a detail, wide view of the place, low angle, over-the-shoulder view of a screen, high angle, calm final wide) but CONSECUTIVE keyframes share the same subject or the same place, so the video AI can film a believable camera move from one to the next: it cannot film a believable move between two unrelated pictures. Keyframe 1 is the hook: the most striking, beautifully lit picture of the client's product or of a screen showing it, bold colour, one clear subject, shot close and tight. Keyframe 6 is the END CARD background: a calm, clean shot of the product or its result with plenty of empty space and NO text. Bright, colourful, natural light by default (dark moody looks only for luxury, gothic, metal or security brands). Each keyframe prompt is 30-45 words: subject, place, light, camera angle. NO faces, no portraits, no close-ups of people; hands or a person seen from behind are allowed only as small parts of the picture, never the subject. Family-friendly.
-(3) MOTION BETWEEN KEYFRAMES. "motion" of scene N is ONE sentence (max 26 words) describing what happens on screen while keyframe N turns into keyframe N+1: the camera move (dolly in, orbit, tilt, crane, pull back, push through the screen) and what physically happens (the screen fills with colour, the light shifts, a video starts playing). Concrete physical verbs only. The last scene's "motion" is a slow push in on the end card picture.`;
+(3) MOTION BETWEEN KEYFRAMES. "motion" of scene N is ONE sentence (max 26 words) describing what happens on screen while keyframe N turns into keyframe N+1: the camera move (dolly in, orbit, tilt, crane, pull back, push through the screen) and what physically happens (the screen fills with colour, the light shifts, a video starts playing). Concrete physical verbs only, and ONLY what can be seen: never mention sound, music or sound effects. The last scene's "motion" is a slow push in on the end card picture.`;
 
 const MOVIE_KEYS = `Return ONE JSON object with these keys:
 "brand", "motifs": EXACTLY 6 short strings (see RELEVANCE IS EVERYTHING - write these first), "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "imageStyle" (8-14 words: the ONE shared look of all six keyframes - light, colour palette, mood; never mention lenses, vignettes or camera gear), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
@@ -30,7 +30,7 @@ const stems = (t) => new Set(flat(t).split(' ').filter((w) => w.length >= 4 && !
 
 /** true when the prompt is about the client: no invented subject, and it shares vocabulary with the client's motifs. */
 function grounded(prompt, briefText, motifs) {
-  const p = flat(prompt), b = flat(briefText);
+  const p = flat(prompt), b = flat(briefText) + flat(motifs.join(' '));            // the client's own motifs may use any word (a coffee roaster's motifs say cup, beans, steam)
   if (p.trim() === '') return false;
   for (const w of BANNED) { if (p.includes(' ' + w + ' ') && !b.includes(' ' + w + ' ')) return false; }
   const ref = motifs.length ? stems(motifs.join(' ')) : stems(b);
@@ -38,11 +38,25 @@ function grounded(prompt, briefText, motifs) {
   return false;
 }
 
-const SHOTS = ['extreme close-up, bold colour', 'wide view of the place, low angle', 'over-the-shoulder view of a screen', 'macro detail in soft focus', 'high angle looking down', 'calm wide shot with empty space'];
+const SHOTS = ['extreme close-up, bold colour', 'wide view, low angle', 'medium shot, slight angle, natural light', 'macro detail in soft focus', 'high angle looking down', 'calm wide shot with empty space'];
 /** A keyframe prompt built only from the client's motifs (used when the AI's own prompt was not about the client). */
 function motifPrompt(motifs, k, style) {
   const m = motifs[k % motifs.length], n = motifs[(k + 1) % motifs.length];
-  return `${SHOTS[k % SHOTS.length]}: ${m}, with ${n} nearby, bright real-world setting, ${style}`;
+  return `${SHOTS[k % SHOTS.length]}: ${m}, with ${n} in view, ${style}`;
+}
+
+/** The camera line goes to the video model: strip anything that is not something you can SEE (the script AI sometimes mentions sound effects such as whoosh_05). */
+function cleanMotion(text) {
+  // the camera line goes to the video model: keep only what can be SEEN. A clause that mentions a sound effect (whoosh_05, "a soft whoosh", music...) is dropped whole;
+  // the sound words are matched as whole words so ordinary words ("surrounding", "ticker") are never touched.
+  const sound = /\b(whoosh|swoosh|swish|tick|sparkle|riser|impact|sfx|sound|audio|music)\b|[a-z]+_\d\d/i;
+  let t = String(text || '').trim();
+  if (sound.test(t)) {
+    const parts = t.split(/[,;]| as | then | while | with | and /i).map((x) => x.trim()).filter(Boolean);
+    const kept = parts.filter((x) => !sound.test(x));
+    t = kept.length ? kept.join(', ') : '';
+  }
+  return t.replace(/\s+([,.;])/g, '$1').replace(/\s+/g, ' ').replace(/^[,;\s]+/, '').trim().slice(0, 220);
 }
 
 /** The AI's photographic style, minus looks that damage every picture. */
@@ -52,4 +66,4 @@ function cleanStyle(style, fallback) {
   return parts.length >= 2 ? parts.join(', ') : fallback;
 }
 
-module.exports = { RELEVANCE, MOVIE_FLOW, MOVIE_KEYS, grounded, motifPrompt, cleanStyle, stems, flat };
+module.exports = { RELEVANCE, MOVIE_FLOW, MOVIE_KEYS, grounded, motifPrompt, cleanStyle, cleanMotion, stems, flat };
