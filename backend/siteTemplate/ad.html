@@ -16,7 +16,7 @@
     - story-style progress bars, sticker-style proof badges: the native social look, not the corporate-site look
 -->
 <style>
-  :root { --accent: #ff5c1a; --accent-ink: #fff; --bg: #0b0b0d; --ink: #fff; --ink2: rgba(255,255,255,.95); --dispf: "Bricolage Grotesque", Impact, sans-serif; --dispw: 800; --bodyf: "Inter", -apple-system, sans-serif; --hs: 14vw; --ss: 5.3vw; }
+  :root { --accent: #ff5c1a; --accent-ink: #fff; --bg: #0b0b0d; --ink: #fff; --ink2: rgba(255,255,255,.95); --dispf: "Bricolage Grotesque", Impact, sans-serif; --dispw: 800; --bodyf: "Inter", -apple-system, sans-serif; --hs: 14vw; --ss: 4.6vw; }
   * { box-sizing: border-box; }
   html, body { margin: 0; overflow-x: hidden; background: var(--bg); }
   body { color: #fff; font-family: var(--bodyf); -webkit-font-smoothing: antialiased; }
@@ -57,7 +57,7 @@
   .w.hi .wi { background: linear-gradient(var(--accent), var(--accent)) no-repeat 0 0 / 0% 100%; border-radius: .14em; padding: 0 .16em; text-shadow: none; }
   .sub { margin: 2.2vh 0 0; max-width: 94%; font-family: var(--bodyf); font-weight: 700; font-size: var(--ss); line-height: 1.24; color: var(--ink2); text-shadow: 0 .06em 0 rgba(0,0,0,.28), 0 0 .6em rgba(0,0,0,.45); }
   .sticker { margin-top: 3vh; opacity: 0; display: flex; align-items: center; gap: 3vw; padding: 1.5vh 5.2vw; border-radius: 3.2vw; background: var(--accent); color: var(--accent-ink); box-shadow: 0 1.3vw 0 rgba(0,0,0,.36); }
-  .sticker .n { font-family: var(--dispf); font-weight: var(--dispw); font-size: 10vw; line-height: 1; }
+  .sticker .n { font-family: var(--dispf); font-weight: var(--dispw); font-size: 8vw; line-height: 1; }
   .sticker .l { font: 800 3.4vw/1.15 var(--bodyf); letter-spacing: .08em; text-transform: uppercase; text-align: left; max-width: 34vw; }
 
   /* end card */
@@ -140,7 +140,7 @@ window.SITE = /*__SITE_JSON__*/null;
     document.querySelectorAll(".hl").forEach((h) => {
       const sec = h.closest("section"), inner = h.closest(".ad-inner");
       const hook = sec.classList.contains("role-hook"), cta = sec.classList.contains("role-cta");
-      let fs = vw * (hook ? 0.175 : cta ? 0.125 : 0.15);
+      let fs = vw * (hook ? 0.125 : cta ? 0.095 : 0.105);
       const avail = inner.clientWidth, maxH = sec.clientHeight * (hook ? 0.62 : cta ? 0.36 : 0.56), maxBlock = sec.clientHeight;
       for (let k = 0; k < 40; k++) {
         h.style.fontSize = fs + "px";
