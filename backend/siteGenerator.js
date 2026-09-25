@@ -323,7 +323,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   let spec = given;
   if (!spec) {
     say('Writing the ad script', 0.05);
-    let raw = null, lastErr = null, keep = 7800, outEst = 1400, maxTok = 2600;
+    let raw = null, lastErr = null, keep = 7800, outEst = 1400, maxTok = movieOn() ? 1900 : 2600, temp = 0.8;   // a keyframe script is ~1000-1200 tokens: a runaway answer is cut off early (and cheaply)
     // Up to 3 tries (the first + 2 retries). When the film would not fit the per-film neuron ceiling the guard refuses BEFORE spending anything,
     // and each retry then asks for a smaller job (shorter brief, tighter answer) instead of giving up.
     for (let attempt = 0; attempt < 3 && !raw; attempt++) {
@@ -333,11 +333,12 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
         while (keep > 1200 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep), movieOn()); est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst); }
         neurons.charge(est, 'ad script', reserveNow()); // refuses BEFORE spending if the ad could not be finished inside its ceiling
         let usage = null;
-        const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: maxTok, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
+        const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: maxTok, temperature: temp, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
         neurons.settleText(SPEC_MODEL, est, usage, 'ad script');
         raw = typeof txt === 'string' ? JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)) : txt;
       } catch (e) {
         lastErr = e; console.warn(`[script] try ${attempt + 1} failed: ${String(e.message).slice(0, 200)}`);
+        if (/truncated|max_tokens|JSON/i.test(String(e && e.message))) temp = Math.max(0.4, temp - 0.2);   // a runaway or broken answer: retry calmer
         if (/Neuron guard/i.test(String(e && e.message))) {   // over the ceiling: nothing was spent, so try again with a smaller job
           keep = Math.max(1200, Math.floor(keep * 0.7)); outEst = Math.max(900, outEst - 250); maxTok = Math.max(1500, maxTok - 250);
           say(`Making the job smaller (try ${attempt + 2} of 3)`, 0.05);
