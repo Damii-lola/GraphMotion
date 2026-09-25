@@ -477,7 +477,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
             const tries = [
               () => (ask.mode === 'edit' && made[k - 1] ? klein.edit(ask.prompt, made[k - 1]) : klein.generate(ask.prompt)),
               () => klein.generate(ask.fresh || ask.prompt),
-              () => klein.generate(`${spec.heroes[sc.hero].name}, ${spec.worlds[sc.world].name}, ${first}, ${morphFilm.PIC_STYLE}`),
+              () => klein.generate(spec.place ? `${first}, ${String(spec.place).split(/[,.;]/)[0]}, ${morphFilm.PIC_STYLE}` : `${spec.heroes[sc.hero].name}, ${spec.worlds[sc.world].name}, ${first}, ${morphFilm.PIC_STYLE}`),
             ];
             let buf = null;
             for (let t = 0; t < tries.length && !buf; t++) {
