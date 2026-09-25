@@ -122,7 +122,7 @@ async function assemble(clips, sceneSeconds, out) {
   for (let i = 0; i < clips.length; i++) {
     const p = path.join(dir, `part${i}.webm`); parts.push(p);
     await ff(['-i', clips[i].file, '-vf', `setpts=PTS*${(sceneSeconds / Math.max(0.5, clips[i].seconds)).toFixed(4)},fps=30,scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W}:${H},setsar=1`,
-      '-t', String(sceneSeconds), '-c:v', 'libvpx-vp9', '-crf', '30', '-b:v', '0', '-deadline', 'good', '-cpu-used', '4', '-threads', '2', '-lag-in-frames', '8', '-g', '15', '-pix_fmt', 'yuv420p', '-an', p]);
+      '-t', String(sceneSeconds), '-c:v', 'libvpx-vp9', '-crf', '30', '-b:v', '0', '-deadline', 'realtime', '-cpu-used', '6', '-threads', '2', '-g', '15', '-pix_fmt', 'yuv420p', '-an', p]);
   }
   const list = path.join(dir, 'parts.txt');
   fs.writeFileSync(list, parts.map((p) => `file '${p.split('\\').join('/')}'`).join('\n'));

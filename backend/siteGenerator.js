@@ -354,7 +354,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
       // (first- and last-frame conditioning), so the ad is one unbroken shot that passes through pictures we control. Each clip is stretched to 3.5 s.
       const KF = spec.scenes.length, clips = [], kfFile = (k) => path.join(tmp, `kf${k}.png`);
       const gate = ((n) => { let active = 0; const q = []; const next = () => { if (active >= n || !q.length) return; active++; const j = q.shift(); j.fn().then(j.res, j.rej).finally(() => { active--; next(); }); }; return (fn) => new Promise((res, rej) => { q.push({ fn, res, rej }); next(); }); })(3);
-      const KEY_SUFFIX = ', cinematic vertical 9:16 photograph, dramatic lighting, shallow depth of field, vivid colour, sharp focus, the only text anywhere is a brand word if one was asked for, no other letters, no watermark';
+      const KEY_SUFFIX = ', cinematic vertical 9:16 photograph, bright natural light, shallow depth of field, vivid colour, sharp focus, no text, no letters, no words, no watermark';
       const brandLow = String(spec.brand).toLowerCase(), brandRef = siteImg || (logo && logo.length ? logo : null) || wordmarkCard(spec.brand), refNote = " The reference image is the company's own logo / wordmark: paint exactly that brand mark, spelled identically letter for letter and undistorted, as printed or glowing text on the surface named in this scene (a box, mug, sign or screen bar); it must look photographed in the scene, not pasted; add no other text.";
       const made = new Array(KF).fill(null);
       const makeKey = async (k) => {
@@ -363,13 +363,25 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
         const p = `${sc.imagePrompt}, ${spec.imageStyle}${KEY_SUFFIX}`, viaSite = !!brandRef && k < KF - 1 && String(sc.imagePrompt).toLowerCase().includes(brandLow);
         const gen = (t) => (viaSite ? klein.edit(t + refNote, brandRef) : klein.generate(t));
         neurons.charge(neurons.estKlein(viaSite), `keyframe ${k + 1}`);
-        let buf;
-        try { buf = await gen(p); }
-        catch (e) {
-          if (!/8007|NSFW|flagged/i.test(String(e.message))) throw e;
-          try { buf = await klein.generate(`${spec.imageStyle}, a calm wholesome close-up of the company's main product on a clean surface, soft light, no people${KEY_SUFFIX}`); }
-          catch (e2) { if (k === 0) throw e2; buf = null; console.warn(`[keyframe] ${k + 1} refused by the safety filter twice: the previous keyframe is held`); }
+        // Cloudflare's safety filter is over-sensitive ("a night sky over a city with app icons" gets refused). A refusal costs nothing, so we retry with
+        // gentler versions of the SAME idea - never with a generic stand-in, which is how a dull cup once became the hook - and only then hold the previous keyframe.
+        const first = String(sc.imagePrompt).split(/[,;.]/)[0].split(/\s+/).slice(0, 22).join(' ');
+        const tries = [
+          () => gen(p),
+          () => gen(`${first}, ${spec.imageStyle}${KEY_SUFFIX}`),
+          () => klein.generate(`${first}, ${spec.imageStyle}, wholesome and family friendly${KEY_SUFFIX}`),
+          async () => { if (k === 0) throw new Error('flagged'); await jobs[k - 1]; return klein.edit(`The same scene from a clearly different camera angle and framing, with a fresh detail in view. ${spec.imageStyle}. No text, no letters.`, made[k - 1]); },
+        ];
+        let buf = null, lastErr = null;
+        for (let t = 0; t < tries.length && !buf; t++) {
+          try { buf = await tries[t](); }
+          catch (e) {
+            lastErr = e;
+            if (!/8007|NSFW|flagged/i.test(String(e.message))) throw e;             // a real error (quota, network): not ours to work around
+            console.warn(`[keyframe] ${k + 1} attempt ${t + 1} refused by the safety filter (${String(e.message).slice(0, 90)})`);
+          }
         }
+        if (!buf) { if (k === 0) throw lastErr; console.warn(`[keyframe] ${k + 1} refused every time: the previous keyframe is held`); }
         if (buf) { fs.writeFileSync(kfFile(k), buf); made[k] = buf; }
       };
       say('Painting the keyframes of your film', 0.08);
