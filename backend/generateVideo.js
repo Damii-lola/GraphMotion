@@ -88,7 +88,7 @@ function register(app, { siteVideo }) {
           onProgress: seen,
         });
       }
-      j.genProgress = 1; j.nodeFilm = !!(result && result.spec && result.spec.nodes);   // photographic worlds compress badly: the node film is encoded a little harder
+      j.genProgress = 1; j.nodeFilm = !!(result && result.spec && (result.spec.nodes || result.spec.morph));   // photographic worlds compress badly: the node film is encoded a little harder
       if (j.cancelled) throw new Error('cancelled');
       await store.persist(j.id, { company: input.company, spec: result.spec, dir });   // the job id + ad script are stored (Supabase) before recording starts
       return true;

@@ -212,4 +212,4 @@ async function cutout(buf, tol = 70) {
 const BG_LOOK = 'cinematic wide atmospheric background photograph, vertical 9:16 composition, deep soft focus and shallow depth of field, moody premium lighting, rich colour, no people, no text, no letters, no signs, no logos, nothing sharp in the centre, calm uncluttered space in the middle';
 const NODE_LOOK = 'single object, centered, floating in the air, flat 2D vector illustration, bold simple shapes, crisp clean edges, a few rich saturated flat colours with subtle shading, sticker style icon, high contrast, NOT white and NOT grey and NOT green, isolated on a plain flat pure bright green chroma-key background (#00ff00), no shadow, no ground, no text, no letters, no logo';
 
-module.exports = { BG_LOOK, NODE_FLOW, NODE_KEYS, applyNodePlan, brandBadge, proceduralNode, cutout, NODE_LOOK };
+module.exports = { stems, flat, grounded, BG_LOOK, NODE_FLOW, NODE_KEYS, applyNodePlan, brandBadge, proceduralNode, cutout, NODE_LOOK };

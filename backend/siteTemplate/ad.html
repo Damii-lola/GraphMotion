@@ -149,13 +149,13 @@ window.SITE = /*__SITE_JSON__*/null;
     document.querySelectorAll(".hl").forEach((h) => {
       const sec = h.closest("section"), inner = h.closest(".ad-inner");
       const hook = sec.classList.contains("role-hook"), cta = sec.classList.contains("role-cta");
-      let fs = vw * ((S.movie || S.nodes) ? (hook ? 0.086 : cta ? 0.07 : 0.066) : (hook ? 0.125 : cta ? 0.095 : 0.105));   // movie mode: captions are the SECOND centre of attention, the film is the first
+      let fs = vw * ((S.movie || S.nodes || S.morph) ? (hook ? 0.086 : cta ? 0.07 : 0.066) : (hook ? 0.125 : cta ? 0.095 : 0.105));   // movie mode: captions are the SECOND centre of attention, the film is the first
       const avail = inner.clientWidth, maxH = sec.clientHeight * (hook ? 0.62 : cta ? 0.36 : 0.56), maxBlock = sec.clientHeight;
       for (let k = 0; k < 40; k++) {
         h.style.fontSize = fs + "px";
         const widest = Math.max(0, ...[...h.querySelectorAll(".w")].map((w) => w.getBoundingClientRect().width));
         if (widest <= avail && h.offsetHeight <= maxH && inner.offsetHeight <= maxBlock) break;
-        fs *= 0.94; if (fs < vw * ((S.movie || S.nodes) ? 0.038 : 0.055)) break;
+        fs *= 0.94; if (fs < vw * ((S.movie || S.nodes || S.morph) ? 0.038 : 0.055)) break;
       }
     });
   }
@@ -179,7 +179,7 @@ window.SITE = /*__SITE_JSON__*/null;
     const last = i === secs.length - 1, first = i === 0;
     const q = (s) => [...sec.querySelectorAll(s)], one = (s) => sec.querySelector(s);
     const inner = one(".ad-inner"), hlw = q(".hl .wi"), subw = q(".sub .wi"), tag = one(".tag"), stk = one(".sticker"), btn = one(".cta-btn"), lnk = one(".cta-link"), lg = one(".cta-logo, .cta-word");
-    const MV = !!(S.movie || S.nodes);
+    const MV = !!(S.movie || S.nodes || S.morph);
     const t0 = first ? 0 : MV ? i + 0.16 : i - 0.14;   // the words start rising while the camera is still arriving, so the text is part of the same motion (not a separate event after it)
 
     // ONE continuous wave: every word rises out of a soft blur, overlapping its neighbours, decelerating into place (power4.out: fast start, long soft settle)
@@ -284,6 +284,173 @@ if (S.movie) {
     });
   });
   window.__jumpToProgress(0);
+} else if (S.morph && S.morph.images && S.morph.images.length) {
+/* ===== MORPH MODE: the film is six AI pictures (the hero is INSIDE each picture) and every scene change is a wireframe morph:
+   the picture goes normal -> wireframe (a glowing grid surface, dissolving into strands) -> and the NEXT picture forms out of the wireframe.
+     move  : same hero, new world  - the whole frame morphs at once while the hero settles into its new place
+     sweep : same world, different hero - the morph travels across the frame from the top-left corner to the bottom-right
+     all   : everything changes - the whole frame morphs at once
+   A pure function of film progress p, so the recorder and the preview show identical frames. ===== */
+{
+  const root = document.documentElement; root.classList.add("nodes");
+  const canvas = document.getElementById("bg");
+  const gl = canvas.getContext("webgl2", { antialias: false, alpha: false, preserveDrawingBuffer: true });
+  const chip = document.getElementById("chip"), pulse = document.querySelector(".cta-pulse");
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const sm = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+  const hex = (h, d) => { const m = /^#?([0-9a-f]{6})$/i.exec(String(h || "")); const n = m ? parseInt(m[1], 16) : d; return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; };
+  const ACC = hex(S.theme.accent, 0xff5c1a);
+  const eio = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+  const IMGS = S.morph.images;
+
+  const compile = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s)); return s; };
+  const program = (vs, fs) => { const p = gl.createProgram(); gl.attachShader(p, compile(gl.VERTEX_SHADER, vs)); gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(p)); return p; };
+
+  // shared: where a picture point ends up while the surface is tilting, waving and lifted by its own brightness
+  const COMMON = `
+uniform sampler2D uA, uB; uniform float uTq, uKind, uT, uRatio; uniform vec4 uCamA, uCamB;
+float h1(vec2 p){ p = fract(p * vec2(233.34, 851.73)); p += dot(p, p + 23.45); return fract(p.x * p.y); }
+float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h1(i), h1(i + vec2(1,0)), f.x), mix(h1(i + vec2(0,1)), h1(i + vec2(1,1)), f.x), f.y); }
+float bell(float t){ float a = smoothstep(0.0, 0.42, t), b = 1.0 - smoothstep(0.58, 1.0, t); return a * b; }
+vec2 cam(vec2 uv, vec4 c){ return (uv - 0.5) / c.x + 0.5 + c.yz; }
+// local transition progress: everywhere at once, except the sweep, which travels from the top-left corner to the bottom-right
+float localT(vec2 uv){ float spread = uKind > 1.5 ? 0.85 : 0.0; float d = (uv.x + (1.0 - uv.y)) * 0.5; return clamp(uTq * (1.0 + spread) - d * spread, 0.0, 1.0); }
+`;
+  const M_VS = `#version 300 es
+in vec2 aUV; ${COMMON}
+out vec2 vUV; out vec2 vA; out vec2 vB; out float vW; out float vM;
+void main(){
+  vUV = aUV;
+  float t = localT(aUV), w = uTq < 0.0 ? 0.0 : bell(t), m = smoothstep(0.42, 0.58, t);
+  vW = w; vM = m; vA = cam(aUV, uCamA); vB = cam(aUV, uCamB);
+  vec4 ta = textureLod(uA, vA, 0.0), tb = textureLod(uB, vB, 0.0);
+  float lum = dot(mix(ta, tb, m).rgb, vec3(0.299, 0.587, 0.114));
+  vec2 c = (aUV - 0.5) * vec2(uRatio, 1.0);
+  float z = ((lum - 0.4) * 0.34 + (vn(aUV * 5.0 + uT * 0.6) - 0.5) * 0.22) * w;                 // the surface: brightness lifts it, a slow wave moves it
+  float ang = w * 0.42, ca = cos(ang), sa = sin(ang);
+  vec3 p = vec3(c.x, c.y * ca - z * sa, c.y * sa + z * ca);                                       // tilted back like a sheet of glass
+  p.xy *= 1.0 / (1.0 - p.z * 0.9);
+  p.xy *= 1.0 - 0.10 * w;
+  gl_Position = vec4(p.x / uRatio * 2.0, p.y * 2.0, 0.0, 1.0);
+}`;
+  const M_FS = `#version 300 es
+precision highp float;
+in vec2 vUV; in vec2 vA; in vec2 vB; in float vW; in float vM; out vec4 o;
+uniform sampler2D uA, uB; uniform vec3 uAcc; uniform float uRatio, uPhoto;
+void main(){
+  vec3 ca = texture(uA, vA).rgb, cb = texture(uB, vB).rgb;
+  vec3 col = mix(ca, cb, vM);
+  vec2 g = vUV * vec2(30.0, 30.0 / uRatio);
+  vec2 gf = abs(fract(g - 0.5) - 0.5) / fwidth(g);
+  float line = 1.0 - min(min(gf.x, gf.y), 1.0);
+  vec3 wc = mix(uAcc, vec3(1.0), 0.6);
+  float fill = 1.0 - 0.9 * vW;
+  vec3 rgb = col * fill + wc * (line * 0.9 + 0.0) * vW + col * 0.55 * line * vW;                  // the grid glows and carries the picture's own colour
+  // soft dark bands where the captions sit (top and bottom), so any picture can carry text
+  float band = (1.0 - 0.42 * smoothstep(0.80, 1.0, vUV.y)) * (1.0 - 0.5 * smoothstep(0.34, 0.0, vUV.y));
+  rgb *= band;
+  o = vec4(rgb, 1.0);
+}`;
+  // the strands: every point of the picture flies out along its own line, glows, and gathers back into the next picture
+  const S_VS = `#version 300 es
+in vec3 aV; ${COMMON}
+out vec3 vCol; out float vSide; out float vDis;
+void main(){
+  vec2 uv = aV.xy; vSide = aV.z;
+  float t = localT(uv), dis = uTq < 0.0 ? 0.0 : pow(bell(t), 0.85), m = smoothstep(0.42, 0.58, t); vDis = dis;
+  vec2 ua = cam(uv, uCamA), ub = cam(uv, uCamB);
+  vCol = mix(textureLod(uA, ua, 0.0).rgb, textureLod(uB, ub, 0.0).rgb, m);
+  vec2 c = (uv - 0.5) * vec2(uRatio, 1.0);
+  float ang = h1(uv) * 6.2832 + uT * 0.5, rad = (0.05 + 0.55 * h1(uv + 3.7)) * dis;
+  vec3 tip = vec3(cos(ang) * rad, sin(ang) * rad, (h1(uv + 9.1) - 0.5) * rad * 1.4) + vec3(c * 0.35 * dis, 0.0);
+  vec3 p = vec3(c, 0.0) + tip * aV.z;
+  float a = dis * 0.42, ca = cos(a), sa = sin(a);
+  p = vec3(p.x, p.y * ca - p.z * sa, p.y * sa + p.z * ca);
+  p.xy *= 1.0 / (1.0 - p.z * 0.9); p.xy *= 1.0 - 0.10 * dis;
+  gl_Position = vec4(p.x / uRatio * 2.0, p.y * 2.0, 0.0, 1.0);
+  gl_PointSize = 2.6 * (1.0 + 1.4 * dis);
+}`;
+  const S_FS = `#version 300 es
+precision highp float;
+in vec3 vCol; in float vSide; in float vDis; out vec4 o; uniform float uPoint; uniform vec3 uAcc;
+void main(){
+  vec3 hot = mix(vCol, mix(uAcc, vec3(1.0), 0.4), 0.5 * vSide);
+  float k = vDis * (uPoint > 0.5 ? 0.5 : 0.22 * mix(0.1, 1.0, vSide));
+  if (uPoint > 0.5) { vec2 q = gl_PointCoord - 0.5; float d = length(q); if (d > 0.5) discard; k *= smoothstep(0.5, 0.05, d); }
+  o = vec4(hot * k, k);
+}`;
+
+  const mP = program(M_VS, M_FS), sP = program(S_VS, S_FS);
+  const GX = 60, GY = 100, verts = [], idx = [];
+  for (let y = 0; y <= GY; y++) for (let x = 0; x <= GX; x++) verts.push(x / GX, y / GY);
+  for (let y = 0; y < GY; y++) for (let x = 0; x < GX; x++) { const a = y * (GX + 1) + x, b = a + 1, c = a + GX + 1, d = c + 1; idx.push(a, b, c, b, d, c); }
+  const meshVb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, meshVb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW);
+  const meshIb = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, meshIb); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
+  const PGX = 54, PGY = 90, lineV = [], pointV = [];
+  for (let y = 0; y <= PGY; y++) for (let x = 0; x <= PGX; x++) { const u = x / PGX, v = y / PGY; lineV.push(u, v, 0, u, v, 1); pointV.push(u, v, 1); }
+  const lineVb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, lineVb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lineV), gl.STATIC_DRAW);
+  const pointVb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, pointVb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pointV), gl.STATIC_DRAW);
+
+  // ---------- the six pictures
+  const tex = IMGS.map(() => null); let loaded = 0;
+  const blank = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, blank); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([8, 8, 12, 255]));
+  IMGS.forEach((f, i) => {
+    const im = new Image();
+    im.onload = () => {
+      const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, im); gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.MIRRORED_REPEAT); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.MIRRORED_REPEAT);
+      tex[i] = t; loaded++;
+    };
+    im.onerror = () => { loaded++; };
+    im.src = f;
+  });
+  window.__assetsReady = () => loaded >= IMGS.length && (!window.__fitDone || window.__fitDone());
+  window.__sceneReady = true;
+
+  const resize = () => { const dpr = Math.min(2, window.devicePixelRatio || 1), w = Math.round(window.innerWidth * dpr), h = Math.round(window.innerHeight * dpr); if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; } };
+  const U = (p, n) => gl.getUniformLocation(p, n);
+  // the kind of change between two scenes: which of hero / world stays
+  const kindOf = (a, b) => { const sh = a.hero === b.hero, sw = a.world === b.world; return sh && !sw ? 1 : !sh && sw ? 2 : 0; };
+
+  function draw(p) {
+    resize(); const P = clamp01(p) * N;
+    let k = -1; for (let j = 0; j < N - 1; j++) if (P >= j + 0.8 && P <= j + 1.2) { k = j; break; }
+    const cur = Math.max(0, Math.min(N - 1, Math.floor(P - 0.2)));
+    const ia = k >= 0 ? k : cur, ib = k >= 0 ? k + 1 : cur;
+    const tq = k >= 0 ? eio((P - (k + 0.8)) / 0.4) * 0.999 + 0.0005 : -1, kind = k >= 0 ? kindOf(S.scenes[ia], S.scenes[ib]) : 0;
+    const tSec = clamp01(p) * N * 3.5;
+    // every picture is alive: a slow push-in and drift, so nothing ever sits still
+    const camOf = (i) => { const u = Math.max(0, P - i), s = i % 2 ? -1 : 1; return [1.05 + 0.06 * Math.min(u, 1.6), s * 0.012 * Math.min(u, 1.6), (i % 3 - 1) * 0.006 * Math.min(u, 1.6), 0]; };
+    const cA = camOf(ia), cB = camOf(ib);
+    gl.viewport(0, 0, canvas.width, canvas.height); gl.disable(gl.DEPTH_TEST); gl.clearColor(0.02, 0.02, 0.03, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+    const R = canvas.width / canvas.height;
+    const setCommon = (prog) => {
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex[ia] || blank); gl.uniform1i(U(prog, "uA"), 0);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, tex[ib] || blank); gl.uniform1i(U(prog, "uB"), 1);
+      gl.uniform1f(U(prog, "uTq"), tq); gl.uniform1f(U(prog, "uKind"), kind === 2 ? 2 : kind); gl.uniform1f(U(prog, "uT"), tSec); gl.uniform1f(U(prog, "uRatio"), R);
+      gl.uniform4f(U(prog, "uCamA"), cA[0], cA[1], cA[2], 0); gl.uniform4f(U(prog, "uCamB"), cB[0], cB[1], cB[2], 0);
+      gl.uniform3f(U(prog, "uAcc"), ACC[0], ACC[1], ACC[2]);
+    };
+    gl.useProgram(mP); gl.disable(gl.BLEND); setCommon(mP);
+    gl.bindBuffer(gl.ARRAY_BUFFER, meshVb); const au = gl.getAttribLocation(mP, "aUV"); gl.enableVertexAttribArray(au); gl.vertexAttribPointer(au, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, meshIb); gl.drawElements(gl.TRIANGLES, idx.length, gl.UNSIGNED_SHORT, 0);
+    if (tq >= 0) {                                                                // the strands, additive, on top of the surface
+      gl.useProgram(sP); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE); setCommon(sP);
+      const bind = (buf) => { gl.bindBuffer(gl.ARRAY_BUFFER, buf); const a = gl.getAttribLocation(sP, "aV"); gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a, 3, gl.FLOAT, false, 0, 0); };
+      gl.uniform1f(U(sP, "uPoint"), 0); bind(lineVb); gl.drawArrays(gl.LINES, 0, (PGX + 1) * (PGY + 1) * 2);
+      gl.uniform1f(U(sP, "uPoint"), 1); bind(pointVb); gl.drawArrays(gl.POINTS, 0, (PGX + 1) * (PGY + 1));
+    }
+    const i = Math.min(N - 1, Math.floor(Math.min(0.99999, p) * N)), u = Math.min(0.99999, p) * N - i;
+    chip.style.opacity = i >= N - 1 ? 0 : i === N - 2 ? 1 - sm(0.7, 1, u) : 1;
+    if (pulse) pulse.style.transform = i >= N - 1 ? "scale(" + (1 + 0.035 * Math.sin(u * 30)) + ")" : "none";
+  }
+  window.__setFrameHook((p) => { draw(p); });
+  window.__jumpToProgress(0);
+}
+
 } else if (S.nodes && S.nodes.length) {
 /* ===== NODE MODE: a designed motion-graphics film. A gradient world + ONE hero "node" (an object / the brand's mark) that lives in the frame and travels between scenes.
    A change of scene is one of three things (chosen from which node / background each scene uses):
