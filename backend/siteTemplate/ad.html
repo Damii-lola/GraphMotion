@@ -16,7 +16,7 @@
     - story-style progress bars, sticker-style proof badges: the native social look, not the corporate-site look
 -->
 <style>
-  :root { --accent: #ff5c1a; --accent-ink: #fff; --bg: #0b0b0d; --ink: #fff; --ink2: rgba(255,255,255,.95); --dispf: "Bricolage Grotesque", Impact, sans-serif; --dispw: 800; --bodyf: "Inter", -apple-system, sans-serif; --hs: 14vw; --ss: 4.6vw; }
+  :root { --accent: #ff5c1a; --accent-ink: #fff; --bg: #0b0b0d; --ink: #fff; --ink2: rgba(255,255,255,.95); --dispf: "Bricolage Grotesque", Impact, sans-serif; --dispw: 800; --bodyf: "Inter", -apple-system, sans-serif; --hs: 9vw; --ss: 3.5vw; }
   * { box-sizing: border-box; }
   html, body { margin: 0; overflow-x: hidden; background: var(--bg); }
   body { color: #fff; font-family: var(--bodyf); -webkit-font-smoothing: antialiased; }
@@ -50,8 +50,10 @@
   .pos-bm .ad-inner { margin: auto 0 0; align-items: center; text-align: center; }
   .pos-bl .ad-inner { margin: auto auto 0 0; width: 84%; align-items: flex-start; text-align: left; }
   .pos-br .ad-inner { margin: auto 0 0 auto; width: 84%; align-items: flex-end; text-align: right; }
+  .pos-tl .ad-inner { margin: 0 auto auto 0; width: 84%; align-items: flex-start; text-align: left; }
+  .pos-tm .ad-inner { margin: 0 0 auto; align-items: center; text-align: center; }
 
-  .tag { display: inline-block; padding: 1.5vw 3.8vw; border-radius: 99px; background: #fff; color: #0a0c10; font: 800 3.1vw/1 var(--bodyf); letter-spacing: .14em; text-transform: uppercase; margin-bottom: 2.4vh; opacity: 0; box-shadow: 0 .8vw 0 rgba(0,0,0,.28); }
+  .tag { display: inline-block; padding: 1.2vw 3vw; border-radius: 99px; background: #fff; color: #0a0c10; font: 800 2.5vw/1 var(--bodyf); letter-spacing: .14em; text-transform: uppercase; margin-bottom: 2.4vh; opacity: 0; box-shadow: 0 .8vw 0 rgba(0,0,0,.28); }
   .hl { margin: 0; font-family: var(--dispf); font-weight: var(--dispw); font-size: var(--hs); line-height: 1.04; letter-spacing: -.01em; color: var(--ink); text-shadow: 0 .05em 0 rgba(0,0,0,.30), 0 0 .55em rgba(0,0,0,.42); }
   section.tone-light .hl, section.tone-light .sub { text-shadow: 0 0 .5em rgba(255,255,255,.75); }
   /* every text is revealed WORD BY WORD as one flowing wave: each word rises, un-blurs and settles (no hard-edged masks); a highlighted word gets its accent block WIPED in behind it */
@@ -60,7 +62,7 @@
   .w.hi .wi { background: linear-gradient(var(--accent), var(--accent)) no-repeat 0 0 / 0% 100%; border-radius: .14em; padding: 0 .16em; text-shadow: none; }
   .sub { margin: 2.2vh 0 0; max-width: 94%; font-family: var(--bodyf); font-weight: 700; font-size: var(--ss); line-height: 1.24; color: var(--ink2); text-shadow: 0 .06em 0 rgba(0,0,0,.28), 0 0 .6em rgba(0,0,0,.45); }
   .sticker { margin-top: 3vh; opacity: 0; display: flex; align-items: center; gap: 3vw; padding: 1.5vh 5.2vw; border-radius: 3.2vw; background: var(--accent); color: var(--accent-ink); box-shadow: 0 1.3vw 0 rgba(0,0,0,.36); }
-  .sticker .n { font-family: var(--dispf); font-weight: var(--dispw); font-size: 8vw; line-height: 1; }
+  .sticker .n { font-family: var(--dispf); font-weight: var(--dispw); font-size: 6vw; line-height: 1; }
   .sticker .l { font: 800 3.4vw/1.15 var(--bodyf); letter-spacing: .08em; text-transform: uppercase; text-align: left; max-width: 34vw; }
 
   /* end card */
@@ -144,13 +146,13 @@ window.SITE = /*__SITE_JSON__*/null;
     document.querySelectorAll(".hl").forEach((h) => {
       const sec = h.closest("section"), inner = h.closest(".ad-inner");
       const hook = sec.classList.contains("role-hook"), cta = sec.classList.contains("role-cta");
-      let fs = vw * (hook ? 0.125 : cta ? 0.095 : 0.105);
+      let fs = vw * (S.movie ? (hook ? 0.086 : cta ? 0.07 : 0.066) : (hook ? 0.125 : cta ? 0.095 : 0.105));   // movie mode: captions are the SECOND centre of attention, the film is the first
       const avail = inner.clientWidth, maxH = sec.clientHeight * (hook ? 0.62 : cta ? 0.36 : 0.56), maxBlock = sec.clientHeight;
       for (let k = 0; k < 40; k++) {
         h.style.fontSize = fs + "px";
         const widest = Math.max(0, ...[...h.querySelectorAll(".w")].map((w) => w.getBoundingClientRect().width));
         if (widest <= avail && h.offsetHeight <= maxH && inner.offsetHeight <= maxBlock) break;
-        fs *= 0.94; if (fs < vw * 0.055) break;
+        fs *= 0.94; if (fs < vw * (S.movie ? 0.038 : 0.055)) break;
       }
     });
   }
@@ -174,7 +176,8 @@ window.SITE = /*__SITE_JSON__*/null;
     const last = i === secs.length - 1, first = i === 0;
     const q = (s) => [...sec.querySelectorAll(s)], one = (s) => sec.querySelector(s);
     const inner = one(".ad-inner"), hlw = q(".hl .wi"), subw = q(".sub .wi"), tag = one(".tag"), stk = one(".sticker"), btn = one(".cta-btn"), lnk = one(".cta-link"), lg = one(".cta-logo, .cta-word");
-    const t0 = first ? 0 : i - 0.14;   // the words start rising while the camera is still arriving, so the text is part of the same motion (not a separate event after it)
+    const MV = !!S.movie;
+    const t0 = first ? 0 : MV ? i + 0.16 : i - 0.14;   // the words start rising while the camera is still arriving, so the text is part of the same motion (not a separate event after it)
 
     // ONE continuous wave: every word rises out of a soft blur, overlapping its neighbours, decelerating into place (power4.out: fast start, long soft settle)
     const wave = (words, start, dur, stag, rise) => {
@@ -200,7 +203,9 @@ window.SITE = /*__SITE_JSON__*/null;
     if (lnk) master.fromTo(lnk, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.1, ease: "power2.out" }, i + 0.32);
     // the block never sits perfectly still: a slow drift across the whole scene (text and picture share the same continuous motion)
     master.fromTo(inner, { yPercent: 2.2 }, { yPercent: -2.2, duration: 1, ease: "none" }, i);
-    if (!last) {                                          // the caption is carried off by the same dive that takes the picture
+    if (!last && MV) {                                    // movie mode: no dive to carry it off, the caption simply lets go a moment before the next scene
+      master.to(inner, { opacity: 0, filter: "blur(6px)", duration: 0.09, ease: "power2.in" }, i + 0.87);
+    } else if (!last) {                                   // the caption is carried off by the same dive that takes the picture
       const ov = ovOf(i), z = Math.min(1, (TR[i] ? TR[i].zoom : 0.8)), bl = TR[i] ? TR[i].blur : 0.4;
       master.to(inner, { opacity: 0, scale: 1 + 0.32 * z, filter: `blur(${(2 + 8 * bl).toFixed(1)}px)`, duration: 0.6 * ov, ease: "power2.in" }, i + 1 - ov + 0.03);
     }

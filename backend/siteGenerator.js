@@ -46,8 +46,8 @@ const LOOKS = {
 // Vertical, single-subject, bold and bright: what performs in a phone feed. The shader crops the (square) render to 9:16, so the subject must sit in the middle.
 const IMAGE_SUFFIX = ', bold commercial photograph for a social media ad, ONE clear subject in the centre, vertical composition, vibrant saturated colour, crisp dramatic lighting, shallow depth of field, clean uncluttered background, no text, no letters, no logos, no watermark';
 const IDS = ['hook', 'pain', 'solution', 'feature', 'proof', 'cta'];
-const TEXT_POS = ['mm', 'bm', 'bl', 'br'];                       // Middle Middle, Bottom Middle, Bottom Left, Bottom Right (the lower edge of the safe zone)
-const DEFAULT_POS = ['mm', 'bl', 'mm', 'br', 'bm', 'mm'];       // used when the AI does not choose
+const TEXT_POS = ['mm', 'bm', 'bl', 'br', 'tl', 'tm'];                       // Middle Middle, Bottom Middle, Bottom Left, Bottom Right (the lower edge of the safe zone)
+const DEFAULT_POS = ['mm', 'bl', 'mm', 'br', 'bm', 'mm'], MOVIE_POS = ['bl', 'tm', 'br', 'bl', 'tl', 'bm'];       // used when the AI does not choose
 const USER_IMAGE_ORDER = [2, 0, 3, 4, 5, 1]; // where the client's own photos go first: product scene, then the hook, then the rest
 
 // ------------------------------------------------------------- the brief
@@ -69,8 +69,12 @@ Set "sfx" inside each transition to a whoosh id (vary them), and add a top-level
 
 `;
 }
-function briefPrompt(brief) {
-  return `Write a 21-second vertical (9:16) social-media video AD for the company below. It is NOT a website: six scenes of 3.5 seconds, each ONE idea shown as a big caption over a full-screen photograph. Write like a top ad-agency copywriter: specific to THIS company, spoken and punchy, never generic filler. Use only facts, names and numbers that appear in the brief - never invent statistics, awards or prices.
+const STILL_FLOW = "THE FLOW (the most important part). The ad is ONE continuous camera move through six images, never six slides with effects between them. Study how the best scroll-driven 3D-website shorts do it: an aeroplane window fills the screen, the camera flies INTO the window, the sky outside becomes the whole screen and rushes past, and the next scene emerges out of the clouds - nothing stops, nothing cuts, the end of every scene literally becomes the beginning of the next. You control the flow with three things:\n(1) ONE WORLD, SIX SHOTS. The six pictures are six shots of ONE continuous scene in ONE place, as if a single camera filmed it - never six locations. imagePrompt of scene 1 paints the world once, richly: the place, the time of day and light, and ONE hero object that IS this company's own product (or its most direct real-world stand-in: what the company sells, makes or does) - the pictures must be about THIS brand, never about generic gadgets, desks or offices. Each later imagePrompt is a director's note about only WHAT CHANGES from the previous shot: the camera move (push in to a macro detail, pull back to a wide, orbit), what the hero object DOES (it comes alive, it transforms, the light shifts) and the story beat. A picture editor keeps the same place, objects and light, so never re-describe them, never change the location, never add people, faces, crowds or offices, and never show bare skin, feet or bodies - hands or the hero object only. Show the product itself beautifully, like premium product photography, in a setting that matches the brand's values. Example for a note-taking app - shot 1: \"a cozy wooden desk at golden hour, an open laptop with a softly glowing screen, a hand-drawn sketch of a phone on paper, a steaming mug\"; shot 2: \"the camera pushes in to a macro of the sketch; its pencil lines begin to glow gold\"; shot 3: \"the sketch comes alive as a real glowing phone with a colourful screen, sparks of light\"; shot 4: \"the camera pulls far back to the whole desk, the phone floating above the paper lighting the room\". Example for a shoe brand - shot 1: \"a single wool runner shoe on a mossy rock in soft misty forest light, morning sun through the trees\"; shot 2: \"the camera pushes in to a macro of the shoe's soft woven wool\"; shot 3: \"the camera orbits to the side, light glinting on the sole\"; shot 4: \"pull back to a wide: the shoe glowing on its rock in the whole misty forest\". The point the camera dives into in scene N is what scene N+1 moves into.\n(2) EVERY SCENE HAS A CAMERA MOVE that never rests: \"move\": {\"zoom\": -0.24..0.24 (+ pushes in, - pulls out), \"pan\": [-0.15..0.15, -0.04..0.04], \"roll\": -3..3 degrees}. Vary it scene to scene.\n(3) EVERY TRANSITION is the camera diving through the current image while the next one is already opening inside it. There are 5 transitions (scene 1->2 ... 5->6) in \"transitions\": {\"focus\": [x, y] where in the frame (0..1, y from the top) the camera dives - the thing that should open: a hole, a glow, the product, \"zoom\": 0.3..1.8 how violently it rushes, \"spin\": -25..25 degrees, \"blur\": 0..1 motion blur, \"warp\": 0..1 liquid distortion of the opening's edge, \"glow\": 0..1 light bloom, \"soft\": 0.03..0.35 edge softness, \"overlap\": 0.28..0.5 share of the scene the dive lasts, \"mask\": \"...\" optional}. Invent each one for THIS story; never repeat the same numbers or shape twice in a row; calm luxury brands = low blur/warp/spin, aggressive brands = high.\nMASK = a GLSL float expression that shapes the opening. Variables: p (vec2: position relative to the dive point, screen height = 1, x right, y up), q (0..1 progress), t (seconds). The next image shows where the expression is NEGATIVE. Style examples (invent your own, do not copy): \"length(p)-1.6*q\" a circle opening; \"abs(p.y)-2.0*q+0.15*sin(p.x*9.0+t*3.0)\" a rippling slit widening; \"length(p*vec2(1.0,0.5))-1.7*q\" an ellipse; \"abs(p.x)+abs(p.y)-1.9*q\" a diamond. By q=1 it must cover |p|<=1.8. Allowed: p q t, numbers WITH a decimal point, + - * / ( ) . , and the functions sin cos abs length min max pow smoothstep mix clamp fract atan sqrt exp vec2. Leave \"\" for the plain circle.";
+const STILL_KEYS = "Return ONE JSON object with these keys:\n\"brand\", \"tagline\" (max 7 words), \"look\" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), \"accent\" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), \"bg\" (near-black #RRGGBB), \"imageStyle\" (6-10 words: ONE consistent photographic look), \"cta\" (button label, 2-4 words), \"link\" (website or @handle ONLY if it appears in the brief, else \"\"),\n\"scenes\": EXACTLY 6 objects, each: \"id\", \"tag\" (a 1-3 word LABEL pill like \"POV\", \"Real talk\", \"The proof\" - a label, not the start of a sentence, never ending in \"...\"; \"\" for cta), \"headline\" (an ARRAY of 2-7 word strings, ONE WORD PER ELEMENT, e.g. [\"Your\",\"*idea*\",\"starts\",\"|\",\"to\",\"glow\"]; a lone \"|\" element is a line break; wrap the 1-2 key words in *asterisks*), \"sub\" (optional line, max 9 words, else \"\"), \"sticker\" ({\"n\":\"number or word, max 7 chars\",\"l\":\"label, max 3 words\"} for solution/feature/proof only when the brief gives a real number or fact, else null), \"imagePrompt\" (max 32 words; scene 1 = the world and hero subject, scenes 2-6 = what changes from the previous shot: camera move, action, light; ONE subject, no text, no logos, no faces or bodies or bare skin - every image must pass a strict family-friendly safety filter), \"move\" (see 2), \"pos\" (where this scene's text sits: \"mm\" middle, \"bm\" bottom centre, \"bl\" bottom left, \"br\" bottom right - pick the spot that leaves the picture's subject clear, and vary it), \"tone\" (\"dark\" except at most one), \"fx\" ({\"ripple\":0-1,\"mist\":0-1,\"rays\":0-1}),\n\"transitions\": EXACTLY 5 objects (see 3)@@SND@@.\nOutput the JSON object only.";
+const MOVIE_FLOW = "KEYFRAME FILM (the most important part). The picture of this ad is ONE continuous AI-made film. You are its director and you write SIX KEYFRAMES, one per scene. An image AI paints each keyframe from your text; then a video AI films the camera travelling from each keyframe INTO the next one, so the whole ad is a single unbroken shot that morphs from picture to picture. Nothing is cut, nothing is a slide. Three things decide whether a stranger stops scrolling:\n(1) EVERY KEYFRAME IS ABOUT THIS COMPANY. Someone who sees only the six keyframes, with no words, must understand what this company makes or does. Show the product itself, the exact moment it is used, or the result it creates - specific to THIS brand, never generic desks, laptops, offices, gadgets or stock scenes. Write the company name into the picture as a short legible wordmark on ONE physical surface (a mug, a box lid, a sign, a t-shirt, a laptop lid, the top bar of a phone screen) in at least three keyframes, phrased like: with the word \"Name\" printed on the box lid. That single word is the ONLY text allowed in any keyframe: image AIs scramble every other letter, so never ask for sentences, interface text, code, numbers, logos or paragraphs. For software and apps show a phone or laptop whose screen glows with a colourful interface made of shapes and blocks (no readable words), touched by hands, next to the real-world thing that is being built or solved.\n(2) SIX DIFFERENT MOMENTS, ONE LOOK. Every keyframe is a different picture (new subject, place or scale: extreme macro, wide reveal, over-the-shoulder hands, the finished result) but they all share the imageStyle (light, colour palette, lens, mood) so they belong to one film. Keyframe 1 has to stop a thumb within one second: the most striking, surprising image of the six - an extreme close-up or impossible scale, bold colour contrast, a visual question the viewer needs answered. Each keyframe prompt is 35-50 words: subject, place, light, camera angle. No faces (hands, backs, silhouettes only), no bare skin beyond hands, family-friendly.\n(3) MOTION BETWEEN KEYFRAMES. \"motion\" of scene N is ONE sentence (max 28 words) describing what happens on screen while keyframe N turns into keyframe N+1: the camera move (dolly in, orbit, tilt, pull back, fly through) and what the objects physically do (unfold, open, light up, rotate, assemble, pour). Concrete physical verbs only. The last scene's \"motion\" is a slow push in on the end card picture.\nExample for a running-shoe brand called Nova - keyframe 1: \"extreme macro of one wool fibre being pulled taut like a guitar string, warm golden light, the word \"Nova\" woven along the thread, shallow depth of field\"; motion 1: \"the camera flies along the thread as it loosens and weaves itself into the sole of a running shoe\"; keyframe 2: \"a single runner shoe on wet city asphalt at dawn, steam rising, the word \"Nova\" on the heel tab, low angle\"; motion 2: \"the camera orbits the shoe as a hand slides into it and the laces tighten by themselves\". The next keyframes keep going: the shoe in motion on a trail, the box opening, the finished pair glowing.";
+const MOVIE_KEYS = "Return ONE JSON object with these keys:\n\"brand\", \"tagline\" (max 7 words), \"look\" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), \"accent\" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), \"bg\" (near-black #RRGGBB), \"imageStyle\" (10-16 words: the ONE shared look of all six keyframes - light, colour palette, lens, mood), \"cta\" (button label, 2-4 words), \"link\" (website or @handle ONLY if it appears in the brief, else \"\"),\n\"scenes\": EXACTLY 6 objects, each: \"id\", \"tag\" (a 1-3 word LABEL pill like \"POV\", \"Real talk\", \"The proof\" - a label, not the start of a sentence, never ending in \"...\"; \"\" for cta), \"headline\" (an ARRAY of 2-6 word strings, ONE WORD PER ELEMENT, e.g. [\"Your\",\"*idea*\",\"starts\",\"|\",\"to\",\"glow\"]; a lone \"|\" element is a line break; wrap the 1-2 key words in *asterisks*), \"sub\" (optional line, max 8 words, else \"\"), \"sticker\" ({\"n\":\"number or word, max 7 chars\",\"l\":\"label, max 3 words\"} for solution/feature/proof only when the brief gives a real number or fact, else null), \"imagePrompt\" (the KEYFRAME, 35-50 words, see KEYFRAME FILM), \"motion\" (see KEYFRAME FILM), \"pos\" (where this scene's caption sits: \"bm\" bottom centre, \"bl\" bottom left, \"br\" bottom right, \"tl\" top left, \"tm\" top centre - never the middle; pick the spot that leaves the picture's subject clear, and vary it), \"tone\" (\"dark\" except at most one),\n\"transitions\": EXACTLY 5 objects, each just {\"sfx\": a whoosh id from SOUND}@@SND@@.\nOutput the JSON object only.";
+function briefPrompt(brief, movie = false) {
+  return `Write a 21-second vertical (9:16) social-media video AD for the company below. It is NOT a website: six scenes of 3.5 seconds, each ONE idea, shown as a short caption over a full-screen ${movie ? "film shot" : "photograph"}. Write like a top ad-agency copywriter: specific to THIS company, spoken and punchy, never generic filler. Use only facts, names and numbers that appear in the brief - never invent statistics, awards or prices.
 
 COMPANY BRIEF:
 ${brief}
@@ -82,17 +86,9 @@ CRAFT RULES (a human creative director will judge the result):
 - ONE story, one emotional thread. hook = a specific, felt moment from the viewer's own world (never generic); pain stays in that same moment and sharpens it; solution resolves exactly that tension; feature SHOWS the product doing its job (hands, a screen glowing, the object in use) - the picture and the words prove one concrete thing; proof = the payoff, what changes for the viewer once it works (a feeling or a result taken from the brief), never "customers love us"; cta = a callback to the hook's words or image, so the ad closes a loop.
 - Copy: concrete, human, a little witty, in the client's own words and voice. Banned: "love us", "so will you", "game-changer", "revolutionary", "next level", "fast-growing", "trusted by", "unlock", "supercharge", "seamless", and any statistic that is not written in the brief.
 
-THE FLOW (the most important part). The ad is ONE continuous camera move through six images, never six slides with effects between them. Study how the best scroll-driven 3D-website shorts do it: an aeroplane window fills the screen, the camera flies INTO the window, the sky outside becomes the whole screen and rushes past, and the next scene emerges out of the clouds - nothing stops, nothing cuts, the end of every scene literally becomes the beginning of the next. You control the flow with three things:
-(1) ONE WORLD, SIX SHOTS. The six pictures are six shots of ONE continuous scene in ONE place, as if a single camera filmed it - never six locations. imagePrompt of scene 1 paints the world once, richly: the place, the time of day and light, and ONE hero object that IS this company's own product (or its most direct real-world stand-in: what the company sells, makes or does) - the pictures must be about THIS brand, never about generic gadgets, desks or offices. Each later imagePrompt is a director's note about only WHAT CHANGES from the previous shot: the camera move (push in to a macro detail, pull back to a wide, orbit), what the hero object DOES (it comes alive, it transforms, the light shifts) and the story beat. A picture editor keeps the same place, objects and light, so never re-describe them, never change the location, never add people, faces, crowds or offices, and never show bare skin, feet or bodies - hands or the hero object only. Show the product itself beautifully, like premium product photography, in a setting that matches the brand's values. Example for a note-taking app - shot 1: "a cozy wooden desk at golden hour, an open laptop with a softly glowing screen, a hand-drawn sketch of a phone on paper, a steaming mug"; shot 2: "the camera pushes in to a macro of the sketch; its pencil lines begin to glow gold"; shot 3: "the sketch comes alive as a real glowing phone with a colourful screen, sparks of light"; shot 4: "the camera pulls far back to the whole desk, the phone floating above the paper lighting the room". Example for a shoe brand - shot 1: "a single wool runner shoe on a mossy rock in soft misty forest light, morning sun through the trees"; shot 2: "the camera pushes in to a macro of the shoe's soft woven wool"; shot 3: "the camera orbits to the side, light glinting on the sole"; shot 4: "pull back to a wide: the shoe glowing on its rock in the whole misty forest". The point the camera dives into in scene N is what scene N+1 moves into.
-(2) EVERY SCENE HAS A CAMERA MOVE that never rests: "move": {"zoom": -0.24..0.24 (+ pushes in, - pulls out), "pan": [-0.15..0.15, -0.04..0.04], "roll": -3..3 degrees}. Vary it scene to scene.
-(3) EVERY TRANSITION is the camera diving through the current image while the next one is already opening inside it. There are 5 transitions (scene 1->2 ... 5->6) in "transitions": {"focus": [x, y] where in the frame (0..1, y from the top) the camera dives - the thing that should open: a hole, a glow, the product, "zoom": 0.3..1.8 how violently it rushes, "spin": -25..25 degrees, "blur": 0..1 motion blur, "warp": 0..1 liquid distortion of the opening's edge, "glow": 0..1 light bloom, "soft": 0.03..0.35 edge softness, "overlap": 0.28..0.5 share of the scene the dive lasts, "mask": "..." optional}. Invent each one for THIS story; never repeat the same numbers or shape twice in a row; calm luxury brands = low blur/warp/spin, aggressive brands = high.
-MASK = a GLSL float expression that shapes the opening. Variables: p (vec2: position relative to the dive point, screen height = 1, x right, y up), q (0..1 progress), t (seconds). The next image shows where the expression is NEGATIVE. Style examples (invent your own, do not copy): "length(p)-1.6*q" a circle opening; "abs(p.y)-2.0*q+0.15*sin(p.x*9.0+t*3.0)" a rippling slit widening; "length(p*vec2(1.0,0.5))-1.7*q" an ellipse; "abs(p.x)+abs(p.y)-1.9*q" a diamond. By q=1 it must cover |p|<=1.8. Allowed: p q t, numbers WITH a decimal point, + - * / ( ) . , and the functions sin cos abs length min max pow smoothstep mix clamp fract atan sqrt exp vec2. Leave "" for the plain circle.
+${movie ? MOVIE_FLOW : STILL_FLOW}
 
-${soundBlock()}Return ONE JSON object with these keys:
-"brand", "tagline" (max 7 words), "look" (metal = heavy-metal / punk / gothic / dark-humour brands; luxury; tech; playful; clean), "accent" (ONE bold signature colour #RRGGBB - the brand's own if the brief names one; never grey), "bg" (near-black #RRGGBB), "imageStyle" (6-10 words: ONE consistent photographic look), "cta" (button label, 2-4 words), "link" (website or @handle ONLY if it appears in the brief, else ""),
-"scenes": EXACTLY 6 objects, each: "id", "tag" (a 1-3 word LABEL pill like "POV", "Real talk", "The proof" - a label, not the start of a sentence, never ending in "..."; "" for cta), "headline" (an ARRAY of 2-7 word strings, ONE WORD PER ELEMENT, e.g. ["Your","*idea*","starts","|","to","glow"]; a lone "|" element is a line break; wrap the 1-2 key words in *asterisks*), "sub" (optional line, max 9 words, else ""), "sticker" ({"n":"number or word, max 7 chars","l":"label, max 3 words"} for solution/feature/proof only when the brief gives a real number or fact, else null), "imagePrompt" (max 32 words; scene 1 = the world and hero subject, scenes 2-6 = what changes from the previous shot: camera move, action, light; ONE subject, no text, no logos, no faces or bodies or bare skin - every image must pass a strict family-friendly safety filter), "move" (see 2), "pos" (where this scene's text sits: "mm" middle, "bm" bottom centre, "bl" bottom left, "br" bottom right - pick the spot that leaves the picture's subject clear, and vary it), "tone" ("dark" except at most one), "fx" ({"ripple":0-1,"mist":0-1,"rays":0-1}),
-"transitions": EXACTLY 5 objects (see 3)${adMixMenu() ? ', "sound" (see SOUND)' : ''}.
-Output the JSON object only.`;
+${soundBlock()}${(movie ? MOVIE_KEYS : STILL_KEYS).replace("@@SND@@", adMixMenu() ? ', "sound" (see SOUND)' : "")}`;
 }
 
 /** Cut at a word boundary (never mid-word); a single over-long word is cut hard. */
@@ -146,7 +142,7 @@ function normalizeSpec(raw, brand, opts = {}) {
   if (opts.website) link = opts.website;                                       // the client gave us their site: that is the address on the end card
   const spec = {
     kind: 'ad', seed: flowSeed(name), brand: name, tagline: str(S.tagline, '', 60), cta: str(S.cta, 'Learn more', 24), link,
-    imageStyle: str(S.imageStyle, 'bold vibrant commercial photography', 90),
+    imageStyle: str(S.imageStyle, 'bold vibrant commercial photography', 160),
     theme: {
       look, ...LOOKS[look], bg,
       accent: rgb2hex(accRgb),
@@ -169,8 +165,8 @@ function normalizeSpec(raw, brand, opts = {}) {
       tag: k === 5 ? '' : (() => { const t = clipWords(str(s.tag, '', 80).replace(/[*_()[\]<>]/g, '').replace(/[.\u2026\s]+$/g, '').trim(), 22); return IDS.includes(t.toLowerCase()) ? '' : t; })(),   // never the scene's own role name ("SOLUTION"), never markup
       headline: cleanHeadline(Array.isArray(s.headline) ? s.headline.map((w) => String(w)).join(' ').replace(/ \| /g, '|') : (s.headline || s.title), k === 5 ? `Try *${name}* today` : `*${name}*`),
       sub, sticker,
-      imagePrompt: str(s.imagePrompt, `${name} atmosphere, ${spec.imageStyle}`, 200),
-      tone, pos: TEXT_POS.includes(s.pos) ? s.pos : DEFAULT_POS[k],
+      imagePrompt: str(s.imagePrompt, `${name} atmosphere, ${spec.imageStyle}`, 380), motion: str(s.motion, '', 200),
+      tone, pos: TEXT_POS.includes(s.pos) && !(opts.movie && s.pos === 'mm') ? s.pos : (opts.movie ? MOVIE_POS : DEFAULT_POS)[k],
       fx: { ripple: num01(fx.ripple, 0.12), mist: num01(fx.mist, 0.25), rays: num01(fx.rays, 0) },
       move: flow.normalizeMove(s.move, seed, k),
     });
@@ -298,7 +294,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   const brandRefs = [logo && logo.length ? logo : null, ...userImgs.slice(1)].filter(Boolean).slice(0, 3), refCost = () => brandRefs.length * 13;   // shrinks below if the film would not fit the neuron ceiling
   const siteImg = company && company.siteImage && company.siteImage.length ? company.siteImage : null;
   const heroCost = userImgs[0] ? 0 : logo && logo.length || siteImg ? neurons.estKlein(true) : neurons.estKlein(false);
-  const reserveNow = () => (given ? 0 : movieOn() ? heroCost : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
+  const reserveNow = () => (given ? 0 : movieOn() ? IDS.length * neurons.estKlein(true) : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
   let spec = given;
   if (!spec) {
     say('Writing the ad script', 0.05);
@@ -307,9 +303,9 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
     // and each retry then asks for a smaller job (shorter brief, tighter answer) instead of giving up.
     for (let attempt = 0; attempt < 3 && !raw; attempt++) {
       try {
-        let prompt = briefPrompt(text.slice(0, keep)), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst);
+        let prompt = briefPrompt(text.slice(0, keep), movieOn()), est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst);
         while (brandRefs.length > 1 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) brandRefs.pop();   // keep the logo (first), give up extra photos before anything else
-        while (keep > 1200 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep)); est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst); }
+        while (keep > 1200 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep), movieOn()); est = neurons.estText(SPEC_MODEL, prompt.length + SYSTEM.length, outEst); }
         neurons.charge(est, 'ad script', reserveNow()); // refuses BEFORE spending if the ad could not be finished inside its ceiling
         let usage = null;
         const txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: maxTok, temperature: 0.8, model: SPEC_MODEL, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
@@ -324,7 +320,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
       }
     }
     if (!raw) throw new Error('The AI could not write the ad script: ' + (lastErr && lastErr.message));
-    spec = normalizeSpec(raw, slug, { brand: company && company.name, brief: text, website: company && company.siteHost });
+    spec = normalizeSpec(raw, slug, { brand: company && company.name, brief: text, website: company && company.siteHost, movie: movieOn() });
   }
   fs.mkdirSync(path.join(outDir, 'images'), { recursive: true });
   if (planOnly) { fs.writeFileSync(path.join(outDir, 'site.json'), JSON.stringify(spec, null, 2)); return { outDir, spec }; }
@@ -337,51 +333,65 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
       await toWebp(f, out, 640);
       spec.logo = { file: 'images/logo.webp', plate: await logoPlate(f) };
     }
-    let movieDone = false, heroPre = null;   // heroPre: the movie's hero picture, reused if the video model turns out to be unavailable
+    let movieDone = false, keyPre = null;   // keyPre: the six keyframes, reused as the pictures if the video model turns out to be unavailable
     if (movieOn() && !given) {
-      // ===== ONE CONTINUOUS FILM =====
-      // shot 1 is a picture (the only picture that costs neurons); each scene is then an image-to-video clip that STARTS on the last frame of the previous one,
-      // guided by that scene's director's note. Joined and slowed to exactly 3.5 s per scene, it is one camera in one world with nothing cut or crossfaded.
-      const clips = []; let start = null, madeHero = false;
-      try {
-        say('Building the world of your ad', 0.1);
-        const heroFile = path.join(tmp, 'hero.png');
-        if (userImgs[0]) { const src = path.join(tmp, 'hero.src'); fs.writeFileSync(src, userImgs[0]); await runFfmpeg(['-i', src, '-vf', `scale=${klein.W}:${klein.H}:force_original_aspect_ratio=increase,crop=${klein.W}:${klein.H}`, heroFile]); }
-        else {
-          const first = `${spec.scenes[0].imagePrompt}, ${spec.imageStyle}${IMAGE_SUFFIX}`;
-          const viaSite = (p) => klein.edit(`${p} The reference image is the company's own brand image (its logo, mascot or product). Show that brand element clearly, accurately and undistorted on the hero object in this scene (on the product, its packaging, a sign or a screen), photographed naturally; add no other text.`, siteImg);
-          const gen = (p) => (siteImg ? viaSite(p) : klein.generate(p));
-          neurons.charge(neurons.estKlein(!!siteImg), 'hero picture');
-          let buf; try { buf = await gen(first); } catch (e) { if (!/8007|NSFW|flagged/i.test(String(e.message))) throw e; buf = await gen(`${spec.imageStyle}, a calm wholesome still life of a single simple object, soft light${IMAGE_SUFFIX}`); }
-          fs.writeFileSync(heroFile, buf);
+      // ===== KEYFRAME FILM =====
+      // Cloudflare paints six DIFFERENT, company-specific keyframes; the video model then films the camera travelling from each keyframe INTO the next one
+      // (first- and last-frame conditioning), so the ad is one unbroken shot that passes through pictures we control. Each clip is stretched to 3.5 s.
+      const KF = spec.scenes.length, clips = [], kfFile = (k) => path.join(tmp, `kf${k}.png`);
+      const gate = ((n) => { let active = 0; const q = []; const next = () => { if (active >= n || !q.length) return; active++; const j = q.shift(); j.fn().then(j.res, j.rej).finally(() => { active--; next(); }); }; return (fn) => new Promise((res, rej) => { q.push({ fn, res, rej }); next(); }); })(3);
+      const KEY_SUFFIX = ', cinematic vertical 9:16 photograph, dramatic lighting, shallow depth of field, vivid colour, sharp focus, the only text anywhere is a brand word if one was asked for, no other letters, no watermark';
+      const brandLow = String(spec.brand).toLowerCase(), refNote = " The reference image is the company's own brand image (its logo, mascot or product): show that brand element accurately and undistorted in this scene, photographed naturally; add no other text.";
+      const made = new Array(KF).fill(null);
+      const makeKey = async (k) => {
+        const sc = spec.scenes[k];
+        if (k === 0 && userImgs[0]) { const src = path.join(tmp, 'hero.src'); fs.writeFileSync(src, userImgs[0]); await runFfmpeg(['-i', src, '-vf', `scale=${klein.W}:${klein.H}:force_original_aspect_ratio=increase,crop=${klein.W}:${klein.H}`, kfFile(0)]); made[0] = fs.readFileSync(kfFile(0)); return; }
+        const p = `${sc.imagePrompt}, ${spec.imageStyle}${KEY_SUFFIX}`, viaSite = !!siteImg && (k === 0 || String(sc.imagePrompt).toLowerCase().includes(brandLow));
+        const gen = (t) => (viaSite ? klein.edit(t + refNote, siteImg) : klein.generate(t));
+        neurons.charge(neurons.estKlein(viaSite), `keyframe ${k + 1}`);
+        let buf;
+        try { buf = await gen(p); }
+        catch (e) {
+          if (!/8007|NSFW|flagged/i.test(String(e.message))) throw e;
+          try { buf = await klein.generate(`${spec.imageStyle}, a calm wholesome close-up of the company's main product on a clean surface, soft light, no people${KEY_SUFFIX}`); }
+          catch (e2) { if (k === 0) throw e2; buf = null; console.warn(`[keyframe] ${k + 1} refused by the safety filter twice: the previous keyframe is held`); }
         }
-        madeHero = true; start = heroFile; heroPre = fs.readFileSync(heroFile);
-        await toWebp(heroFile, path.join(outDir, 'images', spec.scenes[0].id + '.webp'));        // poster / fallback picture
-        for (let k = 0; k < spec.scenes.length; k++) {
-          const sc = spec.scenes[k], note = k === 0 ? 'the camera slowly pushes in, subtle natural motion in the scene: ' + String(sc.imagePrompt).slice(0, 160) : sc.imagePrompt;
-          say(`Filming scene ${k + 1} of ${spec.scenes.length}`, 0.1 + 0.8 * (k / spec.scenes.length));
+        if (buf) { fs.writeFileSync(kfFile(k), buf); made[k] = buf; }
+      };
+      say('Painting the keyframes of your film', 0.08);
+      const jobs = spec.scenes.map((_, k) => gate(() => makeKey(k)));
+      jobs.forEach((j) => j.catch(() => {}));                       // failures are raised where they are awaited below
+      const keyReady = async (k) => { await jobs[k]; if (!made[k]) { made[k] = made[k - 1]; fs.writeFileSync(kfFile(k), made[k]); } return kfFile(k); };
+      try {
+        for (let k = 0; k < KF; k++) {
+          const sc = spec.scenes[k], last = k === KF - 1;
+          say(`Filming scene ${k + 1} of ${KF}`, 0.1 + 0.8 * (k / KF));
+          const from = await keyReady(k), to = last ? null : await keyReady(k + 1);
+          if (k === 0) await toWebp(from, path.join(outDir, 'images', sc.id + '.webp'));      // poster / fallback picture
+          const note = last ? 'the camera slowly pushes in on the scene, gentle natural motion' : (sc.motion || `the camera glides forward as the scene changes: ${String(spec.scenes[k + 1].imagePrompt).slice(0, 140)}`);
           const f = path.join(tmp, `clip${k}.mp4`);
-          try { await videoGen.clip({ startImage: start, prompt: note, seconds: SCENE_SECONDS, seed: 100 + k * 7, out: f }); }
+          try { await videoGen.clip({ startImage: from, endImage: to, prompt: note, seconds: SCENE_SECONDS, seed: 100 + k * 7, out: f }); }
           catch (e) {
-            if (k === 0) throw e;                                    // nothing yet: the caller falls back to the stills engine
-            console.warn('[movie] clip ' + (k + 1) + ' failed (' + String(e.message).slice(0, 120) + '): the last picture is held with a slow push-in'); // never fail a film over one clip
+            if (k === 0) { keyPre = made.slice(); throw e; }                            // nothing filmed yet: the caller falls back to the pictures
+            console.warn('[movie] clip ' + (k + 1) + ' failed (' + String(e.message).slice(0, 120) + '): its keyframe is held with a slow push-in');   // never fail a film over one clip
             const hold = path.join(tmp, `hold${k}.mp4`);
-            await runFfmpeg(['-loop', '1', '-i', start, '-t', '3', '-vf', `zoompan=z='1+0.0016*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=90:s=${videoGen.W}x${videoGen.H}:fps=30`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', hold]);
+            await runFfmpeg(['-loop', '1', '-i', from, '-t', '3', '-vf', `zoompan=z='1+0.0016*on':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=90:s=${videoGen.W}x${videoGen.H}:fps=30`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', hold]);
             clips.push({ file: hold, seconds: 3 }); continue;
           }
           clips.push({ file: f, seconds: await videoGen.probeSeconds(f) });
-          console.log(`[movie] clip ${k + 1}/${spec.scenes.length} done (server memory ${Math.round(process.memoryUsage().rss / 1048576)} MB)`);
-          start = await videoGen.lastFrame(f, path.join(tmp, `last${k}.png`));
+          console.log(`[movie] clip ${k + 1}/${KF} done (server memory ${Math.round(process.memoryUsage().rss / 1048576)} MB)`);
         }
         say('Editing the film', 0.92);
         await videoGen.assemble(clips, SCENE_SECONDS, path.join(outDir, 'movie.webm'));
         console.log(`[movie] film assembled (server memory ${Math.round(process.memoryUsage().rss / 1048576)} MB)`);
-        spec.movie = { file: 'movie.webm', seconds: SCENE_SECONDS * spec.scenes.length };
+        spec.movie = { file: 'movie.webm', seconds: SCENE_SECONDS * KF };
+        for (let k = 1; k < KF; k++) { try { await toWebp(kfFile(k), path.join(outDir, 'images', spec.scenes[k].id + '.webp')); } catch (_) {} }
         movieDone = true;
       } catch (e) {
-        if (madeHero && clips.length === 0) console.warn('[movie] the video model is unavailable (' + String(e.message).slice(0, 200) + ') - falling back to pictures joined by dives');
-        else if (!madeHero) throw e;                                  // the hero picture itself failed (quota, filter...): a real error
-        else throw e;
+        if (clips.length === 0 && made[0]) {
+          console.warn('[movie] the video model is unavailable (' + String(e.message).slice(0, 200) + ') - falling back to the keyframes joined by dives');
+          await Promise.allSettled(jobs); keyPre = made.slice();
+        } else throw e;
       }
     }
     let worldDone = movieDone;
@@ -393,9 +403,9 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
         for (let k = 0; k < spec.scenes.length; k++) {
           const sc = spec.scenes[k], progress = 0.1 + 0.8 * (k / spec.scenes.length);
           let buf;
-          if (k === 0) {
-            if (heroPre) { buf = heroPre; }
-            else if (userImgs[0]) {
+          if (keyPre && keyPre[k]) { buf = keyPre[k]; }
+          else if (k === 0) {
+            if (userImgs[0]) {
               say('Preparing your photo', progress); const src = path.join(tmp, 'hero.src'), dst = path.join(tmp, 'hero.png'); fs.writeFileSync(src, userImgs[0]);
               await runFfmpeg(['-i', src, '-vf', `scale=${klein.W}:${klein.H}:force_original_aspect_ratio=increase,crop=${klein.W}:${klein.H}`, dst]); buf = fs.readFileSync(dst);
             } else {

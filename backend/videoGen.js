@@ -73,10 +73,10 @@ async function falClip({ startImage, prompt, seconds, seed, out }) {
 }
 
 /** One clip: startImage (png/jpg path) + a director's note -> mp4 of about `seconds` seconds. */
-async function clip({ startImage, prompt, seconds = 3, seed = 42, out }) {
+async function clip({ startImage, endImage = null, prompt, seconds = 3, seed = 42, out }) {
   if (useWorker()) {                                   // the free notebook GPU worker: it pulls the job from this server
     const frames = Math.max(9, Math.round((seconds * 24 - 1) / 8) * 8 + 1);
-    const mp4 = await require('./videoWorker').enqueue({ prompt: `${prompt}, cinematic, smooth camera movement, natural motion`, negative: NEGATIVE, seed, frames, width: W, height: H, image: fs.readFileSync(startImage).toString('base64') });
+    const mp4 = await require('./videoWorker').enqueue({ prompt: `${prompt}, cinematic, smooth camera movement, natural motion`, negative: NEGATIVE, seed, frames, width: W, height: H, image: fs.readFileSync(startImage).toString('base64'), ...(endImage ? { imageEnd: fs.readFileSync(endImage).toString('base64') } : {}) });
     fs.writeFileSync(out, mp4); return out;
   }
   if (useFal()) {
