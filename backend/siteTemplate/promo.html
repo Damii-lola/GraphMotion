@@ -76,7 +76,24 @@
     if (b > 0) { const s = BEATS[b].t0 - PAN * 0.35, u = (t - s) / PAN; if (u >= 1) { const z = Z[BEATS[b].zone]; return { x: z.x, y: z.y, u: 1, from: z, to: z, b }; } if (u > 0) { const a = Z[BEATS[b - 1].zone], c = Z[BEATS[b].zone]; const e = E.inOutCubic(u); return { x: lerp(a.x, c.x, e), y: lerp(a.y, c.y, e), u: e, from: a, to: c, b }; } const z = Z[BEATS[b - 1].zone]; return { x: z.x, y: z.y, u: 0, from: z, to: z, b: b - 1 }; }
     const z = Z[BEATS[b].zone]; return { x: z.x, y: z.y, u: 1, from: z, to: z, b };
   }
-  function drawBoard(cam) {
+  // GraphMotion's atmosphere over the gradient: a faint wireframe grid anchored to the board (the camera visibly travels across it), concentric energy rings at every zone,
+  // soft drifting fog, rising motes and a slow sonar ping. All of it is a pure function of t.
+  const FOG = (() => { const R = rnd(4242), f = []; for (let i = 0; i < 5; i++) f.push({ x: R() * W, y: R() * H, r: 200 + R() * 260, dx: 30 + R() * 40, dy: 20 + R() * 34, fx: 0.04 + R() * 0.05, fy: 0.035 + R() * 0.05, ph: R() * TAU, a: 0.07 + R() * 0.05 }); return f; })();
+  const MOTES = (() => { const R = rnd(999), m = []; for (let i = 0; i < 26; i++) { const d = R(); m.push({ x: R() * W, y: R() * (H + 80) - 40, r: 1.2 + d * 3.4, sp: 6 + d * 22, da: 8 + d * 18, df: 0.15 + R() * 0.25, dp: R() * TAU, a: 0.2 + d * 0.4 }); } return m; })();
+  function drawAtmosphere(cam, c0, c1, t) {
+    const light = (luma(c0) + luma(c1)) / 2 > 0.62, ink = light ? "0,0,0" : "255,255,255", GS = 64;
+    g.save(); g.lineWidth = 1.5; g.strokeStyle = "rgba(" + ink + "," + (light ? 0.075 : 0.085) + ")";
+    const gx = ((-cam.x % GS) + GS) % GS, gy = ((-cam.y % GS) + GS) % GS; g.beginPath();
+    for (let x = gx; x <= W; x += GS) { g.moveTo(x, 0); g.lineTo(x, H); }
+    for (let y = gy; y <= H; y += GS) { g.moveTo(0, y); g.lineTo(W, y); }
+    g.stroke();
+    for (const z of Z) { const sx = W / 2 + (z.x - cam.x), sy = H / 2 + (z.y - cam.y); if (Math.abs(sx - W / 2) > 900 || Math.abs(sy - H / 2) > 1100) continue; [150, 250, 360].forEach((r, i) => { g.strokeStyle = "rgba(" + ink + "," + (0.12 - i * 0.03) + ")"; g.lineWidth = 2; g.beginPath(); g.arc(sx, sy, r, 0, TAU); g.stroke(); }); }
+    for (const f of FOG) { const x = f.x + Math.sin(t * f.fx + f.ph) * f.dx, y = f.y + Math.cos(t * f.fy + f.ph) * f.dy, gr = g.createRadialGradient(x, y, 0, x, y, f.r); gr.addColorStop(0, "rgba(" + ink + "," + f.a + ")"); gr.addColorStop(1, "rgba(" + ink + ",0)"); g.fillStyle = gr; g.beginPath(); g.arc(x, y, f.r, 0, TAU); g.fill(); }
+    for (const m of MOTES) { const span = H + 80, y = (((m.y - t * m.sp) % span) + span) % span - 40, x = m.x + Math.sin(t * m.df + m.dp) * m.da; g.fillStyle = "rgba(" + ink + "," + m.a * 0.7 + ")"; g.beginPath(); g.arc(x, y, m.r, 0, TAU); g.fill(); }
+    const pp = (((t % 3.4) + 3.4) % 3.4) / 3.4; g.strokeStyle = "rgba(" + ink + "," + (1 - pp) * 0.16 + ")"; g.lineWidth = 2.5; g.beginPath(); g.arc(W / 2, H / 2, pp * H * 0.55, 0, TAU); g.stroke();
+    g.restore();
+  }
+  function drawBoard(cam, t) {
     const c0 = mixc(cam.from.c0, cam.to.c0, cam.u), c1 = mixc(cam.from.c1, cam.to.c1, cam.u);
     g.fillStyle = rgbs(c1); g.fillRect(-W, -H, W * 3, H * 3);
     const radial = (cam.u < 0.5 ? cam.from : cam.to).shape === "radial";
@@ -86,6 +103,7 @@
       const gr = radial ? g.createRadialGradient(sx, sy, 0, sx, sy, 1500) : g.createLinearGradient(sx, sy - 900, sx, sy + 900);
       gr.addColorStop(0, rgbs(z.c0)); gr.addColorStop(1, rgbs(z.c1, radial ? 0 : 1)); g.fillStyle = gr; g.fillRect(-W, -H, W * 3, H * 3);
     }
+    drawAtmosphere(cam, c0, c1, t || 0);
     return { c0, c1, at: (x, y) => mixc(c0, c1, radial ? clamp(Math.hypot((x - 0.5) * W, (y - 0.5) * H) / 1150, 0, 1) : clamp(Math.abs(y - 0.5) * 1.6, 0, 1)) };
   }
 
@@ -116,7 +134,8 @@
     const it = t - t0, sp = idle.speed || 1, am = idle.amp !== undefined ? idle.amp : 0.02;
     switch (idle.kind) { case "float": st.y += Math.sin(it * sp * 2.2) * am; break; case "wobble": st.r += Math.sin(it * sp * 3) * (am * 100); break; case "spin": st.r += it * sp * 90; break; case "pulse": st.s *= 1 + Math.sin(it * sp * 5) * am; break; case "drift": st.x += Math.sin(it * sp * 1.3) * am; st.y += Math.cos(it * sp * 1.7) * am * 0.6; break; }
     if (L.keys && L.keys.length) {                                    // free keyframes override any of x, y, s, r, o: complete choreographic freedom
-      const K = L.keys; let a = K[0], b = K[K.length - 1];
+      const K = L.keys; if (t < K[0].t) return st;                  // before its first keyframe the element is still doing its arrival (in) motion
+      let a = K[0], b = K[K.length - 1];
       if (t <= K[0].t) { st.o = K[0].o !== undefined && K[0].hide ? 0 : st.o; }
       for (let i = 0; i < K.length - 1; i++) if (t >= K[i].t && t <= K[i + 1].t) { a = K[i]; b = K[i + 1]; break; }
       const u = a === b ? 1 : ease(b.e || "inOutCubic", (t - a.t) / Math.max(1e-6, b.t - a.t));
@@ -147,13 +166,22 @@
     drawSprite(L.src, st.x * W + dx, st.y * H + dy, w * st.s, (L.r || 0) + st.r, st.o, st.sx, st.sy, L.shadow === false ? null : (L.shadow || { blur: 46, y: 26, a: 0.3 }));
   }
   // ingredients / props flying in around the hero: every copy has its own deterministic flight, then drifts
+  const HERO_L = (P.layers || []).find((l) => l.kind === "sprite" && l.src === "hero");
+  // where the product is right now (pieces flying around it keep out of its silhouette, like the references: they hug the pack, they never cover it)
+  function heroZone(t) {
+    if (!HERO_L || !IMG.hero || !IMG.hero.naturalWidth) return null;
+    const st = motionState(HERO_L, t, { x: HERO_L.x !== undefined ? HERO_L.x : 0.5, y: HERO_L.y !== undefined ? HERO_L.y : 0.5 }); if (st.o < 0.5) return null;
+    const w = (HERO_L.w || 0.5) * Math.min(st.s, 1.6), hh = w * IMG.hero.naturalHeight / IMG.hero.naturalWidth * W / H; return { x: st.x, y: st.y, rx: w * 0.5 * 1.08 + 0.03, ry: hh * 0.5 * 1.02 + 0.03 };
+  }
   function drawScatter(L, t, cam) {
     const n = clamp(L.n | 0 || 6, 1, 24), R = rnd((L.seed || 1) * 977), cx = (L.cx !== undefined ? L.cx : 0.5), cy = (L.cy !== undefined ? L.cy : 0.5), spread = L.spread || 0.42, t0 = L.t0 || 0, dur = L.dur || 0.7, sz = L.size || [0.12, 0.24];
     const [dx, dy] = ox(L, cam), srcs = Array.isArray(L.src) ? L.src : [L.src];
     for (let i = 0; i < n; i++) {
       const ang = R() * TAU, rad = (0.25 + R() * 0.75) * spread, w = lerp(sz[0], sz[1], R()) * W, delay = (i / n) * (L.stag !== undefined ? L.stag : 0.35), spin = (R() - 0.5) * (L.spin !== undefined ? L.spin : 240), src = srcs[i % srcs.length];
-      const tx = cx + Math.cos(ang) * rad, ty = cy + Math.sin(ang) * rad * 1.5;
-      const fromKind = L.from || "burst", sx0 = fromKind === "burst" ? cx : fromKind === "top" ? tx : fromKind === "sides" ? (tx < 0.5 ? -0.3 : 1.3) : (Math.cos(ang) > 0 ? 1.3 : -0.3), sy0 = fromKind === "burst" ? cy : fromKind === "top" ? -0.3 : fromKind === "sides" ? ty : (Math.sin(ang) > 0 ? 1.3 : -0.3);
+      let tx = cx + Math.cos(ang) * rad, ty = cy + Math.sin(ang) * rad * 1.5;
+      if (L.from === "corners") { const rr = R(), qx = i % 2 ? 1 : 0, qy = (i >> 1) % 2 ? 1 : 0, mid = i % 5 === 4; tx = mid ? (qx ? 0.98 : 0.02) : qx ? 0.92 - rr * 0.1 : 0.08 + rr * 0.1; ty = mid ? 0.5 + (rr - 0.5) * 0.4 : qy ? 0.9 - R() * 0.18 : 0.1 + R() * 0.18; }
+      const fromKind = L.from || "burst", sx0 = fromKind === "corners" ? (tx < 0.5 ? -0.4 : 1.4) : fromKind === "burst" ? cx : fromKind === "top" ? tx : fromKind === "sides" ? (tx < 0.5 ? -0.3 : 1.3) : (Math.cos(ang) > 0 ? 1.3 : -0.3), sy0 = fromKind === "corners" ? (ty < 0.5 ? -0.3 : 1.3) : fromKind === "burst" ? cy : fromKind === "top" ? -0.3 : fromKind === "sides" ? ty : (Math.sin(ang) > 0 ? 1.3 : -0.3);
+      { const hz = L.from === "corners" ? null : heroZone(Math.max(t0 + delay + dur, Math.min(t, L.t1 !== undefined ? L.t1 : D))); if (hz) { const rx = hz.rx + (w / W) * 0.34, ry = hz.ry + (w / H) * 0.34, ex = (tx - hz.x) / rx, ey = (ty - hz.y) / ry, d = Math.hypot(ex, ey); if (d < 1) { const k = d < 1e-3 ? 1 : 1 / d, ux = d < 1e-3 ? (i % 2 ? 1 : -1) : ex * k, uy = d < 1e-3 ? 0 : ey * k; tx = clamp(hz.x + ux * rx, -0.04, 1.04); ty = clamp(hz.y + uy * ry, -0.04, 1.04); } } }
       const ip = cl01((t - t0 - delay) / dur), e = E.outBack(ip), life = L.t1 !== undefined ? L.t1 : D;
       if (t < t0 + delay || t > life + 0.001) continue;
       let x = lerp(sx0, tx, e), y = lerp(sy0, ty, e); const it = t - t0 - delay;
@@ -182,7 +210,12 @@
     let size = (L.size || 0.12) * W; const font = L.font || "anton", track = (L.track || 0) * size, lineH = (L.lineGap || 1.05) * size;
     const measure = (px) => { g.font = fontCss(font, px); return Math.max(...lines.map((ln) => g.measureText(upper ? ln.toUpperCase() : ln).width + track * ln.length)); };
     const maxW = W * (L.maxW || 0.92); let mw = measure(size); if (mw > maxW) { size *= maxW / mw; mw = maxW; }
-    const lh = (L.lineGap || 1.05) * size, col = L.color ? hex2(L.color, 0xffffff) : [255, 255, 255], fillc = L.noContrast ? col : readable(col, bg.at ? bg.at(st.x, st.y) : bg.c0);
+    { const half = mw * st.s / 2 + W * 0.035; st.x = clamp(st.x, half / W, 1 - half / W); }                  // a line never runs off the edge of the frame
+    const lh = (L.lineGap || 1.05) * size, col = L.color ? hex2(L.color, 0xffffff) : [255, 255, 255], bgAt = bg.at ? bg.at(st.x, st.y) : bg.c0;
+    // colour that keeps the AI's choice: tone-on-tone words (a shade off the backdrop) or, when a colour would not read, a deep outline instead of a swap to black
+    let fillc = col, autoStroke = null;
+    if (L.tone) fillc = mixc(bgAt, luma(bgAt) > 0.5 ? [0, 0, 0] : [255, 255, 255], 0.22);
+    else if (!L.noContrast) { const cc = contrast(col, bgAt); if (cc < 1.5) fillc = readable(col, bgAt); else if (cc < 3) autoStroke = luma(col) > 0.5 ? mixc(bgAt, [0, 0, 0], 0.62) : [255, 255, 255]; }
     const inn = L.in || { kind: "rise" }, dur = inn.dur || 0.45, stag = inn.stag !== undefined ? inn.stag : 0.09;
     const reps = L.repeat ? clamp(L.repeat.n | 0 || 5, 2, 11) : 1, rdy = (L.repeat && L.repeat.dy) || 0.92;
     for (let rep = 0; rep < reps; rep++) {
@@ -204,10 +237,10 @@
           if (t > t1 - 0.25) o *= cl01((t1 - t) / 0.25);
           g.save(); g.beginPath();
           if (!inn.kind || inn.kind === "rise") { g.rect(-W, yLine - lh * 0.62, W * 2, lh * 1.24); g.clip(); }                    // the masked "rise" reveal: the word slides up out of an invisible line
-          g.translate(tx, ty); g.scale(sc, sc); g.globalAlpha *= o * fade * st.o;
+          g.translate(tx, ty); g.scale(sc, sc); g.globalAlpha *= o * fade * st.o * (L.alpha !== undefined ? L.alpha : 1);
           const outline = L.repeat && !isMain;
           if (L.shadow) { g.shadowColor = "rgba(0,0,0,0.35)"; g.shadowBlur = size * 0.2; g.shadowOffsetY = size * 0.08; }
-          if (L.stroke || outline) { g.lineWidth = (L.stroke && L.stroke.w ? L.stroke.w : 0.03) * size; g.strokeStyle = rgbs(L.stroke && L.stroke.color ? hex2(L.stroke.color, 0) : fillc); g.lineJoin = "round"; g.textAlign = "center"; g.strokeText(wd, 0, 0); }
+          if (L.stroke || outline || autoStroke) { g.lineWidth = (L.stroke && L.stroke.w ? L.stroke.w : autoStroke ? 0.09 : 0.03) * size; g.strokeStyle = rgbs(L.stroke && L.stroke.color ? hex2(L.stroke.color, 0) : autoStroke || fillc); g.lineJoin = "round"; g.textAlign = "center"; g.strokeText(wd, 0, 0); }
           if (!outline) { g.fillStyle = rgbs(fillc); g.textAlign = "center"; g.fillText(wd, 0, 0); }
           g.restore(); x += wds[wi] + space;
         });
@@ -242,7 +275,7 @@
     let zoom = 1, shx = 0, shy = 0;
     (P.cam || []).forEach((c) => { const u = (t - c.t) / (c.dur || 0.3); if (u < 0 || u > 1) return; const bump = Math.sin(Math.min(1, u) * Math.PI) * (1 - u * 0.4); if (c.kind === "shake") { shx += Math.sin(t * 90) * (c.amp || 8) * (1 - u); shy += Math.cos(t * 77) * (c.amp || 8) * (1 - u); } else zoom += (c.amp || 0.06) * bump; });
     g.translate(W / 2 + shx, H / 2 + shy); g.scale(zoom, zoom); g.translate(-W / 2, -H / 2);
-    const cam = camPos(t), bg = drawBoard(cam);
+    const cam = camPos(t), bg = drawBoard(cam, t);
     for (const L of P.layers) {
       g.save();
       try { if (L.kind === "sprite") drawSpriteLayer(L, t, cam, bg); else if (L.kind === "text") drawText(L, t, cam, bg); else if (L.kind === "scatter") drawScatter(L, t, cam); else if (L.kind === "pattern") drawPattern(L, t, cam); else drawShape(L, t, cam, bg); } catch (e) { /* a broken layer never breaks the film */ }

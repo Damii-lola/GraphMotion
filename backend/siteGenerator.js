@@ -341,6 +341,7 @@ async function buildPromoFilm({ raw, company, outDir, say, planOnly }) {
   }
   if (!heroRes) throw new Error('The product picture could not be made: ' + (lastErr && lastErr.message));
   save('hero', heroRes.buf, heroRes.aspect);
+  promoFilm.layoutPass(promo, heroRes.aspect);            // small lines and the brand never sit on the product picture
   // 2. the props (ingredients, pieces, splashes), three at a time; a prop that fails becomes a plain glossy disc in the product's colour
   say('Painting the ingredients', 0.4);
   await Promise.all(promo.props.map(async (p, i) => {
