@@ -122,6 +122,7 @@ function normalizePromo(raw, ctx = {}) {
   zin.forEach((z, i) => {
     let c0 = rgb(fixHex(z.c0, toHex(mix(pc, [255, 255, 255], 0.2)))), c1 = rgb(fixHex(z.c1, toHex(mix(pc, [10, 10, 30], 0.45))));
     if (Math.max(...c0) - Math.min(...c0) < 28 && Math.max(...c0) < 235) c0 = mix(c0, pc, 0.6);      // a dull grey is not a backdrop
+    if ((0.299 * c0[0] + 0.587 * c0[1] + 0.114 * c0[2]) / 255 > 0.86) { c0 = mix(c0, pc, 0.55); c1 = mix(c1, pc, 0.35); }   // near-white: the product and the words would vanish
     if (i > 0) { const a = rand() * Math.PI * 2, d = 450 + rand() * 350; px = Math.round(px + Math.cos(a) * d); py = Math.round(py + Math.sin(a) * d); }
     zones.push({ c0: toHex(c0), c1: toHex(c1), shape: z.shape === 'linear' ? 'linear' : 'radial', x: px, y: py });
   });
@@ -161,8 +162,8 @@ function normalizePromo(raw, ctx = {}) {
       if (L.shadow === false) o.shadow = false; if (L.blur !== undefined) o.blur = num(L.blur, 0, 0, 40); const gl = glowOf(L.glow); if (gl) o.glow = gl;
       const ks = keysOf(L.keys, D, 16, o.w); if (ks) o.keys = ks;
       if (src === 'hero') {                                                                    // a product this small cannot be seen: repair the scale, not the choreography
-        const eff = [o.w * (o.keys ? 0 : 1)]; if (o.keys) o.keys.forEach((k) => eff.push(o.w * (k.s !== undefined ? k.s : 1))); const mx = Math.max(...eff.filter((v) => v > 0), 0.01);
-        if (mx < 0.36) o.w = +Math.min(1.2, o.w * (0.5 / mx)).toFixed(3);     // every key scales with it
+        const eff = o.keys ? o.keys.map((k) => o.w * (k.s !== undefined ? k.s : 1)) : [o.w], srt = eff.filter((v) => v > 0).sort((a, b) => a - b), md = srt.length ? srt[Math.floor(srt.length / 2)] : o.w;
+        if (md < 0.4) o.w = +Math.min(1.2, o.w * (0.48 / md)).toFixed(3);     // every key scales with it
       }
       layers.push(o);
     } else if (kind === 'text') {

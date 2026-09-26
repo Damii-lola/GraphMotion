@@ -52,7 +52,7 @@ function register(app, { siteVideo }) {
 
   function view(j) {
     const r = j.render && siteVideo.view(j.render);
-    const out = { id: j.id, status: j.phase, label: label(j), progress: 0, eta: null, error: j.error || null, errorDetail: j.errorDetail || null, position: 0, videoUrl: null, downloadUrl: null, mp4Url: null };
+    const out = { id: j.id, status: j.phase, label: label(j), progress: 0, eta: null, error: j.error || null, errorDetail: j.errorDetail || null, position: 0, videoUrl: null, downloadUrl: null, mp4Url: null, ...(j.promoInfo ? { promo: j.promoInfo } : {}) };
     if (j.phase === 'generating') {
       let gp = j.genProgress;
       if (/^Writing the ad script/.test(j.genStage || '')) gp = 0.05 + 0.05 * (1 - Math.exp(-(Date.now() - j.stageAt) / 40000));   // the single AI call has no sub-steps: creep gently so the bar never looks frozen
@@ -88,7 +88,7 @@ function register(app, { siteVideo }) {
           onProgress: seen,
         });
       }
-      j.genProgress = 1; j.promoD = result && result.spec && result.spec.promo ? result.spec.promo.duration : 0;   // a product promo is ~9 s of motion graphics: filmed at 720x1280, not as six 3.5 s scenes
+      j.genProgress = 1; j.promoD = result && result.spec && result.spec.promo ? result.spec.promo.duration : 0; j.promoInfo = result && result.spec && result.spec.promo ? { review: result.spec.review || null, ideas: result.spec.promo.ideas, script: result.spec.promo } : null;   // a product promo is ~9 s of motion graphics: filmed at 720x1280, not as six 3.5 s scenes
       if (j.cancelled) throw new Error('cancelled');
       await store.persist(j.id, { company: input.company, spec: result.spec, dir });   // the job id + ad script are stored (Supabase) before recording starts
       return true;

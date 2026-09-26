@@ -320,7 +320,7 @@ function renderPage(spec) {
 /** The AI's motion script -> a playable promo: validated, its pictures painted (the pack with the brand copied from a real-font wordmark, then the props), cut out, sound added. */
 async function buildPromoFilm({ raw, company, outDir, say, planOnly }) {
   const promo = promoFilm.normalizePromo(raw, { brand: company && company.name });
-  const spec = { kind: 'promo', brand: promo.brand, tagline: '', cta: '', link: '', theme: { look: 'clean', accent: promo.zones[0].c0, accentInk: '#000000', bg: promo.zones[0].c1 }, promo, scenes: [] };
+  const spec = { kind: 'promo', review: raw && raw.__review, brand: promo.brand, tagline: '', cta: '', link: '', theme: { look: 'clean', accent: promo.zones[0].c0, accentInk: '#000000', bg: promo.zones[0].c1 }, promo, scenes: [] };
   const imgDir = path.join(outDir, 'images'); fs.mkdirSync(imgDir, { recursive: true });
   if (planOnly) { fs.writeFileSync(path.join(outDir, 'site.json'), JSON.stringify(spec, null, 2)); return { outDir, spec }; }
   const key = promoFilm.pickKey(promo.product.colors), assetsOut = [];
@@ -422,6 +422,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
       // the director's review: what is thin about the draft goes back to the AI, which rewrites the whole script (its own fix, not ours)
       try {
         const draft = promoFilm.normalizePromo(raw, { brand: company && company.name }), issues = promoFilm.critique(draft);
+        raw.__review = { draft: issues };
         console.log('[promo] draft review: ' + (issues.length ? issues.length + ' issue(s): ' + issues.map((x) => x.slice(0, 70)).join(' | ') : 'clean'));
         if (issues.length) {
           say('Improving the design', 0.12);
@@ -432,6 +433,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
             neurons.settleText(scriptModel, rest0, usage2, 'promo revision');
             const raw2 = typeof txt2 === 'string' ? JSON.parse(txt2.slice(txt2.indexOf('{'), txt2.lastIndexOf('}') + 1)) : txt2;
             const d2 = promoFilm.normalizePromo(raw2, { brand: company && company.name }), i2 = promoFilm.critique(d2);
+            raw2.__review = { draft: issues, revision: i2 };
             console.log('[promo] revision review: ' + (i2.length ? i2.length + ' issue(s)' : 'clean'));
             if (i2.length <= issues.length) raw = raw2;
           } else console.log('[promo] revision skipped: it would not fit the neuron ceiling');
