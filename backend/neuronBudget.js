@@ -16,7 +16,7 @@ const crypto = require('crypto');
 
 const FILE = path.join(__dirname, '.neuron_usage.json');
 const DAILY_CEILING = +process.env.NEURON_DAILY_CEILING || 9000;   // hard stop well under the 10,000 allowance
-const PER_RUN_CEILING = +process.env.NEURON_RUN_CEILING || 2700;   // a one-world film is 6 klein pictures (~1440) + the script (~170); the old six-schnell film was ~730    // ONE FILM MAY NEVER COST MORE THAN THIS (estimated, then settled to the measured figure)
+const PER_RUN_CEILING = +process.env.NEURON_RUN_CEILING || 3200;   // a one-world film is 6 klein pictures (~1440) + the script (~170); the old six-schnell film was ~730    // ONE FILM MAY NEVER COST MORE THAN THIS (estimated, then settled to the measured figure)
 const SAFETY = 1.15;
 const RATE = { '70b': [26668, 204805], mistral: [31909, 50455], '8b': [4119, 34868], oss: [31819, 68182] };   // oss = gpt-oss-120b: $0.35 / $0.75 per M tokens at $0.000011 per neuron
 

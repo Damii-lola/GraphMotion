@@ -72,7 +72,8 @@
   const PAN = P.pan || 0.55;
   // camera position on the board: it glides (cubic ease-in-out) from one beat's zone to the next just before that beat starts
   function camPos(t) {
-    let b = beatAt(t); if (b + 1 < BEATS.length) { const nb = BEATS[b + 1], s = nb.t0 - PAN * 0.35, u = (t - s) / PAN; if (u > 0 && u < 1) { const a = Z[BEATS[b].zone], c = Z[nb.zone]; const e = E.inOutCubic(u); return { x: lerp(a.x, c.x, e), y: lerp(a.y, c.y, e), u: e, from: a, to: c, b }; } }
+    let b = beatAt(t); if (b + 1 < BEATS.length) { const nb = BEATS[b + 1], s = nb.t0 - PAN * 0.35, u = (t - s) / PAN; if (!nb.cut && u > 0 && u < 1) { const a = Z[BEATS[b].zone], c = Z[nb.zone]; const e = E.inOutCubic(u); return { x: lerp(a.x, c.x, e), y: lerp(a.y, c.y, e), u: e, from: a, to: c, b }; } }
+    if (b > 0 && BEATS[b].cut) { const z = Z[BEATS[b].zone]; return { x: z.x, y: z.y, u: 1, from: z, to: z, b }; }
     if (b > 0) { const s = BEATS[b].t0 - PAN * 0.35, u = (t - s) / PAN; if (u >= 1) { const z = Z[BEATS[b].zone]; return { x: z.x, y: z.y, u: 1, from: z, to: z, b }; } if (u > 0) { const a = Z[BEATS[b - 1].zone], c = Z[BEATS[b].zone]; const e = E.inOutCubic(u); return { x: lerp(a.x, c.x, e), y: lerp(a.y, c.y, e), u: e, from: a, to: c, b }; } const z = Z[BEATS[b - 1].zone]; return { x: z.x, y: z.y, u: 0, from: z, to: z, b: b - 1 }; }
     const z = Z[BEATS[b].zone]; return { x: z.x, y: z.y, u: 1, from: z, to: z, b };
   }
@@ -265,8 +266,8 @@
           const idx = wordIdx++, d = idx * stag + (L.repeat ? Math.abs(off) * 0.05 : 0), ip = cl01((t - t0 - d) / dur);
           if (ip <= 0) { x += wds[wi] + space; return; }
           const e = ease(inn.ease || (inn.kind === "slam" ? "outBack" : "outCubic"), ip);
-          let ty = yLine, sc = 1, tx = x + wds[wi] / 2, o = 1;
-          switch (inn.kind) { case "slam": sc = lerp(2.4, 1, e); o = cl01(ip * 4); break; case "pop": sc = e; break; case "fade": o = e; break; case "slideL": tx -= (1 - e) * W; break; case "slideR": tx += (1 - e) * W; break; case "drop": ty -= (1 - E.outBounce(ip)) * size * 3; break; case "rise": default: ty += (1 - e) * size * 1.15; break; }
+          let ty = yLine, sc = 1, tx = x + wds[wi] / 2, o = 1, sliceE = 1;
+          switch (inn.kind) { case "slam": sc = lerp(2.4, 1, e); o = cl01(ip * 4); break; case "slice": o = cl01(ip * 5); sliceE = e; break; case "pop": sc = e; break; case "fade": o = e; break; case "slideL": tx -= (1 - e) * W; break; case "slideR": tx += (1 - e) * W; break; case "drop": ty -= (1 - E.outBounce(ip)) * size * 3; break; case "rise": default: ty += (1 - e) * size * 1.15; break; }
           if (t > t1 - 0.25) o *= cl01((t1 - t) / 0.25);
           g.save(); g.beginPath();
           if (!inn.kind || inn.kind === "rise") { g.rect(-W, yLine - lh * 0.62, W * 2, lh * 1.24); g.clip(); }                    // the masked "rise" reveal: the word slides up out of an invisible line
@@ -276,7 +277,11 @@
           if (L.stroke || outline || autoStroke || L.fill === false) { g.lineWidth = (L.stroke && L.stroke.w ? L.stroke.w : autoStroke ? 0.09 : 0.03) * size; g.strokeStyle = rgbs(L.stroke && L.stroke.color ? hex2(L.stroke.color, 0) : autoStroke || fillc); g.lineJoin = "round"; g.textAlign = "center"; g.strokeText(wd, 0, 0); }
           if (L.glow) { g.shadowColor = rgbs(hex2(L.glow.color, 0xffffff), 0.9); g.shadowBlur = (L.glow.blur || 30); g.shadowOffsetY = 0; }
           if (st.blur > 0.4) g.globalAlpha *= clamp(1 - st.blur / 40, 0.45, 1);              // (a per-frame blur filter is far too slow: a blurred word simply softens by fading)
-          if (!outline && L.fill !== false) { g.fillStyle = rgbs(fillc); g.textAlign = "center"; g.fillText(wd, 0, 0); }
+          if (!outline && L.fill !== false) {
+            g.fillStyle = rgbs(fillc); g.textAlign = "center";
+            if (inn.kind === "slice" && sliceE < 0.999) { const K = 6, bh = size * 1.3 / K; for (let s = 0; s < K; s++) { g.save(); g.beginPath(); g.rect(-wds[wi] * 2, -size * 0.65 + s * bh, wds[wi] * 4, bh + 1); g.clip(); g.translate((s % 2 ? 1 : -1) * (1 - sliceE) * W * (0.5 + 0.12 * s), 0); g.fillText(wd, 0, 0); g.restore(); } }
+            else g.fillText(wd, 0, 0);
+          }
           g.restore(); x += wds[wi] + space;
         });
       });
@@ -293,6 +298,20 @@
       for (let i = 0; i < nb; i++) { const ui = cl01((u - i * 0.07) / (1 - (nb - 1) * 0.07)), e = E.inOutCubic(ui), pos = (sgn > 0 ? -span : span) + sgn * 2 * span * e; g.fillStyle = rgbs(i % 2 ? c2 : c); if (vert) g.fillRect(-W, pos - (sgn > 0 ? 0 : 0), W * 3, span); else g.fillRect(pos, -H, span, H * 3); }
       g.restore(); return;
     }
+    if (k === "line" || k === "oval") {
+      const t0l = L.t0 || 0, dur = L.dur || 0.6, p = E.outCubic(cl01((t - t0l) / dur)), [odx, ody] = ox(L, cam);
+      g.save(); g.translate(odx, ody); g.globalAlpha *= clamp(L.alpha !== undefined ? L.alpha : 1, 0, 1); g.strokeStyle = rgbs(c); g.fillStyle = rgbs(c); g.lineWidth = Math.max(1.5, (L.width || 0.006) * W); g.lineCap = "round";
+      if (k === "line") {
+        const x1 = (L.x1 !== undefined ? L.x1 : 0.3) * W, y1 = (L.y1 !== undefined ? L.y1 : 0.5) * H, x2 = (L.x2 !== undefined ? L.x2 : 0.7) * W, y2 = (L.y2 !== undefined ? L.y2 : 0.5) * H, qx = L.cx !== undefined ? L.cx * W : (x1 + x2) / 2, qy = L.cy !== undefined ? L.cy * H : (y1 + y2) / 2;
+        const at = (u) => [(1 - u) * (1 - u) * x1 + 2 * (1 - u) * u * qx + u * u * x2, (1 - u) * (1 - u) * y1 + 2 * (1 - u) * u * qy + u * u * y2];
+        g.beginPath(); g.moveTo(x1, y1); for (let i = 1; i <= 28; i++) { const q = at((i / 28) * p); g.lineTo(q[0], q[1]); } g.stroke();
+        if (L.arrow && p > 0.05) { const a = at(p), b = at(Math.max(0, p - 0.04)), ang = Math.atan2(a[1] - b[1], a[0] - b[0]), s = W * 0.025; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(a[0] - s * Math.cos(ang - 0.45), a[1] - s * Math.sin(ang - 0.45)); g.moveTo(a[0], a[1]); g.lineTo(a[0] - s * Math.cos(ang + 0.45), a[1] - s * Math.sin(ang + 0.45)); g.stroke(); }
+      } else {
+        const cx0 = X + odx * 0, rx = (L.w || 0.4) * W / 2, ry = (L.h || 0.12) * H / 2; g.beginPath(); g.ellipse(st.x * W, st.y * H, rx, ry, ((L.r || 0) * Math.PI) / 180, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * 1.04 * p); g.stroke();
+      }
+      g.restore(); return;
+    }
+    if (k === "zoomblur") return;                                     // drawn as a post-process over the finished frame (see render)
     if (k === "flash") { const t0f = L.t0 || 0, t1f = L.t1 !== undefined ? L.t1 : D, u = cl01((t - t0f) / Math.max(0.05, t1f - t0f)); g.save(); g.globalAlpha *= clamp((L.alpha !== undefined ? L.alpha : 0.9) * Math.sin(u * Math.PI), 0, 1); g.fillStyle = rgbs(c); g.fillRect(-W, -H, W * 3, H * 3); g.restore(); return; }
     g.save(); g.globalAlpha *= clamp(a, 0, 1); g.translate(X, Y); g.rotate(((L.r || 0) + st.r) * Math.PI / 180); g.scale(st.s * st.sx, st.s * st.sy);
     const R = (L.size || 0.3) * W;
@@ -322,9 +341,24 @@
       if (u < 0 || u > 1) return; const bump = Math.sin(Math.min(1, u) * Math.PI) * (1 - u * 0.4); if (c.kind === "shake") { shx += Math.sin(t * 90) * (c.amp || 8) * (1 - u); shy += Math.cos(t * 77) * (c.amp || 8) * (1 - u); } else zoom += (c.amp || 0.06) * bump; });
     g.translate(W / 2 + shx, H / 2 + shy); g.rotate(roll * Math.PI / 180); g.scale(zoom, zoom); g.translate(-W / 2, -H / 2);
     const cam = camPos(t), bg = drawBoard(cam, t);
-    for (const L of P.layers) {
+    const layersToDraw = P.layers;
+    for (const L of layersToDraw) {
       g.save(); if (L.blend) g.globalCompositeOperation = L.blend;
       try { if (L.kind === "sprite") drawSpriteLayer(L, t, cam, bg); else if (L.kind === "text") drawText(L, t, cam, bg); else if (L.kind === "scatter") drawScatter(L, t, cam); else if (L.kind === "pattern") drawPattern(L, t, cam); else drawShape(L, t, cam, bg); } catch (e) { /* a broken layer never breaks the film */ }
+      g.restore();
+    }
+    zoomBlurs(t, w, h);
+  }
+  // zoom blur (the radial "push through" transition between scenes): the finished frame is stacked over itself at growing scales
+  let TMP = null;
+  function zoomBlurs(t, w, h) {
+    for (const L of P.layers) {
+      if (L.kind !== "zoomblur" || t < L.t0 || t > L.t1) continue;
+      const u = (t - L.t0) / Math.max(0.05, L.t1 - L.t0), inten = Math.sin(clamp(u, 0, 1) * Math.PI), amp = (L.amp || 0.25) * inten; if (amp < 0.01) continue;
+      if (!TMP) TMP = document.createElement("canvas"); if (TMP.width !== w || TMP.height !== h) { TMP.width = w; TMP.height = h; }
+      const tg = TMP.getContext("2d"); tg.setTransform(1, 0, 0, 1, 0, 0); tg.clearRect(0, 0, w, h); tg.drawImage(cv, 0, 0);
+      g.save(); g.setTransform(1, 0, 0, 1, 0, 0);
+      for (let k = 1; k <= 7; k++) { const s = 1 + amp * k / 7; g.globalAlpha = 0.16; g.translate(w / 2, h / 2); g.scale(s, s); g.translate(-w / 2, -h / 2); g.drawImage(TMP, 0, 0); g.setTransform(1, 0, 0, 1, 0, 0); }
       g.restore();
     }
   }
