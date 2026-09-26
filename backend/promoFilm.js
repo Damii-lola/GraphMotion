@@ -195,6 +195,7 @@ function normalizePromo(raw, ctx = {}) {
     } else if (kind === 'scatter') {
       const srcList = (Array.isArray(L.src) ? L.src : [L.src]).filter((s) => okSrc.has(s)); if (!srcList.length) return;
       let sz = Array.isArray(L.size) && L.size.length === 2 ? [num(L.size[0], 0.16, 0.04, 0.6), num(L.size[1], 0.3, 0.05, 0.8)] : [0.16, 0.3]; if (sz[1] < sz[0]) sz = [sz[1], sz[0]];
+      sz = [Math.max(0.14, sz[0]), Math.max(0.26, sz[1])];               // confetti-sized props are never wanted: pieces are big and bleed off the frame
       layers.push(timing(L, { kind, src: srcList, n: num(L.n, 8, 1, 16) | 0, cx: num(L.cx, 0.5, -0.5, 1.5), cy: num(L.cy, 0.5, -0.5, 1.5), spread: num(L.spread, 0.42, 0.1, 1.2), size: sz, from: oneOf(L.from, ['burst', 'corners', 'edges', 'top', 'sides'], 'burst'), seed: num(L.seed, 3, 1, 999) | 0, spin: num(L.spin, 240, 0, 900), stag: num(L.stag, 0.35, 0, 1.2), ...(L.avoid ? { avoid: true } : {}) }));
     } else if (kind === 'pattern') {
       const src = okSrc.has(L.src) ? L.src : 'hero';
