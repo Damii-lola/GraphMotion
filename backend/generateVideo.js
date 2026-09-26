@@ -100,7 +100,7 @@ function register(app, { siteVideo }) {
     try {
       const dir = store.dirFor(j.id);
       j.phase = 'rendering';
-      j.render = siteVideo.submit({ dir }, j.promoD ? { sceneSeconds: Math.max(2, Math.min(10, j.promoD / 3)), fps: 30, preset: 'tiktok', holdStart: 0, holdEnd: 0.4, crf: 20, captureBudgetSeconds: +process.env.PROMO_CAPTURE_BUDGET_S || 1500 } : { sceneSeconds: 3.5, fps: 30, preset: 'film', holdStart: 0, holdEnd: 1, crf: 21, captureBudgetSeconds: +process.env.AD_CAPTURE_BUDGET_S || 420 });   // constants: 720x1280, 30 fps, 3.5 s per scene; no dead intro (the hook is on screen from frame 1), 1 s to linger on the CTA card
+      j.render = siteVideo.submit({ dir }, j.promoD ? { sceneSeconds: Math.max(2, Math.min(10, j.promoD / 3)), fps: 24, preset: 'tiktok', holdStart: 0, holdEnd: 0.4, crf: 20, captureBudgetSeconds: +process.env.PROMO_CAPTURE_BUDGET_S || 1500 } : { sceneSeconds: 3.5, fps: 30, preset: 'film', holdStart: 0, holdEnd: 1, crf: 21, captureBudgetSeconds: +process.env.AD_CAPTURE_BUDGET_S || 420 });   // constants: 720x1280, 30 fps, 3.5 s per scene; no dead intro (the hook is on screen from frame 1), 1 s to linger on the CTA card
       while (!['done', 'error', 'cancelled'].includes(j.render.status)) { if (j.cancelled) siteVideo.cancel(j.render); await new Promise((r) => setTimeout(r, 1000)); }
       if (j.render.status === 'done') { j.phase = 'done'; store.setStatus(j.id, { status: 'done', video_url: j.render.publicUrl || null }); }
       else if (j.render.status === 'cancelled') j.phase = 'cancelled';

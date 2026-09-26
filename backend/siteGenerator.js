@@ -318,44 +318,60 @@ function renderPage(spec) {
 
 // ------------------------------------------------------------- product promo
 /** The AI's motion script -> a playable promo: validated, its pictures painted (the pack with the brand copied from a real-font wordmark, then the props), cut out, sound added. */
-async function buildPromoFilm({ raw, company, outDir, say, planOnly }) {
+/** at most 3 pictures being painted at once (a burst of parallel requests stalls the image service) */
+const paintQueue = []; let paintRunning = 0;
+function paintLimit(fn) { return new Promise((res, rej) => { const go = () => { paintRunning++; Promise.resolve().then(fn).then(res, rej).finally(() => { paintRunning--; const nx = paintQueue.shift(); if (nx) nx(); }); }; if (paintRunning < 3) go(); else paintQueue.push(go); }); }
+
+/** Start painting every picture a promo needs (the main pack, its variants, the props): cached by what is asked for, so a rewritten script that keeps a picture reuses it. Returns immediately. */
+function startPaint(promo, cache) {
+  const key = promoFilm.pickKey(promo.product.colors), brand = promo.brand;
+  const hero = (id, look, wm) => {
+    const ck = id + '|' + look + '|' + key.hex; if (cache.has(ck)) return cache.get(ck);
+    const p = paintLimit(async () => {
+      const hp = promoFilm.heroPrompt(promo, key, look);
+      neurons.charge(neurons.estKlein(true), 'product picture ' + id);
+      const tries = [() => klein.generate(hp), () => klein.generate(hp + ' No text on it.'), () => klein.generate(`${promo.product.kind}, ${look}, product photography, isolated on a plain flat pure ${key.name} (${key.hex}) background, no text`)];
+      let res = null, lastErr = null;
+      for (let t = 0; t < tries.length && !res; t++) {
+        try { res = await promoFilm.cutout(await tries[t]()); }
+        catch (e) { lastErr = e; console.warn(`[promo] ${id} attempt ${t + 1} failed: ${String(e.message).slice(0, 110)}`); if (/429|4006|allocation|not set/i.test(String(e.message))) throw e; }
+      }
+      if (!res) throw new Error('The product picture could not be made: ' + (lastErr && lastErr.message));
+      return { buf: await promoFilm.stampBrand(res.buf, brand), aspect: res.aspect };
+    });
+    p.catch(() => {}); cache.set(ck, p); return p;
+  };
+  const prop = (i, pr) => {
+    const ck = 'prop|' + pr.look + '|' + key.hex; if (cache.has(ck)) return cache.get(ck);
+    const p = paintLimit(async () => {
+      let res = null;
+      neurons.charge(neurons.estKlein(false), 'prop ' + (i + 1));
+      for (let t = 0; t < 2 && !res; t++) {
+        try { res = await promoFilm.cutout(await klein.generate(t ? `${pr.name || 'an ingredient'}, macro product photography, isolated on a plain flat pure ${key.name} (${key.hex}) background, no text` : promoFilm.propPrompt(pr, key), { width: 512, height: 512 })); }
+        catch (e) { console.warn(`[promo] prop ${i + 1} attempt ${t + 1} failed: ${String(e.message).slice(0, 100)}`); if (/429|4006|allocation/i.test(String(e.message))) throw e; }
+      }
+      return res || promoFilm.fallbackProp(promo.product.colors[i % promo.product.colors.length]);
+    });
+    p.catch(() => {}); cache.set(ck, p); return p;
+  };
+  const jobs = { hero: hero('hero', promo.product.look) };
+  (promo.product.variants || []).forEach((v, i) => { jobs['hero' + (i + 2)] = hero('hero' + (i + 2), v.look); });
+  promo.props.forEach((pr, i) => { jobs['prop' + i] = prop(i, pr); });
+  return jobs;
+}
+
+async function buildPromoFilm({ raw, company, outDir, say, planOnly, cache }) {
   const promo = promoFilm.normalizePromo(raw, { brand: company && company.name });
   const spec = { kind: 'promo', review: raw && raw.__review, brand: promo.brand, tagline: '', cta: '', link: '', theme: { look: 'clean', accent: promo.zones[0].c0, accentInk: '#000000', bg: promo.zones[0].c1 }, promo, scenes: [] };
   const imgDir = path.join(outDir, 'images'); fs.mkdirSync(imgDir, { recursive: true });
   if (planOnly) { fs.writeFileSync(path.join(outDir, 'site.json'), JSON.stringify(spec, null, 2)); return { outDir, spec }; }
-  const key = promoFilm.pickKey(promo.product.colors), assetsOut = [];
-  const save = (id, buf, aspect) => { fs.writeFileSync(path.join(imgDir, id + '.png'), buf); assetsOut.push({ id, file: 'images/' + id + '.png', aspect }); };
-  // 1. the hero: the pack shot, painted as an EDIT of the brand wordmark so the brand name on the pack is spelled right
   say('Painting your product', 0.15);
-  const wm = promoFilm.wordmarkCard(promo.brand), hp = promoFilm.heroPrompt(promo, key);
-  neurons.charge(neurons.estKlein(true), 'product picture');
-  const heroTries = [
-    () => klein.generate(hp),
-    () => klein.generate(hp.split(' The reference image')[0] + ' No text on it.'),
-    () => klein.generate(`${promo.product.kind}, ${promo.product.look}, product photography, isolated on a plain flat pure ${key.name} (${key.hex}) background, no text`),
-  ];
-  let heroRes = null, lastErr = null;
-  for (let t = 0; t < heroTries.length && !heroRes; t++) {
-    try { const raw2 = await heroTries[t](); heroRes = await promoFilm.cutout(raw2); }
-    catch (e) { lastErr = e; console.warn(`[promo] product picture attempt ${t + 1} failed: ${String(e.message).slice(0, 110)}`); if (/429|4006|allocation|not set/i.test(String(e.message))) throw e; }
+  const jobs = startPaint(promo, cache || new Map()), assetsOut = [];
+  for (const [id, pr] of Object.entries(jobs)) {
+    const r = await pr;                                         // a failed hero throws (nothing to sell without it); variants and props fall back
+    fs.writeFileSync(path.join(imgDir, id + '.png'), r.buf); assetsOut.push({ id, file: 'images/' + id + '.png', aspect: r.aspect });
+    if (id === 'hero') say('Painting the ingredients', 0.4);
   }
-  if (!heroRes) throw new Error('The product picture could not be made: ' + (lastErr && lastErr.message));
-  save('hero', await promoFilm.stampBrand(heroRes.buf, promo.brand), heroRes.aspect);            // the brand is printed with a real font, always spelled right
-  // 2. the props (ingredients, pieces, splashes), three at a time; a prop that fails becomes a plain glossy disc in the product's colour
-  say('Painting the ingredients', 0.4);
-  const paintProp = async (p, i) => {
-    let res = null;
-    if (p.look) {
-      neurons.charge(neurons.estKlein(false), `prop ${i + 1}`);
-      for (let t = 0; t < 2 && !res; t++) {
-        try { const raw2 = await klein.generate(t ? `${p.name || 'an ingredient'}, macro product photography, isolated on a plain flat pure ${key.name} (${key.hex}) background, no text` : promoFilm.propPrompt(p, key), { width: 512, height: 512 }); res = await promoFilm.cutout(raw2); }
-        catch (e) { console.warn(`[promo] prop ${i + 1} attempt ${t + 1} failed: ${String(e.message).slice(0, 100)}`); if (/429|4006|allocation/i.test(String(e.message))) throw e; }
-      }
-    }
-    if (!res) res = promoFilm.fallbackProp(promo.product.colors[i % promo.product.colors.length]);
-    save('prop' + i, res.buf, res.aspect);
-  };
-  for (let b = 0; b < promo.props.length; b += 3) await Promise.all(promo.props.slice(b, b + 3).map((p, k) => paintProp(p, b + k)));   // three at a time
   promo.assets = assetsOut.sort((a, b) => (a.id === 'hero' ? -1 : b.id === 'hero' ? 1 : a.id.localeCompare(b.id)));
   say('Scoring the sound', 0.85);
   try { spec.audio = await promoFilm.promoAudio(promo, outDir); } catch (e) { console.warn('[promo] soundtrack skipped:', e.message); }
@@ -382,7 +398,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   const brandRefs = [logo && logo.length ? logo : null, ...userImgs.slice(1)].filter(Boolean).slice(0, 3), refCost = () => brandRefs.length * 13;   // shrinks below if the film would not fit the neuron ceiling
   const siteImg = company && company.siteImage && company.siteImage.length ? company.siteImage : null;
   const heroCost = userImgs[0] ? 0 : logo && logo.length || siteImg ? neurons.estKlein(true) : neurons.estKlein(false);
-  const reserveNow = () => (given ? 0 : promoOn() ? 6 * neurons.estKlein(true) : movieOn() ? IDS.length * neurons.estKlein(true) : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
+  const reserveNow = () => (given ? 0 : promoOn() ? 7 * neurons.estKlein(true) : movieOn() ? IDS.length * neurons.estKlein(true) : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
   let spec = given;
   if (!spec) {
     say(promoOn() ? 'Designing your promo' : 'Writing the ad script', 0.05);
@@ -420,15 +436,17 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
     }
     if (!raw) throw new Error('The AI could not write the ad script: ' + (lastErr && lastErr.message));
     if (promoOn()) {
+      const paintCache = new Map();
       // the director's review: what is thin about the draft goes back to the AI, which rewrites the whole script (its own fix, not ours)
       try {
         const draft = promoFilm.normalizePromo(raw, { brand: company && company.name }), issues = promoFilm.critique(draft);
         raw.__review = { draft: issues };
         raw.__review = { draft: issues };
+        if (!planOnly) { try { startPaint(draft, paintCache); } catch (e) { console.warn('[promo] early painting skipped: ' + String(e.message).slice(0, 100)); } }   // the pictures are painted WHILE the AI rewrites its script
         console.log('[promo] draft review: ' + (issues.length ? issues.length + ' issue(s): ' + issues.map((x) => x.slice(0, 70)).join(' | ') : 'clean'));
         if (issues.length) {
           say('Improving the design', 0.12);
-          const rp = promoFilm.revisePrompt(text.slice(0, keep), raw, issues), rest = 6 * neurons.estKlein(true), rest0 = neurons.estText(scriptModel, rp.length + sysPrompt.length, outEst);
+          const rp = promoFilm.revisePrompt(text.slice(0, keep), raw, issues), rest = paintCache.size ? 0 : 7 * neurons.estKlein(true), rest0 = neurons.estText(scriptModel, rp.length + sysPrompt.length, outEst);
           if (rest0 + rest + neurons.runTotal() <= neurons.PER_RUN_CEILING) {
             neurons.charge(rest0, 'promo revision', rest);
             let usage2 = null; const txt2 = await callCloudflareRaw(sysPrompt, rp, { jsonMode: true, maxTokens: maxTok, temperature: 0.9, model: scriptModel, timeoutMs: 180000, reasoning: 'medium', onUsage: (u) => { usage2 = u; } });
@@ -441,7 +459,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
           } else { raw.__review.note = 'revision skipped: it would not fit the neuron ceiling (' + neurons.PER_RUN_CEILING + ')'; console.log('[promo] ' + raw.__review.note); }
         }
       } catch (e) { if (raw.__review) raw.__review.note = 'revision failed: ' + String(e.message).slice(0, 160); console.warn('[promo] revision skipped: ' + String(e.message).slice(0, 140)); }
-      return await buildPromoFilm({ raw, company, outDir, say, planOnly });
+      return await buildPromoFilm({ raw, company, outDir, say, planOnly, cache: paintCache });
     }
     spec = normalizeSpec(raw, slug, { brand: company && company.name, brief: text, website: company && company.siteHost, movie: movieOn() });
   }

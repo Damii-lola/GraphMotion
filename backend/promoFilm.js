@@ -54,7 +54,7 @@ MIMIC THEM: pick the ONE reference whose structure suits this product (or blend 
 
 YOU WRITE A "MOTION SCRIPT" from these primitives (there are no templates; the renderer plays exactly what you write). Coordinates x, y, cx, cy are fractions of the screen (0,0 top-left, 1,1 bottom-right; values outside 0..1 are off-screen, which is how things enter and leave); w and sizes are fractions of the screen WIDTH; times are seconds from 0. Layers are drawn in the order you write them (later = on top of earlier).
 FORMAT: THE HERO is ONE continuous track, "hero": {"path":[waypoints], "shadow":true|false, "glow":{...}, "idle":{...}}. Each waypoint {"t","x","y","w","r","blur","sx","sy","o","e"} (w = the pack's width as a fraction of the screen width: it rests at 0.4-0.6, can swell past 1.0 for a zoom-through or shrink to a badge; r = tilt in degrees; e = easing of the move ARRIVING at that waypoint). The first waypoint is where and when it first appears (put it off-screen to fly in), the last pose holds until the end; it leaves the screen by moving outside 0..1 or with o:0. Write 6 to 14 waypoints: it is the star and it travels the whole frame. Never split the hero into separate layers (extra copies of it, for a row or a ring, go in "layers" with src "hero").
-FORMAT: every PROP carries its own appearances: "props":[{"name","look","uses":[{"kind":"scatter","t0":1,"t1":3,"n":8,"size":[0.16,0.36],"from":"burst","seed":5}, {"kind":"sprite","t0":2,"t1":4,"x":0.8,"y":0.2,"w":0.3,"keys":[...]}]}] (a use is a scatter, a sprite or a pattern; its src is filled in for you). Every prop needs at least one use, and they are big.
+FORMAT: every PROP carries its own appearances: "props":[{"name","look","uses":[{"kind":"scatter","t0":1,"t1":3,"n":8,"size":[0.16,0.36],"from":"burst","seed":5}, {"kind":"sprite","t0":2,"t1":4,"x":0.8,"y":0.2,"w":0.3,"keys":[...]}]}] (a use is a scatter, a sprite or a pattern; its src is filled in for you). Every prop needs at least one use, and they are big. Variants (hero2, hero3) are placed as ordinary sprites in "layers" with their own keys.
 FORMAT: "layers" holds everything else, as FLAT objects, each with a "kind" key and its fields directly on it (never nested under a "sprite" or "text" key), for example:
 {"kind":"text","t0":1,"t1":3,"x":0.5,"y":0.3,"size":0.2,"font":"anton","color":"#ffffff","lines":["WORD"],"in":{"kind":"slam","dur":0.4}}
 {"kind":"pattern","src":"hero","sub":"ring","t0":4,"t1":6,"cx":0.5,"cy":0.5,"w":0.2,"rings":2,"spin":30}
@@ -62,7 +62,7 @@ FORMAT: "layers" holds everything else, as FLAT objects, each with a "kind" key 
 "zones" and "beats" are arrays. A layer only EXISTS between its t0 and t1, so give a layer t0..t1 covering every moment it is visible (a word must stay at least 1 s to be read); DRAW ORDER: backdrop shapes and giant words (size 0.16 and up, unless front:true) are BEHIND the hero, the hero is above them, props, bursts and copies above the hero, small lines (and front:true words) above those, and wipes and flashes over everything; In a SPRITE's keys, "w" is its width at that moment as a fraction of the screen width (the hero rests at 0.4-0.6; it can swell to 1.0 or more for a zoom-through and shrink to a badge), so it can grow and shrink between keys.
 EVERY layer: beat (optional index), t0, t1, alpha, blend ("screen","multiply","overlay","lighter","soft-light"), keys.
 KEYS: "keys":[{"t","x","y","w" (sprites: width as a fraction of the screen width) or "s" (text and shapes: scale, 1 = as written),"sx","sy" (stretch / squash multipliers, 1 = none),"r" (rotation in degrees, absolute),"o" (opacity),"blur" (pixels),"e" (easing of the move that ARRIVES at this key)}]. Between keys the layer is interpolated; eases: ${EASES.join(', ')}. If a layer has keys, make its first key's t equal to the layer's t0 and give it the layer's x, y, w. Any number of keys (up to 16): whip across, stop, rebound, exit. The same sprite may appear in SEVERAL layers, each with its own keys.
-- "sprite" (in layers or in a prop's uses): src "hero" or "prop0".."prop4". x, y, w, r, shadow (false to drop it), glow {color, blur}, blur (px), idle {kind, amp, speed} (kinds ${IDLE.join(', ')}), in {kind, dur, delay, from, turns} (kinds ${IN_KINDS.join(', ')}; "focus" = blurred to sharp, "wipeL/wipeR/wipeU/wipeD/iris" = mask reveals), out {kind, dur}.
+- "sprite" (in layers or in a prop's uses): src "hero", "hero2", "hero3" (your variants: other shots of the product) or "prop0".."prop3". x, y, w, r, shadow (false to drop it), glow {color, blur}, blur (px), idle {kind, amp, speed} (kinds ${IDLE.join(', ')}), in {kind, dur, delay, from, turns} (kinds ${IN_KINDS.join(', ')}; "focus" = blurred to sharp, "wipeL/wipeR/wipeU/wipeD/iris" = mask reveals), out {kind, dur}.
 - "text": lines ["WORD","WORD"], x, y, size (0.03 tiny .. 0.36 giant), font, color, upper, track (letter spacing), r (any rotation; 90 or -90 runs a word vertically up the side), align, stroke {color, w}, fill (false = outline only), tone (true = a shade off the backdrop, tone-on-tone), shadow, glow {color, blur}, blur, in {kind, dur, stag} (kinds ${TEXT_IN.join(', ')}; words arrive one by one; "slice" = a giant word arrives as horizontal strips sliding in from opposite sides, then aligning), out {kind}, repeat {n, dy, speed} (the same word stacked n times, scrolling: the wall behind a product). Fonts: ${Object.entries(FONTS).map(([k, v]) => k + ' (' + v + ')').join('; ')}.
 - "scatter": pieces flying around: src (one prop id or a list, "hero" allowed), n (1-16), cx, cy, spread, size [min,max], from ("burst" | "corners" | "edges" | "top" | "sides"), seed, spin, stag, avoid (true keeps them off the product).
 - "pattern": src repeated as a pattern: sub ("radial" | "grid" | "ring"), cx, cy, w, spin, rings, cols, rows, stag, alpha.
@@ -71,11 +71,12 @@ KEYS: "keys":[{"t","x","y","w" (sprites: width as a fraction of the screen width
 - "zones": the backdrop: {c0 (bright centre), c1 (edge), shape "radial"|"linear"} (make c1 equal to c0 for a flat colour). "beats": 1 to 6 windows (scenes) {t0, t1, zone, cut} that tile 0..duration; between beats the backdrop glides to the next zone, or switches instantly when "cut": true (a hard scene cut with a new backdrop colour); give beats the same zone for one calm backdrop. Saturated colours that make the product POP.
 - "sound": {"music": "pulse" | "warm pad" | "tense" | "dark drone", "cues": [{"t", "kind": ${CUE_KINDS.map((k) => '"' + k + '"').join(' | ')}}]}: put a cue exactly on every whoosh, landing and hit you animated.
 
-RULES (a promo that breaks these looks cheap): USE EVERY PROP you define (each one appears in at least one scatter, sprite or pattern), big; at least FOUR distinct things happen in every beat, and nothing sits still for more than half a second; the hero is on screen within 1.5 s and travels a lot (not a shuffle: whole-frame moves), with different easing each time; props are BIG (w 0.16-0.5) and bleed off the frame edges; use different motion for every element and never copy a layer; the whole promo has AT MOST 24 words, only words from the brief or that describe the taste, feel or look; text stays clear of the product's face unless it is a giant word BEHIND it (write it earlier); the last beat shows the product with the BRAND NAME big and at most 3 words of call to action. No prices, no claims you cannot see. Up to 40 layers.
+RULES (a promo that breaks these looks cheap): the product appears in SEVERAL shots (the main "hero" plus "hero2"/"hero3" from product.variants, used in other scenes as sprites, in a row, in a ring, or as scatter); the main hero LEAVES the screen at least once so that type, shapes or another product take the stage for a beat (the references do this constantly), and it comes back; USE EVERY PROP you define (each one appears in at least one scatter, sprite or pattern), big; at least FOUR distinct things happen in every beat, and nothing sits still for more than half a second; the hero is on screen within 1.5 s and travels a lot (not a shuffle: whole-frame moves), with different easing each time; props are BIG (w 0.16-0.5) and bleed off the frame edges; use different motion for every element and never copy a layer; the whole promo has AT MOST 24 words, only words from the brief or that describe the taste, feel or look; text stays clear of the product's face unless it is a giant word BEHIND it (write it earlier); the last beat shows the product with the BRAND NAME big and at most 3 words of call to action. No prices, no claims you cannot see. Up to 40 layers.
 
 Return ONE JSON object with these keys, in this order:
-"ideas": 3 to 5 sentences, one per beat, in your own words: the SPECIFIC unique things that happen in that beat (what the hero does, what reacts to it, what the type and the camera do, how the scene changes). Write them first, then implement exactly them.
-"brand" (as in the brief, max 24 characters), "product": {"name", "kind" (what it physically is: "canned soft drink", "bag of potato chips"...), "look" (how the pack looks for an image AI: shape, materials, the two or three colours, label art WITHOUT any text, max 30 words), "colors" ["#rrggbb","#rrggbb"]}, "props": 2 to 5 objects {"name", "look" (one thing that belongs to the product - an ingredient, a splash, a piece, a leaf, a crumb - described for an image AI, no text, max 18 words)}, "duration" (6 to 12.4, in seconds, your choice), "zones", "beats", "layers", "cam", "sound".
+"mimic": {"ref": "R1" to "R10" (the reference you reproduce), "scenes": [one sentence per scene: what you copy from that reference in that scene, and how it becomes THIS product]},
+"ideas": 3 to 6 sentences, one per beat, in your own words: the SPECIFIC unique things that happen in that beat (what the hero does, what reacts to it, what the type and the camera do, how the scene changes). Write them first, then implement exactly them.
+"brand" (as in the brief, max 24 characters), "product": {"name", "kind" (what it physically is: "canned soft drink", "bag of potato chips"...), "look" (how the pack looks for an image AI: shape, materials, the two or three colours, label art WITHOUT any text, max 30 words), "colors" ["#rrggbb","#rrggbb"], "variants": [0 to 2 OTHER SHOTS of the product for other scenes: {"name","look"} (another flavour or colour, an open box, a multipack, a close-up of the top), same brand]}, "props": 2 to 4 objects {"name", "look" (one thing that belongs to the product - an ingredient, a splash, a piece, a leaf, a crumb - described for an image AI, no text, max 18 words)}, "duration" (6 to 12.4, in seconds, your choice), "zones", "beats", "layers", "cam", "sound".
 Output the JSON object only.`;
 }
 
@@ -123,9 +124,11 @@ function normalizePromo(raw, ctx = {}) {
   const P = S.product && typeof S.product === 'object' ? S.product : {};
   const colors = (Array.isArray(P.colors) ? P.colors : []).filter(isHex).map((c) => fixHex(c)).slice(0, 2);
   const product = { name: cleanStr(P.name, 60) || brand, kind: cleanStr(P.kind, 50) || 'product pack', look: cleanStr(P.look, 260) || 'a premium retail pack', colors: colors.length ? colors : ['#ff5c1a', '#ffd23f'] };
-  const props = (Array.isArray(S.props) ? S.props : []).slice(0, 5).map((p) => ({ name: cleanStr(p && p.name, 40), look: cleanStr(p && p.look, 200) })).filter((p) => p.look);
+  const variants = (Array.isArray(P.variants) ? P.variants : []).slice(0, 2).map((v) => ({ name: cleanStr(v && v.name, 40), look: cleanStr(v && v.look, 240) })).filter((v) => v.look);
+  product.variants = variants;
+  const props = (Array.isArray(S.props) ? S.props : []).slice(0, 4).map((p) => ({ name: cleanStr(p && p.name, 40), look: cleanStr(p && p.look, 200) })).filter((p) => p.look);
   while (props.length < 2) props.push({ name: 'splash', look: 'a fresh splash of the product, glossy droplets' });
-  const assets = [{ id: 'hero' }, ...props.map((_, i) => ({ id: 'prop' + i }))], okSrc = new Set(assets.map((a) => a.id));
+  const assets = [{ id: 'hero' }, ...variants.map((_, i) => ({ id: 'hero' + (i + 2) })), ...props.map((_, i) => ({ id: 'prop' + i }))], okSrc = new Set(assets.map((a) => a.id));
   const ideas = (Array.isArray(S.ideas) ? S.ideas : []).map((s) => cleanStr(s, 260)).filter(Boolean).slice(0, 6);
 
   // zones: the AI's colours (a flat colour when c0 = c1), only a dull grey is repaired; positions on the board are a gentle seeded walk
@@ -166,9 +169,9 @@ function normalizePromo(raw, ctx = {}) {
   const extraIn = [];
   if (S.hero && typeof S.hero === 'object' && Array.isArray(S.hero.path) && S.hero.path.length) {
     const wp = S.hero.path.filter((k) => k && typeof k === 'object' && Number.isFinite(+k.t)).sort((a, b) => a.t - b.t), p0 = wp[0];
-    if (p0) extraIn.push({ kind: 'sprite', src: 'hero', t0: p0.t, t1: D, x: p0.x, y: p0.y, w: p0.w, r: 0, keys: wp.length >= 2 ? wp.map((k) => Object.assign({}, k, { r: k.r })) : undefined, shadow: S.hero.shadow, glow: S.hero.glow, idle: S.hero.idle, blur: p0.blur });
+    if (p0) extraIn.push({ kind: 'sprite', main: true, src: 'hero', t0: p0.t, t1: D, x: p0.x, y: p0.y, w: p0.w, r: 0, keys: wp.length >= 2 ? wp.map((k) => Object.assign({}, k, { r: k.r })) : undefined, shadow: S.hero.shadow, glow: S.hero.glow, idle: S.hero.idle, blur: p0.blur });
   }
-  (Array.isArray(S.props) ? S.props : []).slice(0, 5).forEach((p, i) => { (p && Array.isArray(p.uses) ? p.uses : []).slice(0, 4).forEach((u) => { if (u && typeof u === 'object') extraIn.push(Object.assign({}, u, { src: 'prop' + i, kind: ['scatter', 'sprite', 'pattern'].includes(u.kind) ? u.kind : 'scatter' })); }); });
+  (Array.isArray(S.props) ? S.props : []).slice(0, 4).forEach((p, i) => { (p && Array.isArray(p.uses) ? p.uses : []).slice(0, 4).forEach((u) => { if (u && typeof u === 'object') extraIn.push(Object.assign({}, u, { src: 'prop' + i, kind: ['scatter', 'sprite', 'pattern'].includes(u.kind) ? u.kind : 'scatter' })); }); });
   (Array.isArray(S.layers) ? S.layers : []).concat(extraIn).slice(0, 64).forEach((L0) => {
     if (!L0 || typeof L0 !== 'object') return;
     let L = L0;
@@ -178,12 +181,13 @@ function normalizePromo(raw, ctx = {}) {
     if (kind === 'shape' && SHAPES.includes(L.type)) kind = L.type;
     if (kind === 'sprite') {
       const src = okSrc.has(L.src) ? L.src : null; if (!src) return;
-      const o = timing(L, { kind, src, x: num(L.x, 0.5, -3, 4), y: num(L.y, 0.5, -3, 4), w: num(L.w, src === 'hero' ? 0.5 : 0.22, 0.04, src === 'hero' ? 1.2 : 0.9), r: num(L.r, 0, -720, 720) });
+      const o = timing(L, { kind, src, x: num(L.x, 0.5, -3, 4), y: num(L.y, 0.5, -3, 4), w: num(L.w, /^hero/.test(src) ? 0.5 : 0.22, 0.04, /^hero/.test(src) ? 1.5 : 0.9), r: num(L.r, 0, -720, 720) });
       const i = motionIO(L.in, IN_KINDS, 0.5), out = motionIO(L.out, IN_KINDS, 0.35), idle = L.idle && oneOf(L.idle.kind, IDLE, null) ? { kind: L.idle.kind, amp: num(L.idle.amp, 0.02, 0, 0.15), speed: num(L.idle.speed, 1, 0.2, 4) } : undefined;
       if (i) o.in = i; if (out) o.out = out; if (idle) o.idle = idle;
       if (L.shadow === false) o.shadow = false; if (L.blur !== undefined) o.blur = num(L.blur, 0, 0, 40); const gl = glowOf(L.glow); if (gl) o.glow = gl;
       const ks = keysOf(L.keys, D, 16, o.w); if (ks) o.keys = ks;
-      if (src === 'hero') {                                                                    // a product this small cannot be seen: repair the scale, not the choreography
+      if (L.main) o.main = true;
+      if (src === 'hero' && L.main) {                                                                    // the main product this small cannot be seen: repair the scale, not the choreography
         const eff = o.keys ? o.keys.map((k) => o.w * (k.s !== undefined ? k.s : 1)) : [o.w], srt = eff.filter((v) => v > 0).sort((a, b) => a - b), md = srt.length ? srt[Math.floor(srt.length / 2)] : o.w;
         if (md < 0.4) o.w = +Math.min(1.2, o.w * (0.48 / md)).toFixed(3);     // every key scales with it
       }
@@ -228,18 +232,19 @@ function normalizePromo(raw, ctx = {}) {
   layers.forEach((l) => { if (l.kind === 'text') { const need = 1.0; if (l.t1 - l.t0 < need) l.t1 = +Math.min(D, l.t0 + need).toFixed(2); if (l.t0 + need > D) l.t0 = +Math.max(0, D - need).toFixed(2); } else if (l.kind === 'sprite' || l.kind === 'scatter') { if (l.t1 - l.t0 < 0.5) l.t1 = +Math.min(D, l.t0 + 0.5).toFixed(2); } });
   { let fl = 0; for (let i = layers.length - 1; i >= 0; i--) if (layers[i].kind === 'flash') { fl++; if (fl > 3) layers.splice(i, 1); } }
   // draw order (a rendering rule, not a design): backdrop shapes and giant words behind the hero, the hero, props / bursts / copies above it, small lines above those, wipes and flashes over everything
-  { const rank = (l) => (['flash', 'wipe', 'zoomblur'].includes(l.kind) ? 6 : ['line', 'oval'].includes(l.kind) ? 4 : ['circle', 'rect', 'rings', 'wave', 'rays', 'dots', 'stripes'].includes(l.kind) ? 0 : l.kind === 'pattern' ? 1 : l.kind === 'text' ? (l.front || l.size < 0.16 ? 5 : 2) : l.kind === 'sprite' && l.src === 'hero' && !l.copy ? 3 : 4); const first = layers.findIndex((l) => l.kind === 'sprite' && l.src === 'hero');
+  { const rank = (l) => (['flash', 'wipe', 'zoomblur'].includes(l.kind) ? 6 : ['line', 'oval'].includes(l.kind) ? 4 : ['circle', 'rect', 'rings', 'wave', 'rays', 'dots', 'stripes'].includes(l.kind) ? 0 : l.kind === 'pattern' ? 1 : l.kind === 'text' ? (l.front || l.size < 0.16 ? 5 : 2) : l.kind === 'sprite' && l.main ? 3 : 4); const first = layers.findIndex((l) => l.kind === 'sprite' && l.main);
     const arr = layers.map((l, i) => [rank(l), i === first ? -1 : i, l]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]); layers.length = 0; arr.forEach((l) => layers.push(l)); }
   // guarantees (content, not design): the product exists and is on screen early; the brand name closes the promo
   const heroLayers = layers.filter((l) => l.kind === 'sprite' && l.src === 'hero');
-  if (!heroLayers.length) layers.push({ kind: 'sprite', src: 'hero', beat: 'all', t0: 0.3, t1: D, x: 0.5, y: 0.52, w: 0.5, r: -10, in: { kind: 'pop', dur: 0.6 }, idle: { kind: 'float', amp: 0.012, speed: 1 } });
+  if (!heroLayers.length) layers.push({ kind: 'sprite', main: true, src: 'hero', beat: 'all', t0: 0.3, t1: D, x: 0.5, y: 0.52, w: 0.5, r: -10, in: { kind: 'pop', dur: 0.6 }, idle: { kind: 'float', amp: 0.012, speed: 1 } });
   const lastBeat = beats[nb - 1];
   const hasBrand = layers.some((l) => l.kind === 'text' && l.t1 >= D - 0.4 && l.lines.join(' ').toUpperCase().includes(brand.split(' ')[0]));
   if (!hasBrand) layers.push({ kind: 'text', beat: nb - 1, t0: +(lastBeat.t0 + 0.5).toFixed(2), t1: D, lines: [brand.length > 12 && brand.includes(' ') ? brand.split(' ').slice(0, 2).join(' ') : brand], x: 0.5, y: 0.88, size: brand.length > 10 ? 0.11 : 0.15, font: 'anton', color: '#ffffff', upper: true, track: 0, r: 0, align: 'center', in: { kind: 'slam', dur: 0.4, stag: 0.14 }, shadow: true, front: true });
   const cam = (Array.isArray(S.cam) ? S.cam : []).filter((c) => c && Number.isFinite(+c.t) && CAM_KINDS.includes(c.kind)).slice(0, 12).map((c) => ({ t: num(c.t, 0.5, 0, D - 0.2), kind: c.kind, amp: num(c.amp, c.kind === 'shake' ? 8 : c.kind === 'roll' ? 5 : 0.06, 0, c.kind === 'shake' ? 24 : c.kind === 'roll' ? 25 : 0.15), dur: num(c.dur, 0.3, 0.1, 3), ...(c.kind === 'zoom' ? { to: num(c.to, 1.25, 0.6, 2.5), hold: num(c.hold, 0, 0, 4), back: num(c.back, 0, 0, 3) } : {}), ...(c.kind === 'pan' ? { dx: num(c.dx, 0, -0.5, 0.5), dy: num(c.dy, 0, -0.5, 0.5) } : {}) }));
   const music = oneOf(S.sound && S.sound.music, ['pulse', 'warm pad', 'tense', 'dark drone'], 'pulse');
   const cues = (S.sound && Array.isArray(S.sound.cues) ? S.sound.cues : []).filter((c) => c && Number.isFinite(+c.t) && CUE_KINDS.includes(c.kind)).slice(0, 24).map((c) => ({ t: num(c.t, 0, 0, D), kind: c.kind }));
-  return { brand, product, props, assets, duration: +D.toFixed(2), ideas, zones, beats, layers, cam, sound: { music, cues }, pan: 0.8 };
+  const mimicIn = S.mimic && typeof S.mimic === 'object' ? S.mimic : {}, mimic = { ref: /^R(10|[1-9])$/i.test(String(mimicIn.ref || '').trim()) ? String(mimicIn.ref).trim().toUpperCase() : '', scenes: (Array.isArray(mimicIn.scenes) ? mimicIn.scenes : []).map((x) => cleanStr(x, 260)).filter(Boolean).slice(0, 8) };
+  return { brand, product, props, assets, duration: +D.toFixed(2), mimic, ideas, zones, beats, layers, cam, sound: { music, cues }, pan: 0.8 };
 }
 
 /**
@@ -255,10 +260,13 @@ function critique(promo) {
   if (travel < 3) issues.push(`The hero travels only ${travel.toFixed(1)} screen-widths in total. In the reference spots it whips across the whole frame several times, enters and leaves at speed, with different easing each time. Give the hero many more, bigger keyframed moves (at least 3 whole-frame sweeps).`);
   else if (sweeps < 2) issues.push('The hero drifts but never really whips across the frame. Add fast sweeps (a move of most of the screen in under 0.8 s, easing outExpo / inCubic) with blur keys on the fast parts.');
   const heroAtT = (t) => { let vis = false, w = 0; heroes.forEach((h) => { if (t < h.t0 || t > h.t1) return; let x = h.x, y = h.y, sc = 1; const K = h.keys; if (K && K.length && t >= K[0].t) { let a = K[0], b = K[K.length - 1]; for (let i = 0; i < K.length - 1; i++) if (t >= K[i].t && t <= K[i + 1].t) { a = K[i]; b = K[i + 1]; break; } const u = a === b ? 1 : Math.max(0, Math.min(1, (t - a.t) / Math.max(1e-6, b.t - a.t))); const iv = (k, d) => { const va = a[k] !== undefined ? a[k] : d, vb = b[k] !== undefined ? b[k] : va; return va + (vb - va) * u; }; x = iv('x', x); y = iv('y', y); sc = iv('s', 1); } if (x > -0.1 && x < 1.1 && y > -0.1 && y < 1.1) { vis = true; w = Math.max(w, h.w * sc); } }); return { vis, w }; };
-  let gapStart = null; const gaps = [];
-  for (let t = 0.2; t <= D - 0.2; t += 0.1) { const v = heroAtT(t).vis; if (!v && gapStart === null) gapStart = t; if (v && gapStart !== null) { if (t - gapStart > 0.7) gaps.push([gapStart, t]); gapStart = null; } }
-  if (gapStart !== null && D - gapStart > 0.7) gaps.push([gapStart, D]);
-  if (gaps.length) issues.push('The hero is missing from the screen during ' + gaps.slice(0, 3).map((g) => g[0].toFixed(1) + '-' + g[1].toFixed(1) + ' s').join(', ') + '. Layers exist only between their t0 and t1: extend the hero layer (or add another) so the product is on screen nearly all the time, especially in the last beat with the brand name.');
+  // the product must LEAVE the screen for a stretch of type / shapes / another product (mid-video), and be back for the brand at the end
+  const anyProd = (t) => L.some((l) => l.kind === 'sprite' && /^hero/.test(l.src || '') && t >= l.t0 && t <= l.t1 && (() => { if (l.main) return heroAtT(t).vis; const K = l.keys; if (!K || !K.length || t < K[0].t) return true; let a = K[0], b = K[K.length - 1]; for (let i = 0; i < K.length - 1; i++) if (t >= K[i].t && t <= K[i + 1].t) { a = K[i]; b = K[i + 1]; break; } const u = a === b ? 1 : (t - a.t) / Math.max(1e-6, b.t - a.t), x = (a.x !== undefined ? a.x : l.x) + (((b.x !== undefined ? b.x : l.x) - (a.x !== undefined ? a.x : l.x)) * u), y = (a.y !== undefined ? a.y : l.y) + (((b.y !== undefined ? b.y : l.y) - (a.y !== undefined ? a.y : l.y)) * u); return x > -0.1 && x < 1.1 && y > -0.1 && y < 1.1; })());
+  let clearRun = 0, bestClear = 0; for (let t = 1.2; t <= D - 2.2; t += 0.1) { if (!anyProd(t)) { clearRun += 0.1; bestClear = Math.max(bestClear, clearRun); } else clearRun = 0; }
+  if (D > 6 && bestClear < 0.7) issues.push('The product never leaves the screen. In the references it exits (flies out, is swapped for another bottle, or is covered by a wipe) so that giant type, a word wall, shapes or a different product take the stage for at least a beat, then returns. Send the hero off-screen for 0.8-2 s in the middle and let type and other things happen.');
+  if (!anyProd(D - 0.6)) issues.push('The product is not on screen at the end. The last beat must show the pack with the brand name.');
+  if (D > 6 && !(promo.product.variants || []).length) issues.push('Only one pack shot is defined. The references show the product in several shots (another flavour or colour, an open box, a multipack, a close-up). Add 1 or 2 "variants" in product and use hero2 / hero3 in other scenes.');
+  else if (D > 6 && !L.some((l) => /^hero[23]$/.test(Array.isArray(l.src) ? l.src[0] : l.src || ''))) issues.push('You defined product variants (hero2/hero3) but never use them. Use them as sprites or scatter in other scenes.');
   let bigMax = 0; for (let t = 0.3; t <= D; t += 0.2) bigMax = Math.max(bigMax, heroAtT(t).w);
   if (bigMax < 0.4) issues.push('The hero never gets big: its width should reach at least 0.45 of the screen width at rest.');
   promo.beats.forEach((b, i) => { const z = promo.zones[b.zone]; if (!z) return; const c = rgb(z.c0), mn = Math.min(...c), mxv = Math.max(...c); if (mn > 215 && mxv - mn < 40) issues.push(`Beat ${i + 1}'s backdrop is almost white or grey, so the product and the words vanish. Use a saturated colour behind them.`); });
@@ -294,7 +302,34 @@ function critique(promo) {
   const unused = promo.props.map((p, i) => 'prop' + i).filter((id) => !usedSrc.has(id));
   if (unused.length) issues.push('These props have no "uses" and never appear on screen: ' + unused.join(', ') + '. Give every prop uses (scatter pieces, flying sprites or patterns), big.');
   if (promo.sound.cues.length < 4) issues.push('Sound cues: place a whoosh at every fast sweep, an impact at every landing and a tick on every word slam (sound.cues), at least 6.');
-  return issues.slice(0, 7);
+  // did it actually reproduce the reference it named?
+  const ref = promo.mimic && promo.mimic.ref;
+  if (!ref) issues.unshift('You did not name the reference you reproduce. Fill "mimic": {"ref": "R1".."R10", "scenes": [...]} and copy that reference scene by scene.');
+  else {
+    const T = L.filter((l) => l.kind === 'text'), has = (f) => L.some(f);
+    const wall = T.filter((l) => l.repeat && l.repeat.n >= 5).length, sliced = T.filter((l) => l.in && l.in.kind === 'slice').length, vertical = T.filter((l) => Math.abs(l.r || 0) > 60 && Math.abs(l.r || 0) < 120).length;
+    const typed = T.filter((l) => l.size <= 0.07 && l.in && ['rise', 'fade'].includes(l.in.kind) && l.lines.join(' ').split(' ').length >= 3 && (l.in.stag || 0) >= 0.15).length;
+    const lines = L.filter((l) => l.kind === 'line').length, ovals = L.filter((l) => l.kind === 'oval').length, wipes = L.filter((l) => l.kind === 'wipe').length, zb = L.filter((l) => l.kind === 'zoomblur').length;
+    const cuts = promo.beats.filter((b) => b.cut).length, script = T.filter((l) => ['pacifico', 'lobster', 'caveat'].includes(l.font)).length;
+    const heroSrcs = new Set(L.filter((l) => l.kind === 'sprite' && /^hero/.test(l.src || '')).map((l) => l.src)), heroCopies = L.filter((l) => l.kind === 'sprite' && /^hero/.test(l.src || '')).length;
+    const scatterHero = L.filter((l) => l.kind === 'scatter' && l.src.some((x) => /^hero/.test(x))).length, ringLong = L.filter((l) => l.kind === 'rings' && l.t1 - l.t0 >= D * 0.5).length;
+    const circleBig = L.filter((l) => l.kind === 'circle' && l.keys && l.keys.some((k) => (k.s || 1) >= 3)).length, patHero = L.filter((l) => l.kind === 'pattern' && /^hero/.test(l.src || '')).length;
+    const SIG = {
+      R1: [[wall >= 1, 'a WALL of one repeated word (text with repeat n>=5, rows scrolling, tone or outlined) filling the screen'], [typed >= 2, 'small sentences TYPED word by word (size <= 0.06, in rise/fade with stag >= 0.2)'], [lines >= 2, 'hairline connectors drawn on (line layers) from the product to icons'], [zb >= 1, 'a zoomblur transition'], [cuts >= 2, 'hard scene cuts ("cut": true on beats)']],
+      R2: [[typed >= 2, 'a question / sentences TYPED word by word'], [wall >= 1, 'a giant outlined word wall'], [lines >= 3, 'curved arrows drawn on (line layers with arrow:true) for callouts'], [script >= 2, 'handwritten cheer words (caveat / pacifico) around the pack at different tilts'], [cuts >= 3, 'at least 4 different scenes with hard cuts']],
+      R3: [[vertical >= 1, 'a giant word running vertically up the side (r = 90 or -90)'], [L.filter((l) => l.keys && l.keys.some((k) => (k.blur || 0) > 5)).length >= 1, 'blur keys on the fast moves'], [new Set(promo.beats.map((b) => b.zone)).size === 1, 'one calm backdrop (all beats the same zone)']],
+      R4: [[wipes >= 2, 'colour wipes changing the scene every ~2 s'], [heroSrcs.size >= 2 || heroCopies >= 3, 'SEVERAL bottles (hero2/hero3 or copies) replacing each other, each entering diagonally'], [patHero >= 1 || scatterHero >= 1, 'the packs multiplying into a radial ring / grid'], [typed >= 1, 'tiny text lines in the gaps']],
+      R5: [[ringLong >= 1, 'concentric rings pulsing outward for most of the promo'], [L.filter((l) => l.kind === 'scatter' && ['corners', 'edges', 'sides'].includes(l.from)).length >= 1, 'big pieces flying in from the frame edges'], [heroCopies >= 3 || heroSrcs.size >= 2, 'a row of THREE pack shots rising at the end']],
+      R6: [[scatterHero >= 1 || heroCopies >= 4, 'packs tumbling in at all angles, cropped by the frame'], [ovals >= 1, 'a hand-drawn oval around a phrase'], [typed >= 2, 'sentences typed word by word'], [wipes >= 1 || L.some((l) => l.kind === 'wave'), 'a wave / colour wipe between scenes']],
+      R7: [[sliced >= 1, 'a giant word arriving SLICED (text in: slice)'], [wipes >= 1, 'an arch / colour wipe sweeping the frame at the end'], [cuts >= 2, 'a hard cut to a solid brand-colour end card']],
+      R8: [[sliced >= 1, 'a giant word arriving sliced'], [wall >= 1, 'the word repeated above and below the product as a stacked wall'], [T.length >= 2, 'the word at the top and the bottom']],
+      R9: [[script >= 1, 'a giant gold script word (pacifico / lobster)'], [wall >= 1, 'the word NEW stacked and scrolling behind'], [cuts >= 1, 'a hard cut to a second scene']],
+      R10: [[circleBig >= 1, 'a circle growing to fill the screen (a circle layer with keys s >= 3)'], [T.filter((l) => l.size >= 0.24).length >= 2, 'giant words swapping']],
+    };
+    const miss = (SIG[ref] || []).filter((x) => !x[0]).map((x) => x[1]);
+    if (miss.length) issues.unshift('You said you reproduce ' + ref + ' but these signature moves of that reference are missing: ' + miss.join('; ') + '.');
+  }
+  return issues.slice(0, 8);
 }
 
 // ------------------------------------------------------------------ pictures: the hero pack shot and the props, painted on a key colour, then cut out
@@ -306,9 +341,9 @@ function pickKey(colors) {
   for (const k of KEYS) { const d = cs.length ? Math.min(...cs.map((c) => dist(c, rgb(k[0])))) : 200; if (d > bd) { bd = d; best = k; } }
   return { hex: best[0], name: best[1] };
 }
-function heroPrompt(promo, key) {
+function heroPrompt(promo, key, look) {
   const p = promo.product;
-  return `A single ${p.kind}, ${p.look}, front view, premium product photography, studio lighting, sharp focus, vivid colour, the whole product fully in frame and centered, with a plain smooth empty label area in the middle of the pack (no text, no letters, no logo anywhere on it), isolated on a plain flat pure ${key.name} (${key.hex}) chroma-key background, no shadow, no ground, no other objects. The reference image is the brand name: print exactly this brand name, spelled identically letter for letter, large and clear on the front of the pack, as the only text on it.`;
+  return `A single ${p.kind}, ${look || p.look}, front view, premium product photography, studio lighting, sharp focus, vivid colour, the whole product fully in frame and centered, with a plain smooth empty label area in the middle of the pack (no text, no letters, no logo anywhere on it), isolated on a plain flat pure ${key.name} (${key.hex}) chroma-key background, no shadow, no ground, no other objects. The reference image is the brand name: print exactly this brand name, spelled identically letter for letter, large and clear on the front of the pack, as the only text on it.`;
 }
 function propPrompt(prop, key) {
   return `${prop.look}, macro product photography, vivid colour, sharp focus, one single object fully in frame and centered, isolated on a plain flat pure ${key.name} (${key.hex}) chroma-key background, no shadow, no ground, no text, no letters`;
