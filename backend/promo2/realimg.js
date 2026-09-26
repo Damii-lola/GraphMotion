@@ -52,7 +52,7 @@ async function cutoutReal(buf) {
   const pad = Math.round(Math.max(maxx - minx, maxy - miny) * 0.015), x0 = Math.max(0, minx - pad), y0 = Math.max(0, miny - pad), cw = Math.min(w - x0, maxx - minx + 2 * pad), ch = Math.min(h - y0, maxy - miny + 2 * pad);
   const out = createCanvas(cw, ch), og = out.getContext('2d'); og.drawImage(c, x0, y0, cw, ch, 0, 0, cw, ch);
   const fill = sizes[best] / Math.max(1, (maxx - minx + 1) * (maxy - miny + 1));   // how much of its bounding box the object fills: a tilted or ragged cut-out fills less
-  const res = { buf: out.toBuffer('image/png'), aspect: cw / ch, quality: { cover, disp, fill, score: (1 - disp / 24) * 0.5 + Math.min(1, fill / 0.8) * 0.5 } };
+  const res = { buf: out.toBuffer('image/png'), aspect: cw / ch, w: cw, h: ch, quality: { cover, disp, fill, score: (1 - disp / 24) * 0.5 + Math.min(1, fill / 0.8) * 0.5 } };
   if (cover < 0.22 && res.aspect > 0.6) return null;   // a thin shape (a logo, lettering) is not a product photo
   return removeDisc(res);
 }
@@ -91,7 +91,7 @@ async function removeDisc(res) {
   g.putImageData(img, 0, 0);
   const pad = Math.round(Math.max(bw, bh) * 0.02), x0 = Math.max(0, minx - pad), y0 = Math.max(0, miny - pad), cw = Math.min(w - x0, bw + 2 * pad), ch = Math.min(h - y0, bh + 2 * pad), out = createCanvas(cw, ch);
   out.getContext('2d').drawImage(c, x0, y0, cw, ch, 0, 0, cw, ch);
-  return { ...res, buf: out.toBuffer('image/png'), aspect: cw / ch, quality: { ...q, fill: area / (bw * bh), disc: true } };
+  return { ...res, buf: out.toBuffer('image/png'), aspect: cw / ch, w: cw, h: ch, quality: { ...q, fill: area / (bw * bh), disc: true } };
 }
 
 // ------------------------------------------------------------------ the colours of the product
@@ -118,7 +118,13 @@ async function paletteOf(buf) {
  * acquire({ name, brand, userPhotos, sitePhotos, wantVariants }) -> { main, variants[], source, credit } or null
  * each picture is { buf (PNG cut-out), aspect, name?, source }
  */
-async function acquire({ name, brand, userPhotos = [], sitePhotos = [], wantVariants = 2, log = console.log }) {
+/** how well a cut-out's proportions fit the kind of pack the plan describes (a can is not a 1.5 L bottle) */
+function kindFit(kind, aspect) {
+  const k = String(kind || '').toLowerCase(), a = aspect || 0.5;
+  const want = /can/.test(k) ? [0.36, 0.66] : /bottle/.test(k) ? [0.22, 0.45] : /jar|tub|box|pouch|bag|carton|pack/.test(k) ? [0.6, 1.4] : null;
+  return want ? (a >= want[0] && a <= want[1] ? 1 : 0) : 0.5;
+}
+async function acquire({ name, brand, kind, userPhotos = [], sitePhotos = [], wantVariants = 2, log = console.log }) {
   const cands = [];   // { r (cut-out), name, source }
   const tryCut = async (buf, label, source) => { try { const r = await cutoutReal(buf); if (r) cands.push({ ...r, name: label, source }); else log('[photos] ' + source + ' photo of "' + label + '" is not a clean studio-style photo: skipped'); } catch (e) { log('[photos] cut-out failed for ' + source + ': ' + String(e.message).slice(0, 80)); } };
   for (const b of userPhotos.slice(0, 3)) await tryCut(b, name, 'client upload');
@@ -127,13 +133,13 @@ async function acquire({ name, brand, userPhotos = [], sitePhotos = [], wantVari
   const haveOwn = cands.length > 0;
   if (!haveOwn) {   // the client's own photos are never mixed with strangers' packs: other flavours must come from the client (their other photos)
     try {
-      const q = [brand, name].filter(Boolean).join(' '), hits = await offFind(q, brand, 30), nameWords = words(name).filter((w) => !['can', 'bottle', 'pack', 'box'].includes(w));
+      const q = [brand, name].filter(Boolean).join(' '), hits = await offFind(q, brand, 60), nameWords = words(name).filter((w) => !['can', 'bottle', 'pack', 'box'].includes(w));
       const mainOk = (h) => !nameWords.length || nameWords.filter((w) => words(h.name + ' ' + h.brands).includes(w)).length / nameWords.length >= 0.75;
-      const pool = hits.filter((h) => h.score >= 0.5).slice(0, 12); log('[photos] Open Food Facts: ' + hits.length + ' hits, ' + pool.length + ' candidates for "' + q + '"');
+      const pool = hits.filter((h) => h.score >= 0.5).slice(0, 30); log('[photos] Open Food Facts: ' + hits.length + ' hits, ' + pool.length + ' candidates for "' + q + '"');
       const got = await Promise.all(pool.map(async (h) => { try { let b; try { b = await getBuf(fullUrl(h.url)); } catch (_) { b = await getBuf(h.url); } const r = await cutoutReal(b); return r ? { ...r, name: h.name, brands: h.brands, source: 'Open Food Facts', main: mainOk(h) } : null; } catch (e) { return null; } }));
       const clean = got.filter(Boolean).filter((x) => x.quality.score >= 0.6).sort((a, b) => b.quality.score - a.quality.score);
       log('[photos] ' + clean.length + ' clean studio-style photos found in Open Food Facts');
-      if (!haveOwn) { const m = clean.find((x) => x.main) || null; if (m) { cands.push(m); credit = 'Product photos: Open Food Facts contributors (CC BY-SA)'; } }
+      if (!haveOwn) { const m = clean.filter((x) => x.main).sort((a, b) => (kindFit(kind, b.aspect) - kindFit(kind, a.aspect)) || ((b.w >= 220) - (a.w >= 220)) || (b.quality.score - a.quality.score))[0] || null; if (m) { cands.push(m); credit = 'Product photos: Open Food Facts contributors (CC BY-SA)'; } }
       const seen = new Set(cands.map((c) => words(c.name).join(' ')));
       const mb = cands.length ? words(cands[0].brands || '') : [];   // other flavours only of the SAME brand as the main pack
       for (const x of clean) { if (cands.length >= 1 + wantVariants || !mb.length) break; if (!words(x.brands || '').some((w) => mb.includes(w))) continue; const k = words(x.name).join(' '); if (seen.has(k) || cands.includes(x)) continue; seen.add(k); if (cands.length) { cands.push(x); credit = 'Product photos: Open Food Facts contributors (CC BY-SA)'; } }

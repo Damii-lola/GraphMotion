@@ -61,7 +61,7 @@ function paintAll(plan, needs, real) {
 async function realPhotos(plan, company, say) {
   const userPhotos = (company && company.userPhotos) || [], sitePhotos = (company && company.sitePhotos) || [];
   let got = null;
-  try { got = await realimg.acquire({ name: plan.product.name, brand: plan.brand, userPhotos, sitePhotos, wantVariants: 2 }); } catch (e) { console.warn('[promo2] real photo search failed: ' + String(e.message).slice(0, 100)); }
+  try { got = await realimg.acquire({ name: plan.product.name, brand: plan.brand, kind: plan.product.kind, userPhotos, sitePhotos, wantVariants: 2 }); } catch (e) { console.warn('[promo2] real photo search failed: ' + String(e.message).slice(0, 100)); }
   if (!got && (userPhotos.length || sitePhotos.length)) {                                   // the client's photo has a busy background: ask the picture model to isolate the exact product
     const src = userPhotos[0] || sitePhotos[0], key = promoFilm.pickKey(plan.product.colors);
     try {
