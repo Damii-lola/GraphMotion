@@ -16,7 +16,12 @@ const wordsLines = (x, maxLines, maxChars) => {
   if (raw.length === 1 && maxLines > 1 && raw[0].length > maxChars && raw[0].includes(' ')) { const w = raw[0].split(' '); let best = 1, bd = 1e9; for (let i = 1; i < w.length; i++) { const d = Math.abs(w.slice(0, i).join(' ').length - w.slice(i).join(' ').length); if (d < bd) { bd = d; best = i; } } arr = [w.slice(0, best).join(' '), w.slice(best).join(' ')]; }
   return arr.slice(0, maxLines).map((s) => s.slice(0, maxChars).toUpperCase());
 };
-const sentenceLines = (x, maxLines, maxChars) => (Array.isArray(x) ? x : String(x == null ? '' : x).split(/[\/\n]/)).map((s) => cleanWord(s, maxChars)).filter(Boolean).slice(0, maxLines);
+const wrapWords = (t, maxLines, maxChars) => { const w = String(t).split(/\s+/).filter(Boolean), out = []; let cur = ''; for (const x of w) { if ((cur + ' ' + x).trim().length > maxChars && cur) { out.push(cur); cur = x; } else cur = (cur + ' ' + x).trim(); } if (cur) out.push(cur); return out.slice(0, maxLines); };
+const sentenceLines = (x, maxLines, maxChars) => {
+  const parts = (Array.isArray(x) ? x : String(x == null ? '' : x).split(/[\/\n]/)).map((s) => String(s == null ? '' : s).replace(/[<>"\\]/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (parts.length === 1 && maxLines > 1 && parts[0].length > maxChars) return wrapWords(parts[0], maxLines, maxChars).map((s) => cleanWord(s, maxChars));   // one long sentence wraps onto two lines
+  return parts.map((s) => cleanWord(s, maxChars)).filter(Boolean).slice(0, maxLines);
+};
 const nWords = (lines) => lines.join(' ').split(/\s+/).filter(Boolean).length;
 const packId = (ctx, want, i = 0) => { const have = Object.keys(ctx.packs); return have.includes(want) ? want : have[Math.min(i, have.length - 1)] || 'hero'; };
 const packH = (ctx, id, w) => (w * W / ((ctx.packs[id] && ctx.packs[id].aspect) || 0.5)) / H;
@@ -83,8 +88,8 @@ function exitMove(style, u, from, dir = 1) {
 /** LAW (pack size): a pack's visual AREA is constant whatever its proportions and its height never passes maxH of the screen (type needs room). bleed = true lets it be cropped by the frame */
 const restPose = (ctx, id, x, y, w, r, hasGiant, maxH, bleed) => {
   const [lo, hi] = hasGiant ? LAWS.pack.restWithGiantType : LAWS.pack.restW, a = clamp((ctx.packs[id] && ctx.packs[id].aspect) || 0.5, 0.25, 1.6), hMax = (maxH || (hasGiant ? 0.5 : LAWS.pack.maxH)) * H * a / W;
-  const w1 = w * Math.sqrt(a / 0.5), w2 = bleed ? Math.min(w1, 0.85) : Math.min(w1, hMax), lo2 = Math.min(lo, hMax);
-  return { x, y, w: +clamp(w2, bleed ? 0.3 : lo2 * (w < 0.4 ? 0.7 : 1), bleed ? 0.85 : hi).toFixed(3), r: clamp(r, -LAWS.pack.tiltMax, LAWS.pack.tiltMax) };
+  const boost = a > 0.75 ? 1.3 : 1, w1 = w * Math.sqrt(a / 0.5) * boost, w2 = bleed ? Math.min(w1, 0.85) : Math.min(w1, hMax), lo2 = Math.min(lo, hMax);
+  return { x, y, w: +clamp(w2, bleed ? 0.3 : lo2 * (w < 0.4 ? 0.7 : 1), bleed ? 0.85 : Math.min(LAWS.pack.maxW, hi * boost)).toFixed(3), r: clamp(r, -LAWS.pack.tiltMax, LAWS.pack.tiltMax) };
 };
 const variantOf = (ctx, p, list) => (list.includes(String(p.variant || '').toLowerCase()) ? String(p.variant).toLowerCase() : ctx.v.pick(list));
 const ENTR = ['whip', 'drop', 'rise', 'spin', 'pop'];

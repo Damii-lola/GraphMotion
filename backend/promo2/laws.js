@@ -65,7 +65,13 @@ function fitSize(chars, role, fontCondensed = true) {
   return +clamp(want, role === 'giant' ? 0.16 : lo, hi).toFixed(3);   // a long giant word may drop below the giant floor: it must still fit the screen
 }
 const safeFont = (f, fallback = 'anton') => (ALL_FONTS.includes(String(f || '').toLowerCase()) ? String(f).toLowerCase() : fallback);
-const cleanWord = (s, n = 12) => String(s == null ? '' : s).replace(/[<>"\\]/g, '').replace(/\s+/g, ' ').trim().slice(0, n);
+const cleanWord = (s, n = 12) => {   // a too-long text is cut at a WORD boundary (never "Ashwagan" or "Non-") and never ends on a dangling connector
+  const t = String(s == null ? '' : s).replace(/[<>"\\]/g, '').replace(/\s+/g, ' ').trim();
+  if (t.length <= n) return t;
+  let c = t.slice(0, n); const sp = c.lastIndexOf(' ');
+  if (sp >= Math.min(n * 0.4, 6) && t[n] !== ' ') c = c.slice(0, sp);
+  return c.replace(/[\s,;:&+\-\u2022|/]+$/, '').replace(/\s+(and|or|with|the|a|of|to|for)$/i, '');
+};
 const oneOf = (v, list, d) => (list.includes(v) ? v : d);
 
 module.exports = { LAWS, W, H, ALL_FONTS, clamp, num, isHex, fixHex, rgb, hex, mix, toHsl, fromHsl, contrast, dist, vividBackdrop, inkFor, accentFor, fitSize, safeFont, cleanWord, oneOf };

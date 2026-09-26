@@ -16,6 +16,22 @@ const realimg = require('./realimg');
 const queue = []; let running = 0;
 const limit = (fn) => new Promise((res, rej) => { const go = () => { running++; Promise.resolve().then(fn).then(res, rej).finally(() => { running--; const n = queue.shift(); if (n) n(); }); }; if (running < 3) go(); else queue.push(go); });
 
+/** clean vector props for real-photo videos (no AI-painted bottles that have nothing to do with the product): citrus wheels, glossy discs and sparkles in the product's own colours */
+function vectorProp(i, colours) {
+  const { createCanvas } = require('@napi-rs/canvas'), c = createCanvas(400, 400), g = c.getContext('2d'), col = colours[i % colours.length] || '#ffb020', kind = ['wheel', 'disc', 'spark'][i % 3];
+  const rgbOf = (h) => [1, 3, 5].map((k) => parseInt(String(h).slice(k, k + 2), 16) || 200), [r0, g0, b0] = rgbOf(col), sh = (k) => 'rgb(' + [r0, g0, b0].map((v) => Math.round(Math.min(255, v * k))).join(',') + ')';
+  if (kind === 'wheel') {
+    g.fillStyle = sh(0.8); g.beginPath(); g.arc(200, 200, 190, 0, 7); g.fill(); g.fillStyle = 'rgba(255,255,255,0.92)'; g.beginPath(); g.arc(200, 200, 172, 0, 7); g.fill(); g.fillStyle = sh(1.15); g.beginPath(); g.arc(200, 200, 156, 0, 7); g.fill();
+    g.strokeStyle = 'rgba(255,255,255,0.9)'; g.lineWidth = 9; for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4; g.beginPath(); g.moveTo(200, 200); g.lineTo(200 + Math.cos(a) * 156, 200 + Math.sin(a) * 156); g.stroke(); }
+    g.fillStyle = 'rgba(255,255,255,0.95)'; g.beginPath(); g.arc(200, 200, 16, 0, 7); g.fill();
+  } else if (kind === 'disc') {
+    const gr = g.createRadialGradient(150, 140, 20, 200, 200, 190); gr.addColorStop(0, 'rgba(255,255,255,0.95)'); gr.addColorStop(0.3, sh(1.1)); gr.addColorStop(1, sh(0.55)); g.fillStyle = gr; g.beginPath(); g.arc(200, 200, 185, 0, 7); g.fill();
+  } else {
+    g.fillStyle = sh(1.05); g.beginPath(); for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4 - Math.PI / 2, rr = k % 2 ? 60 : 190; g.lineTo(200 + Math.cos(a) * rr, 200 + Math.sin(a) * rr); } g.closePath(); g.fill(); g.fillStyle = 'rgba(255,255,255,0.6)'; g.beginPath(); g.arc(200, 200, 34, 0, 7); g.fill();
+  }
+  return { buf: c.toBuffer('image/png'), aspect: 1 };
+}
+
 function paintAll(plan, needs, real) {
   const key = promoFilm.pickKey(plan.product.colors), brand = plan.brand, jobs = {};
   const shell = { product: plan.product };
@@ -36,7 +52,8 @@ function paintAll(plan, needs, real) {
   });
   const realPack = (id) => { const r = id === 'hero' ? real.main : real.variants[+id.slice(4) - 2]; return Promise.resolve({ buf: r.buf, aspect: r.aspect }); };   // a real photo: no painting, no brand stamp (the pack already carries its own print)
   needs.packs.forEach((id) => { jobs[id] = real ? realPack(id) : pack(id, id === 'hero' ? plan.product.look : plan.product.variants[+id.slice(4) - 2].look); jobs[id].catch(() => {}); });
-  needs.props.forEach((id) => { const i = +id.slice(4); jobs[id] = prop(i, plan.props[i]); jobs[id].catch(() => {}); });
+  const vcols = real ? ((real.palette && real.palette.colors) || []).concat(['#ffd23f', '#ff6b6b', '#4ecdc4']).slice(0, 4) : null;
+  needs.props.forEach((id) => { const i = +id.slice(4); jobs[id] = real ? Promise.resolve(vectorProp(i, vcols)) : prop(i, plan.props[i]); jobs[id].catch(() => {}); });
   return jobs;
 }
 
