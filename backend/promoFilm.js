@@ -141,6 +141,7 @@ function normalizePromo(raw, ctx = {}) {
   zin.forEach((z, i) => {
     let c0 = rgb(fixHex(z.c0, toHex(mix(pc, [255, 255, 255], 0.2)))), c1 = rgb(fixHex(z.c1, toHex(mix(pc, [10, 10, 30], 0.45))));
     if (Math.max(...c0) - Math.min(...c0) < 28 && Math.max(...c0) < 235) c0 = mix(c0, pc, 0.6);      // a dull grey is not a backdrop
+    if (Math.max(...c0) - Math.min(...c0) < 45 && Math.min(...c0) > 120) c0 = mix(c0, pc, 0.5);          // a washed-out pastel gets its colour back
     if ((0.299 * c0[0] + 0.587 * c0[1] + 0.114 * c0[2]) / 255 > 0.86) { c0 = mix(c0, pc, 0.55); c1 = mix(c1, pc, 0.35); }   // near-white: the product and the words would vanish
     if (i > 0) { const a = rand() * Math.PI * 2, d = cutZones.has(i) ? 2600 + rand() * 600 : 450 + rand() * 350; px = Math.round(px + Math.cos(a) * d); py = Math.round(py + Math.sin(a) * d); }
     zones.push({ c0: toHex(c0), c1: toHex(c1), shape: z.shape === 'linear' ? 'linear' : 'radial', x: px, y: py });
@@ -187,6 +188,7 @@ function normalizePromo(raw, ctx = {}) {
       if (L.shadow === false) o.shadow = false; if (L.blur !== undefined) o.blur = num(L.blur, 0, 0, 40); const gl = glowOf(L.glow); if (gl) o.glow = gl;
       const ks = keysOf(L.keys, D, 16, o.w); if (ks) o.keys = ks;
       if (L.main) o.main = true;
+      if (L.main && o.keys) o.keys.forEach((k, i) => { const nx = o.keys[i + 1], hold = nx ? nx.t - k.t : 1; if (k.s !== undefined && hold > 0.7) k.s = +Math.min(k.s, 0.8 / o.w).toFixed(3); });
       if (src === 'hero' && L.main) {                                                                    // the main product this small cannot be seen: repair the scale, not the choreography
         const eff = o.keys ? o.keys.map((k) => o.w * (k.s !== undefined ? k.s : 1)) : [o.w], srt = eff.filter((v) => v > 0).sort((a, b) => a - b), md = srt.length ? srt[Math.floor(srt.length / 2)] : o.w;
         if (md < 0.4) o.w = +Math.min(1.2, o.w * (0.48 / md)).toFixed(3);     // every key scales with it
@@ -441,7 +443,7 @@ async function stampBrand(buf, brand) {
     const im = await loadImage(buf), w = im.width, h = im.height, c = createCanvas(w, h), g = c.getContext('2d');
     g.drawImage(im, 0, 0);
     // a smooth label band over the middle of the pack: it hides any text the image AI wrote there (it likes to add its own name), in the pack's own colour, shaded round the cylinder
-    { const y0 = Math.round(h * 0.27), bh = Math.round(h * 0.46), all = g.getImageData(0, y0, w, bh).data; let r = 0, gg = 0, b = 0, n = 0, minx = w, maxx = 0;
+    { const y0 = Math.round(h * 0.14), bh = Math.round(h * 0.72), all = g.getImageData(0, y0, w, bh).data; let r = 0, gg = 0, b = 0, n = 0, minx = w, maxx = 0;
       for (let y = 0; y < bh; y += 3) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; if (all[i + 3] > 200) { if (x < minx) minx = x; if (x > maxx) maxx = x; } }
       const span = maxx - minx; if (span > 20) {
         for (let y = 0; y < bh; y += 2) for (const fx of [0.2, 0.26, 0.74, 0.8]) { const x = Math.round(minx + span * fx), i = (y * w + x) * 4; if (all[i + 3] > 200) { r += all[i]; gg += all[i + 1]; b += all[i + 2]; n++; } }
