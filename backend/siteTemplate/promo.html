@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>{{TITLE}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Bebas+Neue&family=Archivo+Black&family=Oswald:wght@700&family=League+Gothic&family=Bowlby+One&family=Rubik:wght@900&family=Pacifico&family=Lobster&family=Caveat+Brush&family=Poppins:wght@800&family=Inter:wght@900&family=Playfair+Display:wght@900&family=Bricolage+Grotesque:wght@800&family=Fjalla+One&display=swap" rel="stylesheet">
+<!--
+  SmartClips PRODUCT PROMO. A 9-second motion-graphics spot for a physical product, in the style of the best social product promos:
+  a real product hero on a vivid backdrop, giant kinetic type, ingredients flying in, patterns and rings, almost no words.
+  Nothing here is a template: the AI designs every promo as a "motion script" (SITE.promo) made of primitives (sprites, text, shapes, scatter, patterns,
+  camera moves) and this file just plays that script. Everything is a pure function of time t, so the recorder and the preview show identical frames.
+  The backdrop is the GraphMotion board: vivid radial-gradient zones, one per beat, with a cubic-eased camera pan between them.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>window.SITE = /*__SITE_JSON__*/null;</script>
+<script>
+(() => {
+  const S = window.SITE, P = S.promo, D = P.duration;
+  const W = 720, H = 1280;                                            // the design space; the canvas is scaled to whatever size the recorder asks for
+  const cv = document.getElementById("c"), g = cv.getContext("2d");
+  const TAU = Math.PI * 2, clamp = (v, a, b) => Math.max(a, Math.min(b, v)), lerp = (a, b, t) => a + (b - a) * t, cl01 = (v) => clamp(v, 0, 1);
+
+  // ---------------------------------------------------------------- easing
+  const E = {
+    linear: (t) => t,
+    inCubic: (t) => t * t * t, outCubic: (t) => 1 - Math.pow(1 - t, 3), inOutCubic: (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
+    outQuint: (t) => 1 - Math.pow(1 - t, 5), outExpo: (t) => (t >= 1 ? 1 : 1 - Math.pow(2, -10 * t)),
+    outBack: (t) => { const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); },
+    outBounce: (t) => { const n1 = 7.5625, d1 = 2.75; if (t < 1 / d1) return n1 * t * t; if (t < 2 / d1) return n1 * (t -= 1.5 / d1) * t + 0.75; if (t < 2.5 / d1) return n1 * (t -= 2.25 / d1) * t + 0.9375; return n1 * (t -= 2.625 / d1) * t + 0.984375; },
+    outElastic: (t) => (t <= 0 ? 0 : t >= 1 ? 1 : Math.pow(2, -9 * t) * Math.sin((t * 10 - 0.75) * (TAU / 3)) + 1),
+  };
+  const ease = (name, t) => (E[name] || E.outCubic)(cl01(t));
+
+  // ---------------------------------------------------------------- colour helpers
+  const hex2 = (h, d) => { const m = /^#?([0-9a-f]{6})$/i.exec(String(h || "")); const n = m ? parseInt(m[1], 16) : d; return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+  const rgbs = (c, a = 1) => "rgba(" + Math.round(c[0]) + "," + Math.round(c[1]) + "," + Math.round(c[2]) + "," + a + ")";
+  const mixc = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+  const luma = (c) => (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255;
+  const lum2 = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+  const contrast = (a, b) => { const x = lum2(a), y = lum2(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  // text must read on whatever is behind it: if the AI's colour does not, the better of white / near-black takes its place
+  const readable = (c, bg) => (contrast(c, bg) >= 3 ? c : contrast([255, 255, 255], bg) >= contrast([12, 12, 16], bg) ? [255, 255, 255] : [12, 12, 16]);
+
+  // ---------------------------------------------------------------- deterministic randomness
+  const rnd = (seed) => { let s = (seed * 2654435761) >>> 0; return () => { s = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; };
+
+  // ---------------------------------------------------------------- assets
+  const IMG = {}; let pending = 0;
+  const loadImg = (id, file) => { if (IMG[id]) return; const im = new Image(); pending++; im.onload = () => { pending--; }; im.onerror = () => { pending--; }; im.src = file; IMG[id] = im; };
+  (P.assets || []).forEach((a) => loadImg(a.id, a.file));
+  const fontsUsed = new Set(); (P.layers || []).forEach((l) => { if (l.font) fontsUsed.add(l.font); });
+  const FONT = { anton: ["Anton", 400], bebas: ["Bebas Neue", 400], archivo: ["Archivo Black", 400], oswald: ["Oswald", 700], league: ["League Gothic", 400], bowlby: ["Bowlby One", 400], rubik: ["Rubik", 900], pacifico: ["Pacifico", 400], lobster: ["Lobster", 400], caveat: ["Caveat Brush", 400], poppins: ["Poppins", 800], inter: ["Inter", 900], playfair: ["Playfair Display", 900], bricolage: ["Bricolage Grotesque", 800], fjalla: ["Fjalla One", 400] };
+  const fontCss = (id, px) => { const f = FONT[id] || FONT.anton; return f[1] + " " + px + "px \"" + f[0] + "\", Impact, sans-serif"; };
+  let fontsReady = false;
+  Promise.race([Promise.all([...fontsUsed, "anton"].map((id) => document.fonts.load(fontCss(id, 40)).catch(() => 0))), new Promise((r) => setTimeout(r, 6000))]).then(() => { fontsReady = true; });
+  window.__assetsReady = () => pending <= 0 && fontsReady;
+  window.__sceneReady = true;
+
+  // ---------------------------------------------------------------- the board (GraphMotion's backdrop): vivid radial zones, one per beat; the camera pans between them
+  const Z = (P.zones || []).map((z) => ({ c0: hex2(z.c0, 0xff5c1a), c1: hex2(z.c1, 0x9a1f00), shape: z.shape === "linear" ? "linear" : "radial", x: +z.x || 0, y: +z.y || 0 }));
+  const BEATS = P.beats;                                             // [{t0, t1, zone}]
+  const beatAt = (t) => { for (let i = 0; i < BEATS.length; i++) if (t < BEATS[i].t1) return i; return BEATS.length - 1; };
+  const PAN = P.pan || 0.55;
+  // camera position on the board: it glides (cubic ease-in-out) from one beat's zone to the next just before that beat starts
+  function camPos(t) {
+    let b = beatAt(t); if (b + 1 < BEATS.length) { const nb = BEATS[b + 1], s = nb.t0 - PAN * 0.35, u = (t - s) / PAN; if (u > 0 && u < 1) { const a = Z[BEATS[b].zone], c = Z[nb.zone]; const e = E.inOutCubic(u); return { x: lerp(a.x, c.x, e), y: lerp(a.y, c.y, e), u: e, from: a, to: c, b }; } }
+    if (b > 0) { const s = BEATS[b].t0 - PAN * 0.35, u = (t - s) / PAN; if (u >= 1) { const z = Z[BEATS[b].zone]; return { x: z.x, y: z.y, u: 1, from: z, to: z, b }; } if (u > 0) { const a = Z[BEATS[b - 1].zone], c = Z[BEATS[b].zone]; const e = E.inOutCubic(u); return { x: lerp(a.x, c.x, e), y: lerp(a.y, c.y, e), u: e, from: a, to: c, b }; } const z = Z[BEATS[b - 1].zone]; return { x: z.x, y: z.y, u: 0, from: z, to: z, b: b - 1 }; }
+    const z = Z[BEATS[b].zone]; return { x: z.x, y: z.y, u: 1, from: z, to: z, b };
+  }
+  function drawBoard(cam) {
+    const c0 = mixc(cam.from.c0, cam.to.c0, cam.u), c1 = mixc(cam.from.c1, cam.to.c1, cam.u);
+    g.fillStyle = rgbs(c1); g.fillRect(-W, -H, W * 3, H * 3);
+    const radial = (cam.u < 0.5 ? cam.from : cam.to).shape === "radial";
+    for (const z of Z) {                                             // every zone's own glow lives at its board position, so the pan visibly travels across the board
+      const sx = W / 2 + (z.x - cam.x), sy = H / 2 + (z.y - cam.y);
+      if (Math.abs(sx - W / 2) > 2600 || Math.abs(sy - H / 2) > 3000) continue;
+      const gr = radial ? g.createRadialGradient(sx, sy, 0, sx, sy, 1500) : g.createLinearGradient(sx, sy - 900, sx, sy + 900);
+      gr.addColorStop(0, rgbs(z.c0)); gr.addColorStop(1, rgbs(z.c1, radial ? 0 : 1)); g.fillStyle = gr; g.fillRect(-W, -H, W * 3, H * 3);
+    }
+    return { c0, c1, at: (x, y) => mixc(c0, c1, radial ? clamp(Math.hypot((x - 0.5) * W, (y - 0.5) * H) / 1150, 0, 1) : clamp(Math.abs(y - 0.5) * 1.6, 0, 1)) };
+  }
+
+  // ---------------------------------------------------------------- motion primitives (composable; nothing is a fixed template)
+  // "in": how a thing arrives, ip = 0..1 progress of the arrival; "out": how it leaves; "idle": what it does while it stays.
+  function motionState(L, t, base) {
+    const st = { x: base.x, y: base.y, s: 1, r: 0, o: 1, sx: 1, sy: 1 };
+    const t0 = L.t0 !== undefined ? L.t0 : 0, t1 = L.t1 !== undefined ? L.t1 : D;
+    if (t < t0 || t > t1 + 0.001) { st.o = 0; return st; }
+    const inn = L.in || {}, out = L.out || {}, idle = L.idle || {};
+    const ind = inn.dur || 0.5, ip = ind > 0 ? cl01((t - t0 - (inn.delay || 0)) / ind) : 1, ie = ease(inn.ease || (inn.kind === "pop" || inn.kind === "spin" ? "outBack" : inn.kind === "drop" ? "outBounce" : "outCubic"), ip);
+    if (t < t0 + (inn.delay || 0)) { st.o = 0; }
+    else switch (inn.kind) {
+      case "pop": st.s = ie; st.o = ip > 0 ? 1 : 0; break;
+      case "drop": st.y = base.y - (1 - ie) * 1.1; st.o = 1; break;
+      case "slideL": st.x = base.x - (1 - ie) * 1.3; break;
+      case "slideR": st.x = base.x + (1 - ie) * 1.3; break;
+      case "slideU": st.y = base.y + (1 - ie) * 1.3; break;
+      case "slideD": st.y = base.y - (1 - ie) * 1.3; break;
+      case "spin": st.r = (1 - ie) * (inn.turns || 1) * -360; st.s = ie; break;
+      case "zoom": st.s = lerp(inn.from || 3, 1, ie); st.o = cl01(ip * 3); break;
+      case "fade": st.o = ie; break;
+      case "stretch": st.sy = ie; st.o = ip > 0 ? 1 : 0; break;
+      case "none": default: break;
+    }
+    const od = out.dur || 0.35; if (out.kind && out.kind !== "none" && t > t1 - od) { const op = cl01((t - (t1 - od)) / od), oe = E.inCubic(op);
+      switch (out.kind) { case "pop": st.s *= 1 - oe; break; case "fade": st.o *= 1 - oe; break; case "slideL": st.x -= oe * 1.3; break; case "slideR": st.x += oe * 1.3; break; case "slideU": st.y -= oe * 1.3; break; case "slideD": st.y += oe * 1.3; break; case "spin": st.r += oe * 360; st.s *= 1 - oe; break; case "zoom": st.s *= 1 + oe * 2; st.o *= 1 - oe; break; } }
+    const it = t - t0, sp = idle.speed || 1, am = idle.amp !== undefined ? idle.amp : 0.02;
+    switch (idle.kind) { case "float": st.y += Math.sin(it * sp * 2.2) * am; break; case "wobble": st.r += Math.sin(it * sp * 3) * (am * 100); break; case "spin": st.r += it * sp * 90; break; case "pulse": st.s *= 1 + Math.sin(it * sp * 5) * am; break; case "drift": st.x += Math.sin(it * sp * 1.3) * am; st.y += Math.cos(it * sp * 1.7) * am * 0.6; break; }
+    if (L.keys && L.keys.length) {                                    // free keyframes override any of x, y, s, r, o: complete choreographic freedom
+      const K = L.keys; let a = K[0], b = K[K.length - 1];
+      if (t <= K[0].t) { st.o = K[0].o !== undefined && K[0].hide ? 0 : st.o; }
+      for (let i = 0; i < K.length - 1; i++) if (t >= K[i].t && t <= K[i + 1].t) { a = K[i]; b = K[i + 1]; break; }
+      const u = a === b ? 1 : ease(b.e || "inOutCubic", (t - a.t) / Math.max(1e-6, b.t - a.t));
+      const iv = (k, d) => { const va = a[k] !== undefined ? a[k] : (b[k] !== undefined ? b[k] : d), vb = b[k] !== undefined ? b[k] : va; return lerp(va, vb, u); };
+      if (K.some((k) => k.x !== undefined)) st.x = iv("x", st.x);
+      if (K.some((k) => k.y !== undefined)) st.y = iv("y", st.y);
+      if (K.some((k) => k.s !== undefined)) st.s = iv("s", 1);
+      if (K.some((k) => k.r !== undefined)) st.r = iv("r", 0);
+      if (K.some((k) => k.o !== undefined)) st.o = iv("o", 1);
+    }
+    return st;
+  }
+  const ox = (L, cam, beatPos) => { if (L.beat === "all" || L.beat === undefined && L.screen) return [0, 0]; const bi = L.beat !== undefined ? L.beat : beatAt((L.t0 + (L.t1 !== undefined ? L.t1 : D)) / 2); const z = Z[BEATS[clamp(bi | 0, 0, BEATS.length - 1)].zone]; return [z.x - cam.x, z.y - cam.y]; };
+
+  // ---------------------------------------------------------------- sprites
+  function drawSprite(id, cx, cy, w, rot, o, sx, sy, shadow) {
+    const im = IMG[id]; if (!im || !im.complete || !im.naturalWidth || o <= 0.001) return;
+    const h = w * im.naturalHeight / im.naturalWidth;
+    g.save(); g.translate(cx, cy); g.rotate(rot * Math.PI / 180); g.scale(sx, sy); g.globalAlpha *= clamp(o, 0, 1);
+    if (shadow) { g.shadowColor = "rgba(0,0,0," + (shadow.a !== undefined ? shadow.a : 0.35) + ")"; g.shadowBlur = shadow.blur !== undefined ? shadow.blur : 40; g.shadowOffsetY = shadow.y !== undefined ? shadow.y : 24; }
+    g.drawImage(im, -w / 2, -h / 2, w, h); g.restore();
+  }
+
+  // ---------------------------------------------------------------- layers
+  function drawSpriteLayer(L, t, cam, bg) {
+    const base = { x: (L.x !== undefined ? L.x : 0.5), y: (L.y !== undefined ? L.y : 0.5) }, st = motionState(L, t, base); if (st.o <= 0) return;
+    const [dx, dy] = ox(L, cam), w = (L.w || 0.5) * W;
+    drawSprite(L.src, st.x * W + dx, st.y * H + dy, w * st.s, (L.r || 0) + st.r, st.o, st.sx, st.sy, L.shadow === false ? null : (L.shadow || { blur: 46, y: 26, a: 0.3 }));
+  }
+  // ingredients / props flying in around the hero: every copy has its own deterministic flight, then drifts
+  function drawScatter(L, t, cam) {
+    const n = clamp(L.n | 0 || 6, 1, 24), R = rnd((L.seed || 1) * 977), cx = (L.cx !== undefined ? L.cx : 0.5), cy = (L.cy !== undefined ? L.cy : 0.5), spread = L.spread || 0.42, t0 = L.t0 || 0, dur = L.dur || 0.7, sz = L.size || [0.12, 0.24];
+    const [dx, dy] = ox(L, cam), srcs = Array.isArray(L.src) ? L.src : [L.src];
+    for (let i = 0; i < n; i++) {
+      const ang = R() * TAU, rad = (0.25 + R() * 0.75) * spread, w = lerp(sz[0], sz[1], R()) * W, delay = (i / n) * (L.stag !== undefined ? L.stag : 0.35), spin = (R() - 0.5) * (L.spin !== undefined ? L.spin : 240), src = srcs[i % srcs.length];
+      const tx = cx + Math.cos(ang) * rad, ty = cy + Math.sin(ang) * rad * 1.5;
+      const fromKind = L.from || "burst", sx0 = fromKind === "burst" ? cx : fromKind === "top" ? tx : fromKind === "sides" ? (tx < 0.5 ? -0.3 : 1.3) : (Math.cos(ang) > 0 ? 1.3 : -0.3), sy0 = fromKind === "burst" ? cy : fromKind === "top" ? -0.3 : fromKind === "sides" ? ty : (Math.sin(ang) > 0 ? 1.3 : -0.3);
+      const ip = cl01((t - t0 - delay) / dur), e = E.outBack(ip), life = L.t1 !== undefined ? L.t1 : D;
+      if (t < t0 + delay || t > life + 0.001) continue;
+      let x = lerp(sx0, tx, e), y = lerp(sy0, ty, e); const it = t - t0 - delay;
+      x += Math.sin(it * 1.4 + i) * 0.012; y += Math.cos(it * 1.1 + i * 2) * 0.012;                    // never perfectly still
+      let o = L.fade === false ? 1 : cl01(ip * 4); const od = 0.3; if (t > life - od) o *= cl01((life - t) / od);
+      const sc = fromKind === "burst" ? lerp(0.2, 1, e) : 1;
+      drawSprite(src, x * W + dx, y * H + dy, w * sc, (1 - e) * spin + it * (spin * 0.08), o, 1, 1, { blur: 24, y: 14, a: 0.25 });
+    }
+  }
+  // the product repeated as a pattern (radial burst, ring, grid): the "wall of bottles" look
+  function drawPattern(L, t, cam) {
+    const t0 = L.t0 || 0, t1 = L.t1 !== undefined ? L.t1 : D; if (t < t0 || t > t1) return;
+    const [dx, dy] = ox(L, cam), cx = (L.cx !== undefined ? L.cx : 0.5) * W + dx, cy = (L.cy !== undefined ? L.cy : 0.5) * H + dy, w = (L.w || 0.2) * W, it = t - t0, spin = (L.spin || 0) * it;
+    const list = []; const kind = L.sub || "radial";
+    if (kind === "radial") { const rings = clamp(L.rings | 0 || 3, 1, 6); for (let k = 1; k <= rings; k++) { const n = 6 + k * 4, rad = (0.22 + k * 0.2) * W * (L.radius || 1); for (let i = 0; i < n; i++) { const a = (i / n) * TAU + (k % 2 ? 1 : -1) * spin * Math.PI / 180 * 0.4; list.push({ x: cx + Math.cos(a) * rad, y: cy + Math.sin(a) * rad, r: a * 180 / Math.PI + 90, k, i }); } } }
+    else if (kind === "grid") { const cols = clamp(L.cols | 0 || 4, 1, 8), rows = clamp(L.rows | 0 || 6, 1, 12), sw = W / cols, sh = H / rows; for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) list.push({ x: (c + 0.5) * sw + dx + ((r % 2) ? sw * 0.5 : 0) - (L.scroll || 0) * it * W * 0.1, y: (r + 0.5) * sh + dy, r: (L.tilt || 0) + (r % 2 ? 6 : -6), k: r, i: c }); }
+    else { const n = clamp(L.n | 0 || 10, 2, 24), rad = (L.radius || 0.32) * W; for (let i = 0; i < n; i++) { const a = (i / n) * TAU + spin * Math.PI / 180; list.push({ x: cx + Math.cos(a) * rad, y: cy + Math.sin(a) * rad, r: a * 180 / Math.PI + 90, k: 0, i }); } }
+    const srcs = Array.isArray(L.src) ? L.src : [L.src];
+    list.forEach((it2, j) => { const d = (L.stag !== undefined ? L.stag : 0.02) * j, ip = cl01((t - t0 - d) / 0.45), e = E.outBack(ip); let o = cl01(ip * 3); if (t > t1 - 0.3) o *= cl01((t1 - t) / 0.3); drawSprite(srcs[j % srcs.length], it2.x, it2.y, w * e, it2.r + (L.rot || 0), o * (L.alpha !== undefined ? L.alpha : 1), 1, 1, null); });
+  }
+  // text: words arrive one by one (never letter by letter); optional stacked repeat ("NEW NEW NEW") behind the product
+  function drawText(L, t, cam, bg) {
+    const base = { x: L.x !== undefined ? L.x : 0.5, y: L.y !== undefined ? L.y : 0.5 }, st = motionState(Object.assign({}, L, { in: null, out: L.out }), t, base);
+    const t0 = L.t0 || 0, t1 = L.t1 !== undefined ? L.t1 : D; if (t < t0 || t > t1 + 0.001) return;
+    const [dx, dy] = ox(L, cam), lines = (L.lines && L.lines.length ? L.lines : [String(L.text || "")]).map((s) => String(s)), upper = L.upper !== false;
+    let size = (L.size || 0.12) * W; const font = L.font || "anton", track = (L.track || 0) * size, lineH = (L.lineGap || 1.05) * size;
+    const measure = (px) => { g.font = fontCss(font, px); return Math.max(...lines.map((ln) => g.measureText(upper ? ln.toUpperCase() : ln).width + track * ln.length)); };
+    const maxW = W * (L.maxW || 0.92); let mw = measure(size); if (mw > maxW) { size *= maxW / mw; mw = maxW; }
+    const lh = (L.lineGap || 1.05) * size, col = L.color ? hex2(L.color, 0xffffff) : [255, 255, 255], fillc = L.noContrast ? col : readable(col, bg.at ? bg.at(st.x, st.y) : bg.c0);
+    const inn = L.in || { kind: "rise" }, dur = inn.dur || 0.45, stag = inn.stag !== undefined ? inn.stag : 0.09;
+    const reps = L.repeat ? clamp(L.repeat.n | 0 || 5, 2, 11) : 1, rdy = (L.repeat && L.repeat.dy) || 0.92;
+    for (let rep = 0; rep < reps; rep++) {
+      const off = rep - (reps - 1) / 2, isMain = reps === 1 || Math.abs(off) < 0.51, fade = reps === 1 ? 1 : Math.max(0.12, 1 - Math.abs(off) * 0.28);
+      const scrollX = L.repeat ? ((rep % 2 ? 1 : -1) * (t - t0) * (L.repeat.speed || 0.05) * W) : 0;
+      g.save(); g.translate((st.x * W + dx) + scrollX, st.y * H + dy + off * rdy * lh * lines.length); g.rotate(((L.r || 0) + st.r) * Math.PI / 180); g.scale(st.s, st.s);
+      let wordIdx = 0;
+      lines.forEach((ln, li) => {
+        const words = (upper ? ln.toUpperCase() : ln).split(/\s+/).filter(Boolean), yLine = (li - (lines.length - 1) / 2) * lh;
+        g.font = fontCss(font, size); g.textBaseline = "middle";
+        const wds = words.map((w) => g.measureText(w).width + track * w.length), space = g.measureText(" ").width * 0.9, totW = wds.reduce((a, b) => a + b, 0) + space * (words.length - 1);
+        let x = L.align === "left" ? -mw / 2 : L.align === "right" ? mw / 2 - totW : -totW / 2;
+        words.forEach((wd, wi) => {
+          const idx = wordIdx++, d = idx * stag + (L.repeat ? Math.abs(off) * 0.05 : 0), ip = cl01((t - t0 - d) / dur);
+          if (ip <= 0) { x += wds[wi] + space; return; }
+          const e = ease(inn.ease || (inn.kind === "slam" ? "outBack" : "outCubic"), ip);
+          let ty = yLine, sc = 1, tx = x + wds[wi] / 2, o = 1;
+          switch (inn.kind) { case "slam": sc = lerp(2.4, 1, e); o = cl01(ip * 4); break; case "pop": sc = e; break; case "fade": o = e; break; case "slideL": tx -= (1 - e) * W; break; case "slideR": tx += (1 - e) * W; break; case "drop": ty -= (1 - E.outBounce(ip)) * size * 3; break; case "rise": default: ty += (1 - e) * size * 1.15; break; }
+          if (t > t1 - 0.25) o *= cl01((t1 - t) / 0.25);
+          g.save(); g.beginPath();
+          if (!inn.kind || inn.kind === "rise") { g.rect(-W, yLine - lh * 0.62, W * 2, lh * 1.24); g.clip(); }                    // the masked "rise" reveal: the word slides up out of an invisible line
+          g.translate(tx, ty); g.scale(sc, sc); g.globalAlpha *= o * fade * st.o;
+          const outline = L.repeat && !isMain;
+          if (L.shadow) { g.shadowColor = "rgba(0,0,0,0.35)"; g.shadowBlur = size * 0.2; g.shadowOffsetY = size * 0.08; }
+          if (L.stroke || outline) { g.lineWidth = (L.stroke && L.stroke.w ? L.stroke.w : 0.03) * size; g.strokeStyle = rgbs(L.stroke && L.stroke.color ? hex2(L.stroke.color, 0) : fillc); g.lineJoin = "round"; g.textAlign = "center"; g.strokeText(wd, 0, 0); }
+          if (!outline) { g.fillStyle = rgbs(fillc); g.textAlign = "center"; g.fillText(wd, 0, 0); }
+          g.restore(); x += wds[wi] + space;
+        });
+      });
+      g.restore();
+    }
+  }
+  // vector shapes: the moving furniture of the backdrop (rings, waves, rays, dots, stripes, blobs, bands)
+  function drawShape(L, t, cam, bg) {
+    const base = { x: L.x !== undefined ? L.x : 0.5, y: L.y !== undefined ? L.y : 0.5 }, st = motionState(L, t, base); if (st.o <= 0) return;
+    const [dx, dy] = ox(L, cam), c = hex2(L.color, 0xffffff), c2 = hex2(L.color2 || L.color, 0xffffff), it = t - (L.t0 || 0), X = st.x * W + dx, Y = st.y * H + dy, k = L.kind, a = (L.alpha !== undefined ? L.alpha : 1) * st.o;
+    g.save(); g.globalAlpha *= clamp(a, 0, 1); g.translate(X, Y); g.rotate(((L.r || 0) + st.r) * Math.PI / 180); g.scale(st.s * st.sx, st.s * st.sy);
+    const R = (L.size || 0.3) * W;
+    if (k === "circle") { g.fillStyle = rgbs(c); g.beginPath(); g.arc(0, 0, R, 0, TAU); g.fill(); }
+    else if (k === "rect") { const w = (L.w || 0.6) * W, h = (L.h || 0.2) * H, r = (L.radius || 0) * Math.min(w, h); g.fillStyle = rgbs(c); g.beginPath(); if (g.roundRect) g.roundRect(-w / 2, -h / 2, w, h, r); else g.rect(-w / 2, -h / 2, w, h); g.fill(); }
+    else if (k === "rings") { const n = clamp(L.n | 0 || 6, 1, 14), gap = (L.gap || 0.12) * W, sp = (L.speed || 0.5); g.lineWidth = (L.width || 0.05) * W; for (let i = n; i >= 0; i--) { const rad = ((i + ((it * sp) % 1)) * gap); g.strokeStyle = rgbs(i % 2 ? c : c2, 0.55 + 0.4 * (1 - i / (n + 1))); g.beginPath(); g.arc(0, 0, rad, 0, TAU); g.stroke(); } }
+    else if (k === "wave") { const th = (L.thick || 0.18) * H, amp = (L.amp || 0.03) * H, wl = (L.wl || 0.9) * W, sp = (L.speed || 0.4) * W; g.fillStyle = rgbs(c); g.beginPath(); g.moveTo(-W * 1.2, (L.side === "top" ? -th : th)); for (let x = -W * 1.2; x <= W * 1.2; x += 12) { const yy = Math.sin(((x + it * sp) / wl) * TAU) * amp; g.lineTo(x, yy); } g.lineTo(W * 1.2, L.side === "top" ? -H : H); g.lineTo(-W * 1.2, L.side === "top" ? -H : H); g.closePath(); g.fill(); }
+    else if (k === "rays") { const n = clamp(L.n | 0 || 14, 4, 40), sp = (L.speed || 10) * it; g.fillStyle = rgbs(c); for (let i = 0; i < n; i += 2) { const a0 = (i / n) * TAU + sp * Math.PI / 180, a1 = ((i + 1) / n) * TAU + sp * Math.PI / 180; g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, W * 2, a0, a1); g.closePath(); g.fill(); } }
+    else if (k === "dots") { const gs = (L.gap || 0.07) * W, r = (L.dot || 0.012) * W; g.fillStyle = rgbs(c); for (let yy = -H; yy <= H; yy += gs) for (let xx = -W; xx <= W; xx += gs) { g.beginPath(); g.arc(xx + ((it * (L.speed || 0.02) * W) % gs), yy, r, 0, TAU); g.fill(); } }
+    else if (k === "stripes") { const wd = (L.w || 0.14) * W, sp = (L.speed || 0.1) * W * it; g.fillStyle = rgbs(c); for (let x = -W * 2; x < W * 2; x += wd * 2) g.fillRect(x + (sp % (wd * 2)), -H * 2, wd, H * 4); }
+    else if (k === "burst") { const n = clamp(L.n | 0 || 14, 3, 40), Rr = rnd((L.seed || 3) * 131); for (let i = 0; i < n; i++) { const ang = Rr() * TAU, spd = (0.15 + Rr() * 0.6) * W, life = clamp(it / (L.life || 0.9), 0, 1), e = E.outCubic(life), r = (0.008 + Rr() * 0.02) * W * (1 - life * 0.6); g.fillStyle = rgbs(i % 2 ? c : c2, 1 - life * 0.7); g.beginPath(); g.arc(Math.cos(ang) * spd * e, Math.sin(ang) * spd * e + life * life * 0.15 * W, r, 0, TAU); g.fill(); } }
+    g.restore();
+  }
+
+  // ---------------------------------------------------------------- the frame
+  function render(t) {
+    const dpr = Math.min(2, window.devicePixelRatio || 1), w = Math.round(window.innerWidth * dpr), h = Math.round(window.innerHeight * dpr);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, w, h);
+    const sc = w / W; g.setTransform(sc, 0, 0, sc, 0, 0);
+    // global camera moves: punch (a quick zoom bump) and shake
+    let zoom = 1, shx = 0, shy = 0;
+    (P.cam || []).forEach((c) => { const u = (t - c.t) / (c.dur || 0.3); if (u < 0 || u > 1) return; const bump = Math.sin(Math.min(1, u) * Math.PI) * (1 - u * 0.4); if (c.kind === "shake") { shx += Math.sin(t * 90) * (c.amp || 8) * (1 - u); shy += Math.cos(t * 77) * (c.amp || 8) * (1 - u); } else zoom += (c.amp || 0.06) * bump; });
+    g.translate(W / 2 + shx, H / 2 + shy); g.scale(zoom, zoom); g.translate(-W / 2, -H / 2);
+    const cam = camPos(t), bg = drawBoard(cam);
+    for (const L of P.layers) {
+      g.save();
+      try { if (L.kind === "sprite") drawSpriteLayer(L, t, cam, bg); else if (L.kind === "text") drawText(L, t, cam, bg); else if (L.kind === "scatter") drawScatter(L, t, cam); else if (L.kind === "pattern") drawPattern(L, t, cam); else drawShape(L, t, cam, bg); } catch (e) { /* a broken layer never breaks the film */ }
+      g.restore();
+    }
+  }
+  const END = 0.975;                                                 // the recorder films progress 0..0.975
+  window.__BEATS = [0, 1 / 3, 2 / 3, 1];
+  window.__PACE = { revealEnd: 0.3, holdEnd: 0.7, flat: true };
+  window.__audio = S.audio || null;
+  window.__setFrameHook = () => {};
+  window.__jumpToProgress = (p) => { render(clamp(p / END, 0, 1) * D); };
+  // preview: play in real time
+  let playId = 0;
+  window.__autoplay = () => { const my = ++playId, t0 = performance.now(); const tick = () => { if (my !== playId) return; const t = (performance.now() - t0) / 1000; render(Math.min(t, D)); if (t < D) requestAnimationFrame(tick); }; requestAnimationFrame(tick); };
+  window.addEventListener("message", (e) => { if (e.data && e.data.type === "smartclips-play") window.__autoplay(); });
+  if (/[?&]autoplay=1/.test(location.search)) setTimeout(() => window.__autoplay(), 600);
+  const wait = setInterval(() => { if (window.__assetsReady()) { clearInterval(wait); render(0); } }, 50);
+  render(0);
+})();
+</script>
+</body>
+</html>

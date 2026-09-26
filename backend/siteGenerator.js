@@ -23,7 +23,9 @@ const neurons = require('./neuronBudget');
 const flow = require('./flowSpec');
 const klein = require('./kleinClient');
 const MOVIE = process.env.MOVIE === '1' || (process.env.MOVIE !== '0' && (!!process.env.HF_TOKEN || !!process.env.FAL_KEY || !!process.env.VIDEO_WORKER_SECRET));                    // default: ONE CONTINUOUS FILM - shot 1 is a picture, then chained image-to-video clips (no cuts, no transitions)
-const movieOn = () => MOVIE && videoGen.available();            // a notebook worker that is not running simply means: pictures joined by dives, as before
+const promoFilm = require('./promoFilm');
+const promoOn = () => (process.env.FILM_MODE || 'promo') === 'promo';    // PRODUCT PROMOS: ~9 s motion graphics designed by the AI (no video worker, no voice)
+const movieOn = () => !promoOn() && MOVIE && videoGen.available();            // a notebook worker that is not running simply means: pictures joined by dives, as before
 const videoGen = require('./videoGen');
 const WORLD = process.env.IMAGE_ENGINE !== 'flux';   // default: ONE WORLD, six shots (FLUX.2 klein generate + edit); IMAGE_ENGINE=flux keeps the old six-separate-pictures path
 const SPEC_MODEL = process.env.SITEGEN_MODEL || '@cf/openai/gpt-oss-120b';                 // a much stronger writer than the 24B, same account, ~200 neurons per script
@@ -310,8 +312,57 @@ async function adAudio(spec, dir) {
 
 // ------------------------------------------------------------- the page
 function renderPage(spec) {
-  const tpl = fs.readFileSync(path.join(__dirname, 'siteTemplate', 'ad.html'), 'utf8');
+  const tpl = fs.readFileSync(path.join(__dirname, 'siteTemplate', spec.promo ? 'promo.html' : 'ad.html'), 'utf8');
   return tpl.replace('/*__SITE_JSON__*/null', () => JSON.stringify(spec).replace(/</g, '\\u003c')).replace('{{TITLE}}', () => spec.brand.replace(/[<>&]/g, ''));
+}
+
+// ------------------------------------------------------------- product promo
+/** The AI's motion script -> a playable promo: validated, its pictures painted (the pack with the brand copied from a real-font wordmark, then the props), cut out, sound added. */
+async function buildPromoFilm({ raw, company, outDir, say, planOnly }) {
+  const promo = promoFilm.normalizePromo(raw, { brand: company && company.name });
+  const spec = { kind: 'promo', brand: promo.brand, tagline: '', cta: '', link: '', theme: { look: 'clean', accent: promo.zones[0].c0, accentInk: '#000000', bg: promo.zones[0].c1 }, promo, scenes: [] };
+  const imgDir = path.join(outDir, 'images'); fs.mkdirSync(imgDir, { recursive: true });
+  if (planOnly) { fs.writeFileSync(path.join(outDir, 'site.json'), JSON.stringify(spec, null, 2)); return { outDir, spec }; }
+  const key = promoFilm.pickKey(promo.product.colors), assetsOut = [];
+  const save = (id, buf, aspect) => { fs.writeFileSync(path.join(imgDir, id + '.png'), buf); assetsOut.push({ id, file: 'images/' + id + '.png', aspect }); };
+  // 1. the hero: the pack shot, painted as an EDIT of the brand wordmark so the brand name on the pack is spelled right
+  say('Painting your product', 0.15);
+  const wm = promoFilm.wordmarkCard(promo.brand), hp = promoFilm.heroPrompt(promo, key);
+  neurons.charge(neurons.estKlein(true), 'product picture');
+  const heroTries = [
+    () => (wm ? klein.edit(hp, wm) : klein.generate(hp)),
+    () => klein.generate(hp.split(' The reference image')[0] + ' No text on it.'),
+    () => klein.generate(`${promo.product.kind}, ${promo.product.look}, product photography, isolated on a plain flat pure ${key.name} (${key.hex}) background, no text`),
+  ];
+  let heroRes = null, lastErr = null;
+  for (let t = 0; t < heroTries.length && !heroRes; t++) {
+    try { const raw2 = await heroTries[t](); heroRes = await promoFilm.cutout(raw2); }
+    catch (e) { lastErr = e; console.warn(`[promo] product picture attempt ${t + 1} failed: ${String(e.message).slice(0, 110)}`); if (/429|4006|allocation|not set/i.test(String(e.message))) throw e; }
+  }
+  if (!heroRes) throw new Error('The product picture could not be made: ' + (lastErr && lastErr.message));
+  save('hero', heroRes.buf, heroRes.aspect);
+  // 2. the props (ingredients, pieces, splashes), three at a time; a prop that fails becomes a plain glossy disc in the product's colour
+  say('Painting the ingredients', 0.4);
+  await Promise.all(promo.props.map(async (p, i) => {
+    let res = null;
+    if (p.look) {
+      neurons.charge(neurons.estKlein(false), `prop ${i + 1}`);
+      for (let t = 0; t < 2 && !res; t++) {
+        try { const raw2 = await klein.generate(t ? `${p.name || 'an ingredient'}, macro product photography, isolated on a plain flat pure ${key.name} (${key.hex}) background, no text` : promoFilm.propPrompt(p, key), { width: 512, height: 512 }); res = await promoFilm.cutout(raw2); }
+        catch (e) { console.warn(`[promo] prop ${i + 1} attempt ${t + 1} failed: ${String(e.message).slice(0, 100)}`); if (/429|4006|allocation/i.test(String(e.message))) throw e; }
+      }
+    }
+    if (!res) res = promoFilm.fallbackProp(promo.product.colors[i % promo.product.colors.length]);
+    save('prop' + i, res.buf, res.aspect);
+  }));
+  promo.assets = assetsOut.sort((a, b) => (a.id === 'hero' ? -1 : b.id === 'hero' ? 1 : a.id.localeCompare(b.id)));
+  say('Scoring the sound', 0.85);
+  try { spec.audio = await promoFilm.promoAudio(promo, outDir); } catch (e) { console.warn('[promo] soundtrack skipped:', e.message); }
+  say('Building the promo', 0.95);
+  fs.writeFileSync(path.join(outDir, 'index.html'), renderPage(spec));
+  fs.writeFileSync(path.join(outDir, 'site.json'), JSON.stringify(spec, null, 2));
+  say('Done', 1);
+  return { outDir, spec };
 }
 
 // ------------------------------------------------------------- main
@@ -330,32 +381,34 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   const brandRefs = [logo && logo.length ? logo : null, ...userImgs.slice(1)].filter(Boolean).slice(0, 3), refCost = () => brandRefs.length * 13;   // shrinks below if the film would not fit the neuron ceiling
   const siteImg = company && company.siteImage && company.siteImage.length ? company.siteImage : null;
   const heroCost = userImgs[0] ? 0 : logo && logo.length || siteImg ? neurons.estKlein(true) : neurons.estKlein(false);
-  const reserveNow = () => (given ? 0 : movieOn() ? IDS.length * neurons.estKlein(true) : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
+  const reserveNow = () => (given ? 0 : promoOn() ? 5 * neurons.estKlein(true) : movieOn() ? IDS.length * neurons.estKlein(true) : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
   let spec = given;
   if (!spec) {
-    say('Writing the ad script', 0.05);
+    say(promoOn() ? 'Designing your promo' : 'Writing the ad script', 0.05);
+    const sysPrompt = promoOn() ? promoFilm.PROMO_SYSTEM : SYSTEM;
     let scriptModel = SPEC_MODEL;
-    let raw = null, lastErr = null, keep = 7800, outEst = OSS ? 2100 : 1400, maxTok = movieOn() ? 1900 : 2600, temp = 0.8;   // a keyframe script is ~1000-1200 tokens: a runaway answer is cut off early (and cheaply)
+    let raw = null, lastErr = null, keep = 7800, outEst = promoOn() ? (OSS ? 3000 : 2200) : OSS ? 2100 : 1400, maxTok = promoOn() ? (OSS ? 5600 : 3400) : movieOn() ? 1900 : 2600, temp = 0.8;   // a keyframe script is ~1000-1200 tokens: a runaway answer is cut off early (and cheaply)
     // Up to 3 tries (the first + 2 retries). When the film would not fit the per-film neuron ceiling the guard refuses BEFORE spending anything,
     // and each retry then asks for a smaller job (shorter brief, tighter answer) instead of giving up.
     let useExt = scriptClient.enabled();                          // the stronger writer first; any failure drops to Cloudflare for the remaining tries
     for (let attempt = 0; attempt < 3 && !raw; attempt++) {
       try {
-        let prompt = briefPrompt(text.slice(0, keep), movieOn()), est = neurons.estText(scriptModel, prompt.length + SYSTEM.length, outEst);
+        const mkPrompt = (n) => (promoOn() ? promoFilm.promoPrompt(text.slice(0, n)) : briefPrompt(text.slice(0, n), movieOn()));
+        let prompt = mkPrompt(keep), est = neurons.estText(scriptModel, prompt.length + sysPrompt.length, outEst);
         while (brandRefs.length > 1 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) brandRefs.pop();   // keep the logo (first), give up extra photos before anything else
-        while (keep > 1200 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = briefPrompt(text.slice(0, keep), movieOn()); est = neurons.estText(scriptModel, prompt.length + SYSTEM.length, outEst); }
+        while (keep > 1200 && est + reserveNow() + neurons.runTotal() > neurons.PER_RUN_CEILING) { keep = Math.floor(keep * 0.85); prompt = mkPrompt(keep); est = neurons.estText(scriptModel, prompt.length + sysPrompt.length, outEst); }
         let txt = null;
         if (useExt) {
-          try { txt = await scriptClient.chatJson(SYSTEM, prompt, { maxTokens: 2800, temperature: temp }); console.log('[script] written by ' + scriptClient.label()); raw = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)); continue; }
+          try { txt = await scriptClient.chatJson(sysPrompt, prompt, { maxTokens: 2800, temperature: temp }); console.log('[script] written by ' + scriptClient.label()); raw = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)); continue; }
           catch (e) { useExt = false; raw = null; txt = null; console.warn('[script] ' + scriptClient.label() + ' failed (' + String(e.message).slice(0, 160) + '): falling back to Cloudflare'); }
         }
         neurons.charge(est, 'ad script', reserveNow()); // refuses BEFORE spending if the ad could not be finished inside its ceiling
         let usage = null;
-        txt = await callCloudflareRaw(SYSTEM, prompt, { jsonMode: true, maxTokens: maxTok, temperature: temp, model: scriptModel, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
+        txt = await callCloudflareRaw(sysPrompt, prompt, { jsonMode: true, maxTokens: maxTok, temperature: temp, model: scriptModel, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
         neurons.settleText(scriptModel, est, usage, 'ad script');
         raw = typeof txt === 'string' ? JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)) : txt;
       } catch (e) {
-        if (OSS && scriptModel === SPEC_MODEL && !/Neuron guard|429/i.test(String(e && e.message))) { scriptModel = SPEC_FALLBACK; outEst = 1400; maxTok = 2600; console.warn('[script] ' + SPEC_MODEL + ' failed; the remaining tries use ' + SPEC_FALLBACK); }
+        if (OSS && scriptModel === SPEC_MODEL && !/Neuron guard|429/i.test(String(e && e.message))) { scriptModel = SPEC_FALLBACK; outEst = promoOn() ? 2200 : 1400; maxTok = promoOn() ? 3400 : 2600; console.warn('[script] ' + SPEC_MODEL + ' failed; the remaining tries use ' + SPEC_FALLBACK); }
         lastErr = e; console.warn(`[script] try ${attempt + 1} failed: ${String(e.message).slice(0, 200)}`);
         if (/truncated|max_tokens|JSON/i.test(String(e && e.message))) temp = Math.max(0.4, temp - 0.2);   // a runaway or broken answer: retry calmer
         if (/Neuron guard/i.test(String(e && e.message))) {   // over the ceiling: nothing was spent, so try again with a smaller job
@@ -365,6 +418,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
       }
     }
     if (!raw) throw new Error('The AI could not write the ad script: ' + (lastErr && lastErr.message));
+    if (promoOn()) return await buildPromoFilm({ raw, company, outDir, say, planOnly });
     spec = normalizeSpec(raw, slug, { brand: company && company.name, brief: text, website: company && company.siteHost, movie: movieOn() });
   }
   fs.mkdirSync(path.join(outDir, 'images'), { recursive: true });

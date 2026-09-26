@@ -88,7 +88,7 @@ function register(app, { siteVideo }) {
           onProgress: seen,
         });
       }
-      j.genProgress = 1;
+      j.genProgress = 1; j.promoD = result && result.spec && result.spec.promo ? result.spec.promo.duration : 0;   // a product promo is ~9 s of motion graphics: filmed at 720x1280, not as six 3.5 s scenes
       if (j.cancelled) throw new Error('cancelled');
       await store.persist(j.id, { company: input.company, spec: result.spec, dir });   // the job id + ad script are stored (Supabase) before recording starts
       return true;
@@ -100,7 +100,7 @@ function register(app, { siteVideo }) {
     try {
       const dir = store.dirFor(j.id);
       j.phase = 'rendering';
-      j.render = siteVideo.submit({ dir }, { sceneSeconds: 3.5, fps: 30, preset: 'film', holdStart: 0, holdEnd: 1, crf: 21, captureBudgetSeconds: +process.env.AD_CAPTURE_BUDGET_S || 420 });   // constants: 720x1280, 30 fps, 3.5 s per scene; no dead intro (the hook is on screen from frame 1), 1 s to linger on the CTA card
+      j.render = siteVideo.submit({ dir }, j.promoD ? { sceneSeconds: Math.max(2, Math.min(10, j.promoD / 3)), fps: 30, preset: 'tiktok', holdStart: 0, holdEnd: 0.4, crf: 20, captureBudgetSeconds: +process.env.AD_CAPTURE_BUDGET_S || 420 } : { sceneSeconds: 3.5, fps: 30, preset: 'film', holdStart: 0, holdEnd: 1, crf: 21, captureBudgetSeconds: +process.env.AD_CAPTURE_BUDGET_S || 420 });   // constants: 720x1280, 30 fps, 3.5 s per scene; no dead intro (the hook is on screen from frame 1), 1 s to linger on the CTA card
       while (!['done', 'error', 'cancelled'].includes(j.render.status)) { if (j.cancelled) siteVideo.cancel(j.render); await new Promise((r) => setTimeout(r, 1000)); }
       if (j.render.status === 'done') { j.phase = 'done'; store.setStatus(j.id, { status: 'done', video_url: j.render.publicUrl || null }); }
       else if (j.render.status === 'cancelled') j.phase = 'cancelled';
