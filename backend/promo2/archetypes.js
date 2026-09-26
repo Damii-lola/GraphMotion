@@ -10,9 +10,11 @@ const { LAWS, clamp, num, fixHex, rgb, hex, mix, fitSize, cleanWord, oneOf, inkF
 // ------------------------------------------------------------------ helpers
 const A = (ctx, u) => +(ctx.t0 + u).toFixed(3);
 const wordsLines = (x, maxLines, maxChars) => {
-  let arr = Array.isArray(x) ? x.map((s) => cleanWord(s, maxChars)).filter(Boolean) : String(x == null ? '' : x).split(/[\/\n]/).map((s) => cleanWord(s, maxChars)).filter(Boolean);
-  if (arr.length === 1 && arr[0].length > maxChars * 0.7 && arr[0].includes(' ') && maxLines > 1) { const w = arr[0].split(' '), h = Math.ceil(w.length / 2); arr = [w.slice(0, h).join(' '), w.slice(h).join(' ')]; }
-  return arr.slice(0, maxLines).map((s) => s.toUpperCase());
+  // split into lines BEFORE trimming (a long two-word name is two lines, never one truncated line)
+  const raw = (Array.isArray(x) ? x : String(x == null ? '' : x).split(/[\/\n]/)).map((s) => String(s == null ? '' : s).replace(/[<>"\\]/g, '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  let arr = raw;
+  if (raw.length === 1 && maxLines > 1 && raw[0].length > maxChars && raw[0].includes(' ')) { const w = raw[0].split(' '); let best = 1, bd = 1e9; for (let i = 1; i < w.length; i++) { const d = Math.abs(w.slice(0, i).join(' ').length - w.slice(i).join(' ').length); if (d < bd) { bd = d; best = i; } } arr = [w.slice(0, best).join(' '), w.slice(best).join(' ')]; }
+  return arr.slice(0, maxLines).map((s) => s.slice(0, maxChars).toUpperCase());
 };
 const sentenceLines = (x, maxLines, maxChars) => (Array.isArray(x) ? x : String(x == null ? '' : x).split(/[\/\n]/)).map((s) => cleanWord(s, maxChars)).filter(Boolean).slice(0, maxLines);
 const nWords = (lines) => lines.join(' ').split(/\s+/).filter(Boolean).length;
