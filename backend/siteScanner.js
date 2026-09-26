@@ -47,7 +47,15 @@ async function scan(input) {
   if (text.length < 20) throw new Error('nothing readable on that page (it may need JavaScript to show its content)');
   let image = null;                                                          // the site's own share picture: the real product / brand look, used as a reference by the picture model
   try { const u = meta('og:image') || meta('twitter:image') || meta('twitter:image:src'); if (u) image = await getImage(new URL(u, url).href); } catch (_) { /* optional */ }
-  return { url, host: new URL(url).hostname.replace(/^www\./, ''), text, image };
+  // the product photos of the site: the home page and up to two product / shop pages
+  let images = [];
+  try {
+    const urls = imageUrls(html, url), host = new URL(url).hostname;
+    const links = [...html.matchAll(/<a\b[^>]*href=(["'])(.*?)\1/gi)].map((m) => { try { return new URL(decode(m[2]), url); } catch (_) { return null; } }).filter((u) => u && u.hostname === host && /product|shop|store|collection|flavou?r|our-|range|menu/i.test(u.pathname)).map((u) => u.href.split('#')[0]);
+    for (const l of [...new Set(links)].slice(0, 2)) { try { const p = await getHtml(l); imageUrls(p.html, p.url).forEach((u) => { if (!urls.includes(u)) urls.push(u); }); } catch (_) { /* a page that will not load is skipped */ } }
+    images = await fetchImages(urls, 6);
+  } catch (_) { /* optional */ }
+  return { url, host: new URL(url).hostname.replace(/^www\./, ''), text, image, images };
 }
 
 /** Download one picture (same public-address rule and redirect checks, 6 MB cap, must really be an image). */
@@ -65,4 +73,31 @@ async function getImage(start) {
   return null;
 }
 
-module.exports = { scan };
+const IMG_OK = /\.(jpe?g|png|webp)(\?|#|$)/i, SKIP = /logo|icon|sprite|avatar|favicon|flag|payment|social|arrow|placeholder|blank|pixel|tracking|banner-ad/i, PROD = /product|shop|item|pack|bottle|\bcan\b|flavou?r|snack|drink|packshot|gallery|catalog|store/i;
+/** the image addresses on a page, best first: product structured data, the share image, product-looking pictures */
+function imageUrls(html, base) {
+  const out = [], add = (u) => { try { if (!u) return; const a = new URL(String(u).trim().split(' ')[0], base).href; if (!out.includes(a)) out.push(a); } catch (_) { /* not a valid address */ } };
+  for (const m of html.matchAll(/<script[^>]*application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) { try { const walk = (o) => { if (!o || typeof o !== 'object') return; if (Array.isArray(o)) return o.forEach(walk); if ([].concat(o['@type'] || []).includes('Product') && o.image) [].concat(o.image).forEach((im) => add(typeof im === 'string' ? im : im && (im.url || im.contentUrl))); Object.values(o).forEach((v) => { if (v && typeof v === 'object') walk(v); }); }; walk(JSON.parse(m[1])); } catch (_) { /* bad JSON-LD */ } }
+  const meta = (n) => { const m = new RegExp('<meta[^>]*(?:name|property)=.' + n + '.[^>]*>', 'i').exec(html); const c = m && /content=(["'])([\s\S]*?)\1/i.exec(m[0]); return c ? decode(c[2]) : ''; };
+  add(meta('og:image')); add(meta('twitter:image'));
+  const imgs = [];
+  for (const m of html.matchAll(/<img\b[^>]*>/gi)) {
+    const tag = m[0], attr = (a) => { const q = new RegExp('\\b' + a + '=(["\'])([\\s\\S]*?)\\1', 'i').exec(tag); return q ? decode(q[2]) : ''; };
+    let src = attr('data-src') || attr('data-lazy-src') || attr('src'); const ss = attr('srcset') || attr('data-srcset');
+    if (ss) { const best = ss.split(',').map((p) => p.trim().split(/\s+/)).map((p) => [p[0], parseFloat(p[1]) || 0]).sort((a, b) => b[1] - a[1])[0]; if (best && best[0]) src = best[0]; }
+    if (!src || /^data:/.test(src) || SKIP.test(src + ' ' + attr('alt') + ' ' + attr('class'))) continue;
+    if (!IMG_OK.test(src) && !PROD.test(src)) continue;
+    imgs.push({ src, score: (PROD.test(src + ' ' + attr('alt') + ' ' + attr('class')) ? 2 : 0) + ((parseInt(attr('width'), 10) || 0) >= 300 ? 1 : 0) });
+  }
+  imgs.sort((a, b) => b.score - a.score).forEach((i) => add(i.src));
+  return out.slice(0, 14);
+}
+async function fetchImages(urls, max) { const bufs = []; for (const u of urls) { if (bufs.length >= max) break; try { const b = await getImage(u); if (b && b.length > 6000) bufs.push(b); } catch (_) { /* skip */ } } return bufs; }
+/** a link the client gave for their product: a picture address, or a page (product page, shop listing) whose pictures are collected */
+async function scanImages(input, max = 5) {
+  let s = String(input || '').trim(); if (!s) return []; if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+  if (IMG_OK.test(s.split('?')[0])) { const b = await getImage(s); return b ? [b] : []; }
+  const { html, url } = await getHtml(s); return fetchImages(imageUrls(html, url), max);
+}
+
+module.exports = { scan, scanImages };

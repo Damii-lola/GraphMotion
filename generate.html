@@ -100,6 +100,10 @@
       <div class="field">
         <label class="f" for="website">Website <em>optional · we read it to learn about your company</em></label>
         <input id="website" type="text" maxlength="200" inputmode="url" autocomplete="url" placeholder="e.g. yourcompany.com" />
+        <label class="f" for="photos">Product photos <em>recommended · a clear photo of your real product on a plain background gives the best video</em></label>
+        <input id="photos" type="file" accept="image/png,image/jpeg,image/webp" multiple />
+        <label class="f" for="productLink">Product page or picture link <em>optional · we take your product photos from it (only use links to your own product)</em></label>
+        <input id="productLink" type="text" maxlength="300" inputmode="url" placeholder="e.g. yourcompany.com/products/orange-soda" />
       </div>
 
       <div class="err" id="formErr"></div>
@@ -160,6 +164,19 @@
     else showFormErr("");
     return !bad.length;
   }
+  // product photos: each one is shrunk in the browser (max 1600 px, jpeg) so the upload stays small
+  async function readPhotos() {
+    const files = [...($("photos").files || [])].slice(0, 3), out = [];
+    for (const f of files) {
+      try {
+        const url = URL.createObjectURL(f), im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+        const k = Math.min(1, 1600 / Math.max(im.width, im.height)), c = document.createElement("canvas"); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+        const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+        out.push(c.toDataURL("image/jpeg", 0.9));
+      } catch (_) { /* an unreadable file is skipped */ }
+    }
+    return out;
+  }
   $("form").addEventListener("submit", async (e) => {
     e.preventDefault(); if (busy || !check()) return;
     await ping(); // wakes a sleeping server; the request below waits for it either way
@@ -168,7 +185,7 @@
     try {
       const r = await fetch(API + "/api/generate-video", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company: $("company").value.trim(), details: $("details").value.trim(), focus: $("focus").value.trim(), notes: $("notes").value.trim(), website: $("website").value.trim() }),
+        body: JSON.stringify({ company: $("company").value.trim(), details: $("details").value.trim(), focus: $("focus").value.trim(), notes: $("notes").value.trim(), website: $("website").value.trim(), productLink: $("productLink").value.trim(), photos: await readPhotos() }),
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || "Couldn't start - please try again.");

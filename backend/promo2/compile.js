@@ -4,6 +4,7 @@
  */
 const { LAWS, W, H, clamp, num, fixHex, rgb, hex, mix, vividBackdrop, inkFor, accentFor, fitSize, safeFont, cleanWord, oneOf } = require('./laws');
 const vary = require('./vary');
+const backdrop = require('./backdrop');
 const { ARCH, IDS, minDur, seedRand, A, text, shape, scatter, push } = require('./archetypes');
 
 const TRANSITIONS = ['cut', 'flash', 'wipe', 'zoomblur', 'iris', 'glide', 'brandflash'];
@@ -37,17 +38,17 @@ function compile(plan, assets) {
   let t = 0; plan.scenes.forEach((s, i) => { scenes.push({ ...s, dur: durs[i], t0: +t.toFixed(2), t1: +(t + durs[i]).toFixed(2) }); t += durs[i]; });
   const D = +t.toFixed(2), zones = [], beats = [], layers = [], cam = [], cues = [], heroWay = [], summaries = [];
   const out = (i) => ({ layers: [], hero: [], cam: [], cues: [], heroUsed: false });
-  let flashes = 0, wipes = 0, blurs = 0, zx = 0;
+  let flashes = 0, wipes = 0, blurs = 0, zx = 0, lastPal = null;
+  const roles = backdrop.assignRoles({ scenes }, dice);
 
   scenes.forEach((S, i) => {
-    const sh = (h) => vary.shiftColour(fixHex(h, '#ff7a00'), dice, false);
-    const c0 = vividBackdrop(rgb(sh(S.backdrop && S.backdrop.c0))), flat = S.backdrop && S.backdrop.c1 && String(S.backdrop.c1).toLowerCase() === String(S.backdrop.c0).toLowerCase();
-    const c1 = flat ? c0 : (() => { const q = rgb(S.backdrop && S.backdrop.c1 ? sh(S.backdrop.c1) : hex(mix(c0, [10, 10, 30], 0.45))); return q; })();
-    const bg0 = hex(c0), bg1 = hex(c1), ink = inkFor(bg0, null), accent = accentFor(bg0, S.accent ? sh(S.accent) : null);
+    const bd = backdrop.scene(roles[i], S.backdrop && S.backdrop.style, assets.palette, plan.product, dice, i);
+    const bg0 = bd.c0, bg1 = bd.c1, ink = inkFor(bg0, null), accent = bd.accent;
     const tr = oneOf(S.transition_in, TRANSITIONS, i ? 'cut' : 'cut');
     S.tr = i ? tr : 'cut';
     zx += i === 0 ? 0 : (S.tr === 'glide' ? 700 : 3200);
-    zones.push({ c0: bg0, c1: bg1, shape: 'radial', x: zx, y: 0 });
+    zones.push({ c0: bg0, c1: bg1, shape: bd.shape, angle: bd.angle, ox: bd.ox, oy: bd.oy, x: zx, y: 0 });
+    lastPal = { ink, accent, c0: bg0 };
     const pal = { c0: bg0, c1: bg1, ink, accent };
     const ctx = { t0: S.t0, t1: S.t1, dur: S.dur, pal, packs: assets.packs, props: (assets.props || []).map((id) => ({ id })), brand: plan.brand, cta: plan.cta, seed: 3 + i * 17, out: out(i), v: vary.forScene(dice, i) };
     const A0 = ARCH[oneOf(S.archetype, IDS, 'showcase')];
@@ -79,6 +80,10 @@ function compile(plan, assets) {
     summaries.push(`${i + 1}. ${S.archetype} (${S.t0}-${S.t1} s, ${S.tr})`);
   });
 
+  // ---- the brand shows inside the LAST scene (there is no separate end card): a quiet lockup is added when the scene did not already carry the name
+  { const last = scenes[scenes.length - 1], w0 = String(plan.brand || '').split(' ')[0].toLowerCase();
+    const has = layers.some((l) => l.kind === 'text' && l.t0 >= last.t0 - 0.3 && l.lines.join(' ').toLowerCase().includes(w0));
+    if (!has && lastPal) layers.push({ kind: 'text', lines: [String(plan.brand || '').toUpperCase()], x: 0.5, y: 0.93, size: fitSize(Math.max(4, String(plan.brand || '').length), 'line') * 1.1, font: vary.forScene(dice, scenes.length - 1).font('head'), color: lastPal.ink, upper: true, r: 0, track: 0.12, align: 'center', in: { kind: 'pop', dur: 0.4 }, t0: +(last.t0 + 0.9).toFixed(2), t1: D, front: true, shadow: true, z: 6 }); }
   // ---- the main pack: ONE continuous track
   const way = heroWay.sort((a, b) => a.t - b.t);
   if (way.length >= 1) {

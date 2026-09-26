@@ -29,8 +29,8 @@ const MOTION_P = {
   punchy: { enter: 0.38, eases: ['outBack', 'outExpo'], drift: 0.015, punch: 0.1, hold: 0.8 },
 };
 const MOODS = ['playful and loud', 'clean and premium', 'retro warm', 'neon night', 'fresh and natural', 'street and edgy', 'soft pastel', 'bold sports energy', 'cosy handmade', 'glossy pop'];
-const PACING = { fast: { scenes: [5, 6], secs: '1.6-2.2 s per scene' }, medium: { scenes: [4, 5], secs: '2.2-3 s per scene' }, 'slow then punch': { scenes: [4, 5], secs: 'two slow scenes then quick ones' } };
-const STORIES = ['one hue (mono)', 'analogous neighbours', 'complementary pair', 'triad pops', 'dark base with one neon accent', 'light pastel family'];
+const PACING = { fast: { scenes: [4, 4], secs: '1.8-2.6 s per scene' }, medium: { scenes: [3, 4], secs: '2.6-3.5 s per scene' }, 'slow then punch': { scenes: [3, 4], secs: 'a longer opening scene, then quicker ones' } };
+const STORIES = ['analogous neighbours', 'complementary pair', 'triad pops', 'dark base with one neon accent', 'light and dark alternating', 'warm to cool'];
 const DECOR = ['rays', 'rings', 'dots', 'stripes', 'waves', 'none', 'circles'];
 const TWISTS = ['one scene shows the pack cropped huge by the frame', 'one scene has NO pack, only type and shapes', 'a word repeats as a wall behind something', 'the pack spins a full turn once', 'a scene where type hits on the beat one word at a time', 'a big colour block wipes the scene', 'tiny type and one giant word in the same scene', 'props orbit or rain instead of bursting', 'the end card is quiet after a loud middle', 'a vertical word runs up the side', 'the camera pushes in slowly through a whole scene', 'a hand-drawn scribble or arrow is drawn on'];
 

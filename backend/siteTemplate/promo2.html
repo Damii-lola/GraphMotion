@@ -67,7 +67,7 @@
   window.__sceneReady = true;
 
   // ---------------------------------------------------------------- the board (GraphMotion's backdrop): vivid radial zones, one per beat; the camera pans between them
-  const Z = (P.zones || []).map((z) => ({ c0: hex2(z.c0, 0xff5c1a), c1: hex2(z.c1, 0x9a1f00), shape: z.shape === "linear" ? "linear" : "radial", x: +z.x || 0, y: +z.y || 0 }));
+  const Z = (P.zones || []).map((z) => ({ c0: hex2(z.c0, 0xff5c1a), c1: hex2(z.c1, 0x9a1f00), shape: z.shape === "linear" ? "linear" : "radial", angle: z.angle !== undefined ? +z.angle : 90, ox: +z.ox || 0, oy: +z.oy || 0, x: +z.x || 0, y: +z.y || 0 }));
   const BEATS = P.beats;                                             // [{t0, t1, zone}]
   const beatAt = (t) => { for (let i = 0; i < BEATS.length; i++) if (t < BEATS[i].t1) return i; return BEATS.length - 1; };
   const PAN = P.pan || 0.55;
@@ -102,7 +102,8 @@
     for (const z of Z) {                                             // every zone's own glow lives at its board position, so the pan visibly travels across the board
       const sx = W / 2 + (z.x - cam.x), sy = H / 2 + (z.y - cam.y);
       if (Math.abs(sx - W / 2) > 2600 || Math.abs(sy - H / 2) > 3000) continue;
-      const gr = radial ? g.createRadialGradient(sx, sy, 0, sx, sy, 1500) : g.createLinearGradient(sx, sy - 900, sx, sy + 900);
+      const ang = (z.angle === undefined ? 90 : z.angle) * Math.PI / 180, ddx = Math.cos(ang) * 900, ddy = Math.sin(ang) * 900, cx0 = sx + z.ox * W, cy0 = sy + z.oy * H;
+      const gr = radial ? g.createRadialGradient(cx0, cy0, 0, cx0, cy0, 1250) : g.createLinearGradient(sx - ddx, sy - ddy, sx + ddx, sy + ddy);
       gr.addColorStop(0, rgbs(z.c0)); gr.addColorStop(1, rgbs(z.c1, radial ? 0 : 1)); g.fillStyle = gr; g.fillRect(-90, -90, W + 180, H + 180);
     }
     drawAtmosphere(cam, c0, c1, t || 0);

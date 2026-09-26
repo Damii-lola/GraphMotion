@@ -26,11 +26,13 @@ const KEEP_MS = 2 * 60 * 60 * 1000;
 const text = (v, n) => String(v == null ? '' : v).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim().slice(0, n);
 
 function validate(b) {
-  const company = text(b.company, 60), details = text(b.details, 2400), focus = text(b.focus, 2400), notes = text(b.notes, 2400), website = text(b.website, 200);
+  const company = text(b.company, 60), details = text(b.details, 2400), focus = text(b.focus, 2400), notes = text(b.notes, 2400), website = text(b.website, 200), productLink = text(b.productLink, 300);
+  // up to 3 product photos the client uploaded (data URLs, jpeg / png / webp, 5 MB each)
+  const photos = (Array.isArray(b.photos) ? b.photos : []).slice(0, 3).map((u) => { const m = /^data:image\/(?:jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(u || '')); if (!m) return null; const buf = Buffer.from(m[1], 'base64'); return buf.length > 1500 && buf.length <= 5 * 1024 * 1024 ? buf : null; }).filter(Boolean);
   if (!company) throw new Error('Please enter your company name.');
   if (details.length < 20) throw new Error("Please describe your company in a few sentences (Company's Details).");
   if (!focus) throw new Error('Please tell us the main focus of the video.');
-  return { company, details, focus, notes, website };
+  return { company, details, focus, notes, website, productLink, photos };
 }
 
 const friendly = (e) => {
@@ -47,7 +49,7 @@ function register(app, { siteVideo }) {
   const jobs = new Map();
   let chain = Promise.resolve();
   const limiter = rateLimit({ windowMs: 60 * 1000, max: 3, standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests - please wait a minute.' } });
-  const bigJson = express.json({ limit: '100kb' });
+  const bigJson = express.json({ limit: '18mb' });   // the form may carry up to 3 product photos
 
   const label = (j) => (j.phase === 'generating' ? 'Cloudflare is generating your video' : j.phase === 'rendering' ? 'Rendering video' : j.phase === 'done' ? 'Your video is ready' : j.phase === 'cancelled' ? 'Cancelled' : 'Something went wrong');
 
@@ -76,16 +78,20 @@ function register(app, { siteVideo }) {
     try {
       if (j.cancelled) throw new Error('cancelled');
       const dir = store.dirFor(j.id);
-      let result, siteText = '', siteHost = '', siteImage = null;
+      let result, siteText = '', siteHost = '', siteImage = null, sitePhotos = [];
       if (input.website) {                               // optional: read the company's own site so the ad is written from real facts
         j.genStage = 'Reading your website'; j.stageAt = Date.now();
-        try { const r = await scanner.scan(input.website); siteText = r.text; siteHost = r.host; siteImage = r.image; console.log(`[generate-video] job ${j.id}: read ${r.host} (${r.text.length} chars)`); }
+        try { const r = await scanner.scan(input.website); siteText = r.text; siteHost = r.host; siteImage = r.image; sitePhotos = r.images || []; console.log(`[generate-video] job ${j.id}: read ${r.host} (${r.text.length} chars)`); }
         catch (e) { console.warn(`[generate-video] job ${j.id}: could not read the website (${e.message}) - continuing without it`); }
+      }
+      if (input.productLink) {                          // optional: a product page or picture the client pointed us to (their own product)
+        j.genStage = 'Finding your product photos'; j.stageAt = Date.now();
+        try { const li = await scanner.scanImages(input.productLink, 5); sitePhotos = [...li, ...sitePhotos]; console.log(`[generate-video] job ${j.id}: ${li.length} picture(s) from the product link`); } catch (e) { console.warn(`[generate-video] job ${j.id}: product link unreadable (${e.message})`); }
       }
       if (process.env.GENERATE_MOCK === '1') result = await require('./mockGenerate')(input, dir, seen);   // local testing only: no Cloudflare
       else {
         result = await generateSite({
-          company: { name: input.company, details: input.details, focus: input.focus, notes: input.notes, siteText, siteHost, siteImage }, outDir: dir,
+          company: { name: input.company, details: input.details, focus: input.focus, notes: input.notes, siteText, siteHost, siteImage, userPhotos: input.photos || [], sitePhotos }, outDir: dir,
           onProgress: seen,
         });
       }

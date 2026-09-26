@@ -15,13 +15,13 @@ const LAWS = {
   // PROPS / PIECES
   props: { size: [0.16, 0.4], maxPerScatter: 9, maxScatterAtOnce: 2 },
   // DENSITY = render cost (a promo is drawn frame by frame on a small server)
-  density: { maxLayersPerScene: 18, maxLayersTotal: 60, maxFlash: 3, flashSecs: 0.3, maxWaves: 2, maxZoomBlur: 2, maxWipe: 3, maxExtrasPerScene: 3 },
+  density: { maxLayersPerScene: 24, maxLayersTotal: 60, maxFlash: 3, flashSecs: 0.3, maxWaves: 2, maxZoomBlur: 2, maxWipe: 3, maxExtrasPerScene: 3 },
   // COLOUR
   colour: { minSat: 0.6, lMin: 0.36, lMax: 0.62, minContrast: 3.2 },
   // TIME
   timing: { sceneMin: 1.4, sceneMax: 4.2, totalMin: 6, totalMax: 12.3, transitionSecs: { cut: 0, flash: 0.28, wipe: 0.5, zoomblur: 0.5, iris: 0.6, glide: 0.7 } },
   // STRUCTURE
-  structure: { scenesMin: 3, scenesMax: 6, last: 'endcard', maxSameArchetype: 2, packAbsentScenesMin: 1, giantTypeScenesMin: 2 },
+  structure: { scenesMin: 3, scenesMax: 5, last: 'any (the brand shows inside the last scene)', maxSameArchetype: 2, packAbsentScenesMin: 1, giantTypeScenesMin: 1 },
   // fonts the AI may pick (all loaded by the page)
   fonts: { caps: ['anton', 'bebas', 'league', 'oswald', 'fjalla', 'archivo', 'bowlby', 'rubik'], body: ['poppins', 'inter', 'bricolage'], script: ['pacifico', 'lobster', 'caveat'], serif: ['playfair'] },
 };

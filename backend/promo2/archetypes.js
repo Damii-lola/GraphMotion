@@ -128,18 +128,23 @@ ARCH.word_pack = {
 
 ARCH.wall = {
   about: 'A WALL of one repeated word fills the screen in thin outline, rows scrolling in opposite directions with a motion-blur trail on arrival, a few words solid (Goli "NEW", Sunbake, Wendy\'s). Variants: grid | diagonal (tilted rows) | columns (vertical) | marquee (3 huge rows). The pack whips across it and shrinks, or drops, or is absent; small pieces float.',
-  params: { word: 'the wall word (up to 8 letters)', font: 'a caps font', variant: 'grid | diagonal | columns | marquee', pack: 'hero | hero2 | hero3 | none', action: 'cross | drop | absent', tilt: 'degrees', pieces: 'floating small pieces 0-4' },
+  params: { word: 'the wall word (up to 8 letters)', font: 'a caps font', variant: 'grid | diagonal | columns | marquee', pack: 'hero | hero2 | hero3 | none', action: 'cross | drop | absent', tilt: 'degrees', pieces: 'floating small pieces 0-5', caption: 'a benefit line typed under the pack (max 5 words, e.g. real juice, zero sugar)', badge: 'a round sticker (max 2 words, e.g. NEW)' },
   packs: 'optional',
   build(p, ctx) {
     const word = wordsLines(p.word || p.lines, 1, 8)[0] || 'NEW', chars = word.length, v = variantOf(ctx, p, ['grid', 'diagonal', 'columns', 'marquee']), font = F(ctx, 'giant', p.font);
     const base = clamp(0.36 / (chars * 0.5), 0.09, 0.24), size = +(v === 'marquee' ? clamp(base * 1.7, 0.16, 0.3) : base).toFixed(3);
     shape(ctx, { kind: 'wall', word, font, size, rowGap: v === 'marquee' ? 1.25 : 1.02, colGap: 1.45, speed: ctx.v.range(0.04, 0.08), rot: v === 'diagonal' ? ctx.v.pick([-14, 14, -20]) : v === 'columns' ? 90 : 0, color: ctx.pal.ink, alpha: ctx.v.range(0.75, 0.95), hl: [{ r: 2, c: 1, t: 0.3 }, { r: 5, c: 0, t: 0.55 }, { r: 7, c: 2, t: 0.8 }], u0: 0, z: 2 });
-    const np = Math.round(num(p.pieces, 3, 0, 4)); if (np && ctx.props.length) [[0.74, 0.3], [0.18, 0.66], [0.84, 0.86], [0.3, 0.14]].slice(0, np).forEach(([x, y], i) => push(ctx, { kind: 'sprite', src: ctx.props[i % ctx.props.length].id, t0: A(ctx, 0.7 + i * 0.35), t1: A(ctx, ctx.dur), x, y, w: 0.13, r: i % 2 ? 20 : -15, in: { kind: 'pop', dur: 0.35 }, idle: { kind: 'float', amp: 0.012, speed: 1.1 }, shadow: false, z: 4 }));
+    const np = Math.round(num(p.pieces, 4, 0, 5)); if (np && ctx.props.length) [[0.74, 0.3], [0.18, 0.66], [0.84, 0.86], [0.3, 0.14], [0.9, 0.5]].slice(0, np).forEach(([x, y], i) => push(ctx, { kind: 'sprite', src: ctx.props[i % ctx.props.length].id, t0: A(ctx, 0.7 + i * 0.35), t1: A(ctx, ctx.dur), x, y, w: 0.13, r: i % 2 ? 20 : -15, in: { kind: 'pop', dur: 0.35 }, idle: { kind: 'float', amp: 0.012, speed: 1.1 }, shadow: false, z: 4 }));
     const id = packId(ctx, p.pack);
     if (oneOf(p.pack, ['none'], 'x') !== 'none' && p.action !== 'absent' && ctx.packs[id]) {
-      const rest = restPose(ctx, id, 0.5, 0.58, 0.44, num(p.tilt, ctx.v.range(-12, 12), -20, 20), true), act = oneOf(p.action, ['cross', 'drop'], ctx.v.pick(['cross', 'drop', 'cross']));
+      shape(ctx, { kind: 'circle', x: 0.5, y: 0.58, size: 0.34, color: ctx.pal.accent, alpha: 0.32, in: { kind: 'pop', dur: 0.5, delay: 0.3 }, idle: { kind: 'pulse', amp: 0.04, speed: 1.2 }, u0: 0.2, z: 2.5 });   // a glow behind the pack
+      shape(ctx, { kind: 'circle', x: 0.5, y: 0.58, size: 0.46, color: ctx.pal.ink, alpha: 0.1, in: { kind: 'pop', dur: 0.6, delay: 0.4 }, u0: 0.2, z: 2.4 });
+      const rest = restPose(ctx, id, 0.5, 0.58, 0.5, num(p.tilt, ctx.v.range(-12, 12), -20, 20), true), act = oneOf(p.action, ['cross', 'drop'], ctx.v.pick(['cross', 'drop', 'cross']));
       if (act === 'drop') movePack(ctx, id, [...enter(ctx, 'drop', 0.3, rest), drift(ctx, Math.max(1.6, ctx.dur - 0.05), rest)]);
       else { const d = ctx.v.pick([-1, 1]); movePack(ctx, id, [{ u: 0.15, x: d < 0 ? -0.6 : 1.6, y: 0.7, w: rest.w * 1.15, r: d < 0 ? -38 : 38, blur: 18 }, { u: 0.7, ...rest, blur: 0, e: 'outExpo' }, { u: 1.05, ...rest, w: +(rest.w * 1.1).toFixed(3), e: 'inOutCubic' }, { u: 1.5, ...rest, e: 'inOutCubic' }, { u: Math.max(1.9, ctx.dur - 0.1), x: d < 0 ? 0.62 : 0.38, y: 0.58, w: +(rest.w * 0.68).toFixed(3), r: 0, e: 'inOutCubic' }]); }
+      shape(ctx, { kind: 'burst', x: 0.5, y: 0.58, n: 20, color: ctx.pal.ink, color2: ctx.pal.accent, life: 1, u0: 0.7, u1: 1.8, z: 4 });
+      const cap = sentenceLines(p.caption, 1, 40); if (cap.length && nWords(cap) <= 5) text(ctx, { u0: 1.0, lines: cap, size: 0.05, font: F(ctx, 'small'), upper: false, y: 0.9, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 5, shadow: true });
+      const bad = sentenceLines(p.badge, 1, 14); if (bad.length && nWords(bad) <= 2) { shape(ctx, { kind: 'circle', x: 0.84, y: 0.16, size: 0.09, color: ctx.pal.accent, in: { kind: 'pop', dur: 0.4, delay: 0.5 }, idle: { kind: 'pulse', amp: 0.05, speed: 1.4 }, u0: 0.5, z: 4 }); text(ctx, { u0: 0.7, lines: bad, size: 0.04, font: F(ctx, 'head'), x: 0.84, y: 0.16, r: -12, color: inkFor(ctx.pal.accent, null), in: { kind: 'pop', dur: 0.3 }, front: true, z: 6 }); }
       cue(ctx, 0.15, 'whoosh'); cue(ctx, 0.7, 'impact'); cam(ctx, 0.68, 'punch', { amp: 0.04 });
     } else cue(ctx, 0.1, 'tick');
   },
@@ -234,21 +239,22 @@ ARCH.callouts = {
   packs: 'one',
   build(p, ctx) {
     const id = packId(ctx, p.pack), v = variantOf(ctx, p, ['sides', 'radial', 'list']), items = (Array.isArray(p.items) ? p.items : []).map((s) => cleanWord(s, 18)).filter(Boolean).slice(0, 5), sent = sentenceLines(p.sentence, 2, 26);
-    const px = v === 'list' ? ctx.v.pick([0.32, 0.68]) : 0.5, rest = restPose(ctx, id, px, v === 'radial' ? 0.56 : 0.55, v === 'radial' ? 0.26 : 0.3, ctx.v.range(-6, 6), false, 0.34);
+    const px = v === 'list' ? ctx.v.pick([0.32, 0.68]) : 0.5, rest = restPose(ctx, id, px, 0.62, v === 'radial' ? 0.24 : 0.28, ctx.v.range(-6, 6), false, 0.3);
     movePack(ctx, id, [...enter(ctx, oneOf(p.entrance, ['spin', 'pop', 'rise'], ctx.v.pick(['spin', 'pop', 'rise'])), 0.15, rest), drift(ctx, Math.max(2.0, ctx.dur - 0.05), rest)]);
-    if (sent.length) text(ctx, { u0: 0.2, lines: sent, size: +clamp(0.86 / (Math.max(...sent.map((l) => l.length)) * 0.62), 0.045, 0.058).toFixed(3), font: F(ctx, 'small'), upper: false, y: 0.3 - (v === 'radial' ? 0.05 : 0), lineGap: 1.25, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
+    if (sent.length) text(ctx, { u0: 0.2, lines: sent, size: +clamp(0.86 / (Math.max(...sent.map((l) => l.length)) * 0.62), 0.045, 0.058).toFixed(3), font: F(ctx, 'small'), upper: false, y: 0.26, lineGap: 1.25, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
     let POS;
-    if (v === 'radial') { const n = items.length || 3, a0 = ctx.v.range(0, 40); POS = items.map((_, i) => { const a = ((i / n) * 360 + a0 - 90) * Math.PI / 180; return [+(rest.x + Math.cos(a) * 0.34).toFixed(3), +(rest.y + Math.sin(a) * 0.2).toFixed(3), Math.cos(a) >= 0 ? 'R' : 'L']; }); }
-    else if (v === 'list') { const sd = px < 0.5 ? 'R' : 'L', x = sd === 'R' ? 0.76 : 0.24; POS = items.map((_, i) => [x, +(0.42 + i * 0.075).toFixed(3), sd]); }
-    else POS = [[0.8, 0.46, 'R'], [0.8, 0.56, 'R'], [0.8, 0.66, 'R'], [0.13, 0.56, 'L'], [0.17, 0.66, 'L']];
+    if (v === 'radial') { const n = items.length || 3, a0 = ctx.v.range(0, 40); POS = items.map((_, i) => { const a = ((i / n) * 360 + a0 - 90) * Math.PI / 180; const sg = Math.cos(a) >= 0 ? 1 : -1, dx = sg * Math.max(Math.abs(Math.cos(a)) * 0.34, rest.w * 0.5 + 0.1);   // never on the pack itself: at least a hand's width outside it
+      return [+clamp(rest.x + dx, 0.14, 0.86).toFixed(3), +(rest.y + Math.sin(a) * 0.2).toFixed(3), sg > 0 ? 'R' : 'L']; }); }
+    else if (v === 'list') { const sd = px < 0.5 ? 'R' : 'L', x = sd === 'R' ? 0.76 : 0.24; POS = items.map((_, i) => [x, +(0.47 + i * 0.075).toFixed(3), sd]); }
+    else POS = [[0.8, 0.51, 'R'], [0.8, 0.61, 'R'], [0.8, 0.71, 'R'], [0.13, 0.61, 'L'], [0.17, 0.71, 'L']];
     items.forEach((lab, i) => {
-      const [ix, iy, sd] = POS[i], u = 0.9 + i * 0.36, sx = rest.x + (sd === 'R' ? 1 : -1) * (rest.w * 0.5 + 0.012), sy = clamp(iy, rest.y - 0.14, rest.y + 0.14);
-      shape(ctx, { kind: 'line', x1: +sx.toFixed(3), y1: +sy.toFixed(3), x2: sd === 'R' ? +(ix - 0.03).toFixed(3) : +(ix + 0.03).toFixed(3), y2: iy, cx: +((sx + ix) / 2).toFixed(3), cy: +(sy + (iy - sy) * 0.3).toFixed(3), color: ctx.pal.ink, alpha: 0.85, width: 0.0028, dur: 0.4, u0: u, z: 4 });
-      shape(ctx, { kind: 'circle', x: ix, y: iy, size: 0.026, color: ctx.pal.ink, in: { kind: 'pop', dur: 0.25, delay: 0.25 }, u0: u, z: 4 });
-      text(ctx, { u0: u + 0.35, lines: [lab], size: 0.024, font: F(ctx, 'small'), upper: false, align: sd === 'R' ? 'left' : 'right', x: +clamp(ix + (sd === 'R' ? 0.03 + lab.length * 0.0072 : -0.03 - lab.length * 0.0072), 0.1, 0.9).toFixed(3), y: iy, in: { kind: 'rise', dur: 0.3, stag: 0.15 }, front: true, z: 5 });
+      const [ix0, iy, sd] = POS[i], tw = lab.length * 0.021, ix = +(sd === 'R' ? Math.min(ix0, 0.95 - 0.04 - tw) : Math.max(ix0, 0.05 + 0.04 + tw)).toFixed(3), u = 0.9 + i * 0.36, sx = rest.x + (sd === 'R' ? 1 : -1) * (rest.w * 0.5 + 0.012), sy = clamp(iy, rest.y - 0.14, rest.y + 0.14);
+      shape(ctx, { kind: 'line', x1: +sx.toFixed(3), y1: +sy.toFixed(3), x2: sd === 'R' ? +(ix - 0.03).toFixed(3) : +(ix + 0.03).toFixed(3), y2: iy, cx: +((sx + ix) / 2).toFixed(3), cy: +(sy + (iy - sy) * 0.3).toFixed(3), color: ctx.pal.ink, alpha: 0.85, width: 0.0028, dur: 0.4, u0: u, z: 4.1 });
+      shape(ctx, { kind: 'circle', x: ix, y: iy, size: 0.026, color: ctx.pal.ink, in: { kind: 'pop', dur: 0.25, delay: 0.25 }, u0: u, z: 4.1 });
+      text(ctx, { u0: u + 0.35, lines: [lab], size: 0.034, font: F(ctx, 'small'), upper: false, align: sd === 'R' ? 'left' : 'right', x: +(ix + (sd === 'R' ? 0.04 + tw / 2 : -0.04 - tw / 2)).toFixed(3), y: iy, in: { kind: 'rise', dur: 0.3, stag: 0.15 }, front: true, z: 5 });
       cue(ctx, u + 0.3, 'tick');
     });
-    if (String(p.float) !== 'false' && ctx.props.length && ctx.v.chance(0.7)) [[0.06, 0.16, 0.16, 20], [0.94, 0.84, 0.18, -25], [0.1, 0.95, 0.17, 10]].forEach(([x, y, w, r], i) => push(ctx, { kind: 'sprite', src: ctx.props[i % ctx.props.length].id, t0: A(ctx, 0.4 + i * 0.3), t1: A(ctx, ctx.dur), x, y, w, r, in: { kind: 'pop', dur: 0.4 }, idle: { kind: 'float', amp: 0.01, speed: 1 }, shadow: false, z: 4 }));
+    if (String(p.float) !== 'false' && items.length <= 3 && ctx.props.length && ctx.v.chance(0.7)) [[0.06, 0.16, 0.16, 20], [0.94, 0.84, 0.18, -25], [0.1, 0.95, 0.17, 10]].forEach(([x, y, w, r], i) => push(ctx, { kind: 'sprite', src: ctx.props[i % ctx.props.length].id, t0: A(ctx, 0.4 + i * 0.3), t1: A(ctx, ctx.dur), x, y, w, r, in: { kind: 'pop', dur: 0.4 }, idle: { kind: 'float', amp: 0.01, speed: 1 }, shadow: false, z: 4 }));
   },
 };
 
