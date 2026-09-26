@@ -73,7 +73,7 @@ async function getImage(start) {
   return null;
 }
 
-const IMG_OK = /\.(jpe?g|png|webp)(\?|#|$)/i, SKIP = /logo|icon|sprite|avatar|favicon|flag|payment|social|arrow|placeholder|blank|pixel|tracking|banner-ad/i, PROD = /product|shop|item|pack|bottle|\bcan\b|flavou?r|snack|drink|packshot|gallery|catalog|store/i;
+const IMG_OK = /\.(jpe?g|png|webp)(\?|#|$)/i, SKIP = /logo|icon|sprite[-_]?(sheet|icons?)|avatar|favicon|flag|payment|social|arrow|placeholder|blank|pixel|tracking|banner-ad/i, PROD = /product|shop|item|pack|bottle|\bcan\b|flavou?r|snack|drink|packshot|gallery|catalog|store/i;
 /** the image addresses on a page, best first: product structured data, the share image, product-looking pictures */
 function imageUrls(html, base) {
   const out = [], add = (u) => { try { if (!u) return; const a = new URL(String(u).trim().split(' ')[0], base).href; if (!out.includes(a)) out.push(a); } catch (_) { /* not a valid address */ } };
@@ -100,4 +100,4 @@ async function scanImages(input, max = 5) {
   const { html, url } = await getHtml(s); return fetchImages(imageUrls(html, url), max);
 }
 
-module.exports = { scan, scanImages };
+module.exports = { scan, scanImages, getHtml, getImage };

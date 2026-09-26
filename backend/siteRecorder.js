@@ -383,4 +383,4 @@ async function record(o, onProgress) {
   return { out, mkv: out.replace(/\.mp4$/i, '.mkv'), seconds: totalFrames / fps, width: W, height: H };
 }
 
-module.exports = { record, resolveTarget, PRESETS, SITE_BASE };
+module.exports = { record, resolveTarget, PRESETS, SITE_BASE, launchChrome };

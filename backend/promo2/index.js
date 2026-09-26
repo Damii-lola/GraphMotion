@@ -11,6 +11,7 @@ const promoFilm = require('../promoFilm');   // picture tools shared with engine
 const klein = require('../kleinClient');
 const neurons = require('../neuronBudget');
 const realimg = require('./realimg');
+const webphotos = require('./webphotos');
 
 // at most 3 pictures painted at once (a burst of parallel requests stalls the image service)
 const queue = []; let running = 0;
@@ -69,7 +70,13 @@ async function isolatePhoto(buf, plan) {
 async function realPhotos(plan, company, say) {
   const userPhotos = (company && company.userPhotos) || [], sitePhotos = (company && company.sitePhotos) || [];
   let got = null;
-  try { got = await realimg.acquire({ name: plan.product.name, brand: plan.brand, kind: plan.product.kind, userPhotos, sitePhotos, wantVariants: 2, isolate: (b) => isolatePhoto(b, plan) }); } catch (e) { console.warn('[promo2] real photo search failed: ' + String(e.message).slice(0, 100)); }
+  const base = { name: plan.product.name, brand: plan.brand, kind: plan.product.kind, wantVariants: 2, isolate: (b) => isolatePhoto(b, plan) };
+  // 1. the client's own photos / website pictures   2. the product's official site, rendered in Chrome   3. Open Food Facts (a can photo is isolated by the picture model)
+  try { got = await realimg.acquire({ ...base, userPhotos, sitePhotos, off: false }); } catch (e) { console.warn('[promo2] real photo search failed: ' + String(e.message).slice(0, 100)); }
+  if (!got && !userPhotos.length) {
+    try { say('Finding your product photos', 0.1); const found = await webphotos.discover(plan, company); if (found.length) got = await realimg.acquire({ ...base, userPhotos: [], sitePhotos: found, off: false }); if (got) got.credit = null; } catch (e) { console.warn('[promo2] official-site photos failed: ' + String(e.message).slice(0, 100)); }
+  }
+  if (!got) { try { got = await realimg.acquire({ ...base, userPhotos, sitePhotos: [], off: true }); } catch (e) { console.warn('[promo2] photo library failed: ' + String(e.message).slice(0, 100)); if (/429|4006|allocation|not set/i.test(String(e.message))) throw e; } }
   if (!got && (userPhotos.length || sitePhotos.length)) {                                   // the client's photo has a busy background: ask the picture model to isolate the exact product
     const src = userPhotos[0] || sitePhotos[0], key = promoFilm.pickKey(plan.product.colors);
     try {
