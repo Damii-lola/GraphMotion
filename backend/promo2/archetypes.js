@@ -126,7 +126,7 @@ ARCH.word_pack = {
     if (v === 'peek') { const rest = restPose(ctx, id, ctx.v.range(0.4, 0.6), 0.86, 0.6, tilt, false, 0.62, true); movePack(ctx, id, [...enter(ctx, 'rise', u1 + 0.05, rest), drift(ctx, Math.max(u1 + 1.0, ctx.dur - 0.05), rest)]); }
     else if (v === 'side') { const rest = restPose(ctx, id, 0.5, 0.63, 0.5, tilt, true), d = ctx.v.pick([-1, 1]); movePack(ctx, id, [...enter(ctx, 'whip', u1 + 0.05, rest, d), drift(ctx, Math.max(u1 + 1.0, ctx.dur - 0.05), rest)]); }
     else { const rest = restPose(ctx, id, 0.5, 0.63, 0.5, tilt, true); movePack(ctx, id, [...enter(ctx, 'drop', u1 + 0.05, rest, -1), drift(ctx, Math.max(u1 + 1.0, ctx.dur - 0.05), rest)]); }
-    const tag = sentenceLines(p.tag, 1, 24); if (tag.length && nWords(tag) <= 3) text(ctx, { u0: u1 + 0.9, lines: tag, size: 0.04, font: F(ctx, 'small'), y: 0.93, track: 0.14, in: { kind: 'fade', dur: 0.4, stag: 0.2 }, front: true, z: 5 });
+    const tag = sentenceLines(p.tag, 1, 24); if (tag.length && nWords(tag) <= 3) text(ctx, { u0: u1 + 0.9, lines: tag, size: 0.04, font: F(ctx, 'small'), y: 0.86, track: 0.14, in: { kind: 'fade', dur: 0.4, stag: 0.2 }, front: true, z: 5 });
     cue(ctx, 0.05, 'impact'); cue(ctx, u1 + 0.1, 'whoosh'); cue(ctx, u1 + 0.75, 'impact'); cam(ctx, u1 + 0.72, 'punch');
   },
 };
@@ -204,7 +204,7 @@ ARCH.showcase = {
     if (kicker.length && nWords(kicker) <= 4) text(ctx, { u0: 0.4, lines: kicker, size: 0.038, font: F(ctx, 'small'), upper: false, y: ty - 0.075, x: titleX, align: titleAlign, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
     if (title.length && nWords(title) <= 6) text(ctx, { u0: 0.8, lines: title, size: +clamp(0.86 / (Math.max(...title.map((l) => l.length)) * 0.62), 0.045, 0.07).toFixed(3), font: F(ctx, 'small'), upper: false, y: ty, x: titleX, align: titleAlign, lineGap: 1.25, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
     if (String(p.blurred) === 'true' && ctx.props.length) [[0.05, 0.9, 0.3, 12], [0.97, 0.7, 0.24, 14], [0.03, 0.16, 0.17, 9]].forEach(([x, y, w, b], i) => push(ctx, { kind: 'sprite', src: ctx.props[i % ctx.props.length].id, t0: A(ctx, 0.5 + i * 0.25), t1: A(ctx, ctx.dur), x, y, w, r: i * 40, blur: b, in: { kind: 'fade', dur: 0.5 }, idle: { kind: 'drift', amp: 0.012, speed: 0.8 }, shadow: false, z: 4 }));
-    const words = (Array.isArray(p.cheer) ? p.cheer : []).map((w) => cleanWord(w, 7)).filter(Boolean).slice(0, 4), CP = [[0.2, 0.62, -9], [0.8, 0.88, 8], [0.78, 0.46, 12], [0.22, 0.86, -12]];
+    const words = (Array.isArray(p.cheer) ? p.cheer : []).map((w) => cleanWord(w, 7)).filter(Boolean).slice(0, 4), sideX = (k) => +clamp(rest.x + k * (rest.w * 0.5 + 0.1), 0.1, 0.9).toFixed(3), CP = [[sideX(-1), 0.6, -9], [sideX(1), 0.84, 8], [sideX(1), 0.44, 12], [sideX(-1), 0.82, -12]];   // the tiny cheer words sit BESIDE the pack, never on it
     words.forEach((w, i) => text(ctx, { u0: 1.0 + i * 0.3, lines: [w], size: 0.03, font: F(ctx, 'script'), upper: true, x: CP[i][0], y: CP[i][1], r: CP[i][2], in: { kind: 'pop', dur: 0.25 }, front: true, z: 5 }));
     const np = clamp(Math.round(num(p.props, ctx.v.pick([0, 4, 5, 6]), 0, 7)), 0, 7); if (np >= 2) scatter(ctx, { n: np, from: oneOf(p.from, ['corners', 'edges', 'sides', 'burst', 'top'], ctx.v.pick(['corners', 'edges', 'sides', 'top'])), u0: 0.85, seed: (ctx.seed || 3) + 7 });
     if (ctx.v.chance(0.7)) shape(ctx, { kind: 'burst', x: rest.x, y: rest.y, n: 22, color: ctx.pal.ink, color2: ctx.pal.accent, life: 1, u0: 0.7, u1: 1.8, z: 4 });

@@ -145,8 +145,9 @@
       let a = K[0], b = K[K.length - 1];
       if (t <= K[0].t) { st.o = K[0].o !== undefined && K[0].hide ? 0 : st.o; }
       for (let i = 0; i < K.length - 1; i++) if (t >= K[i].t && t <= K[i + 1].t) { a = K[i]; b = K[i + 1]; break; }
+      if (t > K[K.length - 1].t) a = b = K[K.length - 1];   // after the last keyframe the element STAYS at it (it used to be interpolated back from the first key: a pack that arrived with blur ended blurred)
       const u = a === b ? 1 : ease(b.e || "inOutCubic", (t - a.t) / Math.max(1e-6, b.t - a.t));
-      const iv = (k, d) => { const va = a[k] !== undefined ? a[k] : (b[k] !== undefined ? b[k] : d), vb = b[k] !== undefined ? b[k] : va; return lerp(va, vb, u); };
+      const iv = (k, d) => { const va = a[k] !== undefined ? a[k] : (k === "blur" ? 0 : (b[k] !== undefined ? b[k] : d)), vb = b[k] !== undefined ? b[k] : (k === "blur" ? 0 : va); return lerp(va, vb, u); };
       if (K.some((k) => k.x !== undefined)) st.x = iv("x", pre.x) + idl.x;
       if (K.some((k) => k.y !== undefined)) st.y = iv("y", pre.y) + idl.y;
       if (K.some((k) => k.s !== undefined)) st.s = iv("s", 1) * idl.s;
