@@ -7,24 +7,26 @@
 const { LAWS, clamp, num, isHex, fixHex, rgb, dist, cleanWord, oneOf } = require('./laws');
 const { ARCH, IDS } = require('./archetypes');
 const { TRANSITIONS } = require('./compile');
+const vary = require('./vary');
 
 const SYSTEM = 'You are an award-winning motion-graphics director who plans product launch spots for TikTok and Reels by studying real reference spots. You reply with ONE JSON object only.';
 
-const REFS = `REFERENCE SPOTS and the scene sequences they use (follow ONE of them for this product, adapt freely; each has its own pace):
-R1 Goli multivitamin (12 s, pink): typed -> wall (NEW wall, pack whips across) -> showcase (tilted pack + big blurred gummies) -> callouts -> endcard.
-R2 Goli sleep (12 s, purple): typed (a question) -> showcase (pack rises) -> cheer -> ingredients -> wall (SO YUMMY) -> callouts -> endcard.
-R3 Berry White (12 s, ONE calm backdrop): showcase (vertical word) -> showcase (other side) -> cheer -> endcard.
-R4 Pluckk (10 s, colour wipes every 2 s): parade -> typed -> ring -> ingredients -> endcard.
-R5 Lay's (6 s, red): rings_drop (with row) -> endcard.
-R6 Unicity (9 s, pastel): showcase -> typed (scribble) -> typed -> endcard.
-R7 McDonald's (10 s, yellow): word_pack -> endcard (a solid brand-colour card).
-R8 Wendy's (5 s, red): hook_slice -> wall -> endcard.
-R9 Sunbake (5 s, dark): wall (script word) -> showcase -> endcard.
-R10 Canva lemon (8 s): hook_slice -> hook_slice (word swaps, "iris" transitions) -> disc_pack -> endcard.`;
+const REFS = `REFERENCE SPOTS and the scene sequences they use (follow ONE for this product, adapt freely; each has its own pace and colour scheme):
+R1 Goli multivitamin (12 s, ONE hot hue for the whole spot; the same colour in every scene): typed (align left, style blurin: a small line like "Meet the All New", 1.3 s) -> wall (a word like NEW, the pack whips across and shrinks, 3 small pieces float; 2.3 s) -> showcase (side C, tilt 25, kicker + 2-line title, 3 tiny cheer words, blurred true; 2.5 s) -> callouts (a sentence + 4-5 labels like Non-GMO / Gluten-Free / Kosher / Vegan / Gelatin-Free; 3 s) -> endcard (layout top, the cta "Try them today!", url big, the pack shot big at the bottom: use an open-gift-box variant; transition_in brandflash).
+R2 Goli sleep (12 s, ONE purple): typed (a question) -> showcase (pack rises) -> cheer -> ingredients -> wall (SO YUMMY) -> callouts -> endcard.
+R3 Berry White (12 s, ONE calm green): showcase (vertical word) -> showcase (other side) -> cheer -> endcard.
+R4 Pluckk (10 s, a new pastel colour every scene, colour wipes): parade -> typed -> ring -> ingredients -> endcard.
+R5 Lay's (6 s, ONE red): rings_drop (with row) -> endcard.
+R6 Unicity (9 s, pastels that change): showcase -> typed (scribble) -> typed -> endcard.
+R7 McDonald's (10 s, yellow then red): word_pack -> endcard (a solid brand-colour card).
+R8 Wendy's (5 s, ONE red): hook_slice -> wall -> endcard.
+R9 Sunbake (5 s, dark then a photo): wall (script word) -> showcase -> endcard.
+R10 Canva lemon (8 s, colours change): hook_slice -> hook_slice (word swaps, iris transitions) -> disc_pack -> endcard.`;
 
 const LAW_TEXT = `LAWS (the engine enforces them; plan with them):
 - 4 to 6 scenes, each 1.6-4 s, total 6-12.4 s; the LAST scene is "endcard"; no archetype more than twice.
-- Every scene has its OWN backdrop colour (clearly different saturated colours; only R3 keeps one colour); "accent" must stand out from the backdrop.
+- Backdrops follow the reference: R1, R2, R3, R5, R8 use ONE hue in every scene (repeat the same colours); R4, R6, R7, R9, R10 give every scene its OWN clearly different saturated colour. "accent" must stand out from the backdrop.
+- Variants: define them like the reference (R1: variant 1 = the product in an open gift box seen from above, used in the end card).
 - Type is a main character: at least two scenes carry a giant word (hook_slice, word_pack, wall, showcase with "vertical", disc_pack with "word").
 - The pack is ABSENT in at least one scene (hook_slice, wall with pack none, typed with pack none, ingredients with pack none) so type or another product can take over.
 - Use the extra pack shots (hero2 / hero3) in some scenes if you define product variants.
@@ -35,7 +37,7 @@ function catalogue() {
   return IDS.map((id) => `- "${id}": ${ARCH[id].about}\n    params: ${Object.entries(ARCH[id].params).map(([k, v]) => `${k} = ${v}`).join('; ')}`).join('\n');
 }
 
-function directorPrompt(brief) {
+function directorPrompt(brief, dice) {
   return `Plan a short vertical (9:16) motion-graphics promo (6 to 12.4 seconds) for the PHYSICAL product in this brief, as a faithful re-creation for THIS product of one reference spot. No voice, almost no words.
 
 BRIEF:
@@ -48,14 +50,14 @@ ${catalogue()}
 
 ${LAW_TEXT}
 
-Return ONE JSON object:
+${dice ? vary.dicePrompt(dice) + '\n\n' : ''}Return ONE JSON object:
 {"mimic": {"ref": "R1".."R10", "why": "one sentence"},
  "brand": (as in the brief, max 24 letters),
  "cta": (call to action, max 3 words),
  "product": {"name","kind" (what it physically is),"look" (how the pack looks for an image AI: shape, materials, 2-3 colours, label art WITHOUT any text, max 30 words),"colors":["#rrggbb","#rrggbb"],"variants":[0-2 OTHER SHOTS of the product: {"name","look"} (another flavour or colour, an open box, a multipack)]},
  "props": [2-3 ingredients / pieces: {"name","look" (one thing, for an image AI, no text, max 18 words)}] (prop0, prop1, prop2 in order),
  "sound": {"music": "pulse" | "warm pad" | "tense" | "dark drone"},
- "scenes": [{"archetype": one of ${IDS.map((x) => '"' + x + '"').join(', ')}, "dur": seconds, "backdrop": {"c0": bright centre colour, "c1": edge colour (the same colour twice = flat)}, "accent": "#rrggbb", "transition_in": "cut" | "flash" | "wipe" | "zoomblur" | "iris" | "glide" (how this scene BEGINS; the first scene: "cut"), "dir": "left" | "right" | "up" | "down" (for a wipe), "params": {that archetype's parameters}, "extras": [0-3 free extra layers of your own: {"kind":"text|scatter|burst|rings|circle|oval|line","u0":secs into the scene,"u1":secs,...}]}]}
+ "scenes": [{"archetype": one of ${IDS.map((x) => '"' + x + '"').join(', ')}, "dur": seconds, "backdrop": {"c0": bright centre colour, "c1": edge colour (the same colour twice = flat)}, "accent": "#rrggbb", "transition_in": "cut" | "flash" | "wipe" | "zoomblur" | "iris" | "glide" | "brandflash" (how this scene BEGINS; the first scene: "cut"), "dir": "left" | "right" | "up" | "down" (for a wipe), "params": {that archetype's parameters}, "extras": [0-3 free extra layers of your own: {"kind":"text|scatter|burst|rings|circle|oval|line","u0":secs into the scene,"u1":secs,...}]}]}
 Output the JSON object only.`;
 }
 
@@ -70,7 +72,7 @@ function checkPlan(plan) {
   const iss = [], S = plan.scenes || [], ref = String((plan.mimic && plan.mimic.ref) || '').toUpperCase();
   if (S.length < LAWS.structure.scenesMin) iss.push('Only ' + S.length + ' scenes: write 4 to 6.');
   if (S.length && S[S.length - 1].archetype !== 'endcard') iss.push('The last scene must be "endcard".');
-  if (ref !== 'R3') for (let i = 1; i < S.length; i++) if (cdist(S[i - 1].backdrop && S[i - 1].backdrop.c0, S[i].backdrop && S[i].backdrop.c0) < 90) iss.push('Scenes ' + i + ' and ' + (i + 1) + ' have almost the same backdrop colour: pick clearly different saturated colours.');
+  if (!['R1', 'R2', 'R3', 'R5', 'R8'].includes(ref)) for (let i = 1; i < S.length; i++) if (cdist(S[i - 1].backdrop && S[i - 1].backdrop.c0, S[i].backdrop && S[i].backdrop.c0) < 90) iss.push('Scenes ' + i + ' and ' + (i + 1) + ' have almost the same backdrop colour: pick clearly different saturated colours.');
   if (S.filter(giantScene).length < LAWS.structure.giantTypeScenesMin) iss.push('Type must be a main character: at least two scenes need a giant word (hook_slice, word_pack, wall, showcase with "vertical", disc_pack with "word").');
   if (!S.some(packAbsent)) iss.push('The pack is in every scene: use at least one scene without the pack (hook_slice, typed with pack "none", wall with pack "none", ingredients with pack "none").');
   const count = {}; S.forEach((s) => { count[s.archetype] = (count[s.archetype] || 0) + 1; }); Object.entries(count).forEach(([k, n]) => { if (n > LAWS.structure.maxSameArchetype) iss.push('"' + k + '" is used ' + n + ' times: at most 2.'); });
@@ -105,11 +107,11 @@ function neededAssets(plan) {
 }
 
 /** plan({ brief, call, ctx }) -> normalised plan (one review round with the AI) */
-async function plan({ brief, call, ctx = {} }) {
+async function plan({ brief, call, ctx = {}, dice }) {
   let first = null, problems = null, prev = null, lastErr = null;
   for (let t = 0; t < 2; t++) {
     try {
-      const txt = await call(SYSTEM, directorPrompt(brief) + (problems ? '\n\nYOUR FIRST PLAN (JSON):\n' + JSON.stringify(prev) + '\n\nA REVIEW FOUND THESE PROBLEMS; rewrite the whole plan fixing every one:\n' + problems.map((x, k) => (k + 1) + '. ' + x).join('\n') : ''), { maxTokens: 3600, temperature: 0.9, what: t ? 'director (review)' : 'director' });
+      const txt = await call(SYSTEM, directorPrompt(brief, dice) + (problems ? '\n\nYOUR FIRST PLAN (JSON):\n' + JSON.stringify(prev) + '\n\nA REVIEW FOUND THESE PROBLEMS; rewrite the whole plan fixing every one:\n' + problems.map((x, k) => (k + 1) + '. ' + x).join('\n') : ''), { maxTokens: 3600, temperature: 1.0, what: t ? 'director (review)' : 'director' });
       const s = String(typeof txt === 'string' ? txt : JSON.stringify(txt)).replace(/<think>[\s\S]*?<\/think>/g, ''), raw = JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1)), p = normalizePlan(raw, ctx), iss = checkPlan(p);
       if (!first) first = p;
       console.log('[promo2] director' + (t ? ' (review)' : '') + ': ' + (iss.length ? iss.length + ' issue(s): ' + iss.map((x) => x.slice(0, 60)).join(' | ') : 'clean'));

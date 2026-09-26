@@ -3,9 +3,10 @@
  * THE COMPILER: plan (what the AI chose) + the real picture sizes -> the finished promo (layers, hero path, camera, sound), with the LAWS applied to everything.
  */
 const { LAWS, W, H, clamp, num, fixHex, rgb, hex, mix, vividBackdrop, inkFor, accentFor, fitSize, safeFont, cleanWord, oneOf } = require('./laws');
+const vary = require('./vary');
 const { ARCH, IDS, minDur, seedRand, A, text, shape, scatter, push } = require('./archetypes');
 
-const TRANSITIONS = ['cut', 'flash', 'wipe', 'zoomblur', 'iris', 'glide'];
+const TRANSITIONS = ['cut', 'flash', 'wipe', 'zoomblur', 'iris', 'glide', 'brandflash'];
 
 /** LAW (time): scenes are 1.4-4.2 s, the promo 6-12.4 s; durations are scaled to fit, keeping their proportions */
 function fitDurations(durs) {
@@ -31,6 +32,7 @@ const kindZ = (k) => (['rings', 'rays', 'wave', 'stripes', 'dots'].includes(k) ?
  * assets: { packs: { hero: {aspect}, hero2?, hero3? }, props: ['prop0', ...] }
  */
 function compile(plan, assets) {
+  const dice = plan.dice || vary.roll(vary.hashStr(plan.brand + '|' + (plan.product && plan.product.name)));
   const durs = fitDurations(plan.scenes.map((s) => Math.max(s.dur, minDur(s.archetype, s.params)))), scenes = [];
   let t = 0; plan.scenes.forEach((s, i) => { scenes.push({ ...s, dur: durs[i], t0: +t.toFixed(2), t1: +(t + durs[i]).toFixed(2) }); t += durs[i]; });
   const D = +t.toFixed(2), zones = [], beats = [], layers = [], cam = [], cues = [], heroWay = [], summaries = [];
@@ -38,15 +40,16 @@ function compile(plan, assets) {
   let flashes = 0, wipes = 0, blurs = 0, zx = 0;
 
   scenes.forEach((S, i) => {
-    const c0 = vividBackdrop(rgb(fixHex(S.backdrop && S.backdrop.c0, '#ff7a00'))), flat = S.backdrop && S.backdrop.c1 && String(S.backdrop.c1).toLowerCase() === String(S.backdrop.c0).toLowerCase();
-    const c1 = flat ? c0 : (() => { const q = rgb(fixHex(S.backdrop && S.backdrop.c1, hex(mix(c0, [10, 10, 30], 0.45)))); return q; })();
-    const bg0 = hex(c0), bg1 = hex(c1), ink = inkFor(bg0, null), accent = accentFor(bg0, S.accent);
+    const sh = (h) => vary.shiftColour(fixHex(h, '#ff7a00'), dice, false);
+    const c0 = vividBackdrop(rgb(sh(S.backdrop && S.backdrop.c0))), flat = S.backdrop && S.backdrop.c1 && String(S.backdrop.c1).toLowerCase() === String(S.backdrop.c0).toLowerCase();
+    const c1 = flat ? c0 : (() => { const q = rgb(S.backdrop && S.backdrop.c1 ? sh(S.backdrop.c1) : hex(mix(c0, [10, 10, 30], 0.45))); return q; })();
+    const bg0 = hex(c0), bg1 = hex(c1), ink = inkFor(bg0, null), accent = accentFor(bg0, S.accent ? sh(S.accent) : null);
     const tr = oneOf(S.transition_in, TRANSITIONS, i ? 'cut' : 'cut');
     S.tr = i ? tr : 'cut';
     zx += i === 0 ? 0 : (S.tr === 'glide' ? 700 : 3200);
     zones.push({ c0: bg0, c1: bg1, shape: 'radial', x: zx, y: 0 });
     const pal = { c0: bg0, c1: bg1, ink, accent };
-    const ctx = { t0: S.t0, t1: S.t1, dur: S.dur, pal, packs: assets.packs, props: (assets.props || []).map((id) => ({ id })), brand: plan.brand, cta: plan.cta, seed: 3 + i * 17, out: out(i) };
+    const ctx = { t0: S.t0, t1: S.t1, dur: S.dur, pal, packs: assets.packs, props: (assets.props || []).map((id) => ({ id })), brand: plan.brand, cta: plan.cta, seed: 3 + i * 17, out: out(i), v: vary.forScene(dice, i) };
     const A0 = ARCH[oneOf(S.archetype, IDS, 'showcase')];
     try { A0.build(S.params || {}, ctx); } catch (e) { console.warn('[promo2] archetype ' + S.archetype + ' failed: ' + String(e.message).slice(0, 120)); }
     try { addExtras(ctx, S.extras); } catch (e) { /* extras never break a scene */ }
@@ -59,6 +62,10 @@ function compile(plan, assets) {
       if (S.tr === 'flash' && flashes < LAWS.density.maxFlash) { flashes++; layers.push({ kind: 'flash', color: '#ffffff', alpha: 0.85, t0: +(S.t0 - 0.12).toFixed(2), t1: +(S.t0 + 0.16).toFixed(2), z: 7 }); cues.push({ t: +(S.t0 - 0.1).toFixed(2), kind: 'whoosh' }); }
       else if (S.tr === 'wipe' && wipes < LAWS.density.maxWipe) { wipes++; layers.push({ kind: 'wipe', dir: dirn, n: 2, color: bg0, color2: accent, t0: +(S.t0 - 0.3).toFixed(2), t1: +(S.t0 + 0.3).toFixed(2), z: 7 }); cues.push({ t: +(S.t0 - 0.3).toFixed(2), kind: 'whoosh' }); }
       else if (S.tr === 'zoomblur' && blurs < LAWS.density.maxZoomBlur) { blurs++; layers.push({ kind: 'zoomblur', amp: 0.35, t0: +(S.t0 - 0.25).toFixed(2), t1: +(S.t0 + 0.25).toFixed(2), z: 7 }); cues.push({ t: +(S.t0 - 0.25).toFixed(2), kind: 'whoosh' }); }
+      else if (S.tr === 'brandflash' && blurs < LAWS.density.maxZoomBlur) {   // the brand slams in huge under a zoom blur (Goli's logo flash)
+        blurs++; const bl = String(plan.brand || '').toUpperCase().split(' ').slice(0, 2), bc = Math.max(...bl.map((q) => q.length), 1);
+        layers.push({ kind: 'text', lines: bl, x: 0.5, y: 0.5, size: fitSize(bc, 'giant') * (bl.length > 1 ? 0.85 : 1), font: 'anton', color: '#ffffff', upper: true, r: 0, track: 0, align: 'center', in: { kind: 'pop', dur: 0.25 }, t0: +(S.t0 - 0.5).toFixed(2), t1: +(S.t0 + 0.3).toFixed(2), z: 7, front: true, shadow: true });
+        layers.push({ kind: 'zoomblur', amp: 0.5, t0: +(S.t0 - 0.45).toFixed(2), t1: +(S.t0 + 0.3).toFixed(2), z: 7 }); cues.push({ t: +(S.t0 - 0.5).toFixed(2), kind: 'impact' }); }
       else if (S.tr === 'iris') { layers.push({ kind: 'iris', color: bg0, x: 0.5, y: 0.5, t0: +(S.t0 - 0.6).toFixed(2), t1: +S.t0.toFixed(2), z: 7 }); cues.push({ t: +(S.t0 - 0.6).toFixed(2), kind: 'whoosh' }); }
     }
     // the pack's path: an invisible jump to this scene's first pose, so it never slides across a cut
@@ -87,7 +94,7 @@ function compile(plan, assets) {
   // draw order: z (behind -> in front), stable
   const ordered = lay.map((l, i) => [l.z !== undefined ? l.z : kindZ(l.kind), i, l]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]);
   ordered.forEach((l) => { delete l.z; delete l.isBrand; });
-  return { engine: 2, brand: plan.brand, product: plan.product, props: plan.props, duration: D, mimic: plan.mimic, ideas: summaries, zones, beats, layers: ordered, cam: dedupeCam(cam), sound: { music: plan.sound && plan.sound.music || 'pulse', cues: dedupeCues(cues, D) }, pan: 0.8 };
+  return { engine: 2, dice, brand: plan.brand, product: plan.product, props: plan.props, duration: D, mimic: plan.mimic, ideas: summaries, zones, beats, layers: ordered, cam: dedupeCam(cam), sound: { music: plan.sound && plan.sound.music || 'pulse', cues: dedupeCues(cues, D) }, pan: 0.8 };
 }
 
 function enforceGlobal(layers, D) {

@@ -17,7 +17,7 @@ const LAWS = {
   // DENSITY = render cost (a promo is drawn frame by frame on a small server)
   density: { maxLayersPerScene: 18, maxLayersTotal: 60, maxFlash: 3, flashSecs: 0.3, maxWaves: 2, maxZoomBlur: 2, maxWipe: 3, maxExtrasPerScene: 3 },
   // COLOUR
-  colour: { minSat: 0.6, lMin: 0.36, lMax: 0.62, minContrast: 4.5 },
+  colour: { minSat: 0.6, lMin: 0.36, lMax: 0.62, minContrast: 3.2 },
   // TIME
   timing: { sceneMin: 1.4, sceneMax: 4.2, totalMin: 6, totalMax: 12.3, transitionSecs: { cut: 0, flash: 0.28, wipe: 0.5, zoomblur: 0.5, iris: 0.6, glide: 0.7 } },
   // STRUCTURE
@@ -46,9 +46,10 @@ const dist = (a, b) => Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2]
 function vividBackdrop(c) { let [h, s, l] = toHsl(c); if (l > LAWS.colour.lMax + 0.04) l = LAWS.colour.lMax; if (l > 0.3 && s < LAWS.colour.minSat) s = LAWS.colour.minSat + 0.02; return fromHsl([h, s, l]); }
 /** LAW (colour): words must read on their backdrop: the ink is white or near-black, whichever contrasts more (the AI's own colour is honoured when it already reads). */
 function inkFor(bg, want) {
-  const b = rgb(bg), w = want && isHex(want) ? rgb(want) : null;
-  if (w && contrast(w, b) >= LAWS.colour.minContrast) return hex(w);
-  return contrast([255, 255, 255], b) >= contrast([12, 12, 16], b) ? '#ffffff' : '#0c0c10';
+  const b = rgb(bg), w = want && isHex(want) ? rgb(want) : null, T = LAWS.colour.minContrast, cw = contrast([255, 255, 255], b), cd = contrast([12, 12, 16], b);
+  if (w && contrast(w, b) >= T) return hex(w);
+  if (cw >= T) return '#ffffff';                  // white is the house ink whenever it reads
+  return cd >= cw ? '#0c0c10' : '#ffffff';
 }
 /** an accent that stands out from the backdrop: the AI's own when it differs enough, else the hue-opposite */
 function accentFor(bg, want) {

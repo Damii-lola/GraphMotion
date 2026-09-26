@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const director = require('./director');
+const vary = require('./vary');
 const { compile } = require('./compile');
 const promoFilm = require('../promoFilm');   // picture tools shared with engine 1: chroma-key cut-out, brand printing, prompts, sound mix
 const klein = require('../kleinClient');
@@ -46,9 +47,11 @@ function renderPage(spec) {
 async function generate({ brief, company, outDir, say = () => {}, call, planOnly }) {
   fs.mkdirSync(path.join(outDir, 'images'), { recursive: true });
   say('Directing your promo', 0.05);
-  const { plan, issues } = await director.plan({ brief, call, ctx: { brand: company && company.name } });
+  const dice = vary.roll(vary.hashStr((company && company.name || '') + '|' + Date.now() + '|' + Math.random()));   // this video's creative direction: nothing else is shared with any other video
+  const { plan, issues } = await director.plan({ brief, call, ctx: { brand: company && company.name }, dice });
+  plan.dice = dice;
   const needs = director.neededAssets(plan);
-  const spec = { kind: 'promo', engine: 2, brand: plan.brand, tagline: '', cta: '', link: '', theme: { look: 'clean', accent: plan.scenes[0].backdrop.c0, accentInk: '#000000', bg: plan.scenes[0].backdrop.c1 }, scenes: [], review: { engine: 2, mimic: plan.mimic, issues, plan: { scenes: plan.scenes.map((s) => ({ archetype: s.archetype, dur: s.dur, tr: s.transition_in, params: s.params })) } } };
+  const spec = { kind: 'promo', engine: 2, brand: plan.brand, tagline: '', cta: '', link: '', theme: { look: 'clean', accent: plan.scenes[0].backdrop.c0, accentInk: '#000000', bg: plan.scenes[0].backdrop.c1 }, scenes: [], review: { engine: 2, dice, mimic: plan.mimic, issues, plan: { scenes: plan.scenes.map((s) => ({ archetype: s.archetype, dur: s.dur, tr: s.transition_in, params: s.params })) } } };
   if (planOnly) { spec.promo = compile(plan, { packs: { hero: { aspect: 0.5 }, ...(needs.packs.includes('hero2') ? { hero2: { aspect: 0.5 } } : {}), ...(needs.packs.includes('hero3') ? { hero3: { aspect: 0.5 } } : {}) }, props: needs.props }); fs.writeFileSync(path.join(outDir, 'site.json'), JSON.stringify(spec, null, 2)); return { outDir, spec }; }
   say('Painting your product', 0.15);
   const jobs = paintAll(plan, needs), packs = {}, propIds = [], assetsOut = [];
