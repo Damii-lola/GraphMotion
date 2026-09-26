@@ -62,6 +62,9 @@ const F = (ctx, role, want) => ctx.v.font(role, want);
 // ---- the pack's moves. Waypoints are {u,x,y,w,r,blur,e,sx,sy,o}; u = seconds from the start of the scene
 function movePack(ctx, id, way) {
   const wp = way.map((k) => { const q = { ...k, t: A(ctx, k.u) }; delete q.u; return q; });
+  // once the pack has landed it shows itself off with one full turn (a round pack turns like a turntable; a flat pack ignores the yaw)
+  const ai = wp.findIndex((k) => k.yaw === 0);
+  if (ai >= 0 && ai < wp.length - 1) { const a = wp[ai], last = wp[wp.length - 1]; if (last.t - a.t >= 1.7 && ctx.v.chance(0.9)) { const dir = ctx.v.pick([-1, 1]); wp.splice(ai + 1, 0, { ...a, t: +(a.t + 0.3).toFixed(3), yaw: 0, e: 'linear', blur: 0 }, { ...a, t: +(a.t + 1.3).toFixed(3), yaw: 360 * dir, e: 'inOutCubic', blur: 0 }); } }
   if (id === 'hero') { ctx.out.hero.push(...wp); ctx.out.heroUsed = true; return; }
   const f = wp[0];
   push(ctx, { kind: 'sprite', src: id, t0: f.t, t1: A(ctx, ctx.dur), x: f.x, y: f.y, w: f.w, r: 0, keys: wp.map((k) => ({ ...k })), pack: true, shadow: true });
@@ -71,11 +74,11 @@ function movePack(ctx, id, way) {
 function enter(ctx, style, u, rest, dir = -1) {
   const M = ctx.v.motion, dur = M.enter, off = dir < 0 ? -0.6 : 1.6, e = ctx.v.ease();
   switch (style) {
-    case 'drop': return [{ u, x: rest.x, y: -0.5, w: rest.w * 1.05, r: rest.r + 22, blur: 14 }, { u: u + dur + 0.1, ...rest, blur: 0, e: 'outBounce' }];
-    case 'rise': return [{ u, x: rest.x, y: 1.6, w: rest.w * 1.05, r: rest.r - 18, blur: 14 }, { u: u + dur, ...rest, blur: 0, e: e === 'outBounce' ? 'outExpo' : e }];
-    case 'spin': return [{ u, x: rest.x, y: rest.y, w: rest.w * 0.06, r: rest.r - 320, blur: 5 }, { u: u + dur + 0.15, ...rest, blur: 0, e: 'outBack' }];
-    case 'pop': return [{ u, x: rest.x, y: rest.y, w: rest.w * 0.1, r: rest.r - 12, blur: 0 }, { u: u + 0.5, ...rest, e: 'outBack' }];
-    default: return [{ u, x: off, y: rest.y + 0.22, w: rest.w * 1.1, r: rest.r + (dir < 0 ? -55 : 55), blur: 16 }, { u: u + dur, ...rest, blur: 0, e: e === 'outBounce' || e === 'outElastic' ? 'outExpo' : e }];   // whip
+    case 'drop': return [{ u, x: rest.x, y: -0.5, w: rest.w * 1.05, r: rest.r + 22, blur: 14, yaw: 200 }, { u: u + dur + 0.1, ...rest, blur: 0, yaw: 0, e: 'outBounce' }];
+    case 'rise': return [{ u, x: rest.x, y: 1.6, w: rest.w * 1.05, r: rest.r - 18, blur: 14, yaw: -220 }, { u: u + dur, ...rest, blur: 0, yaw: 0, e: e === 'outBounce' ? 'outExpo' : e }];
+    case 'spin': return [{ u, x: rest.x, y: rest.y, w: rest.w * 0.06, r: rest.r - 320, blur: 5, yaw: 540 }, { u: u + dur + 0.15, ...rest, blur: 0, yaw: 0, e: 'outBack' }];
+    case 'pop': return [{ u, x: rest.x, y: rest.y, w: rest.w * 0.1, r: rest.r - 12, blur: 0, yaw: 360 }, { u: u + 0.6, ...rest, yaw: 0, e: 'outBack' }];
+    default: return [{ u, x: off, y: rest.y + 0.22, w: rest.w * 1.1, r: rest.r + (dir < 0 ? -55 : 55), blur: 16, yaw: dir < 0 ? -260 : 260 }, { u: u + dur, ...rest, blur: 0, yaw: 0, e: e === 'outBounce' || e === 'outElastic' ? 'outExpo' : e }];   // whip
   }
 }
 const drift = (ctx, u, rest, sgn = 1) => { const d = ctx.v.motion.drift; return { u, x: +(rest.x + d * sgn).toFixed(3), y: +(rest.y - 0.012).toFixed(3), w: +(rest.w * 1.04).toFixed(3), r: rest.r + 6 * sgn, e: 'inOutCubic' }; };

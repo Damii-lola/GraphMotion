@@ -84,15 +84,17 @@ function compile(plan, assets) {
   { const last = scenes[scenes.length - 1], shown = showName(plan.brand, plan.product), w0 = String(shown || '').split(' ')[0].toLowerCase();
     const has = layers.some((l) => l.kind === 'text' && l.t0 >= last.t0 - 0.3 && l.lines.join(' ').toLowerCase().includes(w0));
     if (!has && lastPal) layers.push({ kind: 'text', lines: [String(shown || '').toUpperCase()], x: 0.5, y: 0.93, size: fitSize(Math.max(4, String(shown || '').length), 'line') * 1.1, font: vary.forScene(dice, scenes.length - 1).font('head'), color: lastPal.ink, upper: true, r: 0, track: 0.12, align: 'center', in: { kind: 'pop', dur: 0.4 }, t0: +(last.t0 + 0.9).toFixed(2), t1: D, front: true, shadow: true, z: 6 }); }
+  // ---- a round pack (can, bottle, jar) turns like a turntable: a full turn on arrival, then a gentle swing
+  const isRound = /can|bottle|jar|tub|tin|cup|tube|canister|drum|keg/i.test(String((plan.product && plan.product.kind) || '')), swing = +(9 + (dice.tiltSign > 0 ? 3 : 0) + (dice.motion === 'smooth' ? 4 : 0)).toFixed(1);
   // ---- the main pack: ONE continuous track
   const way = heroWay.sort((a, b) => a.t - b.t);
   if (way.length >= 1) {
     if (way.length === 1) way.push({ ...way[0], t: +(way[0].t + 0.1).toFixed(3) });
-    const base = 0.5, keys = way.map((k) => { const q = { t: k.t, x: k.x, y: k.y, s: +(k.w / base).toFixed(3), r: k.r, ...(k.blur !== undefined ? { blur: k.blur } : {}), ...(k.e ? { e: k.e } : {}), ...(k.o !== undefined ? { o: k.o } : {}), ...(k.sx !== undefined ? { sx: k.sx } : {}), ...(k.sy !== undefined ? { sy: k.sy } : {}) }; return q; });
-    layers.push({ kind: 'sprite', src: 'hero', main: true, t0: keys[0].t, t1: D, x: keys[0].x, y: keys[0].y, w: base, r: 0, keys, idle: { kind: 'drift', amp: 0.008, speed: 1 }, shadow: true, z: 3 });
+    const base = 0.5, keys = way.map((k) => { const q = { t: k.t, x: k.x, y: k.y, s: +(k.w / base).toFixed(3), r: k.r, ...(k.blur !== undefined ? { blur: k.blur } : {}), ...(k.e ? { e: k.e } : {}), ...(k.o !== undefined ? { o: k.o } : {}), ...(k.sx !== undefined ? { sx: k.sx } : {}), ...(k.sy !== undefined ? { sy: k.sy } : {}), ...(k.yaw !== undefined ? { yaw: k.yaw } : {}) }; return q; });
+    layers.push({ kind: 'sprite', src: 'hero', main: true, t0: keys[0].t, t1: D, x: keys[0].x, y: keys[0].y, w: base, r: 0, keys, idle: { kind: 'drift', amp: 0.008, speed: 1 }, shadow: true, z: 3, ...(isRound ? { cyl: true, swing: swing } : {}) });
   }
   // ---- other pack sprites (variants): waypoints in width -> scale keys
-  layers.forEach((l) => { if (l.kind === 'sprite' && l.pack && l.keys) { const b = l.keys[0].w || l.w || 0.5; l.w = b; l.keys = l.keys.map((k) => { const q = { ...k, s: +((k.w || b) / b).toFixed(3) }; delete q.w; return q; }); l.z = 3; } });
+  layers.forEach((l) => { if (l.kind === 'sprite' && l.pack && l.keys) { const b = l.keys[0].w || l.w || 0.5; l.w = b; l.keys = l.keys.map((k) => { const q = { ...k, s: +((k.w || b) / b).toFixed(3) }; delete q.w; return q; }); l.z = 3; if (isRound) { l.cyl = true; l.swing = swing; } } });
 
   // ---- laws that look across the whole promo
   const lay = enforceGlobal(layers, D);

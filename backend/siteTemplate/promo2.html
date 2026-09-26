@@ -113,7 +113,7 @@
   // ---------------------------------------------------------------- motion primitives (composable; nothing is a fixed template)
   // "in": how a thing arrives, ip = 0..1 progress of the arrival; "out": how it leaves; "idle": what it does while it stays.
   function motionState(L, t, base) {
-    const st = { x: base.x, y: base.y, s: 1, r: 0, o: 1, sx: 1, sy: 1, blur: L.blur || 0, rv: null };
+    const st = { x: base.x, y: base.y, s: 1, r: 0, o: 1, sx: 1, sy: 1, blur: L.blur || 0, rv: null, yaw: 0 };
     const t0 = L.t0 !== undefined ? L.t0 : 0, t1 = L.t1 !== undefined ? L.t1 : D;
     if (t < t0 || t > t1 + 0.001) { st.o = 0; return st; }
     const inn = L.in || {}, out = L.out || {}, idle = L.idle || {};
@@ -156,6 +156,7 @@
       if (K.some((k) => k.sx !== undefined)) st.sx = iv("sx", 1);
       if (K.some((k) => k.sy !== undefined)) st.sy = iv("sy", 1);
       if (K.some((k) => k.blur !== undefined)) st.blur = iv("blur", 0);
+      if (K.some((k) => k.yaw !== undefined)) st.yaw = iv("yaw", 0);
     }
     return st;
   }
@@ -174,6 +175,37 @@
     else if (kind === "glow") { x.shadowColor = rgbs(hex2(a, 0xffffff), 0.9); x.shadowBlur = Math.round(iw * (b || 40) / 500); x.drawImage(im, pad, pad); x.drawImage(im, pad, pad); }
     else if (kind === "blur") { x.filter = "blur(" + Math.max(0.5, a * iw / 500).toFixed(1) + "px)"; x.drawImage(im, pad, pad); }
     return (BAKED[key] = { c, k: c.width / iw });
+  }
+  // TURNTABLE: a round pack (can, bottle, jar) turns around its axis. The photo is the FRONT half of a cylinder: each screen column of the cylinder reads the photo column that
+  // faces it at the current angle (x' = sin(asin(x) + yaw)); the label repeats every half turn, the edges are shaded, a highlight slides across.
+  let cylC = null; const CYLTEX = {};
+  // the texture of a round pack: every row of the cut-out is stretched to the full width (a row's opaque span IS the cylinder's diameter there), so a turn never shows gaps or a
+  // changing outline; the silhouette itself is put back afterwards from the original picture
+  function cylTex(id, im) {
+    if (CYLTEX[id]) return CYLTEX[id];
+    const nw = im.naturalWidth, nh = im.naturalHeight, src = document.createElement("canvas"); src.width = nw; src.height = nh; const sc = src.getContext("2d"); sc.drawImage(im, 0, 0);
+    const d = sc.getImageData(0, 0, nw, nh).data, tex = document.createElement("canvas"); tex.width = nw; tex.height = nh; const tc = tex.getContext("2d");
+    for (let y = 0; y < nh; y++) { let l = -1, rr = -1; for (let x = 0; x < nw; x++) if (d[(y * nw + x) * 4 + 3] > 60) { if (l < 0) l = x; rr = x; } if (l >= 0 && rr - l > 2) tc.drawImage(src, l, y, rr - l + 1, 1, 0, y, nw, 1); }
+    return (CYLTEX[id] = tex);
+  }
+  function drawCyl(id, im, cx, cy, w, h, rot, o, sx, sy, yawDeg) {
+    const W2 = Math.max(8, Math.round(w)), H2 = Math.max(8, Math.round(h));
+    if (!cylC) cylC = document.createElement("canvas");
+    if (cylC.width !== W2 || cylC.height !== H2) { cylC.width = W2; cylC.height = H2; }
+    const c = cylC.getContext("2d"); c.clearRect(0, 0, W2, H2);
+    const TEX = cylTex(id, im), phi = yawDeg * Math.PI / 180, nw = im.naturalWidth, nh = im.naturalHeight, step = 2, N = Math.ceil(W2 / step);
+    for (let i = 0; i < N; i++) {
+      const xd = clamp(((i + 0.5) / N) * 2 - 1, -0.999, 0.999), a = Math.asin(xd) + phi;
+      const aw = (((a + Math.PI / 2) % Math.PI) + Math.PI) % Math.PI - Math.PI / 2, u = Math.sin(aw);
+      const sw = clamp((Math.cos(aw) / Math.sqrt(1 - xd * xd)) * (nw / N), 1, nw * 0.25), sxp = clamp((u * 0.5 + 0.5) * nw - sw / 2, 0, nw - sw);
+      c.drawImage(TEX, sxp, 0, sw, nh, i * step, 0, step + 0.7, H2);
+    }
+    c.globalCompositeOperation = "destination-in"; c.drawImage(im, 0, 0, W2, H2);   // the true silhouette
+    c.globalCompositeOperation = "source-atop";
+    const g1 = c.createLinearGradient(0, 0, W2, 0); g1.addColorStop(0, "rgba(0,0,0,0.34)"); g1.addColorStop(0.2, "rgba(0,0,0,0)"); g1.addColorStop(0.78, "rgba(0,0,0,0)"); g1.addColorStop(1, "rgba(0,0,0,0.42)"); c.fillStyle = g1; c.fillRect(0, 0, W2, H2);
+    const hx = clamp(0.5 - Math.sin(phi) * 0.32 - 0.12, 0.12, 0.88) * W2, g2 = c.createLinearGradient(hx - W2 * 0.12, 0, hx + W2 * 0.12, 0); g2.addColorStop(0, "rgba(255,255,255,0)"); g2.addColorStop(0.5, "rgba(255,255,255,0.22)"); g2.addColorStop(1, "rgba(255,255,255,0)"); c.fillStyle = g2; c.fillRect(0, 0, W2, H2);
+    c.globalCompositeOperation = "source-over";
+    g.save(); g.translate(cx, cy); g.rotate(rot * Math.PI / 180); g.scale(sx, sy); g.globalAlpha *= clamp(o, 0, 1); g.drawImage(cylC, -w / 2, -h / 2, w, h); g.restore();
   }
   function drawSprite(id, cx, cy, w, rot, o, sx, sy, shadow, fx) {
     const im = IMG[id]; if (!im || !im.complete || !im.naturalWidth || o <= 0.001) return;
@@ -196,10 +228,13 @@
   function drawSpriteLayer(L, t, cam, bg) {
     const base = { x: (L.x !== undefined ? L.x : 0.5), y: (L.y !== undefined ? L.y : 0.5) }, st = motionState(L, t, base); if (st.o <= 0) return;
     const [dx, dy] = ox(L, cam), w = (L.w || 0.5) * W;
-    if (L.keys && L.keys.length) {                                      // motion blur: trailing ghosts along the path while it moves fast
+    const yawT = st.yaw + (L.cyl ? Math.sin(t * 1.7) * (L.swing || 0) : 0), spinning = L.cyl && Math.abs(yawT) > 0.6;
+    if (L.keys && L.keys.length && !spinning) {                        // motion blur: trailing ghosts along the path while it moves fast (a turning pack has none: its ghosts would not turn)
       const p0 = motionState(L, t - 1 / 30, base), dist = Math.hypot((st.x - p0.x) * W, (st.y - p0.y) * H), n = Math.min(4, Math.floor(dist / 22));
       for (let k = n; k >= 1; k--) { const gs = motionState(L, t - (k / n) * (1 / 36), base); drawSprite(L.src, gs.x * W + dx, gs.y * H + dy, w * gs.s, (L.r || 0) + gs.r, gs.o * 0.28, gs.sx, gs.sy, null, null); }
     }
+    const imc = IMG[L.src];
+    if (L.cyl && Math.abs(yawT) > 0.6 && st.blur <= 6 && !st.rv && !L.glow && imc && imc.complete && imc.naturalWidth) { const w2 = w * st.s; drawCyl(L.src, imc, st.x * W + dx, st.y * H + dy, w2, w2 * imc.naturalHeight / imc.naturalWidth, (L.r || 0) + st.r, st.o, st.sx, st.sy, yawT); return; }
     drawSprite(L.src, st.x * W + dx, st.y * H + dy, w * st.s, (L.r || 0) + st.r, st.o, st.sx, st.sy, L.shadow === false ? null : (L.shadow || { blur: 46, y: 26, a: 0.3 }), { blur: st.blur, rv: st.rv, glow: L.glow });
   }
   // ingredients / props flying in around the hero: every copy has its own deterministic flight, then drifts
