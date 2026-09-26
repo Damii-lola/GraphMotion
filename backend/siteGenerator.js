@@ -24,6 +24,7 @@ const flow = require('./flowSpec');
 const klein = require('./kleinClient');
 const MOVIE = process.env.MOVIE === '1' || (process.env.MOVIE !== '0' && (!!process.env.HF_TOKEN || !!process.env.FAL_KEY || !!process.env.VIDEO_WORKER_SECRET));                    // default: ONE CONTINUOUS FILM - shot 1 is a picture, then chained image-to-video clips (no cuts, no transitions)
 const promoFilm = require('./promoFilm');
+const promoDirector = require('./promoDirector');
 const promoOn = () => (process.env.FILM_MODE || 'promo') === 'promo';    // PRODUCT PROMOS: ~9 s motion graphics designed by the AI (no video worker, no voice)
 const movieOn = () => !promoOn() && MOVIE && videoGen.available();            // a notebook worker that is not running simply means: pictures joined by dives, as before
 const videoGen = require('./videoGen');
@@ -402,6 +403,23 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   let spec = given;
   if (!spec) {
     say(promoOn() ? 'Designing your promo' : 'Writing the ad script', 0.05);
+    // STAGED DESIGN: a director plans the scenes from a reference spot, one animator call per scene writes that scene's layers (in parallel), the pictures paint meanwhile
+    if (promoOn() && process.env.PROMO_DESIGNER !== 'single') {
+      const paintCache = new Map(); let stagedRaw = null;
+      const call = async (sys, prompt, o) => {
+        const est = neurons.estText(SPEC_MODEL, sys.length + prompt.length, Math.round((o.maxTokens || 4000) * 0.4));
+        neurons.charge(est, 'promo ' + (o.what || 'call'), paintCache.size ? 0 : 7 * neurons.estKlein(true));
+        let usage = null;
+        const txt = await callCloudflareRaw(sys, prompt, { jsonMode: true, maxTokens: o.maxTokens, temperature: o.temperature, model: SPEC_MODEL, timeoutMs: 180000, reasoning: o.reasoning || 'low', onUsage: (u) => { usage = u; } });
+        neurons.settleText(SPEC_MODEL, est, usage, 'promo ' + (o.what || 'call'));
+        return txt;
+      };
+      try {
+        const r = await promoDirector.design({ brief: text.slice(0, 5000), call, say, onPlan: (plan) => { if (planOnly) return; try { startPaint(promoFilm.normalizePromo({ brand: plan.brand, product: plan.product, props: plan.props, duration: plan.duration }, { brand: company && company.name }), paintCache); } catch (e) { console.warn('[promo] early painting skipped: ' + String(e.message).slice(0, 100)); } } });
+        stagedRaw = r.raw; stagedRaw.__review = { staged: true, mimic: r.plan.mimic };
+      } catch (e) { if (/Neuron guard|429|allocation/i.test(String(e && e.message))) throw e; console.warn('[promo] staged design failed, using the single-call designer: ' + String(e && e.message).slice(0, 160)); paintCache.clear(); }
+      if (stagedRaw) return await buildPromoFilm({ raw: stagedRaw, company, outDir, say, planOnly, cache: paintCache });
+    }
     const sysPrompt = promoOn() ? promoFilm.PROMO_SYSTEM : SYSTEM;
     let scriptModel = SPEC_MODEL;
     let raw = null, lastErr = null, keep = 7800, outEst = promoOn() ? (OSS ? 5500 : 2600) : OSS ? 2100 : 1400, maxTok = promoOn() ? (OSS ? 9000 : 3600) : movieOn() ? 1900 : 2600, temp = promoOn() ? 1.0 : 0.8;   // a keyframe script is ~1000-1200 tokens: a runaway answer is cut off early (and cheaply)
