@@ -29,7 +29,7 @@ ${brief}
 YOU DESIGN EVERYTHING - there are no templates. You write a "motion script" from these primitives; the renderer plays exactly what you write. Coordinates x, y, cx, cy are fractions of the screen (0,0 = top-left, 1,1 = bottom-right); widths (w) and sizes are fractions of the screen WIDTH; times are seconds from 0. Layers are drawn in the order you write them (later = on top).
 PRIMITIVES ("kind"):
 - "sprite": a picture. src is "hero" (the product pack shot) or "prop0".."prop3" (your props). Fields: beat (0..n-1, or "all" so it stays through every beat), t0, t1, x, y, w, r (rotation degrees), in {kind, dur, delay}, out {kind, dur}, idle {kind, amp, speed}, keys [{t, x, y, s (scale), r, o (opacity), e (ease)}]. in/out kinds: ${IN_KINDS.join(', ')}. idle kinds: ${IDLE.join(', ')}. ease names: ${EASES.join(', ')}. "keys" are free keyframes (their r is EXTRA rotation added on top of the sprite's r): use them to fly the hero from one place to another between beats. The first key should equal the pose the sprite has after arriving (x, y as written, s 1, r 0); before it the sprite does its "in" arrival.
-- "text": lines ["WORD","WORD"], beat, t0, t1, x, y, size (0.04 tiny .. 0.34 giant), font, color, upper, track (letter spacing), r, align, stroke {color, w}, shadow (true/false), in {kind, dur, stag} (kinds: ${TEXT_IN.join(', ')}; words arrive one by one), out {kind}, tone (true = the word is a shade lighter/darker than the backdrop: tone-on-tone, the classic giant word behind a product), alpha, front (true = draw over the product), repeat {n, dy, speed}: the same word stacked n times, the copies outlined and fading away from the middle (the "NEW NEW NEW" wall behind a product). Fonts: ${Object.entries(FONTS).map(([k, v]) => k + ' (' + v + ')').join('; ')}.
+- "text": lines ["WORD","WORD"], beat, t0, t1, x, y, size (0.04 tiny .. 0.34 giant), font, color, upper, track (letter spacing), r (rotation degrees; 90 or -90 runs a giant word vertically up the side of the screen, behind the product), align, stroke {color, w}, shadow (true/false), in {kind, dur, stag} (kinds: ${TEXT_IN.join(', ')}; words arrive one by one), out {kind}, tone (true = the word is a shade lighter/darker than the backdrop: tone-on-tone, the classic giant word behind a product), alpha, front (true = draw over the product), repeat {n, dy, speed}: the same word stacked n times, the copies outlined and fading away from the middle (the "NEW NEW NEW" wall behind a product). Fonts: ${Object.entries(FONTS).map(([k, v]) => k + ' (' + v + ')').join('; ')}.
 - "scatter": pieces flying around the hero. src (one prop id or a list), n (1-16), beat, t0, t1, cx, cy, spread, size [min,max], from ("burst" out of the centre, "corners" = big pieces cropped by the frame corners and edges, "edges", "top", "sides"), seed, spin, stag.
 - "pattern": src repeated as a pattern. sub ("radial" rings of copies, "grid", "ring"), t0, t1, cx, cy, w, spin, rings, cols, rows, stag, alpha.
 - shapes (the moving furniture of the backdrop): kind one of ${SHAPES.join(', ')}. circle {x,y,size,color}; rect {x,y,w,h,radius,color}; rings {x,y,n,gap,width,speed,color,color2} (concentric rings pulsing outward); wave {y,amp,wl,speed,color,side:"top"|"bottom"}; rays {x,y,n,speed,color}; dots {gap,dot,speed,color}; stripes {w,speed,color,r}; burst {x,y,n,color,color2,life}. All shapes take beat, t0, t1, alpha, in / out / idle / keys like sprites.
@@ -37,16 +37,16 @@ CAMERA: "cam": [{t, kind:"punch"|"shake", amp, dur}] (a punch is a quick zoom bu
 BACKDROP: "zones": one per beat, {c0, c1, shape:"radial"}: c0 is the vivid bright centre colour, c1 the deeper edge colour; the camera glides across the board from zone to zone between beats. Choose colours that make the product POP (usually the product's own colour family or its strong opposite), and make consecutive zones clearly different.
 DESIGN RULES (a promo that breaks these looks empty and cheap):
 1. RICH BEATS: every beat layers at least FIVE things: a moving backdrop shape (rings / rays / wave / stripes / dots / a pattern of the product's own pieces), ONE giant word (size 0.2-0.34; tone-on-tone with "repeat" stacked behind the product looks best, or a bold slam in a saturated colour with a shadow), the hero, big props from a "scatter" (size [0.18, 0.4], from "corners" / "burst" / "sides" so they are cropped by the frame edges), and optionally one tiny line (size 0.035-0.05). Never write the same scatter or the same shape twice: change the from, the seed, the size, the font, the motion in every beat.
-2. THE HERO IS THE STAR: w 0.45-0.6, on screen by 1.2 s, arriving with drama (spin, zoom or pop with a camera punch), TILTED (r between 8 and 18 degrees, either way), and it MOVES to a different place, size and tilt in every beat using "keys" with outBack easing (like a camera cutting between angles). It never sits still: also give it an idle float.
+2. THE HERO IS THE STAR AND IT FLIES: in every beat the product sweeps in FAST from off-screen (from a different side each beat), decelerates into its pose TILTED (r 8-25 degrees, either way), drifts slowly while it holds, then flies out off-screen as the next beat begins. You choreograph this with "hero_path": one entry per beat {beat, from, x, y, s, r, to}: "from" and "to" are where it comes in from / leaves to ("left","right","top","bottom","topleft","topright","bottomleft","bottomright", and "none" for the last beat), x, y, s, r are its resting pose (x, y 0.25-0.75, s 0.8-1.25, r tilt). The renderer flies it along that path with motion blur; do NOT write keys for the hero sprite. The other elements (props, small lines, bursts, splashes) fire when the hero LANDS; the giant words and backdrop shapes are already there.
 3. Text stays clear of the product: giant words sit BEHIND it (write them before the hero) and may be overlapped; a tiny line goes in the free space above or below the hero. AT MOST 14 words in total, only words that come from the brief or describe the taste, feel or look. 3 or 4 beats of 2-3 s that tile 0..duration with no gaps.
-4. BACKDROP: one zone per beat, saturated: pick the product's colour family or its strong opposite, and make consecutive zones clearly different hues.
+4. BACKDROP: it barely moves and stays in ONE colour family for the whole promo (the product's own colour or its strong opposite, saturated): the hero is what moves. Zones: give the colours of the first zone; later zones only shift slightly.
 5. The last beat: the product plus the BRAND NAME big (0.14-0.2) placed low with the hero moved up and smaller, plus at most 3 words of call to action. No prices, no claims you cannot see. Never tell a company story.
 
-A COMPLETE EXAMPLE for a different product (strawberry milk in a plastic bottle). Show this level of richness and layering, but design YOUR promo for the brief above with its own words (never reuse the example's words), colours, props, fonts and choreography:
-{"brand":"BERRY MOO","product":{"name":"Berry Moo strawberry milk","kind":"plastic bottle of strawberry milk","look":"a slim glossy pink plastic bottle with a white cap and a big strawberry illustration","colors":["#ff6fa5","#ffffff"]},"props":[{"name":"strawberry","look":"a fresh whole strawberry with a green leaf"},{"name":"splash","look":"a creamy pink milk splash frozen mid-air"},{"name":"heart","look":"a glossy pink candy heart"}],"duration":9,"zones":[{"c0":"#ff8fb8","c1":"#c2185b"},{"c0":"#ffd84a","c1":"#e65100"},{"c0":"#5ad1ff","c1":"#0b3d91"},{"c0":"#ff5c8a","c1":"#7b1044"}],"beats":[{"t0":0,"t1":2.3,"zone":0},{"t0":2.3,"t1":4.6,"zone":1},{"t0":4.6,"t1":6.9,"zone":2},{"t0":6.9,"t1":9,"zone":3}],"layers":[
+A COMPLETE EXAMPLE for a different product (strawberry milk in a plastic bottle). Show this level of richness and layering, but design YOUR promo for the brief above with its own words (never reuse the example's words, and choose your own hero_path: different sides, poses and tilts than the example's), colours, props, fonts and choreography:
+{"brand":"BERRY MOO","product":{"name":"Berry Moo strawberry milk","kind":"plastic bottle of strawberry milk","look":"a slim glossy pink plastic bottle with a white cap and a big strawberry illustration","colors":["#ff6fa5","#ffffff"]},"props":[{"name":"strawberry","look":"a fresh whole strawberry with a green leaf"},{"name":"splash","look":"a creamy pink milk splash frozen mid-air"},{"name":"heart","look":"a glossy pink candy heart"}],"duration":9,"zones":[{"c0":"#ff8fb8","c1":"#c2185b"},{"c0":"#ff7aa8","c1":"#b3134f"},{"c0":"#ff9cc2","c1":"#a01248"},{"c0":"#ff6f9f","c1":"#8a0f3f"}],"beats":[{"t0":0,"t1":2.3,"zone":0},{"t0":2.3,"t1":4.6,"zone":1},{"t0":4.6,"t1":6.9,"zone":2},{"t0":6.9,"t1":9,"zone":3}],"layers":[
 {"kind":"rings","beat":0,"t0":0,"t1":2.7,"x":0.5,"y":0.55,"color":"#ffffff","color2":"#ffb3d1","n":8,"gap":0.14,"width":0.05,"speed":0.5,"alpha":0.35},
 {"kind":"text","beat":0,"t0":0.1,"t1":2.7,"x":0.5,"y":0.5,"font":"anton","size":0.3,"color":"#ffffff","tone":true,"lines":["BERRY"],"repeat":{"n":7,"dy":0.85,"speed":0.05},"in":{"kind":"slam","dur":0.35}},
-{"kind":"sprite","src":"hero","beat":"all","t0":0.2,"t1":9,"x":0.5,"y":0.56,"w":0.5,"r":-9,"in":{"kind":"spin","dur":0.7,"turns":1},"idle":{"kind":"float","amp":0.012,"speed":1},"keys":[{"t":2.2,"x":0.5,"y":0.56,"s":1,"r":0},{"t":2.9,"x":0.66,"y":0.6,"s":1.18,"r":21,"e":"outBack"},{"t":4.5,"x":0.66,"y":0.6,"s":1.18,"r":21},{"t":5.2,"x":0.34,"y":0.5,"s":1.06,"r":-6,"e":"outBack"},{"t":6.8,"x":0.34,"y":0.5,"s":1.06,"r":-6},{"t":7.5,"x":0.5,"y":0.4,"s":0.86,"r":9,"e":"outBack"}]},
+{"kind":"sprite","src":"hero","beat":"all","w":0.5,"idle":{"kind":"drift","amp":0.012,"speed":1}},
 {"kind":"scatter","src":["prop0","prop1"],"beat":0,"n":8,"t0":0.5,"t1":2.7,"cx":0.5,"cy":0.55,"spread":0.5,"size":[0.16,0.3],"from":"burst","seed":7,"spin":320},
 {"kind":"text","beat":0,"t0":1.2,"t1":2.6,"x":0.5,"y":0.1,"font":"poppins","size":0.045,"color":"#ffffff","track":0.16,"lines":["new"],"in":{"kind":"rise","dur":0.4}},
 {"kind":"wave","beat":1,"t0":2.3,"t1":4.9,"y":0.8,"color":"#ff9d00","amp":0.03,"wl":0.8,"speed":0.4,"side":"bottom"},
@@ -59,10 +59,10 @@ A COMPLETE EXAMPLE for a different product (strawberry milk in a plastic bottle)
 {"kind":"burst","beat":3,"t0":6.9,"t1":8.2,"x":0.5,"y":0.42,"color":"#ffffff","color2":"#ffb3d1","n":26,"seed":5,"life":1},
 {"kind":"text","beat":3,"t0":7.1,"t1":9,"x":0.5,"y":0.8,"font":"anton","size":0.18,"color":"#ffffff","lines":["BERRY MOO"],"shadow":true,"front":true,"in":{"kind":"slam","dur":0.4,"stag":0.15}},
 {"kind":"text","beat":3,"t0":7.9,"t1":9,"x":0.5,"y":0.92,"font":"poppins","size":0.04,"color":"#ffffff","track":0.14,"lines":["grab one"],"in":{"kind":"fade","dur":0.5}}],
-"cam":[{"t":0.7,"kind":"punch","amp":0.08,"dur":0.3},{"t":2.9,"kind":"punch","amp":0.06,"dur":0.3},{"t":5.2,"kind":"punch","amp":0.06,"dur":0.3},{"t":7.5,"kind":"shake","amp":9,"dur":0.35}],"sound":{"music":"pulse"}}
+"hero_path":[{"beat":0,"from":"bottomleft","x":0.5,"y":0.56,"s":1,"r":-12,"to":"right"},{"beat":1,"from":"left","x":0.66,"y":0.55,"s":1.1,"r":16,"to":"top"},{"beat":2,"from":"bottom","x":0.34,"y":0.5,"s":1.05,"r":-14,"to":"left"},{"beat":3,"from":"topright","x":0.5,"y":0.42,"s":0.9,"r":6,"to":"none"}],"cam":[{"t":7.4,"kind":"shake","amp":9,"dur":0.35}],"sound":{"music":"pulse"}}
 
 Return ONE JSON object with these keys:
-"brand" (the brand name exactly as in the brief, max 24 characters), "product": {"name", "kind" (what it physically is: "canned soft drink", "bag of potato chips", "chocolate bar"...), "look" (how the pack looks for an image AI: shape, materials, the two or three colours, label art WITHOUT any text, max 30 words), "colors" ["#rrggbb","#rrggbb"] (its two main colours)}, "props": 2 to 4 objects {"name", "look" (one thing that belongs to the product - an ingredient, a slice, a piece, a splash, a crumb - described for an image AI, no text, max 18 words)}, "duration" (8 to 10), "zones" (one per beat), "beats": [{"t0","t1","zone"}], "layers" (the motion script), "cam", "sound": {"music": "pulse" | "warm pad" | "tense" | "dark drone"}.
+"brand" (the brand name exactly as in the brief, max 24 characters), "product": {"name", "kind" (what it physically is: "canned soft drink", "bag of potato chips", "chocolate bar"...), "look" (how the pack looks for an image AI: shape, materials, the two or three colours, label art WITHOUT any text, max 30 words), "colors" ["#rrggbb","#rrggbb"] (its two main colours)}, "props": 2 to 4 objects {"name", "look" (one thing that belongs to the product - an ingredient, a slice, a piece, a splash, a crumb - described for an image AI, no text, max 18 words)}, "duration" (8 to 10), "zones" (one per beat), "beats": [{"t0","t1","zone"}], "layers" (the motion script), "hero_path" (one per beat, see rule 2), "cam", "sound": {"music": "pulse" | "warm pad" | "tense" | "dark drone"}.
 Output the JSON object only.`;
 }
 
@@ -96,7 +96,41 @@ function motionIO(o, kinds, dDur) {
  * (a moving backdrop shape in every beat, a hero that travels and tilts, scatter that is never a copy of the last beat's), then the layers are put in a sane draw order:
  * backdrop shapes, giant words, patterns, the hero, the other pictures, the scattered pieces, and small lines on top.
  */
-function richen(layers, beats, zones, D, rand) {
+/**
+ * The hero's flight: for every beat it sweeps in FAST from off-screen (decelerating into its pose, tilted), drifts while it holds, then flies out as the next beat starts.
+ * The AI chooses the sides and the resting poses ("hero_path"); this turns them into keyframes. Returns the moments the hero lands (other elements fire then).
+ */
+function heroChoreo(hero, beats, D, path, rand) {
+  const nb = beats.length, DIRS = ['left', 'right', 'top', 'bottom', 'topleft', 'topright', 'bottomleft', 'bottomright'];
+  const opposite = { left: 'right', right: 'left', top: 'bottom', bottom: 'top', topleft: 'bottomright', topright: 'bottomleft', bottomleft: 'topright', bottomright: 'topleft' };
+  const off = (dir, p) => {
+    const jy = Math.max(0.15, Math.min(0.85, p.y + (rand() - 0.5) * 0.5)), jx = Math.max(0.15, Math.min(0.85, p.x + (rand() - 0.5) * 0.5));
+    return dir === 'left' ? [-0.62, jy] : dir === 'right' ? [1.62, jy] : dir === 'top' ? [jx, -0.5] : dir === 'bottom' ? [jx, 1.5] : dir === 'topleft' ? [-0.6, -0.45] : dir === 'topright' ? [1.6, -0.45] : dir === 'bottomleft' ? [-0.6, 1.45] : [1.6, 1.45];
+  };
+  const start = Math.floor(rand() * DIRS.length), sign = rand() < 0.5 ? 1 : -1;
+  const defX = [0.5, 0.68, 0.32, 0.5], defY = [0.56, 0.5, 0.55, 0.42], defS = [1, 1.1, 1.05, 0.9], defR = [-12, 15, -13, 6];
+  const poses = [];
+  for (let b = 0; b < nb; b++) {
+    const p = path[b] || {}, last = b === nb - 1;
+    poses.push({ from: p.from || DIRS[(start + b * 3) % DIRS.length], x: p.x !== undefined ? p.x : (defX[b] !== undefined ? defX[b] : 0.5), y: p.y !== undefined ? p.y : (defY[b] !== undefined ? defY[b] : 0.5), s: p.s !== undefined ? p.s : (defS[b] || 1), r: p.r !== undefined ? p.r : (defR[b] || 0) * sign, to: last ? 'none' : p.to || undefined });
+  }
+  poses.forEach((p, b) => { if (b < nb - 1 && (!p.to || p.to === 'none')) p.to = opposite[poses[b + 1].from]; });
+  const ks = [], arrive = [];
+  poses.forEach((p, b) => {
+    const B = beats[b].t0, tStart = b === 0 ? 0.1 : B - 0.02, tArr = b === 0 ? 1.1 : B + 0.85, [sx, sy] = off(p.from, p), spin = (b % 2 ? -1 : 1) * 55, dd = b % 2 ? -1 : 1;
+    ks.push({ t: +tStart.toFixed(2), x: +sx.toFixed(3), y: +sy.toFixed(3), s: +(p.s * 1.15).toFixed(3), r: +(p.r + spin).toFixed(1) });
+    ks.push({ t: +tArr.toFixed(2), x: p.x, y: p.y, s: p.s, r: p.r, e: 'outCubic' }); arrive.push(tArr);
+    const tOut = b < nb - 1 ? beats[b + 1].t0 - 0.4 : D;
+    if (tOut > tArr + 0.35) ks.push({ t: +tOut.toFixed(2), x: +(p.x + dd * 0.06).toFixed(3), y: +(p.y - 0.03).toFixed(3), s: +(p.s * 1.07).toFixed(3), r: +(p.r + dd * 11).toFixed(1), e: 'inOutCubic' });
+    if (b < nb - 1 && p.to && p.to !== 'none') { const [ex, ey] = off(p.to, p); ks.push({ t: +(beats[b + 1].t0 - 0.02).toFixed(2), x: +ex.toFixed(3), y: +ey.toFixed(3), s: +(p.s * 1.1).toFixed(3), r: +(p.r + dd * 45).toFixed(1), e: 'inCubic' }); }
+  });
+  hero.keys = ks.map((k, i) => [k, i]).sort((a, b) => a[0].t - b[0].t || a[1] - b[1]).map((x) => x[0]);
+  hero.r = 0; hero.t0 = 0.1; hero.t1 = D; hero.beat = 'all'; delete hero.in; delete hero.out; hero.x = poses[0].x; hero.y = poses[0].y;
+  hero.idle = { kind: 'drift', amp: 0.012, speed: 1 };
+  return arrive;
+}
+
+function richen(layers, beats, zones, D, rand, heroPath, camOut) {
   const nb = beats.length, inBeat = (l, b) => l.beat === b || (l.beat === undefined && l.t0 >= beats[b].t0 - 0.01 && l.t0 < beats[b].t1) || (l.beat === 'all');
   // 1. a real moving shape or product pattern behind every beat
   for (let b = 0; b < nb; b++) {
@@ -123,18 +157,17 @@ function richen(layers, beats, zones, D, rand) {
     const from = b === nb - 1 ? 'corners' : froms[(b * 2 + Math.floor(rand() * 2)) % 3];
     layers.push({ kind: 'scatter', beat: b, t0: +(beats[b].t0 + 0.25).toFixed(2), t1: +(beats[b].t1 + 0.35).toFixed(2), src: srcAll, n: from === 'corners' ? 6 : 8, cx: 0.5, cy: 0.55, spread: 0.5, size: [0.2, 0.38], from, seed: 1 + Math.floor(rand() * 900), spin: 240, stag: 0.35 });
   }
-  // 3. the hero tilts and travels: a different place, size and tilt in every beat
+  // 3. the hero FLIES: sweeps in fast from off-screen, lands tilted, drifts, flies out; everything else fires when it lands
   const hero = layers.find((l) => l.kind === 'sprite' && l.src === 'hero');
   if (hero) {
-    if (!hero.r) hero.r = (rand() < 0.5 ? -1 : 1) * (9 + rand() * 6);
-    hero.r = Math.max(-16, Math.min(16, hero.r)); if (hero.keys) hero.keys.forEach((k) => { if (k.r !== undefined) k.r = Math.max(-22 - hero.r, Math.min(22 - hero.r, k.r)); });   // the tilt (base + keyframe) never exceeds ~22 degrees
-    if (!hero.keys && nb >= 3) {
-      const poses = [], side = rand() < 0.5 ? 1 : -1; let r0 = hero.r;
-      for (let b = 1; b < nb; b++) { const last = b === nb - 1; poses.push(last ? { x: 0.5, y: 0.42, s: 0.9, r: (rand() * 2 - 1) * 8 - r0 } : { x: 0.5 + side * (b % 2 ? 1 : -1) * (0.13 + rand() * 0.06), y: 0.5 + rand() * 0.1, s: 1.06 + rand() * 0.14, r: (b % 2 ? -1 : 1) * side * (8 + rand() * 6) - r0 }); }
-      const ks = [{ t: +(beats[1].t0 - 0.1).toFixed(2), x: hero.x, y: hero.y, s: 1, r: 0 }];
-      poses.forEach((p, i) => { const b = i + 1, t0 = beats[b].t0, end = b + 1 < nb ? beats[b + 1].t0 - 0.1 : D; ks.push({ t: +(t0 + 0.6).toFixed(2), x: +p.x.toFixed(3), y: +p.y.toFixed(3), s: +p.s.toFixed(3), r: +p.r.toFixed(1), e: 'outBack' }); if (end > t0 + 0.7) ks.push({ t: +end.toFixed(2), x: +p.x.toFixed(3), y: +p.y.toFixed(3), s: +p.s.toFixed(3), r: +p.r.toFixed(1) }); });
-      hero.keys = ks.sort((a, b) => a.t - b.t);
-    }
+    const arrive = heroChoreo(hero, beats, D, heroPath || [], rand);
+    layers.forEach((l) => {
+      if (l === hero || typeof l.beat !== 'number') return;
+      const fire = l.kind === 'scatter' || l.kind === 'burst' || l.kind === 'sprite' || (l.kind === 'text' && !l.tone && !l.repeat);
+      const ta = arrive[l.beat]; if (!fire || ta === undefined) return;
+      if (l.t0 < ta - 0.05) { l.t0 = +(ta - 0.05).toFixed(2); if (l.t1 < l.t0 + 0.9) l.t1 = +Math.min(D, l.t0 + 0.9).toFixed(2); }
+    });
+    const shakes = camOut.filter((c) => c.kind === 'shake'); camOut.length = 0; arrive.forEach((t) => camOut.push({ t: +Math.min(D - 0.3, t - 0.05).toFixed(2), kind: 'punch', amp: 0.05, dur: 0.3 })); shakes.forEach((c) => camOut.push(c));
   }
   // 3b. the closing brand line is drawn over everything (props never cover the name)
   layers.filter((l) => l.kind === 'text' && l.t1 >= D - 0.3 && l.t0 >= beats[nb - 1].t0 - 0.01).sort((a, b) => b.size - a.size).slice(0, 1).forEach((l) => { l.front = true; });
@@ -177,8 +210,8 @@ function normalizePromo(raw, ctx = {}) {
     let c0 = rgb(fixHex(z.c0, toHex(mix(pc, [255, 255, 255], 0.25 + 0.1 * i)))), c1 = rgb(fixHex(z.c1, toHex(mix(pc, [10, 10, 30], 0.5))));
     if (Math.max(...c0) - Math.min(...c0) < 55) c0 = mix(c0, pc, 0.6);                        // washed-out greys are not a backdrop: keep the centre vivid
     if (lum(c1) > lum(c0)) [c0, c1] = [c1, c0];                                               // bright centre, deeper edge
-    if (i && dist(c0, rgb(zones[i - 1].c0)) < 70) { c0 = hueShift(c0, 150 + 30 * i); c1 = hueShift(c1, 150 + 30 * i); }   // consecutive zones must be clearly different: a real hue change, never a dull mix
-    if (i > 0) { const a = rand() * Math.PI * 2, d = 1600 + rand() * 1000; px = Math.round(px + Math.cos(a) * d); py = Math.round(py + Math.sin(a) * d); }
+    if (i > 0) { const b0 = rgb(zones[0].c0), b1 = rgb(zones[0].c1), off = [0, 22, -18, 10][i] || 0, k = 0.1 * i * (i % 2 ? 1 : -1); c0 = hueShift(b0, off); c1 = hueShift(b1, off); c0 = k > 0 ? mix(c0, [255, 255, 255], k) : mix(c0, [0, 0, 0], -k); }   // one colour family for the whole promo: later zones only shift a little
+    if (i > 0) { const a = rand() * Math.PI * 2, d = 350 + rand() * 350; px = Math.round(px + Math.cos(a) * d); py = Math.round(py + Math.sin(a) * d); }
     zones.push({ c0: toHex(c0), c1: toHex(c1), shape: 'radial', x: px, y: py });
   }
 
@@ -200,7 +233,7 @@ function normalizePromo(raw, ctx = {}) {
     } else if (kind === 'text') {
       let lines = (Array.isArray(L.lines) ? L.lines : [L.text]).map((s) => cleanStr(s, 30)).filter(Boolean).slice(0, 3); if (!lines.length) return;
       const wc = lines.join(' ').split(' ').filter(Boolean).length; if (words + wc > 16) return; words += wc;      // the promo stays nearly wordless
-      const o = timing(L, { kind, lines, x: num(L.x, 0.5, 0.05, 0.95), y: num(L.y, 0.5, 0.05, 0.95), size: num(L.size, 0.1, 0.03, 0.36), font: oneOf(L.font, fontIds, 'anton'), color: fixHex(L.color, '#ffffff'), upper: L.upper !== false, track: num(L.track, 0, -0.05, 0.4), r: num(L.r, 0, -25, 25), align: oneOf(L.align, ['center', 'left', 'right'], 'center') });
+      const o = timing(L, { kind, lines, x: num(L.x, 0.5, 0.05, 0.95), y: num(L.y, 0.5, 0.05, 0.95), size: num(L.size, 0.1, 0.03, 0.36), font: oneOf(L.font, fontIds, 'anton'), color: fixHex(L.color, '#ffffff'), upper: L.upper !== false, track: num(L.track, 0, -0.05, 0.4), r: num(L.r, 0, -95, 95), align: oneOf(L.align, ['center', 'left', 'right'], 'center') });
       const i = L.in && oneOf(L.in.kind, TEXT_IN, null) ? { kind: L.in.kind, dur: num(L.in.dur, 0.45, 0.15, 1.2), stag: num(L.in.stag, 0.09, 0, 0.4) } : { kind: 'rise', dur: 0.45, stag: 0.09 }; o.in = i;
       const out = motionIO(L.out, IN_KINDS, 0.3); if (out) o.out = out;
       if (L.stroke && typeof L.stroke === 'object') o.stroke = { color: fixHex(L.stroke.color, '#000000'), w: num(L.stroke.w, 0.03, 0.01, 0.12) };
@@ -234,9 +267,11 @@ function normalizePromo(raw, ctx = {}) {
   if (!hasBrand) layers.push({ kind: 'text', beat: nb - 1, t0: +(lastBeat.t0 + 0.5).toFixed(2), t1: D, lines: [brand.length > 12 && brand.includes(' ') ? brand.split(' ').slice(0, 2).join(' ') : brand], x: 0.5, y: 0.86, size: brand.length > 10 ? 0.11 : 0.15, font: 'anton', color: '#ffffff', upper: true, track: 0, r: 0, align: 'center', in: { kind: 'slam', dur: 0.4, stag: 0.14 }, shadow: true });
   const cam = (Array.isArray(S.cam) ? S.cam : []).filter((c) => c && Number.isFinite(+c.t)).slice(0, 6).map((c) => ({ t: num(c.t, 0.5, 0, D - 0.3), kind: c.kind === 'shake' ? 'shake' : 'punch', amp: num(c.amp, c.kind === 'shake' ? 8 : 0.06, 0, c.kind === 'shake' ? 16 : 0.12), dur: num(c.dur, 0.3, 0.15, 0.8) }));
   if (!cam.length) cam.push({ t: Math.min(D - 0.5, (heroLayers[0] ? heroLayers[0].t0 : 0.4) + 0.15), kind: 'punch', amp: 0.06, dur: 0.3 });
-  richen(layers, beats, zones, D, rand);
+  const DIRS = ['left', 'right', 'top', 'bottom', 'topleft', 'topright', 'bottomleft', 'bottomright'];
+  const heroPath = (Array.isArray(S.hero_path) ? S.hero_path : []).filter((h) => h && typeof h === 'object').slice(0, 4).map((h) => ({ from: oneOf(h.from, DIRS, undefined), to: oneOf(h.to, DIRS.concat('none'), undefined), x: num(h.x, undefined, 0.2, 0.8), y: num(h.y, undefined, 0.3, 0.7), s: num(h.s, undefined, 0.75, 1.3), r: num(h.r, undefined, -28, 28) }));
+  richen(layers, beats, zones, D, rand, heroPath, cam);
   const music = oneOf(S.sound && S.sound.music, ['pulse', 'warm pad', 'tense', 'dark drone'], 'pulse');
-  return { brand, product, props, assets, duration: +D.toFixed(2), zones, beats, layers, cam, sound: { music }, pan: 0.55 };
+  return { brand, product, props, assets, duration: +D.toFixed(2), zones, beats, layers, cam, sound: { music }, pan: 0.9 };
 }
 
 /**
@@ -286,9 +321,7 @@ function layoutPass(promo, aspect) {
   const lb = promo.beats[promo.beats.length - 1], brandL = promo.layers.filter((l) => l.kind === 'text' && l.t1 >= D - 0.3 && l.t0 >= lb.t0 - 0.01).sort((a, b) => b.size - a.size)[0];
   if (brandL && overlapHero(brandL, brandL.x, brandL.y, brandL.size) > 0.02) {
     const tb = textBox(brandL, brandL.x, brandL.y, brandL.size), top = 0.07, bot = tb.y0 - 0.02, availH = Math.max(0.3, bot - top), hh = (hero.w * W / ar) / H, sNeed = Math.min(1, availH / (hh * 1.12)), cy = top + availH / 2, cur = pose(lb.t0 + 0.05);
-    const ks = (hero.keys || []).filter((k) => k.t < lb.t0 + 0.05); ks.push({ t: +(lb.t0 + 0.05).toFixed(2), x: +cur.x.toFixed(3), y: +cur.y.toFixed(3), s: +cur.s.toFixed(3), r: 0 });
-    ks.push({ t: +(lb.t0 + 0.65).toFixed(2), x: 0.5, y: +cy.toFixed(3), s: +sNeed.toFixed(3), r: 0, e: 'outBack' }, { t: D, x: 0.5, y: +cy.toFixed(3), s: +sNeed.toFixed(3), r: 0 });
-    hero.keys = ks.sort((a, b) => a.t - b.t);
+    (hero.keys || []).forEach((k) => { if (k.t >= lb.t0 + 0.3) { k.y = +cy.toFixed(3); k.s = +Math.min(k.s, sNeed).toFixed(3); } });
   }
   return promo;
 }
