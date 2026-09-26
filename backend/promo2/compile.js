@@ -2,7 +2,7 @@
 /*
  * THE COMPILER: plan (what the AI chose) + the real picture sizes -> the finished promo (layers, hero path, camera, sound), with the LAWS applied to everything.
  */
-const { LAWS, W, H, clamp, num, fixHex, rgb, hex, mix, vividBackdrop, inkFor, accentFor, fitSize, safeFont, cleanWord, oneOf } = require('./laws');
+const { showName, LAWS, W, H, clamp, num, fixHex, rgb, hex, mix, vividBackdrop, inkFor, accentFor, fitSize, safeFont, cleanWord, oneOf } = require('./laws');
 const vary = require('./vary');
 const backdrop = require('./backdrop');
 const { ARCH, IDS, minDur, seedRand, A, text, shape, scatter, push } = require('./archetypes');
@@ -81,9 +81,9 @@ function compile(plan, assets) {
   });
 
   // ---- the brand shows inside the LAST scene (there is no separate end card): a quiet lockup is added when the scene did not already carry the name
-  { const last = scenes[scenes.length - 1], w0 = String(plan.brand || '').split(' ')[0].toLowerCase();
+  { const last = scenes[scenes.length - 1], shown = showName(plan.brand, plan.product), w0 = String(shown || '').split(' ')[0].toLowerCase();
     const has = layers.some((l) => l.kind === 'text' && l.t0 >= last.t0 - 0.3 && l.lines.join(' ').toLowerCase().includes(w0));
-    if (!has && lastPal) layers.push({ kind: 'text', lines: [String(plan.brand || '').toUpperCase()], x: 0.5, y: 0.93, size: fitSize(Math.max(4, String(plan.brand || '').length), 'line') * 1.1, font: vary.forScene(dice, scenes.length - 1).font('head'), color: lastPal.ink, upper: true, r: 0, track: 0.12, align: 'center', in: { kind: 'pop', dur: 0.4 }, t0: +(last.t0 + 0.9).toFixed(2), t1: D, front: true, shadow: true, z: 6 }); }
+    if (!has && lastPal) layers.push({ kind: 'text', lines: [String(shown || '').toUpperCase()], x: 0.5, y: 0.93, size: fitSize(Math.max(4, String(shown || '').length), 'line') * 1.1, font: vary.forScene(dice, scenes.length - 1).font('head'), color: lastPal.ink, upper: true, r: 0, track: 0.12, align: 'center', in: { kind: 'pop', dur: 0.4 }, t0: +(last.t0 + 0.9).toFixed(2), t1: D, front: true, shadow: true, z: 6 }); }
   // ---- the main pack: ONE continuous track
   const way = heroWay.sort((a, b) => a.t - b.t);
   if (way.length >= 1) {

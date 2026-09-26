@@ -4,7 +4,7 @@
  * and every parameter of every scene (the words, fonts, tilt, side, entrance, which pack shot, which props, extras of its own). It never writes coordinates or keyframes: the engine's compiler does
  * that under the laws, so the result is always clean. The plan is reviewed against the laws once (the AI fixes what the review found).
  */
-const { LAWS, clamp, num, isHex, fixHex, rgb, dist, cleanWord, oneOf } = require('./laws');
+const { showName, LAWS, clamp, num, isHex, fixHex, rgb, dist, cleanWord, oneOf } = require('./laws');
 const { ARCH, IDS } = require('./archetypes');
 const { TRANSITIONS } = require('./compile');
 const vary = require('./vary');
@@ -101,7 +101,7 @@ function normalizePlan(raw, ctx = {}) {
   if (mimic.ref === 'R1') {
     const typed = scenes.find((x) => x.archetype === 'typed'), wall = scenes.find((x) => x.archetype === 'wall'), rest = scenes.filter((x) => x !== typed && x !== wall && x.archetype !== 'endcard' && x.archetype !== 'hook_slice').sort((a, b) => (b.archetype === 'callouts') - (a.archetype === 'callouts'));
     const teaser = (typed && typed.params && [].concat(typed.params.lines || []).join(' ')) || '', hookOk = /(meet|introducing|new|say hello|hello|discover|welcome|ever|ready)/i.test(teaser) && teaser.length <= 60 && !/[•|]/.test(teaser);   // the hook must be a teaser like "Meet the all new ...", not a benefit list
-    const s0 = { ...(typed || scenes[0]), archetype: 'typed', dur: 1.5, transition_in: 'cut', params: { ...(typed ? typed.params : {}), lines: hookOk ? typed.params.lines : ['Meet the all new ' + (product.name || brand)], variant: (typed && typed.params && ['left', 'right', 'center'].includes(String(typed.params.variant))) ? typed.params.variant : 'left', style: 'blurin', wave: 'false', energy: 'true', emphasis: String(brand || '').split(' ')[0].slice(0, 10), scribble: 'true', pack: 'none' } };
+    const s0 = { ...(typed || scenes[0]), archetype: 'typed', dur: 1.5, transition_in: 'cut', backdrop: { ...(typed ? typed.backdrop : {}), role: (typed && typed.backdrop && ['primary', 'analogous', 'duo'].includes(typed.backdrop.role)) ? typed.backdrop.role : 'primary' }, params: { ...(typed ? typed.params : {}), lines: hookOk ? typed.params.lines : ['Meet the all new ' + (product.name || brand)], variant: (typed && typed.params && ['left', 'right', 'center'].includes(String(typed.params.variant))) ? typed.params.variant : 'left', style: 'blurin', wave: 'false', energy: 'true', emphasis: String(showName(brand, product) || '').split(' ')[0].slice(0, 10), scribble: 'true', pack: 'none' } };
     const s1 = { ...(wall || scenes[1] || scenes[0]), archetype: 'wall', dur: 2.4, transition_in: 'flash', params: { ...(wall ? wall.params : {}), word: (wall && wall.params && wall.params.word) || 'NEW', variant: (wall && wall.params && ['grid', 'diagonal', 'columns', 'marquee'].includes(String(wall.params.variant))) ? wall.params.variant : 'grid', pack: 'hero', action: 'cross', pieces: 4 } };
     if (rest.length) rest[0] = { ...rest[0], archetype: 'callouts', params: { ...rest[0].params, pack: (rest[0].params && rest[0].params.pack) || 'hero' } };   // the 3rd scene talks about the product: why it is different
     scenes = [s0, s1, ...rest.slice(0, 2)];

@@ -74,4 +74,5 @@ const cleanWord = (s, n = 12) => {   // a too-long text is cut at a WORD boundar
 };
 const oneOf = (v, list, d) => (list.includes(v) ? v : d);
 
-module.exports = { LAWS, W, H, ALL_FONTS, clamp, num, isHex, fixHex, rgb, hex, mix, toHsl, fromHsl, contrast, dist, vividBackdrop, inkFor, accentFor, fitSize, safeFont, cleanWord, oneOf };
+const showName = (brand, product) => { const b = String(brand || '').trim(), n = String((product && product.name) || '').trim(); return n && n.length <= 16 && !n.toLowerCase().includes(b.toLowerCase().split(' ')[0]) ? n : b; };   // the name people know the pack by: the product (Sprite) when the brand is the parent company (Coca-Cola)
+module.exports = { showName, LAWS, W, H, ALL_FONTS, clamp, num, isHex, fixHex, rgb, hex, mix, toHsl, fromHsl, contrast, dist, vividBackdrop, inkFor, accentFor, fitSize, safeFont, cleanWord, oneOf };

@@ -182,7 +182,7 @@ ARCH.typed = {
       decor(ctx, 'rays');
       shape(ctx, { kind: 'burst', x: 0.5, y: 0.5, n: 26, color: ctx.pal.ink, color2: ctx.pal.accent, life: 1, u0: 0.15, u1: 1.3, z: 4 });
       ctx.props.slice(0, 4).forEach((pr, i) => { const [x, y, w] = [[0.09, 0.52, 0.17], [0.91, 0.46, 0.15], [0.1, 0.9, 0.18], [0.9, 0.92, 0.16]][i]; push(ctx, { kind: 'sprite', src: pr.id, t0: A(ctx, 0.25 + i * 0.15), t1: A(ctx, ctx.dur), x, y, w, r: ctx.v.range(-25, 25), in: { kind: 'pop', dur: 0.4 }, idle: { kind: 'float', amp: 0.012, speed: 1 }, shadow: false, z: 4 }); });   // pieces sit at the sides and bottom: never on the words
-      if (ctx.packs.hero && !(p.pack && p.pack !== 'none')) { const lf = v === 'left', rt = v === 'right', px = lf ? 0.56 : rt ? 0.44 : 0.5, rest = restPose(ctx, 'hero', px, 0.7, 0.5, ctx.v.range(8, 16) * (lf ? 1 : -1), false, 0.44); movePack(ctx, 'hero', [...enter(ctx, ctx.v.pick(['spin', 'whip', 'pop']), 0.08, rest, lf ? 1 : -1), drift(ctx, Math.max(1.3, ctx.dur - 0.05), rest)]); cue(ctx, 0.1, 'whoosh'); }   // the WHOLE product, big, from the first moments: it is what grabs the eye
+      if (ctx.packs.hero && !(p.pack && p.pack !== 'none')) { const lf = v === 'left', rt = v === 'right', px = lf ? 0.56 : rt ? 0.44 : 0.5, rest = restPose(ctx, 'hero', px, 0.68, 0.5, ctx.v.range(8, 16) * (lf ? 1 : -1), false, 0.4); movePack(ctx, 'hero', [...enter(ctx, ctx.v.pick(['spin', 'whip', 'pop']), 0.08, rest, lf ? 1 : -1), drift(ctx, Math.max(1.3, ctx.dur - 0.05), rest)]); cue(ctx, 0.1, 'whoosh'); }   // the WHOLE product, big, from the first moments: it is what grabs the eye
       cam(ctx, 0.5, 'punch');
     }
     const id = packId(ctx, p.pack);
