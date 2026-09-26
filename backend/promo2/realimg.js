@@ -52,7 +52,46 @@ async function cutoutReal(buf) {
   const pad = Math.round(Math.max(maxx - minx, maxy - miny) * 0.015), x0 = Math.max(0, minx - pad), y0 = Math.max(0, miny - pad), cw = Math.min(w - x0, maxx - minx + 2 * pad), ch = Math.min(h - y0, maxy - miny + 2 * pad);
   const out = createCanvas(cw, ch), og = out.getContext('2d'); og.drawImage(c, x0, y0, cw, ch, 0, 0, cw, ch);
   const fill = sizes[best] / Math.max(1, (maxx - minx + 1) * (maxy - miny + 1));   // how much of its bounding box the object fills: a tilted or ragged cut-out fills less
-  return { buf: out.toBuffer('image/png'), aspect: cw / ch, quality: { cover, disp, fill, score: (1 - disp / 24) * 0.5 + Math.min(1, fill / 0.8) * 0.5 } };
+  const res = { buf: out.toBuffer('image/png'), aspect: cw / ch, quality: { cover, disp, fill, score: (1 - disp / 24) * 0.5 + Math.min(1, fill / 0.8) * 0.5 } };
+  if (cover < 0.22 && res.aspect > 0.6) return null;   // a thin shape (a logo, lettering) is not a product photo
+  return removeDisc(res);
+}
+
+/** many brand photos put the pack on a coloured DISC (a circle badge): the disc is not the product. If the cut-out is a disc, the disc colour is removed (flood from its rim inwards) and the pack alone is kept; if that fails the disc version stays. */
+async function removeDisc(res) {
+  const q = res.quality; if (!q || res.aspect < 0.93 || res.aspect > 1.07 || q.fill < 0.74 || q.fill > 0.83) return res;
+  const im = await loadImage(res.buf), w = im.width, h = im.height, c = createCanvas(w, h), g = c.getContext('2d'); g.drawImage(im, 0, 0);
+  const img = g.getImageData(0, 0, w, h), d = img.data, N = w * h, R = Math.min(w, h) / 2, cx = w / 2, cy = h / 2;
+  const ring = [[], [], []]; for (let a = 0; a < 96; a++) { const t = a / 96 * Math.PI * 2, x = Math.round(cx + Math.cos(t) * R * 0.94), y = Math.round(cy + Math.sin(t) * R * 0.94), i = (y * w + x) * 4; if (d[i + 3] > 200) { ring[0].push(d[i]); ring[1].push(d[i + 1]); ring[2].push(d[i + 2]); } }
+  if (ring[0].length < 60) return res;
+  const med = (a) => a.slice().sort((p, q2) => p - q2)[a.length >> 1], m = ring.map(med);
+  const dd = ring[0].map((_, k) => Math.hypot(ring[0][k] - m[0], ring[1][k] - m[1], ring[2][k] - m[2])).sort((a, b) => a - b), spread = dd[Math.floor(dd.length * 0.7)];   // 70% of the rim must be one flat colour (the pack may touch the rim at the top and bottom)
+  if (spread > 14) return res;   // not a plain disc
+  const tol = 30, bg = new Uint8Array(N), qu = new Int32Array(N); let qh = 0, qt = 0;
+  const near = (p) => Math.hypot(d[p * 4] - m[0], d[p * 4 + 1] - m[1], d[p * 4 + 2] - m[2]) < tol;
+  for (let p = 0; p < N; p++) { if (d[p * 4 + 3] < 40) { bg[p] = 1; } }
+  for (let a = 0; a < 360; a++) { const t = a / 360 * Math.PI * 2, x = Math.round(cx + Math.cos(t) * R * 0.95), y = Math.round(cy + Math.sin(t) * R * 0.95), p = y * w + x; if (!bg[p] && near(p)) { bg[p] = 2; qu[qt++] = p; } }
+  while (qh < qt) { const p = qu[qh++], x = p % w, y = (p / w) | 0; for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) { if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue; const n = ny * w + nx; if (bg[n]) continue; if (near(n)) { bg[n] = 2; qu[qt++] = n; } } }
+  const lab = new Int32Array(N), sizes = [0]; let L = 0;
+  for (let s0 = 0; s0 < N; s0++) { if (bg[s0] || lab[s0]) continue; L++; sizes[L] = 0; let a = 0, b = 0; qu[b++] = s0; lab[s0] = L; while (a < b) { const p = qu[a++]; sizes[L]++; const x = p % w, y = (p / w) | 0; for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) { if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue; const n = ny * w + nx; if (!bg[n] && !lab[n]) { lab[n] = L; qu[b++] = n; } } } }
+  let best = 0; for (let i = 1; i <= L; i++) if (sizes[i] > sizes[best]) best = i; if (!best) return res;
+  let minx = w, maxx = 0, miny = h, maxy = 0; for (let p = 0; p < N; p++) if (lab[p] === best) { const x = p % w, y = (p / w) | 0; if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y; }
+  let bw = maxx - minx + 1; const bh = maxy - miny + 1, area = sizes[best], discArea = Math.PI * R * R;
+  if (area < discArea * 0.22 || area > discArea * 0.75 || bh < bw * 1.05 || bw < w * 0.2) return res;   // the flood ate the pack, or found no pack: keep the disc version
+  // soft edge and crop
+  // row hull: every row is filled between the pack's outermost pixels (the flood may have eaten label areas that have the disc's colour)
+  const span = []; for (let y = miny; y <= maxy; y++) { let lo = -1, hi = -1; for (let x = minx; x <= maxx; x++) if (lab[y * w + x] === best) { if (lo < 0) lo = x; hi = x; } span[y] = lo < 0 ? null : [lo, hi]; }
+  const top = []; for (let y = miny; y <= miny + Math.round((maxy - miny) * 0.1); y++) if (span[y]) top.push((span[y][0] + span[y][1]) / 2);
+  const cxm = top.length ? top.sort((p, q2) => p - q2)[top.length >> 1] : (minx + maxx) / 2;   // the lid's centre is the pack's axis: a side the flood ate is mirrored from the other
+  for (let y = miny; y <= maxy; y++) if (span[y]) { const hw = Math.max(cxm - span[y][0], span[y][1] - cxm), lo = Math.max(0, Math.round(cxm - hw)), hi = Math.min(w - 1, Math.round(cxm + hw)); for (let x = lo; x <= hi; x++) lab[y * w + x] = best; }
+  minx = w; maxx = 0; for (let p = 0; p < N; p++) if (lab[p] === best) { const x = p % w; if (x < minx) minx = x; if (x > maxx) maxx = x; }
+  bw = maxx - minx + 1;
+  const al = new Uint8ClampedArray(N); for (let p = 0; p < N; p++) al[p] = lab[p] === best ? 255 : 0;
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) { const p = y * w + x; d[p * 4 + 3] = lab[p] === best ? Math.max(0, Math.min(255, ((al[p] * 4 + al[p - 1] + al[p + 1] + al[p - w] + al[p + w]) / 8 - 40) * 1.35)) : 0; }
+  g.putImageData(img, 0, 0);
+  const pad = Math.round(Math.max(bw, bh) * 0.02), x0 = Math.max(0, minx - pad), y0 = Math.max(0, miny - pad), cw = Math.min(w - x0, bw + 2 * pad), ch = Math.min(h - y0, bh + 2 * pad), out = createCanvas(cw, ch);
+  out.getContext('2d').drawImage(c, x0, y0, cw, ch, 0, 0, cw, ch);
+  return { ...res, buf: out.toBuffer('image/png'), aspect: cw / ch, quality: { ...q, fill: area / (bw * bh), disc: true } };
 }
 
 // ------------------------------------------------------------------ the colours of the product
