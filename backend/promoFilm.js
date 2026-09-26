@@ -104,6 +104,25 @@ const dist = (a, b) => Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2]
 const oneOf = (v, list, d) => (list.includes(v) ? v : d);
 const cleanStr = (v, n) => String(v == null ? '' : v).replace(/[<>"\\]/g, '').replace(/\s+/g, ' ').trim().slice(0, n);
 
+const toHsl = (c) => { const r = c[0] / 255, g = c[1] / 255, b = c[2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn; let h = 0; if (d) { h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; if (h < 0) h += 360; } const l = (mx + mn) / 2; return [h, d ? d / (1 - Math.abs(2 * l - 1)) : 0, l]; };
+const fromHsl = ([h, s, l]) => { const a = s * Math.min(l, 1 - l), f = (n) => { const k = (n + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1))); }; return [f(0) * 255, f(8) * 255, f(4) * 255]; };
+/** a backdrop needs real colour: a near-white or grey-pastel wash makes the product and the giant words vanish */
+const vividBackdrop = (c) => { let [h, sat, l] = toHsl(c); if (l > 0.66) l = 0.62; if (l > 0.3 && sat < 0.55) sat = 0.62; return fromHsl([h, sat, l]); };
+/** the AI sometimes writes a word as one text layer per letter (F, R, E, S, H): they are joined into ONE word (a vertical stack becomes one rotated word) */
+function mergeLetters(list) {
+  const single = (L) => L && L.kind === 'text' && Array.isArray(L.lines) && L.lines.length === 1 && String(L.lines[0]).trim().length === 1 && !L.repeat;
+  const groups = new Map(); list.forEach((L, i) => { if (single(L)) { const k = [L.font, L.size, L.color, Math.round((+L.t0 || 0) * 2)].join('|'); (groups.get(k) || groups.set(k, []).get(k)).push(i); } });
+  const drop = new Set(), repl = new Map();
+  groups.forEach((idx) => {
+    if (idx.length < 3) return;
+    const ls = idx.map((i) => list[i]), xs = ls.map((l) => +l.x || 0), ys = ls.map((l) => +l.y || 0), spread = (a) => Math.max(...a) - Math.min(...a), vertical = spread(ys) >= spread(xs);
+    const ord = ls.map((l, k) => [l, k]).sort((a, b) => (vertical ? (+a[0].y || 0) - (+b[0].y || 0) : (+a[0].x || 0) - (+b[0].x || 0))).map((x) => x[0]);
+    const merged = Object.assign({}, ord[0], { lines: [ord.map((l) => String(l.lines[0]).trim()).join('')], x: xs.reduce((a, b) => a + b, 0) / xs.length, y: ys.reduce((a, b) => a + b, 0) / ys.length, r: vertical ? 90 : ord[0].r || 0, t0: Math.min(...ls.map((l) => +l.t0 || 0)), t1: Math.max(...ls.map((l) => +l.t1 || 0)) });
+    repl.set(idx[0], merged); idx.slice(1).forEach((i) => drop.add(i));
+  });
+  return list.map((L, i) => (repl.has(i) ? repl.get(i) : L)).filter((_, i) => !drop.has(i));
+}
+
 function motionIO(o, kinds, dDur) {
   if (!o || typeof o !== 'object') return undefined;
   const k = oneOf(o.kind, kinds, null); if (!k) return undefined;
@@ -143,6 +162,7 @@ function normalizePromo(raw, ctx = {}) {
     if (Math.max(...c0) - Math.min(...c0) < 28 && Math.max(...c0) < 235) c0 = mix(c0, pc, 0.6);      // a dull grey is not a backdrop
     if (Math.max(...c0) - Math.min(...c0) < 45 && Math.min(...c0) > 120) c0 = mix(c0, pc, 0.5);          // a washed-out pastel gets its colour back
     if ((0.299 * c0[0] + 0.587 * c0[1] + 0.114 * c0[2]) / 255 > 0.86) { c0 = mix(c0, pc, 0.55); c1 = mix(c1, pc, 0.35); }   // near-white: the product and the words would vanish
+    { const flat = z.c0 && z.c1 && String(z.c0).toLowerCase() === String(z.c1).toLowerCase(); c0 = vividBackdrop(c0); if (flat) c1 = c0; }
     if (i > 0) { const a = rand() * Math.PI * 2, d = cutZones.has(i) ? 2600 + rand() * 600 : 450 + rand() * 350; px = Math.round(px + Math.cos(a) * d); py = Math.round(py + Math.sin(a) * d); }
     zones.push({ c0: toHex(c0), c1: toHex(c1), shape: z.shape === 'linear' ? 'linear' : 'radial', x: px, y: py });
   });
@@ -173,7 +193,7 @@ function normalizePromo(raw, ctx = {}) {
     if (p0) extraIn.push({ kind: 'sprite', main: true, src: 'hero', t0: p0.t, t1: D, x: p0.x, y: p0.y, w: p0.w, r: 0, keys: wp.length >= 2 ? wp.map((k) => Object.assign({}, k, { r: k.r })) : undefined, shadow: S.hero.shadow, glow: S.hero.glow, idle: S.hero.idle, blur: p0.blur });
   }
   (Array.isArray(S.props) ? S.props : []).slice(0, 4).forEach((p, i) => { (p && Array.isArray(p.uses) ? p.uses : []).slice(0, 4).forEach((u) => { if (u && typeof u === 'object') extraIn.push(Object.assign({}, u, { src: 'prop' + i, kind: ['scatter', 'sprite', 'pattern'].includes(u.kind) ? u.kind : 'scatter' })); }); });
-  (Array.isArray(S.layers) ? S.layers : []).concat(extraIn).slice(0, 64).forEach((L0) => {
+  mergeLetters((Array.isArray(S.layers) ? S.layers : []).concat(extraIn)).slice(0, 64).forEach((L0) => {
     if (!L0 || typeof L0 !== 'object') return;
     let L = L0;
     for (const nk of ['sprite', 'text', 'scatter', 'pattern', 'shape']) if (L0[nk] && typeof L0[nk] === 'object' && !Array.isArray(L0[nk])) { L = Object.assign({}, L0, L0[nk], nk === 'shape' ? {} : { kind: nk }); if (!L.kind) L.kind = 'shape'; delete L[nk]; break; }
@@ -188,7 +208,7 @@ function normalizePromo(raw, ctx = {}) {
       if (L.shadow === false) o.shadow = false; if (L.blur !== undefined) o.blur = num(L.blur, 0, 0, 40); const gl = glowOf(L.glow); if (gl) o.glow = gl;
       const ks = keysOf(L.keys, D, 16, o.w); if (ks) o.keys = ks;
       if (L.main) o.main = true;
-      if (L.main && o.keys) o.keys.forEach((k, i) => { const nx = o.keys[i + 1], hold = nx ? nx.t - k.t : 1; if (k.s !== undefined && hold > 0.7) k.s = +Math.min(k.s, 0.8 / o.w).toFixed(3); });
+      if (L.main && o.keys) { const giants = layers.filter((l) => l.kind === 'text' && (l.size >= 0.24 || l.repeat)); o.keys.forEach((k, i) => { const nx = o.keys[i + 1], hold = nx ? nx.t - k.t : 1; if (k.s !== undefined && hold > 0.7) { const withType = giants.some((g) => g.t0 <= k.t + hold * 0.5 && g.t1 >= k.t + hold * 0.5); k.s = +Math.min(k.s, (withType ? 0.55 : 0.8) / o.w).toFixed(3); } }); }
       if (src === 'hero' && L.main) {                                                                    // the main product this small cannot be seen: repair the scale, not the choreography
         const eff = o.keys ? o.keys.map((k) => o.w * (k.s !== undefined ? k.s : 1)) : [o.w], srt = eff.filter((v) => v > 0).sort((a, b) => a - b), md = srt.length ? srt[Math.floor(srt.length / 2)] : o.w;
         if (md < 0.4) o.w = +Math.min(1.2, o.w * (0.48 / md)).toFixed(3);     // every key scales with it
@@ -232,6 +252,7 @@ function normalizePromo(raw, ctx = {}) {
   });
   // safety: a word must be readable, a flash is brief and rare
   layers.forEach((l) => { if (l.kind === 'text') { const need = 1.0; if (l.t1 - l.t0 < need) l.t1 = +Math.min(D, l.t0 + need).toFixed(2); if (l.t0 + need > D) l.t0 = +Math.max(0, D - need).toFixed(2); } else if (l.kind === 'sprite' || l.kind === 'scatter') { if (l.t1 - l.t0 < 0.5) l.t1 = +Math.min(D, l.t0 + 0.5).toFixed(2); } });
+  { const ws = layers.filter((l) => l.kind === 'wave').sort((a, b) => a.t0 - b.t0), keep = []; ws.forEach((w) => { if (keep.length < 4 && keep.filter((k) => k.t1 > w.t0 && k.t0 < w.t1).length < 2) keep.push(w); }); layers.splice(0, layers.length, ...layers.filter((l) => l.kind !== 'wave' || keep.includes(l))); }
   { let fl = 0; for (let i = layers.length - 1; i >= 0; i--) if (layers[i].kind === 'flash') { fl++; if (fl > 3) layers.splice(i, 1); } }
   // draw order (a rendering rule, not a design): backdrop shapes and giant words behind the hero, the hero, props / bursts / copies above it, small lines above those, wipes and flashes over everything
   { const rank = (l) => (['flash', 'wipe', 'zoomblur'].includes(l.kind) ? 6 : ['line', 'oval'].includes(l.kind) ? 4 : ['circle', 'rect', 'rings', 'wave', 'rays', 'dots', 'stripes'].includes(l.kind) ? 0 : l.kind === 'pattern' ? 1 : l.kind === 'text' ? (l.front || l.size < 0.16 ? 5 : 2) : l.kind === 'sprite' && l.main ? 3 : 4); const first = layers.findIndex((l) => l.kind === 'sprite' && l.main);
@@ -242,6 +263,13 @@ function normalizePromo(raw, ctx = {}) {
   const lastBeat = beats[nb - 1];
   const hasBrand = layers.some((l) => l.kind === 'text' && l.t1 >= D - 0.4 && l.lines.join(' ').toUpperCase().includes(brand.split(' ')[0]));
   if (!hasBrand) layers.push({ kind: 'text', beat: nb - 1, t0: +(lastBeat.t0 + 0.5).toFixed(2), t1: D, lines: [brand.length > 12 && brand.includes(' ') ? brand.split(' ').slice(0, 2).join(' ') : brand], x: 0.5, y: 0.88, size: brand.length > 10 ? 0.11 : 0.15, font: 'anton', color: '#ffffff', upper: true, track: 0, r: 0, align: 'center', in: { kind: 'slam', dur: 0.4, stag: 0.14 }, shadow: true, front: true });
+  { const brandL = layers.filter((l) => l.kind === 'text' && l.t1 >= D - 0.4 && l.lines.join(' ').toUpperCase().includes(brand.split(' ')[0])).sort((a, b) => b.size - a.size)[0];
+    if (brandL) {
+      const pose = (l) => { const K = l.keys && l.keys.length ? l.keys[l.keys.length - 1] : null, sc = K && K.s !== undefined ? K.s : 1; return { x: K && K.x !== undefined ? K.x : l.x, y: K && K.y !== undefined ? K.y : l.y, w: l.w * sc }; };
+      const boxes = layers.filter((l) => l.kind === 'sprite' && /^hero/.test(l.src || '') && l.t1 >= D - 0.4).map((l) => { const p = pose(l), asp = 1.9; return { x0: p.x - p.w / 2, x1: p.x + p.w / 2, y0: p.y - (p.w * asp * 0.5625) / 2, y1: p.y + (p.w * asp * 0.5625) / 2 }; });
+      const bw = Math.min(0.92, Math.max(...brandL.lines.map((q) => q.length)) * brandL.size * 0.5), bh = brandL.lines.length * brandL.size * 0.6, ov = (y) => boxes.reduce((a, b) => a + Math.max(0, Math.min(brandL.x + bw / 2, b.x1) - Math.max(brandL.x - bw / 2, b.x0)) * Math.max(0, Math.min(y + bh / 2, b.y1) - Math.max(y - bh / 2, b.y0)), 0);
+      if (ov(brandL.y) > 0.004) { let best = brandL.y, bo = ov(brandL.y); for (const y of [0.9, 0.08, 0.86, 0.14]) { const o = ov(y); if (o < bo - 1e-6) { bo = o; best = y; } } brandL.y = best; brandL.front = true; }
+    } }
   const cam = (Array.isArray(S.cam) ? S.cam : []).filter((c) => c && Number.isFinite(+c.t) && CAM_KINDS.includes(c.kind)).slice(0, 12).map((c) => ({ t: num(c.t, 0.5, 0, D - 0.2), kind: c.kind, amp: num(c.amp, c.kind === 'shake' ? 8 : c.kind === 'roll' ? 5 : 0.06, 0, c.kind === 'shake' ? 24 : c.kind === 'roll' ? 25 : 0.15), dur: num(c.dur, 0.3, 0.1, 3), ...(c.kind === 'zoom' ? { to: num(c.to, 1.25, 0.6, 2.5), hold: num(c.hold, 0, 0, 4), back: num(c.back, 0, 0, 3) } : {}), ...(c.kind === 'pan' ? { dx: num(c.dx, 0, -0.5, 0.5), dy: num(c.dy, 0, -0.5, 0.5) } : {}) }));
   const music = oneOf(S.sound && S.sound.music, ['pulse', 'warm pad', 'tense', 'dark drone'], 'pulse');
   const cues = (S.sound && Array.isArray(S.sound.cues) ? S.sound.cues : []).filter((c) => c && Number.isFinite(+c.t) && CUE_KINDS.includes(c.kind)).slice(0, 24).map((c) => ({ t: num(c.t, 0, 0, D), kind: c.kind }));
