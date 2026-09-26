@@ -1,6 +1,6 @@
 'use strict';
 /*
- * PRODUCT PROMO: a ~9 second motion-graphics spot for a PHYSICAL product (a snack, a drink, a pack of anything), in the style of the best social product promos:
+ * PRODUCT PROMO: a short (under 13 s, AI-chosen length) motion-graphics spot for a PHYSICAL product (a snack, a drink, a pack of anything), in the style of the best social product promos:
  * a real product hero on a vivid backdrop, giant kinetic type, ingredients flying in, patterns and rings, almost no words, no voice.
  *
  * NOTHING HERE IS A TEMPLATE. The AI designs each promo as a "motion script" out of primitives (sprites with in / out / idle motion and free keyframes, text with reveal
@@ -25,7 +25,7 @@ const CAM_KINDS = ['punch', 'shake', 'zoom', 'roll', 'pan'];
 const CUE_KINDS = ['whoosh', 'impact', 'tick', 'sparkle', 'riser'];
 
 function promoPrompt(brief) {
-  return `Direct and animate a ~9 second vertical (9:16) motion-graphics promo for the PHYSICAL product in this brief. It must have the energy of the best product spots on TikTok and Reels (Lay's, Goli, Pluckk, BerryWhite, McDonald's, Wendy's): the real product is the hero and something new and surprising happens every half second. No voice, almost no words, never a company story or a list of features: show the product and how it makes people feel, and end on the product with the brand name.
+  return `Direct and animate a short vertical (9:16) motion-graphics promo (you choose its length, anything from 6 to 12.4 seconds: as long as your idea needs and not a second of padding; spots like the references run 5-16 s) for the PHYSICAL product in this brief. It must have the energy of the best product spots on TikTok and Reels (Lay's, Goli, Pluckk, BerryWhite, McDonald's, Wendy's): the real product is the hero and something new and surprising happens every half second. No voice, almost no words, never a company story or a list of features: show the product and how it makes people feel, and end on the product with the brand name.
 
 BRIEF:
 ${brief}
@@ -60,7 +60,7 @@ RULES (a promo that breaks these looks cheap): at least FOUR distinct things hap
 
 Return ONE JSON object with these keys, in this order:
 "ideas": 3 to 5 sentences, one per beat, in your own words: the SPECIFIC unique things that happen in that beat (what the hero does, what reacts to it, what the type and the camera do, how the scene changes). Write them first, then implement exactly them.
-"brand" (as in the brief, max 24 characters), "product": {"name", "kind" (what it physically is: "canned soft drink", "bag of potato chips"...), "look" (how the pack looks for an image AI: shape, materials, the two or three colours, label art WITHOUT any text, max 30 words), "colors" ["#rrggbb","#rrggbb"]}, "props": 2 to 5 objects {"name", "look" (one thing that belongs to the product - an ingredient, a splash, a piece, a leaf, a crumb - described for an image AI, no text, max 18 words)}, "duration" (8 to 10), "zones", "beats", "layers", "cam", "sound".
+"brand" (as in the brief, max 24 characters), "product": {"name", "kind" (what it physically is: "canned soft drink", "bag of potato chips"...), "look" (how the pack looks for an image AI: shape, materials, the two or three colours, label art WITHOUT any text, max 30 words), "colors" ["#rrggbb","#rrggbb"]}, "props": 2 to 5 objects {"name", "look" (one thing that belongs to the product - an ingredient, a splash, a piece, a leaf, a crumb - described for an image AI, no text, max 18 words)}, "duration" (6 to 12.4, in seconds, your choice), "zones", "beats", "layers", "cam", "sound".
 Output the JSON object only.`;
 }
 
@@ -104,7 +104,7 @@ function keysOf(arr, D, max, baseW) {
 function normalizePromo(raw, ctx = {}) {
   const S = raw && typeof raw === 'object' ? raw : {};
   const brand = cleanStr(S.brand || ctx.brand || 'Brand', 24).toUpperCase() || 'BRAND';
-  const D = num(S.duration, 9, 7.5, 10.5);
+  const D = num(S.duration, 9, 5.5, 12.4);
   const P = S.product && typeof S.product === 'object' ? S.product : {};
   const colors = (Array.isArray(P.colors) ? P.colors : []).filter(isHex).map((c) => fixHex(c)).slice(0, 2);
   const product = { name: cleanStr(P.name, 60) || brand, kind: cleanStr(P.kind, 50) || 'product pack', look: cleanStr(P.look, 260) || 'a premium retail pack', colors: colors.length ? colors : ['#ff5c1a', '#ffd23f'] };

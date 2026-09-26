@@ -14,7 +14,7 @@ async function runOnce(fields, files) {
   const fd = new FormData();
   for (const [k, v] of Object.entries(fields)) fd.append(k, String(v));
   for (const [k, buf] of Object.entries(files || {})) fd.append(k, new Blob([buf], { type: 'image/png' }), k + '.png');
-  const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acct}/ai/run/${MODEL}`, { method: 'POST', headers: { Authorization: `Bearer ${tok}` }, body: fd });
+  const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acct}/ai/run/${MODEL}`, { method: 'POST', headers: { Authorization: `Bearer ${tok}` }, body: fd, signal: AbortSignal.timeout(+process.env.KLEIN_TIMEOUT_MS || 100000) });   // a hung request never blocks a whole film
   const txt = await r.text(); let j = null; try { j = JSON.parse(txt); } catch (_) { /* handled below */ }
   if (!j || !j.result || !j.result.image) throw new Error('image generation failed: ' + (j ? JSON.stringify(j.errors || j) : r.status + ' ' + txt.slice(0, 200)).slice(0, 260));
   return Buffer.from(j.result.image, 'base64');

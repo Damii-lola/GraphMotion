@@ -343,7 +343,7 @@ async function buildPromoFilm({ raw, company, outDir, say, planOnly }) {
   save('hero', heroRes.buf, heroRes.aspect);
   // 2. the props (ingredients, pieces, splashes), three at a time; a prop that fails becomes a plain glossy disc in the product's colour
   say('Painting the ingredients', 0.4);
-  await Promise.all(promo.props.map(async (p, i) => {
+  const paintProp = async (p, i) => {
     let res = null;
     if (p.look) {
       neurons.charge(neurons.estKlein(false), `prop ${i + 1}`);
@@ -354,7 +354,8 @@ async function buildPromoFilm({ raw, company, outDir, say, planOnly }) {
     }
     if (!res) res = promoFilm.fallbackProp(promo.product.colors[i % promo.product.colors.length]);
     save('prop' + i, res.buf, res.aspect);
-  }));
+  };
+  for (let b = 0; b < promo.props.length; b += 3) await Promise.all(promo.props.slice(b, b + 3).map((p, k) => paintProp(p, b + k)));   // three at a time
   promo.assets = assetsOut.sort((a, b) => (a.id === 'hero' ? -1 : b.id === 'hero' ? 1 : a.id.localeCompare(b.id)));
   say('Scoring the sound', 0.85);
   try { spec.audio = await promoFilm.promoAudio(promo, outDir); } catch (e) { console.warn('[promo] soundtrack skipped:', e.message); }
