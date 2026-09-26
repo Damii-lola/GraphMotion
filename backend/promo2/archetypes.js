@@ -164,7 +164,7 @@ ARCH.typed = {
   packs: 'optional',
   build(p, ctx) {
     const lines = sentenceLines(p.lines || p.sentence, 3, 30); while (nWords(lines) > 9) lines[lines.length - 1] = lines[lines.length - 1].split(' ').slice(0, -1).join(' ');
-    const v = variantOf(ctx, p, ['left', 'center', 'right', 'bottom', 'swap']), chars = Math.max(...lines.map((l) => l.length), 1), size = +clamp(0.86 / (chars * 0.62), 0.045, 0.062).toFixed(3), stag = ctx.v.range(0.22, 0.32), tEnd = nWords(lines) * stag + 0.5, font = F(ctx, 'small', p.font), inK = oneOf(p.style, ['blurin', 'rise'], ctx.v.pick(['blurin', 'rise']));
+    const v = variantOf(ctx, p, ['left', 'center', 'right', 'bottom', 'swap']), chars = Math.max(...lines.map((l) => l.length), 1), size = +clamp(0.86 / (chars * 0.62), 0.045, String(p.energy) === 'true' ? 0.072 : 0.062).toFixed(3), stag = ctx.v.range(0.22, 0.32), tEnd = nWords(lines) * stag + 0.5, font = F(ctx, 'small', p.font), inK = oneOf(p.style, ['blurin', 'rise'], ctx.v.pick(['blurin', 'rise']));
     if (String(p.wave) === 'true' || (p.wave === undefined && ctx.v.chance(0.4))) decor(ctx, 'waves'); else decor(ctx, ctx.v.chance(0.5) ? 'none' : ctx.v.pick(['rings', 'dots', 'stripes', 'rays']));   // no wave when the plan turned it off
     if (v === 'swap') {
       const ws = lines.join(' ').split(/\s+/).filter(Boolean).slice(0, 7), per = clamp((ctx.dur - 0.3) / ws.length, 0.28, 0.6);
@@ -175,6 +175,15 @@ ARCH.typed = {
       const em = cleanWord(p.emphasis, 10);
       if (em) { const esz = +clamp(0.86 / (em.length * 0.5), 0.09, 0.16).toFixed(3), ey = v === 'bottom' ? 0.6 : 0.58; text(ctx, { u0: tEnd, lines: [em.toUpperCase()], size: esz, font: F(ctx, 'head', p.emfont), color: ctx.pal.accent, y: ey, in: { kind: 'pop', dur: 0.35 }, z: 5, front: true, shadow: true }); if (String(p.scribble) !== 'false') shape(ctx, { kind: 'oval', u0: tEnd + 0.35, x: 0.5, y: ey, w: +clamp(em.length * esz * 0.55 + 0.14, 0.3, 0.9).toFixed(3), h: +(esz * 0.75).toFixed(3), r: -3, color: ctx.pal.ink, width: 0.007, dur: 0.7, z: 5 }); cue(ctx, tEnd, 'impact'); }
       for (let i = 0; i < nWords(lines); i++) cue(ctx, 0.15 + i * stag, 'tick');
+    }
+    if (String(p.energy) === 'true' && v !== 'swap') {   // ENERGY: the calm line is not alone: a ghost word wall, rays, a burst, drifting pieces and the pack rising huge from the bottom corner
+      const gw = String(cleanWord(p.ghost || p.emphasis || ctx.brand, 8)).toUpperCase().split(' ')[0];
+      if (gw) shape(ctx, { kind: 'wall', word: gw, font: F(ctx, 'giant'), size: 0.17, rowGap: 1.05, colGap: 1.5, speed: ctx.v.range(0.03, 0.06), color: ctx.pal.ink, alpha: 0.16, rot: ctx.v.pick([-14, 14, 0]), hl: [], u0: 0, z: 1 });
+      decor(ctx, 'rays');
+      shape(ctx, { kind: 'burst', x: 0.5, y: 0.5, n: 26, color: ctx.pal.ink, color2: ctx.pal.accent, life: 1, u0: 0.15, u1: 1.3, z: 4 });
+      scatter(ctx, { n: 5, from: ctx.v.pick(['edges', 'corners']), u0: 0.4 });
+      if (ctx.packs.hero && !(p.pack && p.pack !== 'none')) { const lf = v === 'left', rt = v === 'right', px = lf ? 0.76 : rt ? 0.24 : 0.5, rest = restPose(ctx, 'hero', px, 0.93, 0.6, ctx.v.range(-14, 14) * (lf ? 1 : -1), false, 0.62, true); movePack(ctx, 'hero', [...enter(ctx, 'rise', 0.45, rest), drift(ctx, Math.max(1.3, ctx.dur - 0.05), rest)]); cue(ctx, 0.45, 'whoosh'); }
+      cam(ctx, 0.5, 'punch');
     }
     const id = packId(ctx, p.pack);
     if (p.pack && p.pack !== 'none' && ctx.packs[id]) { const rest = restPose(ctx, id, ctx.v.range(0.35, 0.65), 0.84, 0.3, ctx.v.range(-8, 8), false, 0.28); movePack(ctx, id, [...enter(ctx, 'rise', 0.6, rest), drift(ctx, Math.max(2.0, ctx.dur - 0.05), rest)]); }
@@ -250,22 +259,28 @@ ARCH.callouts = {
   packs: 'one',
   build(p, ctx) {
     const id = packId(ctx, p.pack), v = variantOf(ctx, p, ['sides', 'radial', 'list']), items = (Array.isArray(p.items) ? p.items : []).map((s) => cleanWord(s, 18)).filter(Boolean).slice(0, 5), sent = sentenceLines(p.sentence, 2, 26);
-    const px = v === 'list' ? ctx.v.pick([0.32, 0.68]) : 0.5, rest = restPose(ctx, id, px, 0.62, v === 'radial' ? 0.24 : 0.28, ctx.v.range(-6, 6), false, 0.3);
+    const px = v === 'list' ? ctx.v.pick([0.32, 0.68]) : 0.5, rest = restPose(ctx, id, px, 0.64, v === 'radial' ? 0.3 : 0.34, ctx.v.range(-9, 9), false, 0.46);
     movePack(ctx, id, [...enter(ctx, oneOf(p.entrance, ['spin', 'pop', 'rise'], ctx.v.pick(['spin', 'pop', 'rise'])), 0.15, rest), drift(ctx, Math.max(2.0, ctx.dur - 0.05), rest)]);
-    if (sent.length) text(ctx, { u0: 0.2, lines: sent, size: +clamp(0.86 / (Math.max(...sent.map((l) => l.length)) * 0.62), 0.045, 0.058).toFixed(3), font: F(ctx, 'small'), upper: false, y: 0.26, lineGap: 1.25, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
+    if (sent.length) text(ctx, { u0: 0.2, lines: sent, size: +clamp(0.9 / (Math.max(...sent.map((l) => l.length)) * 0.6), 0.05, 0.07).toFixed(3), font: F(ctx, 'head'), upper: false, y: 0.24, lineGap: 1.25, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
+    // ENERGY behind the pack: rays, a glow disc, a ghost word wall and a burst when the pack lands
+    decor(ctx, 'rays');
+    shape(ctx, { kind: 'circle', x: rest.x, y: rest.y, size: 0.4, color: '#ffffff', alpha: 0.22, in: { kind: 'pop', dur: 0.5, delay: 0.3 }, idle: { kind: 'pulse', amp: 0.05, speed: 1.3 }, u0: 0.2, z: 2.5 });
+    const gwc = String(items[0] || '').toUpperCase().split(' ')[0].slice(0, 8); if (gwc.length >= 3) shape(ctx, { kind: 'wall', word: gwc, font: F(ctx, 'giant'), size: 0.15, rowGap: 1.1, colGap: 1.6, speed: ctx.v.range(0.03, 0.05), color: ctx.pal.ink, alpha: 0.11, rot: ctx.v.pick([-12, 12, 0]), hl: [], u0: 0, z: 1 });
+    shape(ctx, { kind: 'burst', x: rest.x, y: rest.y, n: 22, color: ctx.pal.ink, color2: ctx.pal.accent, life: 1, u0: 0.25, u1: 1.3, z: 4 }); cam(ctx, 0.4, 'punch');
     let POS;
     if (v === 'radial') { const n = items.length || 3, a0 = ctx.v.range(0, 40); POS = items.map((_, i) => { const a = ((i / n) * 360 + a0 - 90) * Math.PI / 180; const sg = Math.cos(a) >= 0 ? 1 : -1, dx = sg * Math.max(Math.abs(Math.cos(a)) * 0.34, rest.w * 0.5 + 0.1);   // never on the pack itself: at least a hand's width outside it
       return [+clamp(rest.x + dx, 0.14, 0.86).toFixed(3), +(rest.y + Math.sin(a) * 0.2).toFixed(3), sg > 0 ? 'R' : 'L']; }); }
     else if (v === 'list') { const sd = px < 0.5 ? 'R' : 'L', x = sd === 'R' ? 0.76 : 0.24; POS = items.map((_, i) => [x, +(0.47 + i * 0.075).toFixed(3), sd]); }
     else POS = [[0.8, 0.51, 'R'], [0.8, 0.61, 'R'], [0.8, 0.71, 'R'], [0.13, 0.61, 'L'], [0.17, 0.71, 'L']];
     items.forEach((lab, i) => {
-      const [ix0, iy, sd] = POS[i], tw = lab.length * 0.021, ix = +(sd === 'R' ? Math.min(ix0, 0.95 - 0.04 - tw) : Math.max(ix0, 0.05 + 0.04 + tw)).toFixed(3), u = 0.9 + i * 0.36, sx = rest.x + (sd === 'R' ? 1 : -1) * (rest.w * 0.5 + 0.012), sy = clamp(iy, rest.y - 0.14, rest.y + 0.14);
-      shape(ctx, { kind: 'line', x1: +sx.toFixed(3), y1: +sy.toFixed(3), x2: sd === 'R' ? +(ix - 0.03).toFixed(3) : +(ix + 0.03).toFixed(3), y2: iy, cx: +((sx + ix) / 2).toFixed(3), cy: +(sy + (iy - sy) * 0.3).toFixed(3), color: ctx.pal.ink, alpha: 0.85, width: 0.0028, dur: 0.4, u0: u, u1: ctx.dur - 0.25, z: 4.1 });
-      shape(ctx, { kind: 'circle', x: ix, y: iy, size: 0.026, color: ctx.pal.ink, in: { kind: 'pop', dur: 0.25, delay: 0.25 }, u0: u, u1: ctx.dur - 0.25, z: 4.1 });
-      text(ctx, { u0: u + 0.35, lines: [lab], size: 0.034, font: F(ctx, 'small'), upper: false, align: sd === 'R' ? 'left' : 'right', x: +(ix + (sd === 'R' ? 0.04 + tw / 2 : -0.04 - tw / 2)).toFixed(3), y: iy, in: { kind: 'rise', dur: 0.3, stag: 0.15 }, front: true, z: 5 });
+      const [ix0, iy, sd] = POS[i], tw = lab.length * 0.026, pw = +(tw + 0.08).toFixed(3), ix = +(sd === 'R' ? Math.min(Math.max(ix0, rest.x + rest.w * 0.5 + 0.045), 0.965 - pw) : Math.max(Math.min(ix0, rest.x - rest.w * 0.5 - 0.045), 0.035 + pw)).toFixed(3), u = 0.9 + i * 0.36, sx = rest.x + (sd === 'R' ? 1 : -1) * (rest.w * 0.5 + 0.012), sy = clamp(iy, rest.y - 0.14, rest.y + 0.14), pxc = +(ix + (sd === 'R' ? pw / 2 : -pw / 2)).toFixed(3), pc = i % 2 ? ctx.pal.ink : ctx.pal.accent;
+      shape(ctx, { kind: 'line', x1: +sx.toFixed(3), y1: +sy.toFixed(3), x2: +ix.toFixed(3), y2: iy, cx: +((sx + ix) / 2).toFixed(3), cy: +(sy + (iy - sy) * 0.3).toFixed(3), color: ctx.pal.ink, alpha: 0.9, width: 0.0034, dur: 0.4, u0: u, u1: ctx.dur - 0.25, z: 4.1 });
+      shape(ctx, { kind: 'rect', x: pxc, y: iy, w: pw, h: 0.066, radius: 0.5, color: pc, in: { kind: 'pop', dur: 0.4, delay: 0.3 }, u0: u, u1: ctx.dur - 0.25, z: 4.6 });
+      text(ctx, { u0: u + 0.4, lines: [lab], size: 0.04, font: F(ctx, 'head'), upper: true, track: 0.04, color: inkFor(pc, null), x: pxc, y: iy, in: { kind: 'pop', dur: 0.3 }, front: true, z: 5 });
+      shape(ctx, { kind: 'burst', x: pxc, y: iy, n: 10, color: pc, color2: ctx.pal.ink, life: 0.7, u0: u + 0.3, u1: u + 0.9, z: 4.7 });
       cue(ctx, u + 0.3, 'tick');
     });
-    if (String(p.float) !== 'false' && items.length <= 3 && ctx.props.length && ctx.v.chance(0.7)) [[0.06, 0.16, 0.16, 20], [0.94, 0.84, 0.18, -25], [0.1, 0.95, 0.17, 10]].forEach(([x, y, w, r], i) => push(ctx, { kind: 'sprite', src: ctx.props[i % ctx.props.length].id, t0: A(ctx, 0.4 + i * 0.3), t1: A(ctx, ctx.dur), x, y, w, r, in: { kind: 'pop', dur: 0.4 }, idle: { kind: 'float', amp: 0.01, speed: 1 }, shadow: false, z: 4 }));
+    if (String(p.float) !== 'false' && ctx.props.length && ctx.v.chance(0.85)) [[0.06, 0.16, 0.16, 20], [0.94, 0.84, 0.18, -25], [0.1, 0.95, 0.17, 10]].forEach(([x, y, w, r], i) => push(ctx, { kind: 'sprite', src: ctx.props[i % ctx.props.length].id, t0: A(ctx, 0.4 + i * 0.3), t1: A(ctx, ctx.dur), x, y, w, r, in: { kind: 'pop', dur: 0.4 }, idle: { kind: 'float', amp: 0.01, speed: 1 }, shadow: false, z: 4 }));
   },
 };
 

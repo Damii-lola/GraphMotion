@@ -17,7 +17,7 @@ const TYPE_P = {
   'wide heavy': { giant: ['archivo', 'bowlby', 'rubik'], head: ['archivo', 'rubik', 'bowlby'], small: ['poppins', 'bricolage'], script: ['pacifico', 'lobster'] },
   'friendly rounded': { giant: ['rubik', 'bowlby', 'fjalla'], head: ['rubik', 'bowlby'], small: ['bricolage', 'poppins'], script: ['pacifico', 'caveat'] },
   'editorial': { giant: ['playfair', 'oswald', 'league'], head: ['playfair', 'oswald'], small: ['inter', 'bricolage'], script: ['lobster', 'pacifico'] },
-  'retro script mix': { giant: ['lobster', 'bowlby', 'oswald'], head: ['lobster', 'oswald', 'anton'], small: ['poppins', 'inter'], script: ['lobster', 'pacifico', 'caveat'] },
+  'retro script mix': { giant: ['bowlby', 'oswald', 'archivo'], head: ['bowlby', 'oswald', 'anton'], small: ['poppins', 'inter'], script: ['lobster', 'pacifico', 'caveat'] },
   'street tall': { giant: ['league', 'bebas', 'oswald'], head: ['league', 'fjalla', 'oswald'], small: ['inter', 'poppins'], script: ['caveat'] },
 };
 // ---- MOTION PERSONALITIES: durations, eases and amplitudes of the moves

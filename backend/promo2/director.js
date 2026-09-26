@@ -96,7 +96,7 @@ function normalizePlan(raw, ctx = {}) {
   if (mimic.ref === 'R1') {
     const typed = scenes.find((x) => x.archetype === 'typed'), wall = scenes.find((x) => x.archetype === 'wall'), rest = scenes.filter((x) => x !== typed && x !== wall && x.archetype !== 'endcard' && x.archetype !== 'hook_slice');
     const teaser = (typed && typed.params && [].concat(typed.params.lines || []).join(' ')) || '', hookOk = /(meet|introducing|new|say hello|hello|discover|welcome|ever|ready)/i.test(teaser) && teaser.length <= 60 && !/[•|]/.test(teaser);   // the hook must be a teaser like "Meet the all new ...", not a benefit list
-    const s0 = { ...(typed || scenes[0]), archetype: 'typed', dur: 1.5, transition_in: 'cut', params: { ...(typed ? typed.params : {}), lines: hookOk ? typed.params.lines : ['Meet the all new ' + (product.name || brand)], variant: 'left', style: 'blurin', wave: 'false', emphasis: undefined, pack: 'none' } };
+    const s0 = { ...(typed || scenes[0]), archetype: 'typed', dur: 1.5, transition_in: 'cut', params: { ...(typed ? typed.params : {}), lines: hookOk ? typed.params.lines : ['Meet the all new ' + (product.name || brand)], variant: 'left', style: 'blurin', wave: 'false', energy: 'true', emphasis: String(brand || '').split(' ')[0].slice(0, 10), scribble: 'true', pack: 'none' } };
     const s1 = { ...(wall || scenes[1] || scenes[0]), archetype: 'wall', dur: 2.4, transition_in: 'flash', params: { ...(wall ? wall.params : {}), word: (wall && wall.params && wall.params.word) || 'NEW', variant: 'grid', pack: 'hero', action: 'cross', pieces: 4 } };
     scenes = [s0, s1, ...rest.slice(0, 2)];
   }
