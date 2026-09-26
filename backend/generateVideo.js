@@ -35,6 +35,7 @@ function validate(b) {
 
 const friendly = (e) => {
   const m = String((e && e.message) || e);
+  if (/Neuron guard/i.test(m) && /run ceiling/i.test(m)) return "This video needed more AI work than one video is allowed (the per-video safety limit). Please try again.";
   if (/Neuron guard/i.test(m)) return "SmartClips' own daily safety limit for AI usage was reached. Please try again tomorrow.";
   if (/daily free allocation|10,?000 neurons|4006|status.{0,6}429|rate limit/i.test(m)) return "Cloudflare says the free AI allowance of the account this server uses is used up. Please try again tomorrow.";
   if (/ZeroGPU|GPU quota/i.test(m)) return 'The video engine has no free capacity left right now. Please try again later.';
