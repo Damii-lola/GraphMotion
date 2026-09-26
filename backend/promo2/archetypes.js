@@ -197,7 +197,8 @@ ARCH.showcase = {
     else if (pose === 'spin') { rest = rp(ctx, id, 0.5, 0.58, vert ? 0.44 : 0.5, tilt, !!vert); path = [{ u: 0.1, x: rest.x, y: rest.y, w: rest.w * 0.5, r: rest.r - 360, blur: 6, o: 1 }, { u: 0.95, ...rest, blur: 0, e: 'outBack' }]; }
     else if (pose === 'top-drop') { rest = rp(ctx, id, ctx.v.range(0.42, 0.58), 0.6, vert ? 0.44 : 0.5, tilt, !!vert); path = [...enter(ctx, 'drop', 0.1, rest)]; }
     else { rest = rp(ctx, id, ctx.v.range(0.42, 0.6), 0.6, vert ? 0.44 : 0.5, tilt, !!vert); path = [...enter(ctx, oneOf(p.entrance, ENTR, ctx.v.entrance()), 0.1, rest, sg)]; }
-    if (vert) text(ctx, { lines: [vert], size: +clamp(Math.min(0.34, 3.0 / vert.length), 0.2, 0.34).toFixed(3), r: vsg > 0 ? 90 : -90, x: vsg > 0 ? 0.87 : 0.13, y: 0.5, alpha: 0.9, font: F(ctx, 'giant', p.font), in: { kind: 'slideL', dur: 0.6, stag: 0.05 }, z: 2 });
+    if (vert) text(ctx, { lines: [vert], size: +clamp(Math.min(0.25, 2.2 / vert.length), 0.17, 0.25).toFixed(3), r: vsg > 0 ? 90 : -90, x: vsg > 0 ? 0.835 : 0.165, y: 0.5, alpha: 0.9, font: F(ctx, 'giant', p.font), in: { kind: 'slideL', dur: 0.6, stag: 0.05 }, z: 2 });
+    if (vert && !bleedPose) titleX = +(titleX - vsg * 0.06).toFixed(3);   // the title keeps clear of the vertical word
     decor(ctx);
     movePack(ctx, id, [...path, drift(ctx, Math.max(1.4, ctx.dur * 0.7), rest, sg), { ...drift(ctx, Math.max(1.5, ctx.dur - 0.05), rest, -sg), w: rest.w, r: rest.r - 3 * sg }]);
     const kicker = sentenceLines(p.kicker, 1, 28), title = sentenceLines(p.title, 2, 22), ty = pose === 'bottom-peek' ? 0.22 : 0.15;
