@@ -81,17 +81,34 @@ function sceneIssues(S, out) {
   return issues;
 }
 
+const hexRgb = (h) => { const n = parseInt(String(h || '#888888').replace('#', ''), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+const cdist = (a, b) => { const x = hexRgb(a), y = hexRgb(b); return Math.sqrt((x[0] - y[0]) ** 2 + (x[1] - y[1]) ** 2 + (x[2] - y[2]) ** 2); };
+/** what is wrong with a scene plan, measurably (it goes back to the director, who fixes it in its own way) */
+function planIssues(plan) {
+  const iss = [], S = Array.isArray(plan.scenes) ? plan.scenes : [], ref = String((plan.mimic && plan.mimic.ref) || '').toUpperCase(), D = +plan.duration || 9;
+  if (D > 6 && S.length < 3) iss.push('Only ' + S.length + ' scene(s). The reference spots have 3 to 6 scenes.');
+  if (ref !== 'R3') for (let i = 1; i < S.length; i++) { const a = S[i - 1].backdrop || {}, b = S[i].backdrop || {}; if (cdist(a.c0, b.c0) < 90) iss.push('Scenes ' + i + ' and ' + (i + 1) + ' have almost the same backdrop colour. Every scene has its OWN backdrop colour (only R3 keeps one): pick clearly different saturated colours.'); }
+  const giant = S.filter((s) => /giant|wall|slice|vertical|big|huge/i.test(String(s.type || ''))).length;
+  if (S.length >= 3 && giant < 2) iss.push('Type must be a main character: at least two scenes need a giant / sliced / wall / vertical word (say the exact word and how it moves).');
+  if (S.length >= 3 && !S.some((s) => /absent|leaves|exits|off-?screen|out of frame/i.test(String(s.hero || '')))) iss.push('The main pack never leaves the screen: in at least one scene it must be absent or exit so that type or another product takes over.');
+  if (S.filter((s) => !String(s.type || '').trim() || /^(none|no )/i.test(String(s.type || ''))).length > Math.floor(S.length / 2)) iss.push('Most scenes have no type. Give most scenes specific words and a specific type move.');
+  return iss;
+}
+
 /** design({ brief, call, say }): call(system, prompt, {maxTokens, temperature, reasoning}) -> text; returns { raw, plan }. Throws if the director cannot be parsed. */
 async function design({ brief, call, say, onPlan }) {
   say && say('Directing your promo', 0.05);
-  let plan = null, lastErr = null;
+  let plan = null, lastErr = null, prevPlan = null, planProblems = null;
   for (let t = 0; t < 2 && !plan; t++) {
     try {
-      const p = parse(await call(DIRECTOR_SYSTEM, directorPrompt(brief), { maxTokens: 4500, temperature: 0.9, reasoning: 'medium', what: 'director' }));
+      const p = parse(await call(DIRECTOR_SYSTEM, directorPrompt(brief) + (planProblems ? '\n\nYOUR FIRST PLAN (JSON):\n' + JSON.stringify(prevPlan) + '\n\nA REVIEW OF IT FOUND THESE PROBLEMS; rewrite the whole plan fixing every one:\n' + planProblems.map((x, k) => (k + 1) + '. ' + x).join('\n') : ''), { maxTokens: 4500, temperature: 0.9, reasoning: 'medium', what: 'director' }));
       if (!p || !Array.isArray(p.scenes) || p.scenes.length < 2) throw new Error('the director wrote no scenes');
       plan = p;
+      const pi = planIssues(plan);
+      if (pi.length && t === 0) { console.log('[promo] director review: ' + pi.length + ' issue(s): ' + pi.map((x) => x.slice(0, 70)).join(' | ')); prevPlan = p; planProblems = pi; plan = null; continue; }
     } catch (e) { lastErr = e; console.warn('[promo] director try ' + (t + 1) + ' failed: ' + String(e.message).slice(0, 140)); if (/Neuron guard|429|allocation/i.test(String(e.message))) throw e; }
   }
+  if (!plan && prevPlan) plan = prevPlan;                                  // the reviewed first plan is still a plan
   if (!plan) throw new Error('The director could not plan the promo: ' + (lastErr && lastErr.message));
   // tidy the plan: scenes tile 0..D
   const D = Math.max(6, Math.min(12.4, +plan.duration || 9)), n = Math.min(6, plan.scenes.length), cuts = [0];
@@ -114,6 +131,19 @@ async function design({ brief, call, say, onPlan }) {
     }
     return best || { hero: [], layers: [], cam: [], cues: [] };
   }));
+  // the same text placement (x, y, size, font) in several scenes is a copy-paste: the later scenes are asked again for a different composition
+  const sig = (l) => [l.x, l.y, l.size, l.font].map((v) => (typeof v === 'number' ? Math.round(v * 20) / 20 : v)).join('|'), seenSig = new Map(), redo = new Set();
+  outs.forEach((o, i) => { const mine = new Set((o.layers || []).filter((l) => l && l.kind === 'text').map(sig)); mine.forEach((k) => { if (seenSig.has(k) && seenSig.get(k) !== i) redo.add(i); else seenSig.set(k, i); }); });
+  const redoScenes = [...redo].slice(0, 3);
+  if (redoScenes.length) {
+    console.log('[promo] copy-paste type in scenes ' + redoScenes.map((i) => i + 1).join(', ') + ': asking those scenes again');
+    await Promise.all(redoScenes.map(async (i) => {
+      try {
+        const out = parse(await call(ANIMATOR_SYSTEM, animatorPrompt(plan, i, {}, ["Another scene already uses the same text position, size and font as one of yours. Give this scene's type a clearly DIFFERENT composition: a different position, size, font, arrival and rotation than the other scenes (" + [...seenSig.keys()].slice(0, 4).join('; ') + ')']), { maxTokens: 5200, temperature: 0.9, reasoning: 'low', what: 'scene ' + (i + 1) + ' again' }));
+        if (out && Array.isArray(out.layers) && out.layers.length >= 4) outs[i] = out;
+      } catch (e) { console.warn('[promo] scene ' + (i + 1) + ' rewrite failed: ' + String(e.message).slice(0, 100)); if (/Neuron guard|429|allocation/i.test(String(e.message))) throw e; }
+    }));
+  }
   // assemble the raw script promoFilm.normalizePromo understands
   const layers = [], hero = [], cam = [], cues = [];
   outs.forEach((o) => { (o.layers || []).forEach((l) => layers.push(l)); (o.hero || []).forEach((k) => hero.push(k)); (o.cam || []).forEach((c) => cam.push(c)); (o.cues || []).forEach((c) => cues.push(c)); });
@@ -123,4 +153,4 @@ async function design({ brief, call, say, onPlan }) {
   return { raw, plan };
 }
 
-module.exports = { design, directorPrompt, animatorPrompt, sceneIssues, DIRECTOR_SYSTEM, ANIMATOR_SYSTEM };
+module.exports = { planIssues, design, directorPrompt, animatorPrompt, sceneIssues, DIRECTOR_SYSTEM, ANIMATOR_SYSTEM };
