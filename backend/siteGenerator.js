@@ -341,7 +341,6 @@ async function buildPromoFilm({ raw, company, outDir, say, planOnly }) {
   }
   if (!heroRes) throw new Error('The product picture could not be made: ' + (lastErr && lastErr.message));
   save('hero', heroRes.buf, heroRes.aspect);
-  promoFilm.layoutPass(promo, heroRes.aspect);            // small lines and the brand never sit on the product picture
   // 2. the props (ingredients, pieces, splashes), three at a time; a prop that fails becomes a plain glossy disc in the product's colour
   say('Painting the ingredients', 0.4);
   await Promise.all(promo.props.map(async (p, i) => {
@@ -382,13 +381,13 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   const brandRefs = [logo && logo.length ? logo : null, ...userImgs.slice(1)].filter(Boolean).slice(0, 3), refCost = () => brandRefs.length * 13;   // shrinks below if the film would not fit the neuron ceiling
   const siteImg = company && company.siteImage && company.siteImage.length ? company.siteImage : null;
   const heroCost = userImgs[0] ? 0 : logo && logo.length || siteImg ? neurons.estKlein(true) : neurons.estKlein(false);
-  const reserveNow = () => (given ? 0 : promoOn() ? 5 * neurons.estKlein(true) : movieOn() ? IDS.length * neurons.estKlein(true) : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
+  const reserveNow = () => (given ? 0 : promoOn() ? 6 * neurons.estKlein(true) : movieOn() ? IDS.length * neurons.estKlein(true) : WORLD ? heroCost + (IDS.length - 1) * (neurons.estKlein(true) + refCost()) : fluxCount * neurons.estImage());
   let spec = given;
   if (!spec) {
     say(promoOn() ? 'Designing your promo' : 'Writing the ad script', 0.05);
     const sysPrompt = promoOn() ? promoFilm.PROMO_SYSTEM : SYSTEM;
     let scriptModel = SPEC_MODEL;
-    let raw = null, lastErr = null, keep = 7800, outEst = promoOn() ? (OSS ? 3000 : 2200) : OSS ? 2100 : 1400, maxTok = promoOn() ? (OSS ? 5600 : 3400) : movieOn() ? 1900 : 2600, temp = 0.8;   // a keyframe script is ~1000-1200 tokens: a runaway answer is cut off early (and cheaply)
+    let raw = null, lastErr = null, keep = 7800, outEst = promoOn() ? (OSS ? 5500 : 2600) : OSS ? 2100 : 1400, maxTok = promoOn() ? (OSS ? 9000 : 3600) : movieOn() ? 1900 : 2600, temp = promoOn() ? 1.0 : 0.8;   // a keyframe script is ~1000-1200 tokens: a runaway answer is cut off early (and cheaply)
     // Up to 3 tries (the first + 2 retries). When the film would not fit the per-film neuron ceiling the guard refuses BEFORE spending anything,
     // and each retry then asks for a smaller job (shorter brief, tighter answer) instead of giving up.
     let useExt = scriptClient.enabled();                          // the stronger writer first; any failure drops to Cloudflare for the remaining tries
@@ -405,7 +404,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
         }
         neurons.charge(est, 'ad script', reserveNow()); // refuses BEFORE spending if the ad could not be finished inside its ceiling
         let usage = null;
-        txt = await callCloudflareRaw(sysPrompt, prompt, { jsonMode: true, maxTokens: maxTok, temperature: temp, model: scriptModel, timeoutMs: 120000, onUsage: (u) => { usage = u; } });
+        txt = await callCloudflareRaw(sysPrompt, prompt, { jsonMode: true, maxTokens: maxTok, temperature: temp, model: scriptModel, timeoutMs: 180000, reasoning: promoOn() ? 'medium' : 'low', onUsage: (u) => { usage = u; } });
         neurons.settleText(scriptModel, est, usage, 'ad script');
         raw = typeof txt === 'string' ? JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)) : txt;
       } catch (e) {
@@ -419,7 +418,27 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
       }
     }
     if (!raw) throw new Error('The AI could not write the ad script: ' + (lastErr && lastErr.message));
-    if (promoOn()) return await buildPromoFilm({ raw, company, outDir, say, planOnly });
+    if (promoOn()) {
+      // the director's review: what is thin about the draft goes back to the AI, which rewrites the whole script (its own fix, not ours)
+      try {
+        const draft = promoFilm.normalizePromo(raw, { brand: company && company.name }), issues = promoFilm.critique(draft);
+        console.log('[promo] draft review: ' + (issues.length ? issues.length + ' issue(s): ' + issues.map((x) => x.slice(0, 70)).join(' | ') : 'clean'));
+        if (issues.length) {
+          say('Improving the design', 0.12);
+          const rp = promoFilm.revisePrompt(text.slice(0, keep), raw, issues), rest = 6 * neurons.estKlein(true), rest0 = neurons.estText(scriptModel, rp.length + sysPrompt.length, outEst);
+          if (rest0 + rest + neurons.runTotal() <= neurons.PER_RUN_CEILING) {
+            neurons.charge(rest0, 'promo revision', rest);
+            let usage2 = null; const txt2 = await callCloudflareRaw(sysPrompt, rp, { jsonMode: true, maxTokens: maxTok, temperature: 0.9, model: scriptModel, timeoutMs: 180000, reasoning: 'medium', onUsage: (u) => { usage2 = u; } });
+            neurons.settleText(scriptModel, rest0, usage2, 'promo revision');
+            const raw2 = typeof txt2 === 'string' ? JSON.parse(txt2.slice(txt2.indexOf('{'), txt2.lastIndexOf('}') + 1)) : txt2;
+            const d2 = promoFilm.normalizePromo(raw2, { brand: company && company.name }), i2 = promoFilm.critique(d2);
+            console.log('[promo] revision review: ' + (i2.length ? i2.length + ' issue(s)' : 'clean'));
+            if (i2.length <= issues.length) raw = raw2;
+          } else console.log('[promo] revision skipped: it would not fit the neuron ceiling');
+        }
+      } catch (e) { console.warn('[promo] revision skipped: ' + String(e.message).slice(0, 140)); }
+      return await buildPromoFilm({ raw, company, outDir, say, planOnly });
+    }
     spec = normalizeSpec(raw, slug, { brand: company && company.name, brief: text, website: company && company.siteHost, movie: movieOn() });
   }
   fs.mkdirSync(path.join(outDir, 'images'), { recursive: true });
