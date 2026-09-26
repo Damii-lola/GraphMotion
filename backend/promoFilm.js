@@ -46,15 +46,16 @@ FIVE REAL SPOTS AND WHAT ACTUALLY HAPPENS IN THEM (learn the LEVEL of motion; in
 - Unicity (10 s): packs at rotated angles fill the whole frame, a lemon slice rolls in, a stat pops with sparkle circles, wave shapes wipe the bottom.
 
 YOU WRITE A "MOTION SCRIPT" from these primitives (there are no templates; the renderer plays exactly what you write). Coordinates x, y, cx, cy are fractions of the screen (0,0 top-left, 1,1 bottom-right; values outside 0..1 are off-screen, which is how things enter and leave); w and sizes are fractions of the screen WIDTH; times are seconds from 0. Layers are drawn in the order you write them (later = on top of earlier).
-FORMAT: "layers" is an array of FLAT objects, each with a "kind" key and its fields directly on it (never nested under a "sprite" or "text" key), for example:
-{"kind":"sprite","src":"hero","t0":0.1,"t1":9,"x":0.5,"y":0.55,"w":0.5,"r":0,"keys":[{"t":0.1,"x":-0.4,"y":0.9,"w":0.6,"r":-40,"blur":14},{"t":0.8,"x":0.5,"y":0.55,"w":0.5,"r":-8,"blur":0,"e":"outExpo"}]}
+FORMAT: THE HERO is ONE continuous track, "hero": {"path":[waypoints], "shadow":true|false, "glow":{...}, "idle":{...}}. Each waypoint {"t","x","y","w","r","blur","sx","sy","o","e"} (w = the pack's width as a fraction of the screen width: it rests at 0.4-0.6, can swell past 1.0 for a zoom-through or shrink to a badge; r = tilt in degrees; e = easing of the move ARRIVING at that waypoint). The first waypoint is where and when it first appears (put it off-screen to fly in), the last pose holds until the end; it leaves the screen by moving outside 0..1 or with o:0. Write 6 to 14 waypoints: it is the star and it travels the whole frame. Never split the hero into separate layers (extra copies of it, for a row or a ring, go in "layers" with src "hero").
+FORMAT: every PROP carries its own appearances: "props":[{"name","look","uses":[{"kind":"scatter","t0":1,"t1":3,"n":8,"size":[0.16,0.36],"from":"burst","seed":5}, {"kind":"sprite","t0":2,"t1":4,"x":0.8,"y":0.2,"w":0.3,"keys":[...]}]}] (a use is a scatter, a sprite or a pattern; its src is filled in for you). Every prop needs at least one use, and they are big.
+FORMAT: "layers" holds everything else, as FLAT objects, each with a "kind" key and its fields directly on it (never nested under a "sprite" or "text" key), for example:
 {"kind":"text","t0":1,"t1":3,"x":0.5,"y":0.3,"size":0.2,"font":"anton","color":"#ffffff","lines":["WORD"],"in":{"kind":"slam","dur":0.4}}
-{"kind":"scatter","src":["prop0","prop1"],"t0":1,"t1":3,"n":8,"size":[0.16,0.36],"from":"burst","seed":5}
+{"kind":"pattern","src":"hero","sub":"ring","t0":4,"t1":6,"cx":0.5,"cy":0.5,"w":0.2,"rings":2,"spin":30}
 {"kind":"flash","t0":2,"t1":2.25,"color":"#ffffff","alpha":0.8}
-"zones" and "beats" are arrays. A layer only EXISTS between its t0 and t1, so give a layer t0..t1 covering every moment it is visible (the hero: from its first appearance until it is gone; its keys then move it around); In a SPRITE's keys, "w" is its width at that moment as a fraction of the screen width (the hero rests at 0.4-0.6; it can swell to 1.0 or more for a zoom-through and shrink to a badge), so it can grow and shrink between keys.
+"zones" and "beats" are arrays. A layer only EXISTS between its t0 and t1, so give a layer t0..t1 covering every moment it is visible (a word must stay at least 1 s to be read); DRAW ORDER: backdrop shapes and giant words (size 0.16 and up, unless front:true) are BEHIND the hero, the hero is above them, props, bursts and copies above the hero, small lines (and front:true words) above those, and wipes and flashes over everything; In a SPRITE's keys, "w" is its width at that moment as a fraction of the screen width (the hero rests at 0.4-0.6; it can swell to 1.0 or more for a zoom-through and shrink to a badge), so it can grow and shrink between keys.
 EVERY layer: beat (optional index), t0, t1, alpha, blend ("screen","multiply","overlay","lighter","soft-light"), keys.
 KEYS: "keys":[{"t","x","y","w" (sprites: width as a fraction of the screen width) or "s" (text and shapes: scale, 1 = as written),"sx","sy" (stretch / squash multipliers, 1 = none),"r" (rotation in degrees, absolute),"o" (opacity),"blur" (pixels),"e" (easing of the move that ARRIVES at this key)}]. Between keys the layer is interpolated; eases: ${EASES.join(', ')}. If a layer has keys, make its first key's t equal to the layer's t0 and give it the layer's x, y, w. Any number of keys (up to 16): whip across, stop, rebound, exit. The same sprite may appear in SEVERAL layers, each with its own keys.
-- "sprite": src "hero" (the product pack shot) or "prop0".."prop4" (your props). x, y, w, r, shadow (false to drop it), glow {color, blur}, blur (px), idle {kind, amp, speed} (kinds ${IDLE.join(', ')}), in {kind, dur, delay, from, turns} (kinds ${IN_KINDS.join(', ')}; "focus" = blurred to sharp, "wipeL/wipeR/wipeU/wipeD/iris" = mask reveals), out {kind, dur}.
+- "sprite" (in layers or in a prop's uses): src "hero" or "prop0".."prop4". x, y, w, r, shadow (false to drop it), glow {color, blur}, blur (px), idle {kind, amp, speed} (kinds ${IDLE.join(', ')}), in {kind, dur, delay, from, turns} (kinds ${IN_KINDS.join(', ')}; "focus" = blurred to sharp, "wipeL/wipeR/wipeU/wipeD/iris" = mask reveals), out {kind, dur}.
 - "text": lines ["WORD","WORD"], x, y, size (0.03 tiny .. 0.36 giant), font, color, upper, track (letter spacing), r (any rotation; 90 or -90 runs a word vertically up the side), align, stroke {color, w}, fill (false = outline only), tone (true = a shade off the backdrop, tone-on-tone), shadow, glow {color, blur}, blur, in {kind, dur, stag} (kinds ${TEXT_IN.join(', ')}; words arrive one by one), out {kind}, repeat {n, dy, speed} (the same word stacked n times, scrolling: the wall behind a product). Fonts: ${Object.entries(FONTS).map(([k, v]) => k + ' (' + v + ')').join('; ')}.
 - "scatter": pieces flying around: src (one prop id or a list, "hero" allowed), n (1-16), cx, cy, spread, size [min,max], from ("burst" | "corners" | "edges" | "top" | "sides"), seed, spin, stag, avoid (true keeps them off the product).
 - "pattern": src repeated as a pattern: sub ("radial" | "grid" | "ring"), cx, cy, w, spin, rings, cols, rows, stag, alpha.
@@ -154,7 +155,13 @@ function normalizePromo(raw, ctx = {}) {
     if (L.blend) { const bl = oneOf(L.blend, BLENDS, null); if (bl) o.blend = bl; }
     return o;
   };
-  (Array.isArray(S.layers) ? S.layers : []).slice(0, 44).forEach((L0) => {
+  const extraIn = [];
+  if (S.hero && typeof S.hero === 'object' && Array.isArray(S.hero.path) && S.hero.path.length) {
+    const wp = S.hero.path.filter((k) => k && typeof k === 'object' && Number.isFinite(+k.t)).sort((a, b) => a.t - b.t), p0 = wp[0];
+    if (p0) extraIn.push({ kind: 'sprite', src: 'hero', t0: p0.t, t1: D, x: p0.x, y: p0.y, w: p0.w, r: 0, keys: wp.length >= 2 ? wp.map((k) => Object.assign({}, k, { r: k.r })) : undefined, shadow: S.hero.shadow, glow: S.hero.glow, idle: S.hero.idle, blur: p0.blur });
+  }
+  (Array.isArray(S.props) ? S.props : []).slice(0, 5).forEach((p, i) => { (p && Array.isArray(p.uses) ? p.uses : []).slice(0, 4).forEach((u) => { if (u && typeof u === 'object') extraIn.push(Object.assign({}, u, { src: 'prop' + i, kind: ['scatter', 'sprite', 'pattern'].includes(u.kind) ? u.kind : 'scatter' })); }); });
+  (Array.isArray(S.layers) ? S.layers : []).concat(extraIn).slice(0, 56).forEach((L0) => {
     if (!L0 || typeof L0 !== 'object') return;
     let L = L0;
     for (const nk of ['sprite', 'text', 'scatter', 'pattern', 'shape']) if (L0[nk] && typeof L0[nk] === 'object' && !Array.isArray(L0[nk])) { L = Object.assign({}, L0, L0[nk], nk === 'shape' ? {} : { kind: nk }); if (!L.kind) L.kind = 'shape'; delete L[nk]; break; }
@@ -205,6 +212,12 @@ function normalizePromo(raw, ctx = {}) {
       layers.push(o);
     }
   });
+  // safety: a word must be readable, a flash is brief and rare
+  layers.forEach((l) => { if (l.kind === 'text') { const need = 1.0; if (l.t1 - l.t0 < need) l.t1 = +Math.min(D, l.t0 + need).toFixed(2); if (l.t0 + need > D) l.t0 = +Math.max(0, D - need).toFixed(2); } else if (l.kind === 'sprite' || l.kind === 'scatter') { if (l.t1 - l.t0 < 0.5) l.t1 = +Math.min(D, l.t0 + 0.5).toFixed(2); } });
+  { let fl = 0; for (let i = layers.length - 1; i >= 0; i--) if (layers[i].kind === 'flash') { fl++; if (fl > 3) layers.splice(i, 1); } }
+  // draw order (a rendering rule, not a design): backdrop shapes and giant words behind the hero, the hero, props / bursts / copies above it, small lines above those, wipes and flashes over everything
+  { const rank = (l) => (['flash', 'wipe'].includes(l.kind) ? 6 : ['circle', 'rect', 'rings', 'wave', 'rays', 'dots', 'stripes'].includes(l.kind) ? 0 : l.kind === 'pattern' ? 1 : l.kind === 'text' ? (l.front || l.size < 0.16 ? 5 : 2) : l.kind === 'sprite' && l.src === 'hero' && !l.copy ? 3 : 4); const first = layers.findIndex((l) => l.kind === 'sprite' && l.src === 'hero');
+    const arr = layers.map((l, i) => [rank(l), i === first ? -1 : i, l]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]); layers.length = 0; arr.forEach((l) => layers.push(l)); }
   // guarantees (content, not design): the product exists and is on screen early; the brand name closes the promo
   const heroLayers = layers.filter((l) => l.kind === 'sprite' && l.src === 'hero');
   if (!heroLayers.length) layers.push({ kind: 'sprite', src: 'hero', beat: 'all', t0: 0.3, t1: D, x: 0.5, y: 0.52, w: 0.5, r: -10, in: { kind: 'pop', dur: 0.6 }, idle: { kind: 'float', amp: 0.012, speed: 1 } });
@@ -262,7 +275,7 @@ function critique(promo) {
   if (covered.length) issues.push(`A small line of text ("${covered[0].lines.join(' ')}") sits on top of the product's face. Move it into free space or make it a giant word BEHIND the product (written earlier).`);
   const usedSrc = new Set(); L.forEach((l) => { (Array.isArray(l.src) ? l.src : [l.src]).forEach((x) => usedSrc.add(x)); });
   const unused = promo.props.map((p, i) => 'prop' + i).filter((id) => !usedSrc.has(id));
-  if (unused.length) issues.push('These props are defined but never appear on screen: ' + unused.join(', ') + '. Use every prop, big, as scatter pieces, flying sprites or patterns.');
+  if (unused.length) issues.push('These props have no "uses" and never appear on screen: ' + unused.join(', ') + '. Give every prop uses (scatter pieces, flying sprites or patterns), big.');
   if (promo.sound.cues.length < 4) issues.push('Sound cues: place a whoosh at every fast sweep, an impact at every landing and a tick on every word slam (sound.cues), at least 6.');
   return issues.slice(0, 7);
 }
@@ -375,6 +388,19 @@ async function stampBrand(buf, brand) {
     if (fs.existsSync(font) && !GlobalFonts.has('WordmarkFont')) GlobalFonts.registerFromPath(font, 'WordmarkFont');
     const im = await loadImage(buf), w = im.width, h = im.height, c = createCanvas(w, h), g = c.getContext('2d');
     g.drawImage(im, 0, 0);
+    // a smooth label band over the middle of the pack: it hides any text the image AI wrote there (it likes to add its own name), in the pack's own colour, shaded round the cylinder
+    { const y0 = Math.round(h * 0.27), bh = Math.round(h * 0.46), all = g.getImageData(0, y0, w, bh).data; let r = 0, gg = 0, b = 0, n = 0, minx = w, maxx = 0;
+      for (let y = 0; y < bh; y += 3) for (let x = 0; x < w; x++) { const i = (y * w + x) * 4; if (all[i + 3] > 200) { if (x < minx) minx = x; if (x > maxx) maxx = x; } }
+      const span = maxx - minx; if (span > 20) {
+        for (let y = 0; y < bh; y += 2) for (const fx of [0.2, 0.26, 0.74, 0.8]) { const x = Math.round(minx + span * fx), i = (y * w + x) * 4; if (all[i + 3] > 200) { r += all[i]; gg += all[i + 1]; b += all[i + 2]; n++; } }
+        if (n) {
+          r /= n; gg /= n; b /= n; const P = createCanvas(w, bh), p = P.getContext('2d'), gr = p.createLinearGradient(minx, 0, maxx, 0), sh = (k) => 'rgb(' + [r, gg, b].map((v) => Math.max(0, Math.min(255, Math.round(v * k)))).join(',') + ')';
+          gr.addColorStop(0, sh(0.66)); gr.addColorStop(0.2, sh(0.92)); gr.addColorStop(0.5, sh(1.08)); gr.addColorStop(0.8, sh(0.92)); gr.addColorStop(1, sh(0.64));
+          p.fillStyle = gr; p.fillRect(0, 0, w, bh);
+          p.globalCompositeOperation = 'destination-in'; const vg = p.createLinearGradient(0, 0, 0, bh); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(0.07, 'rgba(0,0,0,1)'); vg.addColorStop(0.93, 'rgba(0,0,0,1)'); vg.addColorStop(1, 'rgba(0,0,0,0)'); p.fillStyle = vg; p.fillRect(0, 0, w, bh);
+          g.save(); g.globalCompositeOperation = 'source-atop'; g.drawImage(P, 0, y0); g.restore();
+        }
+      } }
     // ink colour from what is under the label (opaque pixels in the middle band)
     const d = g.getImageData(Math.round(w * 0.3), Math.round(h * 0.4), Math.round(w * 0.4), Math.round(h * 0.2)).data; let r = 0, gg = 0, b = 0, n = 0;
     for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200) { r += d[i]; gg += d[i + 1]; b += d[i + 2]; n++; }
