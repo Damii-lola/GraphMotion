@@ -67,7 +67,11 @@ function exitMove(style, u, from, dir = 1) {
   if (style === 'down') return { u, x: from.x, y: 1.6, w: from.w, r: from.r - 20, blur: 14, e: 'inCubic' };
   return { u, x: off, y: from.y - 0.12, w: from.w * 1.05, r: from.r + (dir > 0 ? 42 : -42), blur: 14, e: 'inCubic' };
 }
-const restPose = (ctx, id, x, y, w, r, hasGiant) => { const [lo, hi] = hasGiant ? LAWS.pack.restWithGiantType : LAWS.pack.restW; return { x, y, w: +clamp(w, lo, hi).toFixed(3), r: clamp(r, -LAWS.pack.tiltMax, LAWS.pack.tiltMax) }; };
+const restPose = (ctx, id, x, y, w, r, hasGiant, maxH) => {
+  const [lo, hi] = hasGiant ? LAWS.pack.restWithGiantType : LAWS.pack.restW, a = clamp((ctx.packs[id] && ctx.packs[id].aspect) || 0.5, 0.25, 1.6), hMax = (maxH || (hasGiant ? 0.5 : LAWS.pack.maxH)) * H * a / W;
+  const w1 = w * Math.sqrt(a / 0.5), w2 = Math.min(w1, hMax), lo2 = Math.min(lo, hMax);
+  return { x, y, w: +clamp(w2, lo2 * (w < 0.4 ? 0.7 : 1), hi).toFixed(3), r: clamp(r, -LAWS.pack.tiltMax, LAWS.pack.tiltMax) };
+};
 const seedRand = (s) => { let x = (s * 2654435761) >>> 0; return () => { x = (Math.imul(x ^ (x >>> 15), 2246822507) + 0x9e3779b9) >>> 0; return x / 4294967296; }; };
 
 // ------------------------------------------------------------------ the archetypes
@@ -136,7 +140,7 @@ ARCH.typed = {
     }
     for (let i = 0; i < nWords(lines); i++) cue(ctx, 0.15 + i * stag, 'tick');
     const id = packId(ctx, p.pack);
-    if (p.pack && p.pack !== 'none' && ctx.packs[id]) { const rest = restPose(ctx, id, 0.5, 0.83, 0.3, 4, false); movePack(ctx, id, [...enter('rise', 0.6, rest), drift(Math.max(2.0, ctx.dur - 0.05), rest)]); }
+    if (p.pack && p.pack !== 'none' && ctx.packs[id]) { const rest = restPose(ctx, id, 0.5, 0.83, 0.3, 4, false, 0.28); movePack(ctx, id, [...enter('rise', 0.6, rest), drift(Math.max(2.0, ctx.dur - 0.05), rest)]); }
   },
 };
 
@@ -194,7 +198,7 @@ ARCH.callouts = {
   params: { pack: 'hero | hero2 | hero3', sentence: 'a sentence (max 8 words)', items: 'list of 2-4 short labels (max 3 words each)', entrance: 'spin | pop | rise' },
   packs: 'one',
   build(p, ctx) {
-    const id = packId(ctx, p.pack), rest = restPose(ctx, id, 0.5, 0.6, 0.34, 0, false), items = (Array.isArray(p.items) ? p.items : []).map((s) => cleanWord(s, 22)).filter(Boolean).slice(0, 4), sent = sentenceLines(p.sentence, 2, 26);
+    const id = packId(ctx, p.pack), rest = restPose(ctx, id, 0.5, 0.6, 0.34, 0, false, 0.38), items = (Array.isArray(p.items) ? p.items : []).map((s) => cleanWord(s, 22)).filter(Boolean).slice(0, 4), sent = sentenceLines(p.sentence, 2, 26);
     movePack(ctx, id, [...enter(oneOf(p.entrance, ['spin', 'pop', 'rise'], 'spin'), 0.2, rest), drift(Math.max(2.0, ctx.dur - 0.05), rest)]);
     if (sent.length) text(ctx, { u0: 0.3, lines: sent, size: 0.05, font: 'poppins', upper: false, y: 0.15, lineGap: 1.4, in: { kind: 'rise', dur: 0.4, stag: 0.25 }, front: true, z: 5 });
     const POS = [[0.2, 0.4], [0.8, 0.4], [0.2, 0.76], [0.8, 0.76]];
@@ -223,7 +227,7 @@ ARCH.ingredients = {
       if (it.label) text(ctx, { u0: u + 0.35, lines: [it.label], size: 0.04, font: 'poppins', upper: false, x, y: +(y + 0.11).toFixed(3), in: { kind: 'rise', dur: 0.35, stag: 0.15 }, front: true, z: 5 });
       cue(ctx, u + 0.05, 'tick');
     });
-    const id = packId(ctx, p.pack); if (p.pack && p.pack !== 'none' && ctx.packs[id]) { const rest = restPose(ctx, id, 0.5, 0.86, 0.28, 3, false); movePack(ctx, id, [...enter('rise', 1.4, rest), drift(Math.max(2.2, ctx.dur - 0.05), rest)]); }
+    const id = packId(ctx, p.pack); if (p.pack && p.pack !== 'none' && ctx.packs[id]) { const rest = restPose(ctx, id, 0.5, 0.86, 0.28, 3, false, 0.24); movePack(ctx, id, [...enter('rise', 1.4, rest), drift(Math.max(2.2, ctx.dur - 0.05), rest)]); }
   },
 };
 
@@ -232,7 +236,7 @@ ARCH.cheer = {
   params: { pack: 'hero | hero2 | hero3', words: 'list of 3-4 cheer words (up to 9 letters each)', font: 'pacifico | lobster | caveat', entrance: 'pop | spin | drop' },
   packs: 'one',
   build(p, ctx) {
-    const id = packId(ctx, p.pack), rest = restPose(ctx, id, 0.5, 0.56, 0.4, -5, false), words = (Array.isArray(p.words) ? p.words : []).map((w) => cleanWord(w, 9)).filter(Boolean).slice(0, 4);
+    const id = packId(ctx, p.pack), rest = restPose(ctx, id, 0.5, 0.56, 0.4, -5, false, 0.5), words = (Array.isArray(p.words) ? p.words : []).map((w) => cleanWord(w, 9)).filter(Boolean).slice(0, 4);
     movePack(ctx, id, [...enter(oneOf(p.entrance, ['pop', 'spin', 'drop'], 'pop'), 0.15, rest), drift(Math.max(1.6, ctx.dur - 0.05), rest)]);
     const POS = [[0.24, 0.27, -14], [0.77, 0.3, 12], [0.25, 0.82, 11], [0.76, 0.79, -13]], font = safeFont(p.font, 'caveat');
     words.forEach((w, i) => { const [x, y, r] = POS[i]; text(ctx, { u0: 0.6 + i * 0.28, lines: [w], size: 0.14, font, upper: true, color: i % 2 ? ctx.pal.ink : ctx.pal.accent, x, y, r, in: { kind: 'pop', dur: 0.3 }, shadow: true, front: true, z: 5 }); cue(ctx, 0.62 + i * 0.28, 'tick'); });
@@ -277,7 +281,7 @@ ARCH.endcard = {
   params: { pack: 'hero | hero2 | hero3', style: 'slam | slice | pop (how the brand arrives)', font: 'a caps font', cta: 'call to action (max 3 words)', badge: 'optional tiny badge text (max 2 words)', entrance: 'spin | drop | whip | rise | pop' },
   packs: 'one',
   build(p, ctx) {
-    const id = packId(ctx, p.pack), rest = restPose(ctx, id, 0.5, 0.4, 0.46, 5, false), brandLines = wordsLines(ctx.brand, 2, 12), chars = Math.max(...brandLines.map((l) => l.length), 1);
+    const id = packId(ctx, p.pack), rest = restPose(ctx, id, 0.5, 0.38, 0.46, 5, false, 0.52), brandLines = wordsLines(ctx.brand, 2, 12), chars = Math.max(...brandLines.map((l) => l.length), 1);
     movePack(ctx, id, [...enter(oneOf(p.entrance, ['spin', 'drop', 'whip', 'rise', 'pop'], 'spin'), 0.1, rest), drift(Math.max(1.4, ctx.dur - 0.05), rest)]);
     text(ctx, { u0: 0.7, lines: brandLines, size: fitSize(chars, 'heading') * (brandLines.length > 1 ? 0.92 : 1), font: safeFont(p.font, 'anton'), color: inkFor(ctx.pal.c0, ctx.pal.accent), y: brandLines.length > 1 ? 0.76 : 0.78, lineGap: 1.0, in: { kind: oneOf(p.style, ['slam', 'slice', 'pop'], 'slam'), dur: 0.5, stag: 0.14 }, shadow: true, front: true, z: 6, isBrand: true });
     const cta = sentenceLines(p.cta || ctx.cta, 1, 24); if (cta.length && nWords(cta) <= 3) text(ctx, { u0: 1.3, lines: cta, size: 0.045, font: 'poppins', upper: true, y: 0.91, track: 0.14, in: { kind: 'rise', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
