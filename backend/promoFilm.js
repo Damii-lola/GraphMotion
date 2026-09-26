@@ -193,7 +193,7 @@ function normalizePromo(raw, ctx = {}) {
     if (p0) extraIn.push({ kind: 'sprite', main: true, src: 'hero', t0: p0.t, t1: D, x: p0.x, y: p0.y, w: p0.w, r: 0, keys: wp.length >= 2 ? wp.map((k) => Object.assign({}, k, { r: k.r })) : undefined, shadow: S.hero.shadow, glow: S.hero.glow, idle: S.hero.idle, blur: p0.blur });
   }
   (Array.isArray(S.props) ? S.props : []).slice(0, 4).forEach((p, i) => { (p && Array.isArray(p.uses) ? p.uses : []).slice(0, 4).forEach((u) => { if (u && typeof u === 'object') extraIn.push(Object.assign({}, u, { src: 'prop' + i, kind: ['scatter', 'sprite', 'pattern'].includes(u.kind) ? u.kind : 'scatter' })); }); });
-  mergeLetters((Array.isArray(S.layers) ? S.layers : []).concat(extraIn)).slice(0, 64).forEach((L0) => {
+  mergeLetters((Array.isArray(S.layers) ? S.layers : []).concat(extraIn)).slice(0, 52).forEach((L0) => {
     if (!L0 || typeof L0 !== 'object') return;
     let L = L0;
     for (const nk of ['sprite', 'text', 'scatter', 'pattern', 'shape']) if (L0[nk] && typeof L0[nk] === 'object' && !Array.isArray(L0[nk])) { L = Object.assign({}, L0, L0[nk], nk === 'shape' ? {} : { kind: nk }); if (!L.kind) L.kind = 'shape'; delete L[nk]; break; }
@@ -208,7 +208,7 @@ function normalizePromo(raw, ctx = {}) {
       if (L.shadow === false) o.shadow = false; if (L.blur !== undefined) o.blur = num(L.blur, 0, 0, 40); const gl = glowOf(L.glow); if (gl) o.glow = gl;
       const ks = keysOf(L.keys, D, 16, o.w); if (ks) o.keys = ks;
       if (L.main) o.main = true;
-      if (L.main && o.keys) { const giants = layers.filter((l) => l.kind === 'text' && (l.size >= 0.24 || l.repeat)); o.keys.forEach((k, i) => { const nx = o.keys[i + 1], hold = nx ? nx.t - k.t : 1; if (k.s !== undefined && hold > 0.7) { const withType = giants.some((g) => g.t0 <= k.t + hold * 0.5 && g.t1 >= k.t + hold * 0.5); k.s = +Math.min(k.s, (withType ? 0.55 : 0.8) / o.w).toFixed(3); } }); }
+      if (L.main && o.keys) { const giants = layers.filter((l) => l.kind === 'text' && (l.size >= 0.24 || l.repeat)); o.keys.forEach((k, i) => { const nx = o.keys[i + 1], hold = nx ? nx.t - k.t : 1; if (hold > 0.7) { const withType = giants.some((g) => g.t0 <= k.t + hold * 0.5 && g.t1 >= k.t + hold * 0.5), sc = k.s !== undefined ? k.s : 1, capped = Math.min(sc, (withType ? 0.55 : 0.8) / o.w); if (capped < sc - 1e-6) k.s = +capped.toFixed(3); } }); }
       if (src === 'hero' && L.main) {                                                                    // the main product this small cannot be seen: repair the scale, not the choreography
         const eff = o.keys ? o.keys.map((k) => o.w * (k.s !== undefined ? k.s : 1)) : [o.w], srt = eff.filter((v) => v > 0).sort((a, b) => a - b), md = srt.length ? srt[Math.floor(srt.length / 2)] : o.w;
         if (md < 0.4) o.w = +Math.min(1.2, o.w * (0.48 / md)).toFixed(3);     // every key scales with it
@@ -230,7 +230,7 @@ function normalizePromo(raw, ctx = {}) {
       const srcList = (Array.isArray(L.src) ? L.src : [L.src]).filter((s) => okSrc.has(s)); if (!srcList.length) return;
       let sz = Array.isArray(L.size) && L.size.length === 2 ? [num(L.size[0], 0.16, 0.04, 0.6), num(L.size[1], 0.3, 0.05, 0.8)] : [0.16, 0.3]; if (sz[1] < sz[0]) sz = [sz[1], sz[0]];
       sz = [Math.max(0.14, sz[0]), Math.max(0.26, sz[1])];               // confetti-sized props are never wanted: pieces are big and bleed off the frame
-      layers.push(timing(L, { kind, src: srcList, n: num(L.n, 8, 1, 16) | 0, cx: num(L.cx, 0.5, -0.5, 1.5), cy: num(L.cy, 0.5, -0.5, 1.5), spread: num(L.spread, 0.42, 0.1, 1.2), size: sz, from: oneOf(L.from, ['burst', 'corners', 'edges', 'top', 'sides'], 'burst'), seed: num(L.seed, 3, 1, 999) | 0, spin: num(L.spin, 240, 0, 900), stag: num(L.stag, 0.35, 0, 1.2), ...(L.avoid ? { avoid: true } : {}) }));
+      layers.push(timing(L, { kind, src: srcList, n: num(L.n, 8, 1, 9) | 0, cx: num(L.cx, 0.5, -0.5, 1.5), cy: num(L.cy, 0.5, -0.5, 1.5), spread: num(L.spread, 0.42, 0.1, 1.2), size: sz, from: oneOf(L.from, ['burst', 'corners', 'edges', 'top', 'sides'], 'burst'), seed: num(L.seed, 3, 1, 999) | 0, spin: num(L.spin, 240, 0, 900), stag: num(L.stag, 0.35, 0, 1.2), ...(L.avoid ? { avoid: true } : {}) }));
     } else if (kind === 'pattern') {
       const src = okSrc.has(L.src) ? L.src : 'hero';
       layers.push(timing(L, { kind, src, sub: oneOf(L.sub, ['radial', 'grid', 'ring'], 'radial'), cx: num(L.cx, 0.5, -0.5, 1.5), cy: num(L.cy, 0.5, -0.5, 1.5), w: num(L.w, 0.14, 0.04, 0.5), spin: num(L.spin, 30, -360, 360), rings: num(L.rings, 3, 1, 5) | 0, cols: num(L.cols, 4, 1, 8) | 0, rows: num(L.rows, 6, 1, 12) | 0, stag: num(L.stag, 0.02, 0, 0.1), alpha: num(L.alpha, 0.7, 0.1, 0.9) }));
