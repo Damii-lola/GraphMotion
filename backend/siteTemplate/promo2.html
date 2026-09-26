@@ -244,7 +244,7 @@
     const t0 = L.t0 || 0, t1 = L.t1 !== undefined ? L.t1 : D; if (t < t0 || t > t1 + 0.001) return;
     const [dx, dy] = ox(L, cam), lines = (L.lines && L.lines.length ? L.lines : [String(L.text || "")]).map((s) => String(s)), upper = L.upper !== false;
     let size = (L.size || 0.12) * W; const font = L.font || "anton", track = (L.track || 0) * size, lineH = (L.lineGap || 1.05) * size;
-    const measure = (px) => { g.font = fontCss(font, px); return Math.max(...lines.map((ln) => g.measureText(upper ? ln.toUpperCase() : ln).width + track * ln.length)); };
+    const measure = (px) => { g.font = fontCss(font, px); try { g.letterSpacing = (track * px / size) + 'px'; } catch (_) {} const m = Math.max(...lines.map((ln) => g.measureText(upper ? ln.toUpperCase() : ln).width)); try { g.letterSpacing = '0px'; } catch (_) {} return m; };
     const vertical = Math.abs(((L.r || 0) % 180)) > 60 && Math.abs(((L.r || 0) % 180)) < 120, maxW = (vertical ? H * 0.9 : W * 0.92) * (L.maxW ? L.maxW / 0.92 : 1); let mw = measure(size); if (mw > maxW) { size *= maxW / mw; mw = maxW; }
     if (!vertical) { const half = mw * st.s / 2 + W * 0.035; st.x = clamp(st.x, half / W, 1 - half / W); }                  // a line never runs off the edge of the frame
     const lh = (L.lineGap || 1.05) * size, col = L.color ? hex2(L.color, 0xffffff) : [255, 255, 255], bgAt = bg.at ? bg.at(st.x, st.y) : bg.c0;
@@ -261,8 +261,8 @@
       let wordIdx = 0;
       lines.forEach((ln, li) => {
         const words = (upper ? ln.toUpperCase() : ln).split(/\s+/).filter(Boolean), yLine = (li - (lines.length - 1) / 2) * lh;
-        g.font = fontCss(font, size); g.textBaseline = "middle";
-        const wds = words.map((w) => g.measureText(w).width + track * w.length), space = g.measureText(" ").width * 0.9, totW = wds.reduce((a, b) => a + b, 0) + space * (words.length - 1);
+        g.font = fontCss(font, size); g.textBaseline = "middle"; try { g.letterSpacing = track + 'px'; } catch (_) {}   // real letter-spacing: drawn AND measured, so word gaps stay tight
+        const wds = words.map((w) => g.measureText(w).width), space = g.measureText(" ").width * 0.9, totW = wds.reduce((a, b) => a + b, 0) + space * (words.length - 1);
         let x = L.align === "left" ? -mw / 2 : L.align === "right" ? mw / 2 - totW : -totW / 2;
         words.forEach((wd, wi) => {
           const idx = wordIdx++, d = idx * stag + (L.repeat ? Math.abs(off) * 0.05 : 0), ip = cl01((t - t0 - d) / dur);

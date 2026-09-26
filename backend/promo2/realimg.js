@@ -86,17 +86,18 @@ async function acquire({ name, brand, userPhotos = [], sitePhotos = [], wantVari
   for (const b of sitePhotos.slice(0, 5)) await tryCut(b, name, 'client website');
   let credit = null;
   const haveOwn = cands.length > 0;
-  if (!haveOwn || wantVariants > 0) {
+  if (!haveOwn) {   // the client's own photos are never mixed with strangers' packs: other flavours must come from the client (their other photos)
     try {
       const q = [brand, name].filter(Boolean).join(' '), hits = await offFind(q, brand, 30), nameWords = words(name).filter((w) => !['can', 'bottle', 'pack', 'box'].includes(w));
       const mainOk = (h) => !nameWords.length || nameWords.filter((w) => words(h.name + ' ' + h.brands).includes(w)).length / nameWords.length >= 0.75;
       const pool = hits.filter((h) => h.score >= 0.5).slice(0, 12); log('[photos] Open Food Facts: ' + hits.length + ' hits, ' + pool.length + ' candidates for "' + q + '"');
-      const got = await Promise.all(pool.map(async (h) => { try { let b; try { b = await getBuf(fullUrl(h.url)); } catch (_) { b = await getBuf(h.url); } const r = await cutoutReal(b); return r ? { ...r, name: h.name, source: 'Open Food Facts', main: mainOk(h) } : null; } catch (e) { return null; } }));
+      const got = await Promise.all(pool.map(async (h) => { try { let b; try { b = await getBuf(fullUrl(h.url)); } catch (_) { b = await getBuf(h.url); } const r = await cutoutReal(b); return r ? { ...r, name: h.name, brands: h.brands, source: 'Open Food Facts', main: mainOk(h) } : null; } catch (e) { return null; } }));
       const clean = got.filter(Boolean).filter((x) => x.quality.score >= 0.6).sort((a, b) => b.quality.score - a.quality.score);
       log('[photos] ' + clean.length + ' clean studio-style photos found in Open Food Facts');
       if (!haveOwn) { const m = clean.find((x) => x.main) || null; if (m) { cands.push(m); credit = 'Product photos: Open Food Facts contributors (CC BY-SA)'; } }
       const seen = new Set(cands.map((c) => words(c.name).join(' ')));
-      for (const x of clean) { if (cands.length >= 1 + wantVariants) break; const k = words(x.name).join(' '); if (seen.has(k) || cands.includes(x)) continue; seen.add(k); if (cands.length) { cands.push(x); credit = 'Product photos: Open Food Facts contributors (CC BY-SA)'; } }
+      const mb = cands.length ? words(cands[0].brands || '') : [];   // other flavours only of the SAME brand as the main pack
+      for (const x of clean) { if (cands.length >= 1 + wantVariants || !mb.length) break; if (!words(x.brands || '').some((w) => mb.includes(w))) continue; const k = words(x.name).join(' '); if (seen.has(k) || cands.includes(x)) continue; seen.add(k); if (cands.length) { cands.push(x); credit = 'Product photos: Open Food Facts contributors (CC BY-SA)'; } }
     } catch (e) { log('[photos] Open Food Facts unavailable: ' + String(e.message).slice(0, 80)); }
   }
   if (!cands.length) return null;
