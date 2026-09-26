@@ -25,7 +25,9 @@ const klein = require('./kleinClient');
 const MOVIE = process.env.MOVIE === '1' || (process.env.MOVIE !== '0' && (!!process.env.HF_TOKEN || !!process.env.FAL_KEY || !!process.env.VIDEO_WORKER_SECRET));                    // default: ONE CONTINUOUS FILM - shot 1 is a picture, then chained image-to-video clips (no cuts, no transitions)
 const promoFilm = require('./promoFilm');
 const promoDirector = require('./promoDirector');
-const promoOn = () => (process.env.FILM_MODE || 'promo') === 'promo';    // PRODUCT PROMOS: ~9 s motion graphics designed by the AI (no video worker, no voice)
+const filmMode = () => process.env.FILM_MODE || 'engine2';
+const promoOn = () => ['promo', 'engine2'].includes(filmMode());
+const engine2On = () => filmMode() === 'engine2';    // PRODUCT PROMOS: ~9 s motion graphics designed by the AI (no video worker, no voice)
 const movieOn = () => !promoOn() && MOVIE && videoGen.available();            // a notebook worker that is not running simply means: pictures joined by dives, as before
 const videoGen = require('./videoGen');
 const WORLD = process.env.IMAGE_ENGINE !== 'flux';   // default: ONE WORLD, six shots (FLUX.2 klein generate + edit); IMAGE_ENGINE=flux keeps the old six-separate-pictures path
@@ -405,6 +407,26 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
   let spec = given;
   if (!spec) {
     say(promoOn() ? 'Designing your promo' : 'Writing the ad script', 0.05);
+    // ENGINE 2: a small director call CHOOSES (reference, scenes, archetypes, words, colours...), the compiler applies the laws, the pictures paint only what the plan uses
+    if (engine2On()) {
+      const P2_MODELS = [process.env.PROMO2_MODEL || '@cf/qwen/qwen3-30b-a3b-fp8', process.env.PROMO2_FALLBACK || '@cf/meta/llama-3.1-8b-instruct-fp8-fast'];
+      const call2 = async (sys, prompt, o) => {
+        let lastErr = null;
+        for (const model of P2_MODELS) {
+          const qwen = /qwen/i.test(model), user = qwen ? prompt + '\n/no_think' : prompt, est = neurons.estText(model, sys.length + user.length, Math.round((o.maxTokens || 3000) * 0.5));
+          neurons.charge(est, 'promo ' + (o.what || 'call') + ' [' + model.split('/').pop() + ']', 7 * neurons.estKlein(true));
+          let usage = null;
+          try {
+            let txt; try { txt = await callCloudflareRaw(sys, user, { jsonMode: true, maxTokens: o.maxTokens, temperature: o.temperature, model, timeoutMs: 150000, onUsage: (u) => { usage = u; } }); }
+            catch (e) { if (/response_format|json mode|JSON/i.test(String(e.message)) && !/429|allocation/i.test(String(e.message))) txt = await callCloudflareRaw(sys, user, { jsonMode: false, maxTokens: o.maxTokens, temperature: o.temperature, model, timeoutMs: 150000, onUsage: (u) => { usage = u; } }); else throw e; }
+            neurons.settleText(model, est, usage, 'promo ' + (o.what || 'call'));
+            return txt;
+          } catch (e) { lastErr = e; neurons.refund(usage ? 0 : est, 'promo call failed'); if (/429|allocation|Neuron guard|not set/i.test(String(e && e.message))) throw e; console.warn('[promo2] model ' + model + ' failed: ' + String(e && e.message).slice(0, 140) + ' -> next model'); }
+        }
+        throw lastErr;
+      };
+      return await require('./promo2').generate({ brief: text.slice(0, 5000), company, outDir, say, call: call2, planOnly });
+    }
     // STAGED DESIGN: a director plans the scenes from a reference spot, one animator call per scene writes that scene's layers (in parallel), the pictures paint meanwhile
     if (promoOn() && process.env.PROMO_DESIGNER !== 'single') {
       const paintCache = new Map(); let stagedRaw = null;

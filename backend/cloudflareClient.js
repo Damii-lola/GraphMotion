@@ -92,9 +92,10 @@ async function callCloudflareRaw(systemPrompt, userMessage, { jsonMode = true, m
     throw new Error(`Cloudflare Workers AI returned an error: ${JSON.stringify(data.errors || data).slice(0, 500)}`);
   }
   const choice = data.result?.choices?.[0];
-  const text = choice?.message?.content;
+  let text = choice?.message?.content ?? (typeof data.result?.response === 'string' ? data.result.response : data.result?.response ? JSON.stringify(data.result.response) : undefined);
+  if (typeof text === 'string') text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   if (!text) throw new Error(`Cloudflare Workers AI returned no content: ${JSON.stringify(data).slice(0, 300)}`);
-  if (choice.finish_reason === 'length') {
+  if (choice && choice.finish_reason === 'length') {
     throw new Error(`Cloudflare Workers AI response was truncated (hit max_tokens=${maxTokens}) before completing`);
   }
   return text;
