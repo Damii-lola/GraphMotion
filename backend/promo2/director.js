@@ -12,7 +12,7 @@ const vary = require('./vary');
 const SYSTEM = 'You are an award-winning motion-graphics director who plans product launch spots for TikTok and Reels by studying real reference spots. You reply with ONE JSON object only.';
 
 const REFS = `REFERENCE SPOTS and the scene sequences they use (follow ONE for this product, adapt freely; each has its own pace):
-R1 Goli multivitamin (12 s): its HOOK is fixed: typed (a small left-aligned line like "Meet the All New", blur-in) -> wall (a word like NEW; the pack whips across it) -> then the 3rd scene is ALWAYS callouts (a sentence saying why THIS product is different + 4-5 short claim labels taken from the brief), then optionally: showcase (the pack tilted big, kicker + 2-line title, tiny cheer words, blurred true) | callouts (a sentence + 4-5 labels like Non-GMO / Gluten-Free / Kosher / Vegan).
+R1 Goli multivitamin (12 s): its HOOK is fixed: typed (a small left-aligned line like "Meet the All New", blur-in) -> wall (a word like NEW; the pack whips across it) -> then the 3rd scene is ALWAYS callouts ("sentence" = ONE short line saying why THIS product is different from the others, e.g. "Made for calm, not just vitamins"; "items" = 4-5 short claim labels taken from the brief; the sentence must NOT repeat the labels), then optionally: showcase (the pack tilted big, kicker + 2-line title, tiny cheer words, blurred true) | callouts (a sentence + 4-5 labels like Non-GMO / Gluten-Free / Kosher / Vegan).
 R2 Goli sleep (12 s): typed (a question) -> showcase (pack rises) -> cheer | ingredients -> wall (SO YUMMY).
 R3 Berry White (12 s): showcase (vertical word) -> showcase (other side) -> cheer.
 R4 Pluckk (10 s, colour wipes every 2 s): parade -> typed -> ring -> ingredients.
@@ -72,7 +72,11 @@ function checkPlan(plan) {
   const iss = [], S = plan.scenes || [], ref = String((plan.mimic && plan.mimic.ref) || '').toUpperCase();
   if (S.length < LAWS.structure.scenesMin) iss.push('Only ' + S.length + ' scenes: write 3 or 4.');
   if (S.length > 4) iss.push('Too many scenes (' + S.length + '): write 3 or 4.');
-  if (ref === 'R1') { const c = S[2]; const n = c && c.params && Array.isArray(c.params.items) ? c.params.items.filter(Boolean).length : 0; if (!c || c.archetype !== 'callouts' || n < 3 || !(c.params && c.params.sentence)) iss.push('R1: the 3rd scene must be "callouts" with a "sentence" saying why this product is different from the others and 4 or 5 short claim labels ("items") taken from the brief.'); }
+  if (ref === 'R1') {
+    const c = S[2], n = c && c.params && Array.isArray(c.params.items) ? c.params.items.filter(Boolean).length : 0;
+    if (!c || c.archetype !== 'callouts' || n < 3 || !(c.params && c.params.sentence)) iss.push('R1: the 3rd scene must be "callouts" with a "sentence" saying why this product is different from the others and 4 or 5 short claim labels ("items") taken from the brief.');
+    else { const sw = String(c.params.sentence).toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 3), lw = c.params.items.join(' ').toLowerCase().split(/[^a-z]+/), rep = sw.filter((w) => lw.includes(w)).length; if (sw.length && rep / sw.length >= 0.5) iss.push('R1: the callouts "sentence" only repeats the labels: write ONE line about what makes this product different (its promise or its edge), not a list of claims.'); }
+  }
   for (let i = 1; i < S.length; i++) if (S[i - 1].backdrop && S[i].backdrop && S[i - 1].backdrop.role && S[i - 1].backdrop.role === S[i].backdrop.role) iss.push('Scenes ' + i + ' and ' + (i + 1) + ' have the same backdrop role: give neighbouring scenes different roles.');
   if (S.filter(giantScene).length < LAWS.structure.giantTypeScenesMin) iss.push('Type must be a main character: at least two scenes need a giant word (hook_slice, word_pack, wall, showcase with "vertical", disc_pack with "word").');
   if (!S.some(packAbsent)) iss.push('The pack is in every scene: use at least one scene without the pack (hook_slice, typed with pack "none", wall with pack "none", ingredients with pack "none").');

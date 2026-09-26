@@ -43,7 +43,7 @@ const shape = (ctx, o) => { const L = { alpha: 1, r: 0, x: 0.5, y: 0.5, color: c
 const scatter = (ctx, o) => {
   const ids = (o.src && o.src.length ? o.src : ctx.props.map((p) => p.id)).filter((id) => ctx.props.some((p) => p.id === id) || ctx.packs[id]);
   if (!ids.length) return null;
-  return push(ctx, { kind: 'scatter', src: ids, n: clamp(o.n || 6, 2, LAWS.props.maxPerScatter), cx: 0.5, cy: 0.55, spread: 0.5, size: [LAWS.props.size[0] + 0.02, LAWS.props.size[1] - 0.04], from: o.from || 'corners', seed: o.seed || 3, spin: o.spin || 240, stag: o.stag || 0.3, t0: A(ctx, o.u0 || 0.8), t1: A(ctx, o.u1 !== undefined ? o.u1 : ctx.dur) });
+  return push(ctx, { kind: 'scatter', src: ids, n: clamp(o.n || 6, 2, LAWS.props.maxPerScatter), cx: 0.5, cy: 0.55, spread: 0.5, size: [LAWS.props.size[0] + 0.02, LAWS.props.size[1] - 0.04], from: o.from || 'corners', seed: o.seed || 3, spin: o.spin || 240, stag: o.stag || 0.3, z: 2.6, t0: A(ctx, o.u0 || 0.8), t1: A(ctx, o.u1 !== undefined ? o.u1 : ctx.dur) });
 };
 const cue = (ctx, u, kind) => ctx.out.cues.push({ t: A(ctx, Math.max(0, u)), kind });
 const cam = (ctx, u, kind, o = {}) => ctx.out.cam.push({ t: A(ctx, u), kind, ...(kind === 'punch' ? { amp: ctx.v.motion.punch, dur: 0.3 } : kind === 'shake' ? { amp: 8, dur: 0.35 } : {}), ...o });
@@ -273,7 +273,7 @@ ARCH.callouts = {
     else if (v === 'list') { const sd = px < 0.5 ? 'R' : 'L', x = sd === 'R' ? 0.76 : 0.24; POS = items.map((_, i) => [x, +(0.47 + i * 0.075).toFixed(3), sd]); }
     else POS = [[0.8, 0.51, 'R'], [0.8, 0.61, 'R'], [0.8, 0.71, 'R'], [0.13, 0.61, 'L'], [0.17, 0.71, 'L']];
     items.forEach((lab, i) => {
-      const [ix0, iy, sd] = POS[i], tw = lab.length * 0.026, pw = +(tw + 0.08).toFixed(3), ix = +(sd === 'R' ? Math.min(Math.max(ix0, rest.x + rest.w * 0.5 + 0.045), 0.965 - pw) : Math.max(Math.min(ix0, rest.x - rest.w * 0.5 - 0.045), 0.035 + pw)).toFixed(3), u = 0.9 + i * 0.36, sx = rest.x + (sd === 'R' ? 1 : -1) * (rest.w * 0.5 + 0.012), sy = clamp(iy, rest.y - 0.14, rest.y + 0.14), pxc = +(ix + (sd === 'R' ? pw / 2 : -pw / 2)).toFixed(3), pc = i % 2 ? ctx.pal.ink : ctx.pal.accent;
+      const [ix0, iy, sd] = POS[i], tw = lab.length * 0.026, pw = +(tw + 0.08).toFixed(3), ix = +(sd === 'R' ? Math.min(Math.max(ix0, rest.x + rest.w * 0.5 + 0.075), 0.965 - pw) : Math.max(Math.min(ix0, rest.x - rest.w * 0.5 - 0.075), 0.035 + pw)).toFixed(3), u = 0.9 + i * 0.36, sx = rest.x + (sd === 'R' ? 1 : -1) * (rest.w * 0.5 + 0.012), sy = clamp(iy, rest.y - 0.14, rest.y + 0.14), pxc = +(ix + (sd === 'R' ? pw / 2 : -pw / 2)).toFixed(3), pc = i % 2 ? ctx.pal.ink : ctx.pal.accent;
       shape(ctx, { kind: 'line', x1: +sx.toFixed(3), y1: +sy.toFixed(3), x2: +ix.toFixed(3), y2: iy, cx: +((sx + ix) / 2).toFixed(3), cy: +(sy + (iy - sy) * 0.3).toFixed(3), color: ctx.pal.ink, alpha: 0.9, width: 0.0034, dur: 0.4, u0: u, u1: ctx.dur - 0.25, z: 4.1 });
       shape(ctx, { kind: 'rect', x: pxc, y: iy, w: pw, h: 0.066, radius: 0.5, color: pc, in: { kind: 'pop', dur: 0.4, delay: 0.3 }, u0: u, u1: ctx.dur - 0.25, z: 4.6 });
       text(ctx, { u0: u + 0.4, lines: [lab], size: 0.04, font: F(ctx, 'head'), upper: true, track: 0.04, color: inkFor(pc, null), x: pxc, y: iy, in: { kind: 'pop', dur: 0.3 }, front: true, z: 5 });
