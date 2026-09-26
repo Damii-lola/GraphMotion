@@ -165,7 +165,7 @@ ARCH.typed = {
   build(p, ctx) {
     const lines = sentenceLines(p.lines || p.sentence, 3, 30); while (nWords(lines) > 9) lines[lines.length - 1] = lines[lines.length - 1].split(' ').slice(0, -1).join(' ');
     const v = variantOf(ctx, p, ['left', 'center', 'right', 'bottom', 'swap']), chars = Math.max(...lines.map((l) => l.length), 1), size = +clamp(0.86 / (chars * 0.62), 0.045, 0.062).toFixed(3), stag = ctx.v.range(0.22, 0.32), tEnd = nWords(lines) * stag + 0.5, font = F(ctx, 'small', p.font), inK = oneOf(p.style, ['blurin', 'rise'], ctx.v.pick(['blurin', 'rise']));
-    if (String(p.wave) === 'true' || (p.wave === undefined && ctx.v.chance(0.4))) decor(ctx, 'waves'); else decor(ctx, ctx.v.chance(0.5) ? 'none' : undefined);
+    if (String(p.wave) === 'true' || (p.wave === undefined && ctx.v.chance(0.4))) decor(ctx, 'waves'); else decor(ctx, ctx.v.chance(0.5) ? 'none' : ctx.v.pick(['rings', 'dots', 'stripes', 'rays']));   // no wave when the plan turned it off
     if (v === 'swap') {
       const ws = lines.join(' ').split(/\s+/).filter(Boolean).slice(0, 7), per = clamp((ctx.dur - 0.3) / ws.length, 0.28, 0.6);
       ws.forEach((w, i) => text(ctx, { u0: 0.15 + i * per, u1: 0.15 + (i + 1) * per + (i === ws.length - 1 ? 0.8 : 0.05), lines: [w], size: +clamp(0.8 / (Math.max(3, w.length) * 0.5), 0.12, 0.3).toFixed(3), font: F(ctx, 'giant'), upper: true, y: 0.5, r: ctx.v.pick([0, 0, -6, 6]), color: i % 2 ? ctx.pal.accent : ctx.pal.ink, in: { kind: ctx.v.pick(['pop', 'slam', 'slideL']), dur: 0.22 }, z: 5, front: true, shadow: true })); ws.forEach((w, i) => cue(ctx, 0.15 + i * per, 'tick'));
@@ -188,14 +188,16 @@ ARCH.showcase = {
   build(p, ctx) {
     const id = packId(ctx, p.pack), pose = variantOf(ctx, { variant: p.pose }, ['centre', 'left-bleed', 'right-bleed', 'bottom-peek', 'spin', 'top-drop']), vert = cleanWord(p.vertical, 8).toUpperCase();
     const sg = pose === 'left-bleed' ? -1 : pose === 'right-bleed' ? 1 : ctx.v.pick([-1, 1]), tilt = num(p.tilt, sg * ctx.v.range(14, 26), -28, 28);
+    const bleedPose = pose === 'left-bleed' || pose === 'right-bleed', vsg = bleedPose ? -sg : sg;   // the vertical word runs on the side the pack does NOT bleed from
+    const rp = (c, id2, x, y, w, r, gt, mh, bl) => { const q = restPose(c, id2, x, y, w, r, gt, mh, bl); if (vert && !bleedPose) { q.x = +(0.5 - vsg * 0.07).toFixed(3); const edge = vsg > 0 ? 0.76 : 0.24; q.w = +Math.min(q.w, Math.max(0.2, 1.5 * Math.abs(edge - q.x))).toFixed(3); } return q; };
     let rest, path, titleX = 0.5, titleAlign = 'center';
     if (pose === 'left-bleed') { rest = restPose(ctx, id, 0.16, 0.6, 0.62, tilt, false, 0.62, true); path = [...enter(ctx, 'whip', 0.1, rest, -1)]; titleX = 0.68; titleAlign = 'left'; }
     else if (pose === 'right-bleed') { rest = restPose(ctx, id, 0.84, 0.6, 0.62, tilt, false, 0.62, true); path = [...enter(ctx, 'whip', 0.1, rest, 1)]; titleX = 0.32; titleAlign = 'right'; }
-    else if (pose === 'bottom-peek') { rest = restPose(ctx, id, ctx.v.range(0.4, 0.6), 0.86, 0.62, tilt * 0.5, false, 0.62, true); path = [...enter(ctx, 'rise', 0.1, rest)]; }
-    else if (pose === 'spin') { rest = restPose(ctx, id, 0.5, 0.58, vert ? 0.44 : 0.5, tilt, !!vert); path = [{ u: 0.1, x: rest.x, y: rest.y, w: rest.w * 0.5, r: rest.r - 360, blur: 6, o: 1 }, { u: 0.95, ...rest, blur: 0, e: 'outBack' }]; }
-    else if (pose === 'top-drop') { rest = restPose(ctx, id, ctx.v.range(0.42, 0.58), 0.6, vert ? 0.44 : 0.5, tilt, !!vert); path = [...enter(ctx, 'drop', 0.1, rest)]; }
-    else { rest = restPose(ctx, id, ctx.v.range(0.42, 0.6), 0.6, vert ? 0.44 : 0.5, tilt, !!vert); path = [...enter(ctx, oneOf(p.entrance, ENTR, ctx.v.entrance()), 0.1, rest, sg)]; }
-    if (vert) text(ctx, { lines: [vert], size: +clamp(Math.min(0.34, 3.0 / vert.length), 0.2, 0.34).toFixed(3), r: sg > 0 ? 90 : -90, x: sg > 0 ? 0.87 : 0.13, y: 0.5, alpha: 0.9, font: F(ctx, 'giant', p.font), in: { kind: 'slideL', dur: 0.6, stag: 0.05 }, z: 2 });
+    else if (pose === 'bottom-peek') { rest = rp(ctx, id, ctx.v.range(0.4, 0.6), 0.86, 0.62, tilt * 0.5, false, 0.62, true); path = [...enter(ctx, 'rise', 0.1, rest)]; }
+    else if (pose === 'spin') { rest = rp(ctx, id, 0.5, 0.58, vert ? 0.44 : 0.5, tilt, !!vert); path = [{ u: 0.1, x: rest.x, y: rest.y, w: rest.w * 0.5, r: rest.r - 360, blur: 6, o: 1 }, { u: 0.95, ...rest, blur: 0, e: 'outBack' }]; }
+    else if (pose === 'top-drop') { rest = rp(ctx, id, ctx.v.range(0.42, 0.58), 0.6, vert ? 0.44 : 0.5, tilt, !!vert); path = [...enter(ctx, 'drop', 0.1, rest)]; }
+    else { rest = rp(ctx, id, ctx.v.range(0.42, 0.6), 0.6, vert ? 0.44 : 0.5, tilt, !!vert); path = [...enter(ctx, oneOf(p.entrance, ENTR, ctx.v.entrance()), 0.1, rest, sg)]; }
+    if (vert) text(ctx, { lines: [vert], size: +clamp(Math.min(0.34, 3.0 / vert.length), 0.2, 0.34).toFixed(3), r: vsg > 0 ? 90 : -90, x: vsg > 0 ? 0.87 : 0.13, y: 0.5, alpha: 0.9, font: F(ctx, 'giant', p.font), in: { kind: 'slideL', dur: 0.6, stag: 0.05 }, z: 2 });
     decor(ctx);
     movePack(ctx, id, [...path, drift(ctx, Math.max(1.4, ctx.dur * 0.7), rest, sg), { ...drift(ctx, Math.max(1.5, ctx.dur - 0.05), rest, -sg), w: rest.w, r: rest.r - 3 * sg }]);
     const kicker = sentenceLines(p.kicker, 1, 28), title = sentenceLines(p.title, 2, 22), ty = pose === 'bottom-peek' ? 0.22 : 0.15;
