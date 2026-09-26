@@ -192,7 +192,7 @@ ARCH.typed = {
 
 ARCH.showcase = {
   about: 'The HERO scene: the pack whips in and comes to rest BIG and tilted, slowly rolling; a two-line bold title with a tiny kicker above it types in; tiny handwritten cheer words pop around it; big BLURRED ingredients sit cropped at the corners, or fruit flies around at the edges; optionally a giant word runs vertically up the side (Goli, Berry White, Unicity). Poses: centre | left-bleed | right-bleed | bottom-peek | spin | top-drop.',
-  params: { pack: 'hero | hero2 | hero3', pose: 'centre | left-bleed | right-bleed | bottom-peek | spin | top-drop', tilt: 'degrees -28..28', entrance: 'whip | drop | rise | spin', kicker: 'optional tiny line above the title (max 4 words)', title: 'the title, 1-2 lines (max 6 words)', cheer: 'optional 2-4 tiny handwritten words (up to 7 letters)', blurred: 'true/false: big blurred ingredients at the corners', vertical: 'optional giant vertical word (up to 8 letters)', props: 'flying sharp pieces 0-7', from: 'corners | edges | sides | burst | top' },
+  params: { pack: 'hero | hero2 | hero3', pose: 'centre | left-bleed | right-bleed | bottom-peek | spin | top-drop', tilt: 'degrees -28..28', entrance: 'whip | drop | rise | spin', kicker: 'optional tiny line above the title (max 4 words)', title: 'the title, 1-2 lines (max 6 words)', cheer: 'optional 2-4 tiny handwritten words (up to 7 letters)', blurred: 'true/false: big blurred ingredients at the corners', vertical: 'optional giant vertical word (up to 8 letters): the BRAND name or its promise (CALM, FRESH, PURE), never a guessed ingredient or flavour', props: 'flying sharp pieces 0-7', from: 'corners | edges | sides | burst | top' },
   packs: 'one',
   build(p, ctx) {
     const id = packId(ctx, p.pack), pose = variantOf(ctx, { variant: p.pose }, ['centre', 'left-bleed', 'right-bleed', 'bottom-peek', 'spin', 'top-drop']), vert = cleanWord(p.vertical, 8).toUpperCase();
@@ -210,9 +210,9 @@ ARCH.showcase = {
     if (vert && !bleedPose) titleX = +(titleX - vsg * 0.06).toFixed(3);   // the title keeps clear of the vertical word
     decor(ctx);
     movePack(ctx, id, [...path, drift(ctx, Math.max(1.4, ctx.dur * 0.7), rest, sg), { ...drift(ctx, Math.max(1.5, ctx.dur - 0.05), rest, -sg), w: rest.w, r: rest.r - 3 * sg }]);
-    const kicker = sentenceLines(p.kicker, 1, 28), title = sentenceLines(p.title, 2, 22), ty = pose === 'bottom-peek' ? 0.22 : 0.15;
+    const kicker = sentenceLines(p.kicker, 1, 28), title = sentenceLines(p.title, 2, 15), ty = pose === 'bottom-peek' ? 0.22 : 0.15;
     if (kicker.length && nWords(kicker) <= 4) text(ctx, { u0: 0.4, lines: kicker, size: 0.038, font: F(ctx, 'small'), upper: false, y: ty - 0.075, x: titleX, align: titleAlign, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
-    if (title.length && nWords(title) <= 6) text(ctx, { u0: 0.8, lines: title, size: +clamp(0.86 / (Math.max(...title.map((l) => l.length)) * 0.62), 0.045, 0.07).toFixed(3), font: F(ctx, 'small'), upper: false, y: ty, x: titleX, align: titleAlign, lineGap: 1.25, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
+    if (title.length && nWords(title) <= 6) text(ctx, { u0: 0.8, lines: title, size: +clamp(0.78 / (Math.max(...title.map((l) => l.length)) * 0.72), 0.045, 0.07).toFixed(3), font: F(ctx, 'small'), upper: false, y: ty, x: titleX, align: titleAlign, lineGap: 1.25, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
     if (String(p.blurred) === 'true' && ctx.props.length) [[0.05, 0.9, 0.3, 12], [0.97, 0.7, 0.24, 14], [0.03, 0.16, 0.17, 9]].forEach(([x, y, w, b], i) => push(ctx, { kind: 'sprite', src: ctx.props[i % ctx.props.length].id, t0: A(ctx, 0.5 + i * 0.25), t1: A(ctx, ctx.dur), x, y, w, r: i * 40, blur: b, in: { kind: 'fade', dur: 0.5 }, idle: { kind: 'drift', amp: 0.012, speed: 0.8 }, shadow: false, z: 4 }));
     const words = (Array.isArray(p.cheer) ? p.cheer : []).map((w) => cleanWord(w, 7)).filter(Boolean).slice(0, 4), sideX = (k) => +clamp(rest.x + k * (rest.w * 0.5 + 0.1), 0.1, 0.9).toFixed(3), CP = [[sideX(-1), 0.6, -9], [sideX(1), 0.84, 8], [sideX(1), 0.44, 12], [sideX(-1), 0.82, -12]];   // the tiny cheer words sit BESIDE the pack, never on it
     words.forEach((w, i) => text(ctx, { u0: 1.0 + i * 0.3, lines: [w], size: 0.03, font: F(ctx, 'script'), upper: true, x: CP[i][0], y: CP[i][1], r: CP[i][2], in: { kind: 'pop', dur: 0.25 }, front: true, z: 5 }));
@@ -258,10 +258,12 @@ ARCH.callouts = {
   params: { pack: 'hero | hero2 | hero3', sentence: 'a sentence, 1-2 lines (max 8 words)', items: 'list of 2-5 short labels (max 2 words each)', variant: 'sides | radial | list', entrance: 'spin | pop | rise', float: 'true/false: small ingredients drift in the corners' },
   packs: 'one',
   build(p, ctx) {
-    const id = packId(ctx, p.pack), v = variantOf(ctx, p, ['sides', 'radial', 'list']), items = (Array.isArray(p.items) ? p.items : []).map((s) => cleanWord(s, 18)).filter(Boolean).slice(0, 5), sent = sentenceLines(p.sentence, 2, 26);
+    const id = packId(ctx, p.pack), items = (Array.isArray(p.items) ? p.items : []).map((s) => cleanWord(s, 18)).filter(Boolean).slice(0, 5), sent = sentenceLines(p.sentence, 2, 26);
+    let v = variantOf(ctx, p, ['sides', 'radial', 'list']);
+    if (v !== 'list' && Math.max(0, ...items.map((s) => s.length * 0.026 + 0.08)) > 0.25) v = 'list';   // long claim pills do not fit beside a centred pack: all of them go on ONE side, the pack on the other
     const px = v === 'list' ? ctx.v.pick([0.32, 0.68]) : 0.5, rest = restPose(ctx, id, px, 0.64, v === 'radial' ? 0.3 : 0.34, ctx.v.range(-9, 9), false, 0.46);
     movePack(ctx, id, [...enter(ctx, oneOf(p.entrance, ['spin', 'pop', 'rise'], ctx.v.pick(['spin', 'pop', 'rise'])), 0.15, rest), drift(ctx, Math.max(2.0, ctx.dur - 0.05), rest)]);
-    if (sent.length) text(ctx, { u0: 0.2, lines: sent, size: +clamp(0.9 / (Math.max(...sent.map((l) => l.length)) * 0.6), 0.05, 0.07).toFixed(3), font: F(ctx, 'head'), upper: false, y: 0.24, lineGap: 1.25, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
+    if (sent.length) text(ctx, { u0: 0.2, lines: sent, size: +clamp(0.9 / (Math.max(...sent.map((l) => l.length)) * 0.6), 0.05, 0.07).toFixed(3), font: F(ctx, 'small'), upper: false, y: 0.24, lineGap: 1.25, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
     // ENERGY behind the pack: rays, a glow disc, a ghost word wall and a burst when the pack lands
     decor(ctx, 'rays');
     shape(ctx, { kind: 'circle', x: rest.x, y: rest.y, size: 0.4, color: '#ffffff', alpha: 0.22, in: { kind: 'pop', dur: 0.5, delay: 0.3 }, idle: { kind: 'pulse', amp: 0.05, speed: 1.3 }, u0: 0.2, z: 2.5 });
