@@ -78,7 +78,7 @@
   }
   // GraphMotion's atmosphere over the gradient: a faint wireframe grid anchored to the board (the camera visibly travels across it), concentric energy rings at every zone,
   // soft drifting fog, rising motes and a slow sonar ping. All of it is a pure function of t.
-  const FOG = (() => { const R = rnd(4242), f = []; for (let i = 0; i < 5; i++) f.push({ x: R() * W, y: R() * H, r: 200 + R() * 260, dx: 30 + R() * 40, dy: 20 + R() * 34, fx: 0.04 + R() * 0.05, fy: 0.035 + R() * 0.05, ph: R() * TAU, a: 0.07 + R() * 0.05 }); return f; })();
+  const FOG = (() => { const R = rnd(4242), f = []; for (let i = 0; i < 2; i++) f.push({ x: R() * W, y: R() * H, r: 220 + R() * 200, dx: 30 + R() * 40, dy: 20 + R() * 34, fx: 0.04 + R() * 0.05, fy: 0.035 + R() * 0.05, ph: R() * TAU, a: 0.07 + R() * 0.05 }); return f; })();
   const MOTES = (() => { const R = rnd(999), m = []; for (let i = 0; i < 26; i++) { const d = R(); m.push({ x: R() * W, y: R() * (H + 80) - 40, r: 1.2 + d * 3.4, sp: 6 + d * 22, da: 8 + d * 18, df: 0.15 + R() * 0.25, dp: R() * TAU, a: 0.2 + d * 0.4 }); } return m; })();
   function drawAtmosphere(cam, c0, c1, t) {
     const light = (luma(c0) + luma(c1)) / 2 > 0.62, ink = light ? "0,0,0" : "255,255,255", GS = 64;
@@ -159,17 +159,33 @@
   const ox = (L, cam) => { if (typeof L.beat !== "number") return [0, 0]; const z = Z[BEATS[clamp(L.beat | 0, 0, BEATS.length - 1)].zone]; return [z.x - cam.x, z.y - cam.y]; };
 
   // ---------------------------------------------------------------- sprites
+  const BAKED = {};
+  // a picture with its shadow / glow / blur painted in, on a canvas with padding; cached by look. Returns { c, k } where k = canvas width / picture width.
+  function bake(id, kind, a, b) {
+    const im = IMG[id]; if (!im || !im.naturalWidth) return null;
+    const key = id + "|" + kind + "|" + (a || 0) + "|" + (b || 0); if (BAKED[key]) return BAKED[key];
+    const iw = im.naturalWidth, ih = im.naturalHeight, pad = Math.round(Math.max(iw, ih) * (kind === "blur" ? 0.12 : 0.2)), c = document.createElement("canvas"); c.width = iw + pad * 2; c.height = ih + pad * 2;
+    const x = c.getContext("2d");
+    if (kind === "shadow") { x.shadowColor = "rgba(0,0,0," + (a || 0.3) + ")"; x.shadowBlur = Math.round(iw * 0.09); x.shadowOffsetY = Math.round(iw * 0.05); x.drawImage(im, pad, pad); }
+    else if (kind === "glow") { x.shadowColor = rgbs(hex2(a, 0xffffff), 0.9); x.shadowBlur = Math.round(iw * (b || 40) / 500); x.drawImage(im, pad, pad); x.drawImage(im, pad, pad); }
+    else if (kind === "blur") { x.filter = "blur(" + Math.max(0.5, a * iw / 500).toFixed(1) + "px)"; x.drawImage(im, pad, pad); }
+    return (BAKED[key] = { c, k: c.width / iw });
+  }
   function drawSprite(id, cx, cy, w, rot, o, sx, sy, shadow, fx) {
     const im = IMG[id]; if (!im || !im.complete || !im.naturalWidth || o <= 0.001) return;
     const h = w * im.naturalHeight / im.naturalWidth;
     g.save(); g.translate(cx, cy); g.rotate(rot * Math.PI / 180); g.scale(sx, sy); g.globalAlpha *= clamp(o, 0, 1);
-    if (shadow) { g.shadowColor = "rgba(0,0,0," + (shadow.a !== undefined ? shadow.a : 0.35) + ")"; g.shadowBlur = shadow.blur !== undefined ? shadow.blur : 40; g.shadowOffsetY = shadow.y !== undefined ? shadow.y : 24; }
+    let src = im, dw = w, dh = h;
+    const lvl = fx && fx.blur > 0.4 ? [2, 5, 9, 14, 20, 28, 40].reduce((p, c) => (Math.abs(c - fx.blur) < Math.abs(p - fx.blur) ? c : p)) : 0;
+    let bk = null;
+    if (lvl) bk = bake(id, "blur", lvl);
+    else if (fx && fx.glow) bk = bake(id, "glow", fx.glow.color, fx.glow.blur || 40);
+    else if (shadow) bk = bake(id, "shadow", shadow.a !== undefined ? shadow.a : 0.3);
+    if (bk) { src = bk.c; dw = w * bk.k; dh = h * bk.k; }
     if (fx) {
-      if (fx.blur > 0.4) g.filter = "blur(" + Math.min(40, fx.blur).toFixed(1) + "px)";
-      if (fx.glow) { g.shadowColor = rgbs(hex2(fx.glow.color, 0xffffff), fx.glow.a !== undefined ? fx.glow.a : 0.9); g.shadowBlur = fx.glow.blur || 40; g.shadowOffsetY = 0; }
       if (fx.rv) { const p = clamp(fx.rv.p, 0, 1); g.beginPath(); if (fx.rv.k === "wipeL") g.rect(-w / 2, -h / 2, w * p, h); else if (fx.rv.k === "wipeR") g.rect(w / 2 - w * p, -h / 2, w * p, h); else if (fx.rv.k === "wipeU") g.rect(-w / 2, h / 2 - h * p, w, h * p); else if (fx.rv.k === "wipeD") g.rect(-w / 2, -h / 2, w, h * p); else g.arc(0, 0, Math.hypot(w, h) / 2 * p, 0, TAU); g.clip(); }
     }
-    g.drawImage(im, -w / 2, -h / 2, w, h); g.restore();
+    g.drawImage(src, -dw / 2, -dh / 2, dw, dh); g.restore();
   }
 
   // ---------------------------------------------------------------- layers
@@ -177,8 +193,8 @@
     const base = { x: (L.x !== undefined ? L.x : 0.5), y: (L.y !== undefined ? L.y : 0.5) }, st = motionState(L, t, base); if (st.o <= 0) return;
     const [dx, dy] = ox(L, cam), w = (L.w || 0.5) * W;
     if (L.keys && L.keys.length) {                                      // motion blur: trailing ghosts along the path while it moves fast
-      const p0 = motionState(L, t - 1 / 30, base), dist = Math.hypot((st.x - p0.x) * W, (st.y - p0.y) * H), n = Math.min(10, Math.floor(dist / 9));
-      for (let k = n; k >= 1; k--) { const gs = motionState(L, t - (k / n) * (1 / 45), base); drawSprite(L.src, gs.x * W + dx, gs.y * H + dy, w * gs.s, (L.r || 0) + gs.r, gs.o * 0.2, gs.sx, gs.sy, null, null); }
+      const p0 = motionState(L, t - 1 / 30, base), dist = Math.hypot((st.x - p0.x) * W, (st.y - p0.y) * H), n = Math.min(4, Math.floor(dist / 22));
+      for (let k = n; k >= 1; k--) { const gs = motionState(L, t - (k / n) * (1 / 36), base); drawSprite(L.src, gs.x * W + dx, gs.y * H + dy, w * gs.s, (L.r || 0) + gs.r, gs.o * 0.28, gs.sx, gs.sy, null, null); }
     }
     drawSprite(L.src, st.x * W + dx, st.y * H + dy, w * st.s, (L.r || 0) + st.r, st.o, st.sx, st.sy, L.shadow === false ? null : (L.shadow || { blur: 46, y: 26, a: 0.3 }), { blur: st.blur, rv: st.rv, glow: L.glow });
   }
@@ -259,7 +275,7 @@
           if (L.shadow) { g.shadowColor = "rgba(0,0,0,0.35)"; g.shadowBlur = size * 0.2; g.shadowOffsetY = size * 0.08; }
           if (L.stroke || outline || autoStroke || L.fill === false) { g.lineWidth = (L.stroke && L.stroke.w ? L.stroke.w : autoStroke ? 0.09 : 0.03) * size; g.strokeStyle = rgbs(L.stroke && L.stroke.color ? hex2(L.stroke.color, 0) : autoStroke || fillc); g.lineJoin = "round"; g.textAlign = "center"; g.strokeText(wd, 0, 0); }
           if (L.glow) { g.shadowColor = rgbs(hex2(L.glow.color, 0xffffff), 0.9); g.shadowBlur = (L.glow.blur || 30); g.shadowOffsetY = 0; }
-          if (st.blur > 0.4) g.filter = "blur(" + Math.min(30, st.blur).toFixed(1) + "px)";
+          if (st.blur > 0.4) g.globalAlpha *= clamp(1 - st.blur / 40, 0.45, 1);              // (a per-frame blur filter is far too slow: a blurred word simply softens by fading)
           if (!outline && L.fill !== false) { g.fillStyle = rgbs(fillc); g.textAlign = "center"; g.fillText(wd, 0, 0); }
           g.restore(); x += wds[wi] + space;
         });
