@@ -38,6 +38,13 @@ HOW THOSE SPOTS WORK (study it, then INVENT your own; never repeat a stock recip
 - The camera is a performer: punch-ins on impacts, shakes, a slow push, a roll, a fast zoom into the pack.
 - Surprises are what make them memorable: an unexpected move, an odd scale, a glitchy repeat, a pack that opens like a book, props that orbit, a beat that freezes then releases. Decide yours.
 
+FIVE REAL SPOTS AND WHAT ACTUALLY HAPPENS IN THEM (learn the LEVEL of motion; invent your own, never copy them):
+- Berry White (12 s, energy drink): ONE calm green backdrop the whole time and a giant word running vertically up the side. A water splash sweeps the bottom at 0.4 s; the can, tilted about 30 degrees, whips in from the lower left with a lemon and lime wedges flying alongside, crosses the entire frame diagonally, rolls slowly while water erupts around it, slides out to the right in a blur, comes back from below out of a blur into focus, settles left of centre at about 60% of the screen width while round stickers ("100% organic") pop onto it and leaves drift; a glassy water swirl passes over it; a white flash-cut, and it sharpens again.
+- Pluckk (10 s, juices): flat pastel colour blocks wipe across the screen to change scene every 2 s (mint, peach, dusty pink, green); each bottle enters diagonally, rotated 20-30 degrees, at speed from a corner, decelerates into place, and is replaced by the next bottle sliding in from the opposite corner; tiny text fills the gaps; then the bottles multiply into a spinning radial ring around a word, and finally a grid of every flavour pops in one by one.
+- Lay's (10 s): deep red backdrop, concentric rings pulsing outward the whole time; the bag drops in tilted with a camera punch, big chips and dip bowls fly in and out from the frame edges (cropped by the frame), tiny "new look" text; the bag shrinks away and three bags rise as a row; a logo badge pops.
+- Goli (12 s): hot pink; a giant outlined "NEW" stacked like a wall behind the bottle; the bottle slams in from above with motion blur, rotates and settles while gummies float around at large scale; callout icons with hairline connectors appear one by one; the pack opens into a gift box.
+- Unicity (10 s): packs at rotated angles fill the whole frame, a lemon slice rolls in, a stat pops with sparkle circles, wave shapes wipe the bottom.
+
 YOU WRITE A "MOTION SCRIPT" from these primitives (there are no templates; the renderer plays exactly what you write). Coordinates x, y, cx, cy are fractions of the screen (0,0 top-left, 1,1 bottom-right; values outside 0..1 are off-screen, which is how things enter and leave); w and sizes are fractions of the screen WIDTH; times are seconds from 0. Layers are drawn in the order you write them (later = on top of earlier).
 FORMAT: "layers" is an array of FLAT objects, each with a "kind" key and its fields directly on it (never nested under a "sprite" or "text" key), for example:
 {"kind":"sprite","src":"hero","t0":0.1,"t1":9,"x":0.5,"y":0.55,"w":0.5,"r":0,"keys":[{"t":0.1,"x":-0.4,"y":0.9,"w":0.6,"r":-40,"blur":14},{"t":0.8,"x":0.5,"y":0.55,"w":0.5,"r":-8,"blur":0,"e":"outExpo"}]}
@@ -51,12 +58,12 @@ KEYS: "keys":[{"t","x","y","w" (sprites: width as a fraction of the screen width
 - "text": lines ["WORD","WORD"], x, y, size (0.03 tiny .. 0.36 giant), font, color, upper, track (letter spacing), r (any rotation; 90 or -90 runs a word vertically up the side), align, stroke {color, w}, fill (false = outline only), tone (true = a shade off the backdrop, tone-on-tone), shadow, glow {color, blur}, blur, in {kind, dur, stag} (kinds ${TEXT_IN.join(', ')}; words arrive one by one), out {kind}, repeat {n, dy, speed} (the same word stacked n times, scrolling: the wall behind a product). Fonts: ${Object.entries(FONTS).map(([k, v]) => k + ' (' + v + ')').join('; ')}.
 - "scatter": pieces flying around: src (one prop id or a list, "hero" allowed), n (1-16), cx, cy, spread, size [min,max], from ("burst" | "corners" | "edges" | "top" | "sides"), seed, spin, stag, avoid (true keeps them off the product).
 - "pattern": src repeated as a pattern: sub ("radial" | "grid" | "ring"), cx, cy, w, spin, rings, cols, rows, stag, alpha.
-- shapes: kind one of ${SHAPES.join(', ')}: circle {x,y,size,color}; rect {x,y,w,h,radius,color}; rings {x,y,n,gap,width,speed,color,color2}; wave {y,amp,wl,speed,color,side}; rays {x,y,n,speed,color}; dots {gap,dot,speed,color}; stripes {w,speed,color,r}; burst {x,y,n,color,color2,life}; wipe {dir:"left|right|up|down", n (stacked bands), color, color2, t0, t1} = a colour block sweeping across the whole screen (use it to change scene); flash {color, alpha, t0, t1}. Shapes take in/out/idle/keys too.
+- shapes: kind one of ${SHAPES.join(', ')}: circle {x,y,size,color}; rect {x,y,w,h,radius,color}; rings {x,y,n,gap,width,speed,color,color2}; wave {y,amp,wl,speed,color,side}; rays {x,y,n,speed,color}; dots {gap,dot,speed,color}; stripes {w,speed,color,r}; burst {x,y,n,color,color2,life}; wipe {dir:"left|right|up|down", n (stacked bands), color, color2, t0, t1} = a colour block sweeping across the whole screen in 0.3 to 1 s (use it to change scene); flash {color, alpha, t0, t1} (a flash lasts 0.1 to 0.5 s: t1 is just after t0; never write a long flash). Shapes take in/out/idle/keys too.
 - "cam": [{t, kind, ...}] kinds: punch {amp, dur}, shake {amp, dur}, zoom {to, dur, hold, back} (zoom to a scale and back), roll {amp, dur}, pan {dx, dy, dur}.
 - "zones": the backdrop: {c0 (bright centre), c1 (edge), shape "radial"|"linear"} (make c1 equal to c0 for a flat colour). "beats": 1 to 5 windows {t0, t1, zone} that tile 0..duration; the camera glides across the board between zones, so give them the same colours for one calm backdrop, or different colours for a scene change. Saturated colours that make the product POP.
 - "sound": {"music": "pulse" | "warm pad" | "tense" | "dark drone", "cues": [{"t", "kind": ${CUE_KINDS.map((k) => '"' + k + '"').join(' | ')}}]}: put a cue exactly on every whoosh, landing and hit you animated.
 
-RULES (a promo that breaks these looks cheap): at least FOUR distinct things happen in every beat, and nothing sits still for more than half a second; the hero is on screen within 1.2 s and travels a lot (not a shuffle: whole-frame moves), with different easing each time; props are BIG (w 0.16-0.5) and bleed off the frame edges; use different motion for every element and never copy a layer; the whole promo has AT MOST 16 words, only words from the brief or that describe the taste, feel or look; text stays clear of the product's face unless it is a giant word BEHIND it (write it earlier); the last beat shows the product with the BRAND NAME big and at most 3 words of call to action. No prices, no claims you cannot see. Up to 40 layers.
+RULES (a promo that breaks these looks cheap): USE EVERY PROP you define (each one appears in at least one scatter, sprite or pattern), big; at least FOUR distinct things happen in every beat, and nothing sits still for more than half a second; the hero is on screen within 1.2 s and travels a lot (not a shuffle: whole-frame moves), with different easing each time; props are BIG (w 0.16-0.5) and bleed off the frame edges; use different motion for every element and never copy a layer; the whole promo has AT MOST 16 words, only words from the brief or that describe the taste, feel or look; text stays clear of the product's face unless it is a giant word BEHIND it (write it earlier); the last beat shows the product with the BRAND NAME big and at most 3 words of call to action. No prices, no claims you cannot see. Up to 40 layers.
 
 Return ONE JSON object with these keys, in this order:
 "ideas": 3 to 5 sentences, one per beat, in your own words: the SPECIFIC unique things that happen in that beat (what the hero does, what reacts to it, what the type and the camera do, how the scene changes). Write them first, then implement exactly them.
@@ -172,7 +179,7 @@ function normalizePromo(raw, ctx = {}) {
       const o = timing(L, { kind, lines, x: num(L.x, 0.5, -0.5, 1.5), y: num(L.y, 0.5, -0.5, 1.5), size: num(L.size, 0.1, 0.03, 0.38), font: oneOf(L.font, fontIds, 'anton'), color: fixHex(L.color, '#ffffff'), upper: L.upper !== false, track: num(L.track, 0, -0.05, 0.5), r: num(L.r, 0, -400, 400), align: oneOf(L.align, ['center', 'left', 'right'], 'center') });
       o.in = L.in && oneOf(L.in.kind, TEXT_IN, null) ? { kind: L.in.kind, dur: num(L.in.dur, 0.45, 0.1, 1.5), stag: num(L.in.stag, 0.09, 0, 0.5) } : { kind: 'rise', dur: 0.45, stag: 0.09 };
       const out = motionIO(L.out, IN_KINDS, 0.3); if (out) o.out = out;
-      if (L.stroke && typeof L.stroke === 'object') o.stroke = { color: fixHex(L.stroke.color, '#000000'), w: num(L.stroke.w, 0.03, 0.01, 0.15) };
+      if (L.stroke && typeof L.stroke === 'object') o.stroke = { color: fixHex(L.stroke.color, '#000000'), w: num(L.stroke.w, 0.03, 0.01, 0.06) };
       if (L.shadow) o.shadow = true; if (L.tone) o.tone = true; if (L.front) o.front = true; if (L.fill === false) o.fill = false; if (L.alpha !== undefined) o.alpha = num(L.alpha, 1, 0.1, 1);
       if (L.blur !== undefined) o.blur = num(L.blur, 0, 0, 30); const gl = glowOf(L.glow); if (gl) o.glow = gl;
       if (L.repeat && typeof L.repeat === 'object') o.repeat = { n: num(L.repeat.n, 5, 2, 11) | 0, dy: num(L.repeat.dy, 0.92, 0.5, 1.5), speed: num(L.repeat.speed, 0.04, 0, 0.3) };
@@ -190,7 +197,8 @@ function normalizePromo(raw, ctx = {}) {
       if (L.color2) o.color2 = fixHex(L.color2, o.color);
       ['size', 'w', 'h', 'radius', 'n', 'gap', 'width', 'speed', 'amp', 'wl', 'thick', 'dot', 'life', 'seed'].forEach((k) => { if (L[k] !== undefined) o[k] = num(L[k], 0, -5, 200); });
       if (L.side) o.side = oneOf(L.side, ['top', 'bottom'], 'bottom');
-      if (kind === 'wipe') o.dir = oneOf(L.dir, ['left', 'right', 'up', 'down'], 'left');
+      if (kind === 'wipe') { o.dir = oneOf(L.dir, ['left', 'right', 'up', 'down'], 'left'); o.t1 = +Math.min(o.t1, o.t0 + 1.4).toFixed(2); }
+      if (kind === 'flash') o.t1 = +Math.min(o.t1, o.t0 + 0.6).toFixed(2);          // a flash is an instant, whatever the AI wrote for t1
       const i = motionIO(L.in, IN_KINDS, 0.5), out = motionIO(L.out, IN_KINDS, 0.35), idle = L.idle && oneOf(L.idle.kind, IDLE, null) ? { kind: L.idle.kind, amp: num(L.idle.amp, 0.02, 0, 0.15), speed: num(L.idle.speed, 1, 0.2, 4) } : undefined;
       if (i) o.in = i; if (out) o.out = out; if (idle) o.idle = idle;
       const ks = keysOf(L.keys, D, 12); if (ks) o.keys = ks;
@@ -252,6 +260,9 @@ function critique(promo) {
   const heroAt = (t) => { const h = heroes.find((x) => x.keys && x.keys.length && t >= x.keys[0].t) || heroes[0]; if (!h) return null; const K = h.keys; let x = h.x, y = h.y, s = 1; if (K && K.length) { let a = K[0], b = K[K.length - 1]; for (let i = 0; i < K.length - 1; i++) if (t >= K[i].t && t <= K[i + 1].t) { a = K[i]; b = K[i + 1]; break; } const u = a === b ? 1 : Math.max(0, Math.min(1, (t - a.t) / Math.max(1e-6, b.t - a.t))); const iv = (k, d) => { const va = a[k] !== undefined ? a[k] : d, vb = b[k] !== undefined ? b[k] : va; return va + (vb - va) * u; }; x = iv('x', x); y = iv('y', y); s = iv('s', 1); } return { x, y, w: h.w * s, h: h.w * s * 2.0 * 720 / 1280 }; };
   const covered = L.filter((l) => l.kind === 'text' && l.size < 0.12 && !l.front && Math.abs(l.r || 0) < 30).filter((l) => { const p = heroAt((l.t0 + l.t1) / 2); return p && Math.abs(l.x - p.x) < p.w * 0.4 && Math.abs(l.y - p.y) < p.h * 0.4; });
   if (covered.length) issues.push(`A small line of text ("${covered[0].lines.join(' ')}") sits on top of the product's face. Move it into free space or make it a giant word BEHIND the product (written earlier).`);
+  const usedSrc = new Set(); L.forEach((l) => { (Array.isArray(l.src) ? l.src : [l.src]).forEach((x) => usedSrc.add(x)); });
+  const unused = promo.props.map((p, i) => 'prop' + i).filter((id) => !usedSrc.has(id));
+  if (unused.length) issues.push('These props are defined but never appear on screen: ' + unused.join(', ') + '. Use every prop, big, as scatter pieces, flying sprites or patterns.');
   if (promo.sound.cues.length < 4) issues.push('Sound cues: place a whoosh at every fast sweep, an impact at every landing and a tick on every word slam (sound.cues), at least 6.');
   return issues.slice(0, 7);
 }
@@ -267,7 +278,7 @@ function pickKey(colors) {
 }
 function heroPrompt(promo, key) {
   const p = promo.product;
-  return `A single ${p.kind}, ${p.look}, front view, premium product photography, studio lighting, sharp focus, vivid colour, the whole product fully in frame and centered, isolated on a plain flat pure ${key.name} (${key.hex}) chroma-key background, no shadow, no ground, no other objects. The reference image is the brand name: print exactly this brand name, spelled identically letter for letter, large and clear on the front of the pack, as the only text on it.`;
+  return `A single ${p.kind}, ${p.look}, front view, premium product photography, studio lighting, sharp focus, vivid colour, the whole product fully in frame and centered, with a plain smooth empty label area in the middle of the pack (no text, no letters, no logo anywhere on it), isolated on a plain flat pure ${key.name} (${key.hex}) chroma-key background, no shadow, no ground, no other objects. The reference image is the brand name: print exactly this brand name, spelled identically letter for letter, large and clear on the front of the pack, as the only text on it.`;
 }
 function propPrompt(prop, key) {
   return `${prop.look}, macro product photography, vivid colour, sharp focus, one single object fully in frame and centered, isolated on a plain flat pure ${key.name} (${key.hex}) chroma-key background, no shadow, no ground, no text, no letters`;
@@ -352,6 +363,41 @@ async function promoAudio(promo, dir) {
   return 'audio.wav';
 }
 
+
+/**
+ * Print the brand on the pack: the image AI cannot be trusted to spell a brand (it wrote "CITUS BURST" and, another time, nothing), so the pack is painted with a blank label
+ * and the brand is drawn onto it with a real font, wrapped around the pack like print on a cylinder (squeezed toward the edges), in an ink that reads on the label colour.
+ */
+async function stampBrand(buf, brand) {
+  try {
+    const { loadImage, createCanvas, GlobalFonts } = cv();
+    const font = path.join(__dirname, 'assets', 'fonts', 'ArchivoBlack-Regular.ttf');
+    if (fs.existsSync(font) && !GlobalFonts.has('WordmarkFont')) GlobalFonts.registerFromPath(font, 'WordmarkFont');
+    const im = await loadImage(buf), w = im.width, h = im.height, c = createCanvas(w, h), g = c.getContext('2d');
+    g.drawImage(im, 0, 0);
+    // ink colour from what is under the label (opaque pixels in the middle band)
+    const d = g.getImageData(Math.round(w * 0.3), Math.round(h * 0.4), Math.round(w * 0.4), Math.round(h * 0.2)).data; let r = 0, gg = 0, b = 0, n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200) { r += d[i]; gg += d[i + 1]; b += d[i + 2]; n++; }
+    if (!n) return buf;
+    const lumv = (0.299 * r + 0.587 * gg + 0.114 * b) / n / 255, ink = lumv > 0.55 ? '#0c0c10' : '#ffffff';
+    const words = String(brand || '').toUpperCase().split(/\s+/).filter(Boolean), lines = words.length > 1 && brand.length > 9 ? [words.slice(0, Math.ceil(words.length / 2)).join(' '), words.slice(Math.ceil(words.length / 2)).join(' ')] : [words.join(' ')];
+    const T = createCanvas(Math.round(w * 0.9), Math.round(h * 0.3)), t = T.getContext('2d'); let px = Math.round(T.height * 0.5);
+    const fit = () => { t.font = px + 'px WordmarkFont, Arial Black, sans-serif'; return Math.max(...lines.map((s) => t.measureText(s).width)); };
+    while (fit() > T.width * 0.94 && px > 12) px -= 4;
+    t.fillStyle = ink; t.textAlign = 'center'; t.textBaseline = 'middle';
+    lines.forEach((s, i) => t.fillText(s, T.width / 2, T.height / 2 + (i - (lines.length - 1) / 2) * px * 1.05));
+    // cylinder wrap: each vertical slice of the text is squeezed toward the pack's edges
+    const N = 48, cx = w / 2, cy = h * 0.5, half = w * 0.36; g.save(); g.globalAlpha = 0.95;
+    for (let i = 0; i < N; i++) {
+      const u0 = (i / N) * 2 - 1, u1 = ((i + 1) / N) * 2 - 1, wrap = (u) => Math.sin(u * Math.PI * 0.42) / Math.sin(Math.PI * 0.42);
+      const x0 = cx + wrap(u0) * half, x1 = cx + wrap(u1) * half, sx = (i / N) * T.width, sw = T.width / N;
+      g.drawImage(T, sx, 0, sw, T.height, x0, cy - T.height / 2, Math.max(1, x1 - x0 + 1.5), T.height);
+    }
+    g.restore();
+    return c.toBuffer('image/png');
+  } catch (e) { console.warn('[promo] brand print skipped: ' + e.message); return buf; }
+}
+
 /** A stand-in prop (a glossy disc in the product's colour) for when the image AI refuses or fails a prop: the promo is never lost over one ingredient. */
 function fallbackProp(hex) {
   const { createCanvas } = cv(), c = createCanvas(400, 400), g = c.getContext('2d'), col = rgb(fixHex(hex, '#ff7a00'));
@@ -360,4 +406,4 @@ function fallbackProp(hex) {
   return { buf: c.toBuffer('image/png'), aspect: 1 };
 }
 
-module.exports = { fallbackProp, PROMO_SYSTEM, promoPrompt, revisePrompt, critique, normalizePromo, pickKey, heroPrompt, propPrompt, wordmarkCard, cutout, promoAudio, FONTS };
+module.exports = { stampBrand, fallbackProp, PROMO_SYSTEM, promoPrompt, revisePrompt, critique, normalizePromo, pickKey, heroPrompt, propPrompt, wordmarkCard, cutout, promoAudio, FONTS };

@@ -330,7 +330,7 @@ async function buildPromoFilm({ raw, company, outDir, say, planOnly }) {
   const wm = promoFilm.wordmarkCard(promo.brand), hp = promoFilm.heroPrompt(promo, key);
   neurons.charge(neurons.estKlein(true), 'product picture');
   const heroTries = [
-    () => (wm ? klein.edit(hp, wm) : klein.generate(hp)),
+    () => klein.generate(hp),
     () => klein.generate(hp.split(' The reference image')[0] + ' No text on it.'),
     () => klein.generate(`${promo.product.kind}, ${promo.product.look}, product photography, isolated on a plain flat pure ${key.name} (${key.hex}) background, no text`),
   ];
@@ -340,7 +340,7 @@ async function buildPromoFilm({ raw, company, outDir, say, planOnly }) {
     catch (e) { lastErr = e; console.warn(`[promo] product picture attempt ${t + 1} failed: ${String(e.message).slice(0, 110)}`); if (/429|4006|allocation|not set/i.test(String(e.message))) throw e; }
   }
   if (!heroRes) throw new Error('The product picture could not be made: ' + (lastErr && lastErr.message));
-  save('hero', heroRes.buf, heroRes.aspect);
+  save('hero', await promoFilm.stampBrand(heroRes.buf, promo.brand), heroRes.aspect);            // the brand is printed with a real font, always spelled right
   // 2. the props (ingredients, pieces, splashes), three at a time; a prop that fails becomes a plain glossy disc in the product's colour
   say('Painting the ingredients', 0.4);
   const paintProp = async (p, i) => {
@@ -424,6 +424,7 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
       try {
         const draft = promoFilm.normalizePromo(raw, { brand: company && company.name }), issues = promoFilm.critique(draft);
         raw.__review = { draft: issues };
+        raw.__review = { draft: issues };
         console.log('[promo] draft review: ' + (issues.length ? issues.length + ' issue(s): ' + issues.map((x) => x.slice(0, 70)).join(' | ') : 'clean'));
         if (issues.length) {
           say('Improving the design', 0.12);
@@ -437,9 +438,9 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
             raw2.__review = { draft: issues, revision: i2 };
             console.log('[promo] revision review: ' + (i2.length ? i2.length + ' issue(s)' : 'clean'));
             if (i2.length <= issues.length) raw = raw2;
-          } else console.log('[promo] revision skipped: it would not fit the neuron ceiling');
+          } else { raw.__review.note = 'revision skipped: it would not fit the neuron ceiling (' + neurons.PER_RUN_CEILING + ')'; console.log('[promo] ' + raw.__review.note); }
         }
-      } catch (e) { console.warn('[promo] revision skipped: ' + String(e.message).slice(0, 140)); }
+      } catch (e) { if (raw.__review) raw.__review.note = 'revision failed: ' + String(e.message).slice(0, 160); console.warn('[promo] revision skipped: ' + String(e.message).slice(0, 140)); }
       return await buildPromoFilm({ raw, company, outDir, say, planOnly });
     }
     spec = normalizeSpec(raw, slug, { brand: company && company.name, brief: text, website: company && company.siteHost, movie: movieOn() });
