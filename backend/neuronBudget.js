@@ -17,7 +17,7 @@ const crypto = require('crypto');
 const FILE = path.join(__dirname, '.neuron_usage.json');
 const DAILY_CEILING = +process.env.NEURON_DAILY_CEILING || 9000;   // hard stop well under the 10,000 allowance
 const PER_RUN_CEILING = +process.env.NEURON_RUN_CEILING || 3400;   // a one-world film is 6 klein pictures (~1440) + the script (~170); the old six-schnell film was ~730    // ONE FILM MAY NEVER COST MORE THAN THIS (estimated, then settled to the measured figure)
-const SAFETY = 1.15;
+const SAFETY = 1.0;
 const RATE = { '70b': [26668, 204805], mistral: [31909, 50455], '8b': [4119, 34868], oss: [31819, 68182] };   // oss = gpt-oss-120b: $0.35 / $0.75 per M tokens at $0.000011 per neuron
 
 const day = () => new Date().toISOString().slice(0, 10);
@@ -44,6 +44,13 @@ function charge(neurons, what, reserve = 0) {
   console.log(`[neurons] ${what}: ~${neurons} (run ~${runSpent}, today ~${cur + neurons} of ${DAILY_CEILING} ceiling)`);
 }
 const resetRun = () => { runSpent = 0; };
+/** A call that failed BEFORE it ran (or a picture that was replaced by a free stand-in) gives its estimate back: the meter must follow what was really spent. */
+function refund(neurons, what) {
+  if (!neurons) return;
+  const u = load(), k = who(); if (u[k] && u[k].day === day()) { u[k].n = Math.max(0, u[k].n - neurons); save(u); }
+  runSpent = Math.max(0, runSpent - neurons);
+  console.log(`[neurons] ${what || 'refund'}: -${neurons} (run ~${runSpent})`);
+}
 
 /** After a text call: replace the estimate with what the API says it really used (tokens in / out). */
 function settleText(model, estimated, usage, what) {
@@ -60,4 +67,4 @@ function settleText(model, estimated, usage, what) {
 const KLEIN_PER_IMAGE = +process.env.KLEIN_NEURONS || 240;
 const estKlein = (isEdit) => KLEIN_PER_IMAGE;
 const runTotal = () => runSpent;
-module.exports = { estKlein, FLUX_STEPS, charge, settleText, estText, estImage, used, resetRun, runTotal, DAILY_CEILING, PER_RUN_CEILING };
+module.exports = { refund, estKlein, FLUX_STEPS, charge, settleText, estText, estImage, used, resetRun, runTotal, DAILY_CEILING, PER_RUN_CEILING };

@@ -324,7 +324,7 @@ const paintQueue = []; let paintRunning = 0;
 function paintLimit(fn) { return new Promise((res, rej) => { const go = () => { paintRunning++; Promise.resolve().then(fn).then(res, rej).finally(() => { paintRunning--; const nx = paintQueue.shift(); if (nx) nx(); }); }; if (paintRunning < 3) go(); else paintQueue.push(go); }); }
 
 /** Start painting every picture a promo needs (the main pack, its variants, the props): cached by what is asked for, so a rewritten script that keeps a picture reuses it. Returns immediately. */
-function startPaint(promo, cache) {
+function startPaint(promo, cache, only) {
   const key = promoFilm.pickKey(promo.product.colors), brand = promo.brand;
   const hero = (id, look, wm) => {
     const ck = id + '|' + look + '|' + key.hex; if (cache.has(ck)) return cache.get(ck);
@@ -351,13 +351,14 @@ function startPaint(promo, cache) {
         try { res = await promoFilm.cutout(await klein.generate(t ? `${pr.name || 'an ingredient'}, macro product photography, isolated on a plain flat pure ${key.name} (${key.hex}) background, no text` : promoFilm.propPrompt(pr, key), { width: 512, height: 512 })); }
         catch (e) { console.warn(`[promo] prop ${i + 1} attempt ${t + 1} failed: ${String(e.message).slice(0, 100)}`); if (/429|4006|allocation/i.test(String(e.message))) throw e; }
       }
-      return res || promoFilm.fallbackProp(promo.product.colors[i % promo.product.colors.length]);
+      if (!res) { neurons.refund(neurons.estKlein(false), 'prop ' + (i + 1) + ' (stand-in used)'); return promoFilm.fallbackProp(promo.product.colors[i % promo.product.colors.length]); }
+      return res;
     });
     p.catch(() => {}); cache.set(ck, p); return p;
   };
   const jobs = { hero: hero('hero', promo.product.look) };
   (promo.product.variants || []).forEach((v, i) => { jobs['hero' + (i + 2)] = hero('hero' + (i + 2), v.look); });
-  promo.props.forEach((pr, i) => { jobs['prop' + i] = prop(i, pr); });
+  promo.props.forEach((pr, i) => { if (only && only.props === false) return; if (only && Array.isArray(only.propIds) && !only.propIds.includes('prop' + i)) { jobs['prop' + i] = Promise.resolve(promoFilm.fallbackProp(promo.product.colors[i % promo.product.colors.length])); return; } jobs['prop' + i] = prop(i, pr); });
   return jobs;
 }
 
@@ -367,7 +368,8 @@ async function buildPromoFilm({ raw, company, outDir, say, planOnly, cache }) {
   const imgDir = path.join(outDir, 'images'); fs.mkdirSync(imgDir, { recursive: true });
   if (planOnly) { fs.writeFileSync(path.join(outDir, 'site.json'), JSON.stringify(spec, null, 2)); return { outDir, spec }; }
   say('Painting your product', 0.15);
-  const jobs = startPaint(promo, cache || new Map()), assetsOut = [];
+  const usedIds = new Set(); promo.layers.forEach((l) => (Array.isArray(l.src) ? l.src : [l.src]).forEach((x) => usedIds.add(x)));
+  const jobs = startPaint(promo, cache || new Map(), { propIds: [...usedIds] }), assetsOut = [];        // a prop no layer uses is never painted (nothing spent)
   for (const [id, pr] of Object.entries(jobs)) {
     const r = await pr;                                         // a failed hero throws (nothing to sell without it); variants and props fall back
     fs.writeFileSync(path.join(imgDir, id + '.png'), r.buf); assetsOut.push({ id, file: 'images/' + id + '.png', aspect: r.aspect });
@@ -410,12 +412,12 @@ async function generateSite({ brief, company, logo, images = [], outDir, slug, o
         const est = neurons.estText(SPEC_MODEL, sys.length + prompt.length, Math.round((o.maxTokens || 4000) * 0.4));
         neurons.charge(est, 'promo ' + (o.what || 'call'), paintCache.size ? 0 : 7 * neurons.estKlein(true));
         let usage = null;
-        const txt = await callCloudflareRaw(sys, prompt, { jsonMode: true, maxTokens: o.maxTokens, temperature: o.temperature, model: SPEC_MODEL, timeoutMs: 180000, reasoning: o.reasoning || 'low', onUsage: (u) => { usage = u; } });
+        let txt; try { txt = await callCloudflareRaw(sys, prompt, { jsonMode: true, maxTokens: o.maxTokens, temperature: o.temperature, model: SPEC_MODEL, timeoutMs: 180000, reasoning: o.reasoning || 'low', onUsage: (u) => { usage = u; } }); } catch (e) { if (/429|allocation|not set|4006/i.test(String(e && e.message))) neurons.refund(est, 'promo ' + (o.what || 'call') + ' (refused)'); throw e; }
         neurons.settleText(SPEC_MODEL, est, usage, 'promo ' + (o.what || 'call'));
         return txt;
       };
       try {
-        const r = await promoDirector.design({ brief: text.slice(0, 5000), call, say, onPlan: (plan) => { if (planOnly) return; try { startPaint(promoFilm.normalizePromo({ brand: plan.brand, product: plan.product, props: plan.props, duration: plan.duration }, { brand: company && company.name }), paintCache); } catch (e) { console.warn('[promo] early painting skipped: ' + String(e.message).slice(0, 100)); } } });
+        const r = await promoDirector.design({ brief: text.slice(0, 5000), call, say, onPlan: (plan) => { if (planOnly) return; try { startPaint(promoFilm.normalizePromo({ brand: plan.brand, product: plan.product, props: plan.props, duration: plan.duration }, { brand: company && company.name }), paintCache, { props: false }); } catch (e) { console.warn('[promo] early painting skipped: ' + String(e.message).slice(0, 100)); } } });
         stagedRaw = r.raw; stagedRaw.__review = { staged: true, mimic: r.plan.mimic };
       } catch (e) { if (/Neuron guard|429|allocation/i.test(String(e && e.message))) throw e; console.warn('[promo] staged design failed, using the single-call designer: ' + String(e && e.message).slice(0, 160)); paintCache.clear(); }
       if (stagedRaw) return await buildPromoFilm({ raw: stagedRaw, company, outDir, say, planOnly, cache: paintCache });
