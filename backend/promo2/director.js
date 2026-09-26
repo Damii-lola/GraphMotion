@@ -12,7 +12,7 @@ const vary = require('./vary');
 const SYSTEM = 'You are an award-winning motion-graphics director who plans product launch spots for TikTok and Reels by studying real reference spots. You reply with ONE JSON object only.';
 
 const REFS = `REFERENCE SPOTS and the scene sequences they use (follow ONE for this product, adapt freely; each has its own pace):
-R1 Goli multivitamin (12 s): its HOOK is fixed: typed (a small left-aligned line like "Meet the All New", blur-in) -> wall (a word like NEW; the pack whips across it) -> then ONE or TWO of: showcase (the pack tilted big, kicker + 2-line title, tiny cheer words, blurred true) | callouts (a sentence + 4-5 labels like Non-GMO / Gluten-Free / Kosher / Vegan).
+R1 Goli multivitamin (12 s): its HOOK is fixed: typed (a small left-aligned line like "Meet the All New", blur-in) -> wall (a word like NEW; the pack whips across it) -> then the 3rd scene is ALWAYS callouts (a sentence saying why THIS product is different + 4-5 short claim labels taken from the brief), then optionally: showcase (the pack tilted big, kicker + 2-line title, tiny cheer words, blurred true) | callouts (a sentence + 4-5 labels like Non-GMO / Gluten-Free / Kosher / Vegan).
 R2 Goli sleep (12 s): typed (a question) -> showcase (pack rises) -> cheer | ingredients -> wall (SO YUMMY).
 R3 Berry White (12 s): showcase (vertical word) -> showcase (other side) -> cheer.
 R4 Pluckk (10 s, colour wipes every 2 s): parade -> typed -> ring -> ingredients.
@@ -72,6 +72,7 @@ function checkPlan(plan) {
   const iss = [], S = plan.scenes || [], ref = String((plan.mimic && plan.mimic.ref) || '').toUpperCase();
   if (S.length < LAWS.structure.scenesMin) iss.push('Only ' + S.length + ' scenes: write 3 or 4.');
   if (S.length > 4) iss.push('Too many scenes (' + S.length + '): write 3 or 4.');
+  if (ref === 'R1') { const c = S[2]; const n = c && c.params && Array.isArray(c.params.items) ? c.params.items.filter(Boolean).length : 0; if (!c || c.archetype !== 'callouts' || n < 3 || !(c.params && c.params.sentence)) iss.push('R1: the 3rd scene must be "callouts" with a "sentence" saying why this product is different from the others and 4 or 5 short claim labels ("items") taken from the brief.'); }
   for (let i = 1; i < S.length; i++) if (S[i - 1].backdrop && S[i].backdrop && S[i - 1].backdrop.role && S[i - 1].backdrop.role === S[i].backdrop.role) iss.push('Scenes ' + i + ' and ' + (i + 1) + ' have the same backdrop role: give neighbouring scenes different roles.');
   if (S.filter(giantScene).length < LAWS.structure.giantTypeScenesMin) iss.push('Type must be a main character: at least two scenes need a giant word (hook_slice, word_pack, wall, showcase with "vertical", disc_pack with "word").');
   if (!S.some(packAbsent)) iss.push('The pack is in every scene: use at least one scene without the pack (hook_slice, typed with pack "none", wall with pack "none", ingredients with pack "none").');
@@ -94,10 +95,11 @@ function normalizePlan(raw, ctx = {}) {
   const mimic = { ref: /^R(10|[1-9])$/i.test(String(S.mimic && S.mimic.ref || '').trim()) ? String(S.mimic.ref).trim().toUpperCase() : '', why: cleanWord(S.mimic && S.mimic.why, 200) };
   // THE R1 HOOK IS A TEMPLATE (it is what makes the reference work): a small left-aligned typed line with blur-in, then the word wall with the pack whipping across it
   if (mimic.ref === 'R1') {
-    const typed = scenes.find((x) => x.archetype === 'typed'), wall = scenes.find((x) => x.archetype === 'wall'), rest = scenes.filter((x) => x !== typed && x !== wall && x.archetype !== 'endcard' && x.archetype !== 'hook_slice');
+    const typed = scenes.find((x) => x.archetype === 'typed'), wall = scenes.find((x) => x.archetype === 'wall'), rest = scenes.filter((x) => x !== typed && x !== wall && x.archetype !== 'endcard' && x.archetype !== 'hook_slice').sort((a, b) => (b.archetype === 'callouts') - (a.archetype === 'callouts'));
     const teaser = (typed && typed.params && [].concat(typed.params.lines || []).join(' ')) || '', hookOk = /(meet|introducing|new|say hello|hello|discover|welcome|ever|ready)/i.test(teaser) && teaser.length <= 60 && !/[•|]/.test(teaser);   // the hook must be a teaser like "Meet the all new ...", not a benefit list
-    const s0 = { ...(typed || scenes[0]), archetype: 'typed', dur: 1.5, transition_in: 'cut', params: { ...(typed ? typed.params : {}), lines: hookOk ? typed.params.lines : ['Meet the all new ' + (product.name || brand)], variant: 'left', style: 'blurin', wave: 'false', energy: 'true', emphasis: String(brand || '').split(' ')[0].slice(0, 10), scribble: 'true', pack: 'none' } };
-    const s1 = { ...(wall || scenes[1] || scenes[0]), archetype: 'wall', dur: 2.4, transition_in: 'flash', params: { ...(wall ? wall.params : {}), word: (wall && wall.params && wall.params.word) || 'NEW', variant: 'grid', pack: 'hero', action: 'cross', pieces: 4 } };
+    const s0 = { ...(typed || scenes[0]), archetype: 'typed', dur: 1.5, transition_in: 'cut', params: { ...(typed ? typed.params : {}), lines: hookOk ? typed.params.lines : ['Meet the all new ' + (product.name || brand)], variant: (typed && typed.params && ['left', 'right', 'center'].includes(String(typed.params.variant))) ? typed.params.variant : 'left', style: 'blurin', wave: 'false', energy: 'true', emphasis: String(brand || '').split(' ')[0].slice(0, 10), scribble: 'true', pack: 'none' } };
+    const s1 = { ...(wall || scenes[1] || scenes[0]), archetype: 'wall', dur: 2.4, transition_in: 'flash', params: { ...(wall ? wall.params : {}), word: (wall && wall.params && wall.params.word) || 'NEW', variant: (wall && wall.params && ['grid', 'diagonal', 'columns', 'marquee'].includes(String(wall.params.variant))) ? wall.params.variant : 'grid', pack: 'hero', action: 'cross', pieces: 4 } };
+    if (rest.length) rest[0] = { ...rest[0], archetype: 'callouts', params: { ...rest[0].params, pack: (rest[0].params && rest[0].params.pack) || 'hero' } };   // the 3rd scene talks about the product: why it is different
     scenes = [s0, s1, ...rest.slice(0, 2)];
   }
   if (scenes.length > 4) scenes = scenes.slice(0, 4);
