@@ -16,7 +16,9 @@ function baseColours(palette, product, dice) {
   const neutral = !own.length || (palette && palette.neutral);
   const seedHue = (dice && dice.seed ? dice.seed % 360 : 20);
   const p1 = rgb(neutral ? (sug[0] || hex(fromHsl([seedHue, 0.85, 0.5]))) : own[0]);
-  const p2 = own[1] && !neutral ? rgb(own[1]) : sug[1] ? rgb(sug[1]) : rot(p1, 38);
+  const hd = (a, b) => { const d = Math.abs(toHsl(a)[0] - toHsl(b)[0]); return Math.min(d, 360 - d); };
+  const sugOk = sug.map((c) => rgb(c)).find((c) => hd(c, p1) > 35);   // the director's colours (the brief's colour wishes: green and yellow) come first for the second colour
+  const p2 = sugOk || (own[1] && !neutral ? rgb(own[1]) : sug[1] ? rgb(sug[1]) : rot(p1, 38));
   return { p1, p2 };
 }
 
@@ -27,7 +29,7 @@ function scene(role, style, palette, product, dice, i) {
   let c0, c1, accent;
   switch (role) {
     case 'secondary': c0 = tone(Q, 0.5, 0.65); c1 = tone(Q, 0.27, 0.65); accent = tone(rot(Q, 150), 0.6, 0.85); break;
-    case 'complement': { const C = rot(P, 180); c0 = tone(C, 0.5, 0.7); c1 = tone(C, 0.27, 0.7); accent = tone(P, 0.58, 0.9); break; }
+    case 'complement': { c0 = tone(Q, 0.52, 0.7); c1 = tone(P, 0.3, 0.7); accent = tone(rot(Q, 165), 0.6, 0.85); break; }   // never the opposite colour: the product's own second colour
     case 'analogous': { const C = rot(P, i % 2 ? 36 : -36); c0 = tone(C, 0.52, 0.7); c1 = tone(C, 0.3, 0.7); accent = tone(rot(C, 160), 0.6, 0.85); break; }
     case 'dark': c0 = tone(P, 0.2, 0.55); c1 = tone(P, 0.08, 0.35); accent = tone(rot(P, 12), 0.6, 0.95); break;
     case 'light': c0 = tone(P, 0.93, 0.5); c1 = tone(P, 0.8, 0.5); accent = tone(P, 0.45, 0.85); break;

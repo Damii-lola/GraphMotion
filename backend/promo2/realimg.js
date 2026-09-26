@@ -15,9 +15,9 @@ async function getBuf(url, ms = 20000) { const r = await fetch(url, { headers: {
 const words = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9À-ɏ ]+/g, ' ').split(/\s+/).filter((w) => w.length > 1);
 const overlap = (a, b) => { const A = new Set(words(a)), B = words(b); return B.length ? B.filter((w) => A.has(w)).length / Math.max(1, Math.min(A.size, B.length)) : 0; };
 async function offFind(query, brandHint, limit = 24) {
-  const j = await getJson('https://search.openfoodfacts.org/search?q=' + encodeURIComponent(query) + '&page_size=' + limit + '&fields=code,product_name,brands,image_front_url,images');
+  const j = await getJson('https://search.openfoodfacts.org/search?q=' + encodeURIComponent(query) + '&page_size=' + limit + '&fields=code,product_name,brands,quantity,image_front_url,images');
   const hits = (j.hits || []).filter((h) => h.image_front_url && h.product_name);
-  return hits.map((h) => ({ code: h.code, name: h.product_name, brands: [].concat(h.brands || []).join(', '), url: h.image_front_url, score: overlap(h.product_name + ' ' + [].concat(h.brands || []).join(' '), query) + (brandHint ? overlap([].concat(h.brands || []).join(' '), brandHint) : 0) })).sort((a, b) => b.score - a.score);
+  return hits.map((h) => ({ code: h.code, name: h.product_name, quantity: String(h.quantity || ''), brands: [].concat(h.brands || []).join(', '), url: h.image_front_url, score: overlap(h.product_name + ' ' + [].concat(h.brands || []).join(' '), query) + (brandHint ? overlap([].concat(h.brands || []).join(' '), brandHint) : 0) })).sort((a, b) => b.score - a.score);
 }
 const fullUrl = (u) => u.replace(/\.(400|200|100)\.jpg$/, '.full.jpg');
 
@@ -121,10 +121,12 @@ async function paletteOf(buf) {
 /** how well a cut-out's proportions fit the kind of pack the plan describes (a can is not a 1.5 L bottle) */
 function kindFit(kind, aspect) {
   const k = String(kind || '').toLowerCase(), a = aspect || 0.5;
-  const want = /can/.test(k) ? [0.36, 0.66] : /bottle/.test(k) ? [0.22, 0.45] : /jar|tub|box|pouch|bag|carton|pack/.test(k) ? [0.6, 1.4] : null;
+  const want = /can/.test(k) ? [0.36, 0.66] : /bottle/.test(k) ? [0.22, 0.45] : /jar|tub|box|pouch|bag|carton|pack/.test(k) ? [0.6, 1.4] : null;
   return want ? (a >= want[0] && a <= want[1] ? 1 : 0) : 0.5;
 }
-async function acquire({ name, brand, kind, userPhotos = [], sitePhotos = [], wantVariants = 2, log = console.log }) {
+const variantPenalty = (name, want) => (/zero|sin az|sugar free|sans sucre|light|diet|cherry|vanilla|0%/i.test(String(name)) && !/zero|sin az|sugar free|sans sucre|light|diet|cherry|vanilla|0%/i.test(String(want)) ? 1 : 0);   // the regular flavour first
+const isCanHit = (h) => { const t = (h.name + ' ' + (h.quantity || '')).toLowerCase(); return !/bottle|botella|bouteille|\bpet\b|1[.,]5|\b[12]\s?l\b|litre|liter/.test(t) && /\bcan\b|canette|lata|blik|dose|\b(150|200|250|330|355|440|473)\s?ml|\b33\s?cl|\b(12|16)\s?(fl\.?\s?)?oz/.test(t); };
+async function acquire({ name, brand, kind, userPhotos = [], sitePhotos = [], wantVariants = 2, isolate = null, log = console.log }) {
   const cands = [];   // { r (cut-out), name, source }
   const tryCut = async (buf, label, source) => { try { const r = await cutoutReal(buf); if (r) cands.push({ ...r, name: label, source }); else log('[photos] ' + source + ' photo of "' + label + '" is not a clean studio-style photo: skipped'); } catch (e) { log('[photos] cut-out failed for ' + source + ': ' + String(e.message).slice(0, 80)); } };
   for (const b of userPhotos.slice(0, 3)) await tryCut(b, name, 'client upload');
@@ -136,10 +138,16 @@ async function acquire({ name, brand, kind, userPhotos = [], sitePhotos = [], wa
       const q = [brand, name].filter(Boolean).join(' '), hits = await offFind(q, brand, 60), nameWords = words(name).filter((w) => !['can', 'bottle', 'pack', 'box'].includes(w));
       const mainOk = (h) => !nameWords.length || nameWords.filter((w) => words(h.name + ' ' + h.brands).includes(w)).length / nameWords.length >= 0.75;
       const pool = hits.filter((h) => h.score >= 0.5).slice(0, 30); log('[photos] Open Food Facts: ' + hits.length + ' hits, ' + pool.length + ' candidates for "' + q + '"');
-      const got = await Promise.all(pool.map(async (h) => { try { let b; try { b = await getBuf(fullUrl(h.url)); } catch (_) { b = await getBuf(h.url); } const r = await cutoutReal(b); return r ? { ...r, name: h.name, brands: h.brands, source: 'Open Food Facts', main: mainOk(h) } : null; } catch (e) { return null; } }));
-      const clean = got.filter(Boolean).filter((x) => x.quality.score >= 0.6).sort((a, b) => b.quality.score - a.quality.score);
+      const raw = await Promise.all(pool.map(async (h) => { try { let b; try { b = await getBuf(fullUrl(h.url)); } catch (_) { b = await getBuf(h.url); } const r = await cutoutReal(b).catch(() => null); return { b, h, r }; } catch (e) { return null; } }));
+      const got = raw.filter((x) => x && x.r).map((x) => ({ ...x.r, name: x.h.name, brands: x.h.brands, source: 'Open Food Facts', main: mainOk(x.h) }));
+      const clean = got.filter((x) => x.quality.score >= 0.6).sort((a, b) => b.quality.score - a.quality.score);
+      const canRaw = raw.filter((x) => x && mainOk(x.h) && isCanHit(x.h)); log('[photos] can-like candidates: ' + canRaw.length + ' of ' + raw.filter(Boolean).length + ' downloaded');
+      const dirtyCan = raw.filter((x) => x && mainOk(x.h) && isCanHit(x.h) && !(x.r && x.r.quality.score >= 0.6 && kindFit(kind, x.r.aspect) === 1)).sort((a, b) => (variantPenalty(a.h.name, name) - variantPenalty(b.h.name, name)) || (b.b.length - a.b.length))[0] || null;   // a real photo of the CAN whose background is busy
       log('[photos] ' + clean.length + ' clean studio-style photos found in Open Food Facts');
-      if (!haveOwn) { const m = clean.filter((x) => x.main).sort((a, b) => (kindFit(kind, b.aspect) - kindFit(kind, a.aspect)) || ((b.w >= 220) - (a.w >= 220)) || (b.quality.score - a.quality.score))[0] || null; if (m) { cands.push(m); credit = 'Product photos: Open Food Facts contributors (CC BY-SA)'; } }
+      if (!haveOwn) { const m = clean.filter((x) => x.main).sort((a, b) => (kindFit(kind, b.aspect) - kindFit(kind, a.aspect)) || ((b.w >= 220) - (a.w >= 220)) || (b.quality.score - a.quality.score))[0] || null; if (m) { cands.push(m); credit = 'Product photos: Open Food Facts contributors (CC BY-SA)'; }
+        if (/can/i.test(String(kind || '')) && isolate && dirtyCan && (!m || kindFit(kind, m.aspect) === 0)) {   // the plan wants a CAN and only a bottle (or nothing) was clean: the picture model isolates the real can photo
+          try { const iso = await isolate(dirtyCan.b); if (iso) { cands.length = 0; cands.push({ buf: iso.buf, aspect: iso.aspect, w: iso.w, h: iso.h, quality: { score: 0.8 }, name: dirtyCan.h.name, brands: dirtyCan.h.brands, source: 'Open Food Facts', main: true, isolated: true }); credit = 'Product photos: Open Food Facts contributors (CC BY-SA)'; log('[photos] can isolated from ' + dirtyCan.h.name); } } catch (e) { log('[photos] isolating the can failed: ' + String(e.message).slice(0, 80)); if (/429|4006|allocation|not set/i.test(String(e.message))) throw e; }
+        } }
       const seen = new Set(cands.map((c) => words(c.name).join(' ')));
       const mb = cands.length ? words(cands[0].brands || '') : [];   // other flavours only of the SAME brand as the main pack
       for (const x of clean) { if (cands.length >= 1 + wantVariants || !mb.length) break; if (!words(x.brands || '').some((w) => mb.includes(w))) continue; const k = words(x.name).join(' '); if (seen.has(k) || cands.includes(x)) continue; seen.add(k); if (cands.length) { cands.push(x); credit = 'Product photos: Open Food Facts contributors (CC BY-SA)'; } }

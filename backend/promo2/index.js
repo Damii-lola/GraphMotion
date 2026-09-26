@@ -57,16 +57,24 @@ function paintAll(plan, needs, real) {
   return jobs;
 }
 
+/** the picture model isolates the exact product of a real photo (busy background) on a flat key colour; then the usual cut-out */
+async function isolatePhoto(buf, plan) {
+  const key = promoFilm.pickKey(plan.product.colors);
+  neurons.charge(neurons.estKlein(true), 'isolate product photo');
+  const iso = await klein.edit(`Show exactly this product (same packaging, same printed text, logo and colours, unchanged), the WHOLE product fully visible, alone, upright, front view, centred, filling most of the frame, with no hands and nothing in front of it, isolated on a plain flat pure ${key.name} (${key.hex}) background, no other objects, no shadow.`, buf);
+  const r = await promoFilm.cutout(iso); return r ? { buf: r.buf, aspect: r.aspect } : null;
+}
+
 /** REAL product photos: the client's own upload, their website / product link, or a clean studio photo from Open Food Facts; a busy client photo is isolated by the picture model. Returns null when there is none (then the packs are painted). */
 async function realPhotos(plan, company, say) {
   const userPhotos = (company && company.userPhotos) || [], sitePhotos = (company && company.sitePhotos) || [];
   let got = null;
-  try { got = await realimg.acquire({ name: plan.product.name, brand: plan.brand, kind: plan.product.kind, userPhotos, sitePhotos, wantVariants: 2 }); } catch (e) { console.warn('[promo2] real photo search failed: ' + String(e.message).slice(0, 100)); }
+  try { got = await realimg.acquire({ name: plan.product.name, brand: plan.brand, kind: plan.product.kind, userPhotos, sitePhotos, wantVariants: 2, isolate: (b) => isolatePhoto(b, plan) }); } catch (e) { console.warn('[promo2] real photo search failed: ' + String(e.message).slice(0, 100)); }
   if (!got && (userPhotos.length || sitePhotos.length)) {                                   // the client's photo has a busy background: ask the picture model to isolate the exact product
     const src = userPhotos[0] || sitePhotos[0], key = promoFilm.pickKey(plan.product.colors);
     try {
       say('Isolating your product photo', 0.12); neurons.charge(neurons.estKlein(true), 'isolate product photo');
-      const iso = await klein.edit(`Show exactly this product (same packaging, same printed text, logo and colours, unchanged) alone, upright, front view, centred, filling most of the frame, isolated on a plain flat pure ${key.name} (${key.hex}) background, no other objects, no shadow.`, src);
+      const iso = await klein.edit(`Show exactly this product (same packaging, same printed text, logo and colours, unchanged), the WHOLE product fully visible, alone, upright, front view, centred, filling most of the frame, with no hands and nothing in front of it, isolated on a plain flat pure ${key.name} (${key.hex}) background, no other objects, no shadow.`, src);
       const r = await promoFilm.cutout(iso);
       if (r) { const buf = r.buf; got = { main: { buf, aspect: r.aspect }, variants: [], palette: await realimg.paletteOf(buf), credit: null }; }
     } catch (e) { console.warn('[promo2] isolating the client photo failed: ' + String(e.message).slice(0, 100)); if (/429|4006|allocation|not set/i.test(String(e.message))) throw e; }

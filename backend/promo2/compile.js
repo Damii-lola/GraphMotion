@@ -50,7 +50,7 @@ function compile(plan, assets) {
     zones.push({ c0: bg0, c1: bg1, shape: bd.shape, angle: bd.angle, ox: bd.ox, oy: bd.oy, x: zx, y: 0 });
     lastPal = { ink, accent, c0: bg0 };
     const pal = { c0: bg0, c1: bg1, ink, accent };
-    const ctx = { t0: S.t0, t1: S.t1, dur: S.dur, pal, packs: assets.packs, props: (assets.props || []).map((id) => ({ id })), brand: plan.brand, cta: plan.cta, seed: 3 + i * 17, out: out(i), v: vary.forScene(dice, i) };
+    const ctx = { t0: S.t0, t1: S.t1, dur: S.dur, pal, packs: assets.packs, props: (assets.props || []).map((id) => ({ id })), brand: showName(plan.brand, plan.product), cta: plan.cta, seed: 3 + i * 17, out: out(i), v: vary.forScene(dice, i) };
     const A0 = ARCH[oneOf(S.archetype, IDS, 'showcase')];
     try { A0.build(S.params || {}, ctx); } catch (e) { console.warn('[promo2] archetype ' + S.archetype + ' failed: ' + String(e.message).slice(0, 120)); }
     try { addExtras(ctx, S.extras); } catch (e) { /* extras never break a scene */ }
@@ -64,7 +64,7 @@ function compile(plan, assets) {
       else if (S.tr === 'wipe' && wipes < LAWS.density.maxWipe) { wipes++; layers.push({ kind: 'wipe', dir: dirn, n: 2, color: bg0, color2: accent, t0: +(S.t0 - 0.3).toFixed(2), t1: +(S.t0 + 0.3).toFixed(2), z: 7 }); cues.push({ t: +(S.t0 - 0.3).toFixed(2), kind: 'whoosh' }); }
       else if (S.tr === 'zoomblur' && blurs < LAWS.density.maxZoomBlur) { blurs++; layers.push({ kind: 'zoomblur', amp: 0.35, t0: +(S.t0 - 0.25).toFixed(2), t1: +(S.t0 + 0.25).toFixed(2), z: 7 }); cues.push({ t: +(S.t0 - 0.25).toFixed(2), kind: 'whoosh' }); }
       else if (S.tr === 'brandflash' && blurs < LAWS.density.maxZoomBlur) {   // the brand slams in huge under a zoom blur (Goli's logo flash)
-        blurs++; const bl = String(plan.brand || '').toUpperCase().split(' ').slice(0, 2), bc = Math.max(...bl.map((q) => q.length), 1);
+        blurs++; const bl = String(showName(plan.brand, plan.product) || '').toUpperCase().split(' ').slice(0, 2), bc = Math.max(...bl.map((q) => q.length), 1);
         layers.push({ kind: 'text', lines: bl, x: 0.5, y: 0.5, size: fitSize(bc, 'giant') * (bl.length > 1 ? 0.85 : 1), font: 'anton', color: '#ffffff', upper: true, r: 0, track: 0, align: 'center', in: { kind: 'pop', dur: 0.25 }, t0: +(S.t0 - 0.5).toFixed(2), t1: +(S.t0 + 0.3).toFixed(2), z: 7, front: true, shadow: true });
         layers.push({ kind: 'zoomblur', amp: 0.5, t0: +(S.t0 - 0.45).toFixed(2), t1: +(S.t0 + 0.3).toFixed(2), z: 7 }); cues.push({ t: +(S.t0 - 0.5).toFixed(2), kind: 'impact' }); }
       else if (S.tr === 'iris') { layers.push({ kind: 'iris', color: bg0, x: 0.5, y: 0.5, t0: +(S.t0 - 0.6).toFixed(2), t1: +S.t0.toFixed(2), z: 7 }); cues.push({ t: +(S.t0 - 0.6).toFixed(2), kind: 'whoosh' }); }
