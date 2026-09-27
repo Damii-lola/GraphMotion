@@ -27,7 +27,7 @@ async function findOfficial(plan, company, log = console.log) {
       try {
         const { html, url } = await scanner.getHtml('https://' + host);
         const t = html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]*>/g, ' ').toLowerCase().slice(0, 60000);
-        const hasProduct = pw.length && pw.every((w) => t.includes(w)), hasBrandOrKind = (bw.length && bw.some((w) => t.includes(w)) && slug(brand) !== slug(product)) || kw.some((w) => t.includes(w));
+        const hasProduct = pw.length > 0 && pw.filter((w) => t.includes(w)).length / pw.length >= 0.66, hasBrandOrKind = (bw.length && bw.some((w) => t.includes(w)) && slug(brand) !== slug(product)) || kw.some((w) => t.includes(w));   // most of the product's words is enough (a brand's own homepage rarely spells out every word of a product line's full name)
         if (hasProduct && hasBrandOrKind) return url;
       } catch (_) { /* not reachable: next */ }
     }
