@@ -285,7 +285,7 @@ ARCH.callouts = {
       shape(ctx, { kind: 'burst', x: pxc, y: iy, n: 10, color: pc, color2: ctx.pal.ink, life: 0.7, u0: u + 0.3, u1: u + 0.9, z: 4.7 });
       cue(ctx, u + 0.3, 'tick');
     });
-    if (String(p.float) !== 'false' && ctx.props.length && ctx.v.chance(0.85)) [[0.11, 0.16, 0.16, 20], [0.89, 0.83, 0.18, -25], [0.13, 0.92, 0.17, 10]].forEach(([x, y, w, r], i) => push(ctx, { kind: 'sprite', src: ctx.props[i % ctx.props.length].id, t0: A(ctx, 0.4 + i * 0.3), t1: A(ctx, ctx.dur), x, y, w, r, in: { kind: 'pop', dur: 0.4 }, idle: { kind: 'float', amp: 0.01, speed: 1 }, shadow: false, z: 4 }));
+    if (String(p.float) !== 'false' && ctx.props.length && ctx.v.chance(0.85)) [[0.1, 0.42, 0.15, 20], [0.9, 0.36, 0.15, -25], [0.12, 0.91, 0.17, 10]].forEach(([x, y, w, r], i) => push(ctx, { kind: 'sprite', src: ctx.props[i % ctx.props.length].id, t0: A(ctx, 0.4 + i * 0.3), t1: A(ctx, ctx.dur), x, y, w, r, in: { kind: 'pop', dur: 0.4 }, idle: { kind: 'float', amp: 0.01, speed: 1 }, shadow: false, z: 4 }));
   },
 };
 
