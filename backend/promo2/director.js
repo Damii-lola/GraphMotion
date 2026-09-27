@@ -115,7 +115,7 @@ function neededAssets(plan) {
   const packs = new Set(['hero']), props = new Set();
   plan.scenes.forEach((s) => { const p = s.params || {}; [p.pack].concat(Array.isArray(p.packs) ? p.packs : []).forEach((x) => { if (/^hero[23]$/.test(x || '')) packs.add(x); });
     if (s.archetype === 'ingredients') (Array.isArray(p.items) ? p.items : []).forEach((it) => props.add('prop' + Math.round(num(it && it.prop, 0, 0, 2))));
-    if ((s.archetype === 'showcase' && num(p.props, 5, 0, 7) >= 2) || (s.archetype === 'rings_drop' && num(p.props, 4, 0, 6) >= 2)) plan.props.forEach((_, i) => props.add('prop' + i));
+    if ((s.archetype === 'showcase' && num(p.props, 5, 0, 7) >= 2) || (s.archetype === 'rings_drop' && num(p.props, 4, 0, 6) >= 2) || (s.archetype === 'wall' && num(p.pieces, 4, 0, 5) >= 1)) plan.props.forEach((_, i) => props.add('prop' + i));
     (s.extras || []).forEach((e) => { if (e && e.kind === 'scatter') plan.props.forEach((_, i) => props.add('prop' + i)); }); });
   const nv = plan.product.variants.length; return { packs: [...packs].filter((id) => id === 'hero' || +id.slice(4) - 2 < nv), props: [...props].filter((id) => +id.slice(4) < plan.props.length) };
 }
