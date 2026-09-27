@@ -11,7 +11,7 @@ const promoFilm = require('../promoFilm');   // picture tools shared with engine
 const klein = require('../kleinClient');
 const neurons = require('../neuronBudget');
 const realimg = require('./realimg');
-const webphotos = require('./webphotos');
+const webphotoRunner = require('./webphotoRunner');   // the official-site photo scan, isolated in its own child process (see that file's doc comment)
 
 // at most 3 pictures painted at once (a burst of parallel requests stalls the image service)
 const queue = []; let running = 0;
@@ -85,10 +85,10 @@ async function realPhotos(plan, company, say) {
   const base = { name: plan.product.name, brand: plan.brand, kind: plan.product.kind, wantVariants: 2, isolate: (b) => isolatePhoto(b, plan) };
   // 1. the client's own photos / website pictures   2. the product's official site, rendered in a second real browser   3. Open Food Facts (a can photo is isolated by the picture model)
   try { got = await realimg.acquire({ ...base, userPhotos, sitePhotos, off: false }); } catch (e) { console.warn('[promo2] real photo search failed: ' + String(e.message).slice(0, 100)); }
-  if (!got && !userPhotos.length && process.env.WEB_PHOTO_SCAN === '1') {   // OFF by default: a second real browser on this same free-tier server crashed the whole process three times live (see feedback_web_photo_scan_disabled memory note) - re-enable only once that is fixed and measured safe under real load
+  if (!got && !userPhotos.length) {   // the official-site scan now runs in its own child process (webphotoRunner) - a crash or OOM kill there can no longer take this server down, so this is safe to run by default again
     try {
       say('Finding your product photos', 0.1);
-      const found = await Promise.race([webphotos.discover(plan, company), new Promise((res) => setTimeout(() => res([]), 45000))]);   // never let a stuck browser hold up the whole job
+      const found = await webphotoRunner.discover(plan, company);
       if (found.length) { const g2 = await realimg.acquire({ ...base, userPhotos: [], sitePhotos: found, off: false }); if (g2) { got = g2; got.credit = null; } }
     } catch (e) { console.warn('[promo2] official-site photos failed: ' + String(e.message).slice(0, 100)); }
   }
