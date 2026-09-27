@@ -11,7 +11,7 @@ const promoFilm = require('../promoFilm');   // picture tools shared with engine
 const klein = require('../kleinClient');
 const neurons = require('../neuronBudget');
 const realimg = require('./realimg');
-const webphotoRunner = require('./webphotoRunner');   // the official-site photo scan, isolated in its own child process (see that file's doc comment)
+const webphotos = require('./webphotos');   // the official-site photo scan: plain HTTP fetch only, no second browser (see that file's doc comment)
 
 // at most 3 pictures painted at once (a burst of parallel requests stalls the image service)
 const queue = []; let running = 0;
@@ -83,12 +83,12 @@ async function realPhotos(plan, company, say) {
   const userPhotos = (company && company.userPhotos) || [], sitePhotos = (company && company.sitePhotos) || [];
   let got = null;
   const base = { name: plan.product.name, brand: plan.brand, kind: plan.product.kind, wantVariants: 2, isolate: (b) => isolatePhoto(b, plan) };
-  // 1. the client's own photos / website pictures   2. the product's official site, rendered in a second real browser   3. Open Food Facts (a can photo is isolated by the picture model)
+  // 1. the client's own photos / website pictures   2. the product's official site (plain fetch, no browser: see webphotos.js)   3. Open Food Facts (a can photo is isolated by the picture model)
   try { got = await realimg.acquire({ ...base, userPhotos, sitePhotos, off: false }); } catch (e) { console.warn('[promo2] real photo search failed: ' + String(e.message).slice(0, 100)); }
-  if (!got && !userPhotos.length) {   // the official-site scan now runs in its own child process (webphotoRunner) - a crash or OOM kill there can no longer take this server down, so this is safe to run by default again
+  if (!got && !userPhotos.length) {
     try {
       say('Finding your product photos', 0.1);
-      const found = await webphotoRunner.discover(plan, company);
+      const found = await Promise.race([webphotos.discover(plan, company), new Promise((res) => setTimeout(() => res([]), 40000))]);   // a slow/unlucky scan never holds up the whole job
       if (found.length) { const g2 = await realimg.acquire({ ...base, userPhotos: [], sitePhotos: found, off: false }); if (g2) { got = g2; got.credit = null; } }
     } catch (e) { console.warn('[promo2] official-site photos failed: ' + String(e.message).slice(0, 100)); }
   }

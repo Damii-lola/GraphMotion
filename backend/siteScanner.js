@@ -90,7 +90,36 @@ function imageUrls(html, base) {
     imgs.push({ src, score: (PROD.test(src + ' ' + attr('alt') + ' ' + attr('class')) ? 2 : 0) + ((parseInt(attr('width'), 10) || 0) >= 300 ? 1 : 0) });
   }
   imgs.sort((a, b) => b.score - a.score).forEach((i) => add(i.src));
-  return out.slice(0, 14);
+  // most JS-built sites (Next.js, Nuxt, and plenty of custom storefronts) still ship their real product data as plain JSON inside the
+  // page's initial HTML - that JSON is what the JS then reads to build the visible page. A plain fetch can read it directly, no
+  // browser needed: walk every inline JSON blob (script type="application/json", __NEXT_DATA__, __NUXT__, etc.) for image-shaped strings.
+  for (const m of html.matchAll(/<script[^>]*type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const walk = (o, depth) => {
+        if (!o || depth > 6) return;
+        if (typeof o === 'string') { if (IMG_OK.test(o.split('?')[0]) && o.length < 500) add(o); return; }
+        if (typeof o !== 'object') return;
+        if (Array.isArray(o)) return o.forEach((x) => walk(x, depth + 1));
+        Object.values(o).forEach((v) => walk(v, depth + 1));
+      };
+      walk(JSON.parse(m[1]), 0);
+    } catch (_) { /* not JSON, or too deep: skip */ }
+  }
+  return out.slice(0, 20);
+}
+/** Shopify stores publish their catalogue at this address with no login needed - a reliable, browser-free source of clean packshots when the site itself is one. Returns [] for anything else (a 404 there just means it isn't Shopify). */
+async function shopifyProductImages(origin, max = 10) {
+  try {
+    const j = await getJson(new URL('/products.json?limit=20', origin).href);
+    const out = [];
+    for (const p of j.products || []) for (const im of p.images || []) { if (im.src && !out.includes(im.src)) out.push(im.src); if (out.length >= max) return out; }
+    return out;
+  } catch (_) { return []; }
+}
+async function getJson(url) {
+  const safe = await resolveTarget(url), r = await fetch(safe, { redirect: 'follow', timeout: TIMEOUT_MS, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SmartClipsBot/1.0)', Accept: 'application/json' } });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
 }
 async function fetchImages(urls, max) { const bufs = []; for (const u of urls) { if (bufs.length >= max) break; try { const b = await getImage(u); if (b && b.length > 6000) bufs.push(b); } catch (_) { /* skip */ } } return bufs; }
 /** a link the client gave for their product: a picture address, or a page (product page, shop listing) whose pictures are collected */
@@ -100,4 +129,4 @@ async function scanImages(input, max = 5) {
   const { html, url } = await getHtml(s); return fetchImages(imageUrls(html, url), max);
 }
 
-module.exports = { scan, scanImages, getHtml, getImage };
+module.exports = { scan, scanImages, getHtml, getImage, imageUrls, fetchImages, shopifyProductImages };
