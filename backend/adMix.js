@@ -53,9 +53,10 @@ async function mix({ bedWav, events, outWav, end }) {
   for (const e of ev) e.norm = Math.pow(10, -(await peakDb(e.file)) / 20);           // gain that takes this recording's peak to 0 dBFS
   const args = ['-i', bedWav]; ev.forEach((e) => args.push('-i', e.file));
   const f = ev.map((e, k) => `[${k + 1}:a]aformat=sample_rates=44100:channel_layouts=stereo,volume=${(e.gain * Math.min(e.norm, 30)).toFixed(3)},adelay=${Math.round(e.at * 1000)}|${Math.round(e.at * 1000)}[e${k}]`);
-  // the bed has a shape: it fades in, sits back under the story, then SWELLS into the end card (over ~2.7 s around the end-card time) - a film with no dynamics feels flat
+  // the bed has a shape: it fades in, plays as a real, PRESENT beat under the story (not a background hum - direct user
+  // feedback: "we need a nice beat to play"), then swells further into the end card (over ~2.7 s around the end-card time)
   const E = Number.isFinite(end) ? end : 17.5;
-  f.unshift(`[0:a]volume='if(lt(t,0.6),0.12+0.22*t/0.6,if(lt(t,${(E - 2.4).toFixed(2)}),0.34,if(lt(t,${(E + 0.3).toFixed(2)}),0.34+0.32*(t-${(E - 2.4).toFixed(2)})/2.7,0.66)))':eval=frame[bed]`);
+  f.unshift(`[0:a]volume='if(lt(t,0.6),0.14+0.44*t/0.6,if(lt(t,${(E - 2.4).toFixed(2)}),0.58,if(lt(t,${(E + 0.3).toFixed(2)}),0.58+0.22*(t-${(E - 2.4).toFixed(2)})/2.7,0.8)))':eval=frame[bed]`);
   const ins = '[bed]' + ev.map((_, k) => `[e${k}]`).join('');
   f.push(`${ins}amix=inputs=${ev.length + 1}:duration=first:normalize=0:dropout_transition=0,loudnorm=I=-16:TP=-1.5:LRA=20[out]`);
   await run([...args, '-filter_complex', f.join(';'), '-map', '[out]', '-ar', '44100', '-ac', '2', outWav]);

@@ -97,9 +97,14 @@ function synth({ duration, cues, music }) {
       musL[i] += ml; musR[i] += mr; sendL[i] += ml * 0.35; sendR[i] += mr * 0.35;
       if (style === 'tense') { const sh = Math.sin(TAU * f0 * 8 * t) * Math.sin(TAU * 0.4 * t) * 0.004 * (t / duration) * swell; musL[i] += sh; musR[i] += sh; }
     }
-    for (const t of kicks) { // soft kick + off-beat hat
+    for (const t of kicks) { // soft kick + a steady 8th-note hat pattern (a single off-beat tick read as thin/background-hum quiet; direct user feedback: "we need a nice beat")
       for (let k = 0; k < 0.3 * SR; k++) { const x = k / SR, f = 46 + 90 * Math.exp(-x * 32), s = Math.sin(TAU * f * x) * Math.exp(-x * 10) * (style === 'tense' ? 0.32 : 0.42); const j = Math.round(t * SR) + k; if (j < n) { musL[j] += s; musR[j] += s; } }
-      if (style === 'pulse') { const th = t + beat / 2, hp = new Biquad(); hp.set('hp', 7000, 0.7); for (let k = 0; k < 0.05 * SR; k++) { const s = hp.p(noise()) * Math.exp(-(k / SR) * 70) * 0.1; const j = Math.round(th * SR) + k; if (j < n) { musL[j] += s * 0.8; musR[j] += s * 1.2; } } }
+      for (let e8 = 0; e8 < 2; e8++) {   // two hats per beat (on- and off-beat): the on-beat sits under the kick (softer, closed), the off-beat drives the groove (louder, brighter, longer)
+        const th = t + e8 * beat / 2, accent = e8 === 0 ? 0.65 : 1, hp = new Biquad(); hp.set('hp', e8 === 0 ? 6200 : 7000, 0.7);
+        const vel = 0.2 + 0.09 * rnd();   // a touch of per-hit humanisation so it doesn't tick like a metronome
+        const dur = e8 === 0 ? 0.06 : 0.13, decay = e8 === 0 ? 85 : 26;   // the off-beat rings out longer, like an open hat - that sustain is what actually reads as "air" / shimmer
+        for (let k = 0; k < dur * SR; k++) { const s = hp.p(noise()) * Math.exp(-(k / SR) * decay) * vel * accent; const j = Math.round(th * SR) + k; if (j < n) { musL[j] += s * 0.85; musR[j] += s * 1.15; } }
+      }
     }
   }
 
