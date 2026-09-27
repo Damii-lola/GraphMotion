@@ -17,6 +17,17 @@ const webphotos = require('./webphotos');
 const queue = []; let running = 0;
 const limit = (fn) => new Promise((res, rej) => { const go = () => { running++; Promise.resolve().then(fn).then(res, rej).finally(() => { running--; const n = queue.shift(); if (n) n(); }); }; if (running < 3) go(); else queue.push(go); });
 
+/** the chroma-key colour leaks into translucent things (ice, water, glass) as a purple cast: remove the spill (the key's own colour cast is pulled down to the neutral level) */
+async function despill(buf, key) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String((key && key.hex) || '')); if (!m) return buf;
+  const kr = parseInt(m[1], 16), kg = parseInt(m[2], 16), kb = parseInt(m[3], 16);
+  if (!(kr > 190 && kb > 190 && kg < 90)) return buf;   // only a magenta key leaves this cast
+  const { loadImage, createCanvas } = require('@napi-rs/canvas'), im = await loadImage(buf), c = createCanvas(im.width, im.height), g = c.getContext('2d'); g.drawImage(im, 0, 0);
+  const id = g.getImageData(0, 0, im.width, im.height), d = id.data;
+  for (let i = 0; i < d.length; i += 4) { if (d[i + 3] === 0) continue; const spill = Math.max(0, Math.min(d[i], d[i + 2]) - d[i + 1]); if (spill > 6) { const k = Math.min(1, spill / 24); d[i] = Math.round(d[i] - spill * 0.9 * k); d[i + 2] = Math.round(d[i + 2] - spill * 0.9 * k); } }
+  g.putImageData(id, 0, 0); return c.toBuffer('image/png');
+}
+
 /** clean vector props for real-photo videos (no AI-painted bottles that have nothing to do with the product): citrus wheels, glossy discs and sparkles in the product's own colours */
 function vectorProp(i, colours) {
   const { createCanvas } = require('@napi-rs/canvas'), c = createCanvas(400, 400), g = c.getContext('2d'), col = colours[i % colours.length] || '#ffb020', kind = ['wheel', 'disc', 'spark'][i % 3];
@@ -48,6 +59,7 @@ function paintAll(plan, needs, real) {
   const prop = (i, pr, photoreal) => limit(async () => {
     let res = null; neurons.charge(neurons.estKlein(false), 'prop ' + (i + 1));
     for (let t = 0; t < 2 && !res; t++) { try { res = await promoFilm.cutout(await klein.generate(t ? `${pr.name || 'an ingredient'}, macro product photography, isolated on a plain flat pure ${key.name} (${key.hex}) background, no text` : (photoreal ? 'A real photograph, photorealistic, natural lighting and texture, not an illustration, not 3D rendered: ' : '') + promoFilm.propPrompt(pr, key), { width: 512, height: 512 })); } catch (e) { console.warn(`[promo2] prop ${i + 1} attempt ${t + 1} failed: ${String(e.message).slice(0, 100)}`); if (/429|4006|allocation/i.test(String(e.message))) throw e; } }
+    if (res && photoreal) { try { res = { ...res, buf: await despill(res.buf, key) }; } catch (_) { /* keep the cut-out as it is */ } }
     if (!res) { neurons.refund(neurons.estKlein(false), 'prop ' + (i + 1) + ' (stand-in used)'); return photoreal ? null : promoFilm.fallbackProp(plan.product.colors[i % plan.product.colors.length]); }
     return res;
   });

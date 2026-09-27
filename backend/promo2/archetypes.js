@@ -139,7 +139,7 @@ ARCH.wall = {
   params: { word: 'the wall word (up to 8 letters)', font: 'a caps font', variant: 'grid | diagonal | columns | marquee', pack: 'hero | hero2 | hero3 | none', action: 'cross | drop | absent', tilt: 'degrees', pieces: 'floating small pieces 0-5', caption: 'a benefit line typed under the pack (max 5 words, e.g. real juice, zero sugar)', badge: 'a round sticker (max 2 words, e.g. NEW)' },
   packs: 'optional',
   build(p, ctx) {
-    const word = wordsLines(p.word || p.lines, 1, 8)[0] || 'NEW', chars = word.length, v = variantOf(ctx, p, ['grid', 'diagonal', 'columns', 'marquee']), font = F(ctx, 'giant', p.font);
+    const word = wordsLines(p.word || p.lines, 1, 10)[0] || 'NEW', chars = word.length, v = variantOf(ctx, p, ['grid', 'diagonal', 'columns', 'marquee']), font = F(ctx, 'giant', p.font);
     const base = clamp(0.36 / (chars * 0.5), 0.09, 0.24), size = +(v === 'marquee' ? clamp(base * 1.7, 0.16, 0.3) : base).toFixed(3);
     shape(ctx, { kind: 'wall', word, font, size, rowGap: v === 'marquee' ? 1.25 : 1.02, colGap: 1.45, speed: ctx.v.range(0.04, 0.08), rot: v === 'diagonal' ? ctx.v.pick([-14, 14, -20]) : v === 'columns' ? 90 : 0, color: ctx.pal.ink, alpha: ctx.v.range(0.75, 0.95), hl: [{ r: 2, c: 1, t: 0.3 }, { r: 5, c: 0, t: 0.55 }, { r: 7, c: 2, t: 0.8 }], u0: 0, z: 2 });
     const np = Math.round(num(p.pieces, 4, 0, 5)); if (np && ctx.props.length) [[0.74, 0.3], [0.18, 0.66], [0.84, 0.86], [0.3, 0.14], [0.9, 0.5]].slice(0, np).forEach(([x, y], i) => push(ctx, { kind: 'sprite', src: ctx.props[i % ctx.props.length].id, t0: A(ctx, 0.7 + i * 0.35), t1: A(ctx, ctx.dur), x, y, w: 0.13, r: i % 2 ? 20 : -15, in: { kind: 'pop', dur: 0.35 }, idle: { kind: 'float', amp: 0.012, speed: 1.1 }, shadow: false, z: 4 }));
