@@ -11,7 +11,7 @@ const LAWS = {
   // TYPE: sizes are fractions of the screen width
   type: { giant: [0.26, 0.36], heading: [0.1, 0.2], line: [0.04, 0.06], minHold: 1.0, maxWordsPerScene: 9, maxWordsTotal: 26 },
   // THE PACK
-  pack: { maxH: 0.6, restW: [0.4, 0.62], restWithGiantType: [0.3, 0.5], maxW: 0.8, zoomThroughMaxW: 1.4, zoomThroughMaxSecs: 0.4, tiltMax: 28 },
+  pack: { maxH: 0.6, restW: [0.4, 0.62], restWithGiantType: [0.3, 0.5], maxW: 0.8, zoomThroughMaxW: 1.4, zoomThroughMaxSecs: 0.4, tiltMax: 11 },
   // PROPS / PIECES
   props: { size: [0.16, 0.4], maxPerScatter: 9, maxScatterAtOnce: 2 },
   // DENSITY = render cost (a promo is drawn frame by frame on a small server)

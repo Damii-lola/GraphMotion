@@ -87,7 +87,7 @@ function compile(plan, assets) {
   // ---- a round pack (can, bottle, jar) turns like a turntable: a full turn on arrival, then a gentle swing
   const kindText = String((plan.product && plan.product.kind) || '') + ' ' + String((plan.product && plan.product.name) || ''), heroAsp = (assets.packs && assets.packs.hero && assets.packs.hero.aspect) || 0.5;
   const flatPack = /\b(box|bag|pouch|packet|carton|sachet|cereal|chips?|crisps|bar|wrapper|tray|sleeve|book|shoes?|phone|device|electronics|kit)\b/i.test(kindText);
-  const isRound = !flatPack && (/can|bottle|jar|tub|tin|cup|tube|canister|drum|keg|drink|soda|soft|beverage|juice|water|beer|wine|cola|energy|gumm|vitamin|supplement|capsule|sauce|jam|candle|cream|lotion|spray/i.test(kindText) || heroAsp <= 0.8);
+  const isRound = process.env.PACK_TURNTABLE === '1' && !flatPack && (/can|bottle|jar|tub|tin|cup|tube|canister|drum|keg|drink|soda|soft|beverage|juice|water|beer|wine|cola|energy|gumm|vitamin|supplement|capsule|sauce|jam|candle|cream|lotion|spray/i.test(kindText) || heroAsp <= 0.8);
   const spinRate = +(115 * (dice.tiltSign > 0 ? 1 : -1)).toFixed(0), swing = 0;   // a round pack turns CONTINUOUSLY (degrees per second)
   // ---- the main pack: ONE continuous track
   const way = heroWay.sort((a, b) => a.t - b.t);
