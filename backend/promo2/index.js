@@ -85,7 +85,7 @@ async function realPhotos(plan, company, say) {
   const base = { name: plan.product.name, brand: plan.brand, kind: plan.product.kind, wantVariants: 2, isolate: (b) => isolatePhoto(b, plan) };
   // 1. the client's own photos / website pictures   2. the product's official site, rendered in a second real browser   3. Open Food Facts (a can photo is isolated by the picture model)
   try { got = await realimg.acquire({ ...base, userPhotos, sitePhotos, off: false }); } catch (e) { console.warn('[promo2] real photo search failed: ' + String(e.message).slice(0, 100)); }
-  if (!got && !userPhotos.length) {
+  if (!got && !userPhotos.length && process.env.WEB_PHOTO_SCAN === '1') {   // OFF by default: a second real browser on this same free-tier server crashed the whole process three times live (see feedback_web_photo_scan_disabled memory note) - re-enable only once that is fixed and measured safe under real load
     try {
       say('Finding your product photos', 0.1);
       const found = await Promise.race([webphotos.discover(plan, company), new Promise((res) => setTimeout(() => res([]), 45000))]);   // never let a stuck browser hold up the whole job
