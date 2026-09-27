@@ -196,7 +196,7 @@
     const TEX = cylTex(id, im), phi = yawDeg * Math.PI / 180, nw = im.naturalWidth, nh = im.naturalHeight, step = 2, N = Math.ceil(W2 / step);
     for (let i = 0; i < N; i++) {
       const xd = clamp(((i + 0.5) / N) * 2 - 1, -0.999, 0.999), a = Math.asin(xd) + phi;
-      const aw = (((a + Math.PI / 2) % Math.PI) + Math.PI) % Math.PI - Math.PI / 2, u = Math.sin(aw);
+      const aw = (((a + Math.PI / 2) % Math.PI) + Math.PI) % Math.PI - Math.PI / 2, u = Math.sin(aw) * 0.86;   // the outer 7% of the photo (rim highlights, the silver edge) is never sampled: no silver seam
       const sw = clamp((Math.cos(aw) / Math.sqrt(1 - xd * xd)) * (nw / N), 1, nw * 0.25), sxp = clamp((u * 0.5 + 0.5) * nw - sw / 2, 0, nw - sw);
       c.drawImage(TEX, sxp, 0, sw, nh, i * step, 0, step + 0.7, H2);
     }
@@ -228,7 +228,7 @@
   function drawSpriteLayer(L, t, cam, bg) {
     const base = { x: (L.x !== undefined ? L.x : 0.5), y: (L.y !== undefined ? L.y : 0.5) }, st = motionState(L, t, base); if (st.o <= 0) return;
     const [dx, dy] = ox(L, cam), w = (L.w || 0.5) * W;
-    const yawT = st.yaw + (L.cyl ? Math.sin(t * 1.7) * (L.swing || 0) : 0), spinning = L.cyl && Math.abs(yawT) > 0.6;
+    const yawT = st.yaw + (L.cyl ? Math.sin(t * 1.7) * (L.swing || 0) + (t - (L.t0 || 0)) * (L.spin || 0) : 0), spinning = L.cyl && (Math.abs(yawT) > 0.6);
     if (L.keys && L.keys.length && !spinning) {                        // motion blur: trailing ghosts along the path while it moves fast (a turning pack has none: its ghosts would not turn)
       const p0 = motionState(L, t - 1 / 30, base), dist = Math.hypot((st.x - p0.x) * W, (st.y - p0.y) * H), n = Math.min(4, Math.floor(dist / 22));
       for (let k = n; k >= 1; k--) { const gs = motionState(L, t - (k / n) * (1 / 36), base); drawSprite(L.src, gs.x * W + dx, gs.y * H + dy, w * gs.s, (L.r || 0) + gs.r, gs.o * 0.28, gs.sx, gs.sy, null, null); }

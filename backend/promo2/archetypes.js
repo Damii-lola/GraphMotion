@@ -64,7 +64,7 @@ function movePack(ctx, id, way) {
   const wp = way.map((k) => { const q = { ...k, t: A(ctx, k.u) }; delete q.u; return q; });
   // once the pack has landed it shows itself off with one full turn (a round pack turns like a turntable; a flat pack ignores the yaw)
   const ai = wp.findIndex((k) => k.yaw === 0);
-  if (ai >= 0 && ai < wp.length - 1) { const a = wp[ai], last = wp[wp.length - 1]; if (last.t - a.t >= 1.7 && ctx.v.chance(0.9)) { const dir = ctx.v.pick([-1, 1]); wp.splice(ai + 1, 0, { ...a, t: +(a.t + 0.3).toFixed(3), yaw: 0, e: 'linear', blur: 0 }, { ...a, t: +(a.t + 1.3).toFixed(3), yaw: 360 * dir, e: 'inOutCubic', blur: 0 }); } }
+  if (ai >= 0 && ai < wp.length - 1) { const a = wp[ai], last = wp[wp.length - 1]; if (last.t - a.t >= 1.7 && false) { const dir = ctx.v.pick([-1, 1]); wp.splice(ai + 1, 0, { ...a, t: +(a.t + 0.3).toFixed(3), yaw: 0, e: 'linear', blur: 0 }, { ...a, t: +(a.t + 1.3).toFixed(3), yaw: 360 * dir, e: 'inOutCubic', blur: 0 }); } }
   if (id === 'hero') { ctx.out.hero.push(...wp); ctx.out.heroUsed = true; return; }
   const f = wp[0];
   push(ctx, { kind: 'sprite', src: id, t0: f.t, t1: A(ctx, ctx.dur), x: f.x, y: f.y, w: f.w, r: 0, keys: wp.map((k) => ({ ...k })), pack: true, shadow: true });
