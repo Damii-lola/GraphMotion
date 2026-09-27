@@ -262,7 +262,7 @@ ARCH.callouts = {
   params: { pack: 'hero | hero2 | hero3', sentence: 'a sentence, 1-2 lines (max 8 words)', items: 'list of 2-5 short labels (max 2 words each)', variant: 'sides | radial | list', entrance: 'spin | pop | rise', float: 'true/false: small ingredients drift in the corners' },
   packs: 'one',
   build(p, ctx) {
-    const id = packId(ctx, p.pack), items = (Array.isArray(p.items) ? p.items : []).map((s) => cleanWord(s, 18)).filter(Boolean).slice(0, 5), sent = sentenceLines(p.sentence, 2, 26);
+    const id = packId(ctx, p.pack), items = (Array.isArray(p.items) ? p.items : []).map((s) => cleanWord(s, 26)).filter(Boolean).slice(0, 5), sent = sentenceLines(p.sentence, 2, 26);   // 26, not 18: "No artificial colours/flavours/sweeteners" used to all get chopped down to the same "No artificial"
     let v = variantOf(ctx, p, ['sides', 'radial', 'list']);
     if (v !== 'list' && Math.max(0, ...items.map((s) => s.length * 0.026 + 0.08)) > 0.25) v = 'list';   // long claim pills do not fit beside a centred pack: all of them go on ONE side, the pack on the other
     const px = v === 'list' ? ctx.v.pick([0.32, 0.68]) : 0.5, rest = restPose(ctx, id, px, 0.64, v === 'radial' ? 0.3 : 0.34, ctx.v.range(-9, 9), false, 0.46);
@@ -279,10 +279,10 @@ ARCH.callouts = {
     else if (v === 'list') { const sd = px < 0.5 ? 'R' : 'L', x = sd === 'R' ? 0.76 : 0.24; POS = items.map((_, i) => [x, +(0.47 + i * 0.075).toFixed(3), sd]); }
     else POS = [[0.8, 0.51, 'R'], [0.8, 0.61, 'R'], [0.8, 0.71, 'R'], [0.13, 0.61, 'L'], [0.17, 0.71, 'L']];
     items.forEach((lab, i) => {
-      const [ix0, iy, sd] = POS[i], tw = lab.length * 0.026, pw = +(tw + 0.08).toFixed(3), ix = +(sd === 'R' ? Math.min(Math.max(ix0, rest.x + rest.w * 0.5 + 0.075), 0.965 - pw) : Math.max(Math.min(ix0, rest.x - rest.w * 0.5 - 0.075), 0.035 + pw)).toFixed(3), u = 0.9 + i * 0.36, sx = rest.x + (sd === 'R' ? 1 : -1) * (rest.w * 0.5 + 0.012), sy = clamp(iy, rest.y - 0.14, rest.y + 0.14), pxc = +(ix + (sd === 'R' ? pw / 2 : -pw / 2)).toFixed(3), pc = i % 2 ? ctx.pal.ink : ctx.pal.accent;
+      const [ix0, iy, sd] = POS[i], labSize = +clamp(0.68 / (lab.length * 0.62), 0.026, 0.04).toFixed(3), tw = lab.length * labSize * 0.62, pw = +(tw + 0.08).toFixed(3), ix = +(sd === 'R' ? Math.min(Math.max(ix0, rest.x + rest.w * 0.5 + 0.075), 0.965 - pw) : Math.max(Math.min(ix0, rest.x - rest.w * 0.5 - 0.075), 0.035 + pw)).toFixed(3), u = 0.9 + i * 0.36, sx = rest.x + (sd === 'R' ? 1 : -1) * (rest.w * 0.5 + 0.012), sy = clamp(iy, rest.y - 0.14, rest.y + 0.14), pxc = +(ix + (sd === 'R' ? pw / 2 : -pw / 2)).toFixed(3), pc = i % 2 ? ctx.pal.ink : ctx.pal.accent;
       shape(ctx, { kind: 'line', x1: +sx.toFixed(3), y1: +sy.toFixed(3), x2: +ix.toFixed(3), y2: iy, cx: +((sx + ix) / 2).toFixed(3), cy: +(sy + (iy - sy) * 0.3).toFixed(3), color: ctx.pal.ink, alpha: 0.9, width: 0.0034, dur: 0.4, u0: u, u1: ctx.dur - 0.25, z: 4.1 });
-      shape(ctx, { kind: 'rect', x: pxc, y: iy, w: pw, h: 0.066, radius: 0.5, color: pc, in: { kind: 'pop', dur: 0.4, delay: 0.3 }, u0: u, u1: ctx.dur - 0.25, z: 4.6 });
-      text(ctx, { u0: u + 0.4, lines: [lab], size: 0.04, font: F(ctx, 'head'), upper: true, track: 0.04, color: (() => { const q = rgb(pc), l = (0.2126 * q[0] + 0.7152 * q[1] + 0.0722 * q[2]) / 255; return l < 0.55 ? '#ffffff' : '#0c0c10'; })(), noContrast: true, x: pxc, y: iy, in: { kind: 'pop', dur: 0.3 }, front: true, z: 5 });
+      shape(ctx, { kind: 'rect', x: pxc, y: iy, w: pw, h: labSize * 1.65, radius: 0.5, color: pc, in: { kind: 'pop', dur: 0.4, delay: 0.3 }, u0: u, u1: ctx.dur - 0.25, z: 4.6 });
+      text(ctx, { u0: u + 0.4, lines: [lab], size: labSize, font: F(ctx, 'head'), upper: true, track: 0.04, color: (() => { const q = rgb(pc), l = (0.2126 * q[0] + 0.7152 * q[1] + 0.0722 * q[2]) / 255; return l < 0.55 ? '#ffffff' : '#0c0c10'; })(), noContrast: true, x: pxc, y: iy, in: { kind: 'pop', dur: 0.3 }, front: true, z: 5 });
       shape(ctx, { kind: 'burst', x: pxc, y: iy, n: 10, color: pc, color2: ctx.pal.ink, life: 0.7, u0: u + 0.3, u1: u + 0.9, z: 4.7 });
       cue(ctx, u + 0.3, 'tick');
     });
