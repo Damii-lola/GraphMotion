@@ -154,9 +154,9 @@ ARCH.wall = {
       const cap = sentenceLines(p.caption, 1, 26); if (cap.length && nWords(cap) <= 5) {   // the benefit line sits on a dark pill in FRONT of the pack, sized to the words so nothing is ever cut off
         const capSize = +clamp(0.8 / (Math.max(...cap.map((l) => l.length)) * 0.58), 0.03, 0.044).toFixed(3), capW = +clamp(Math.max(...cap.map((l) => l.length)) * capSize * 0.62 + 0.1, 0.3, 0.86).toFixed(3);
         shape(ctx, { kind: 'rect', x: 0.5, y: 0.9, w: capW, h: capSize * 1.7, radius: 0.5, color: '#0c0c10', alpha: 0.82, in: { kind: 'pop', dur: 0.35 }, u0: 0.9, u1: ctx.dur - 0.25, z: 6 });
-        text(ctx, { u0: 1.0, lines: cap, size: capSize, font: F(ctx, 'small'), upper: false, color: '#ffffff', y: 0.9, in: { kind: 'blurin', dur: 0.4, stag: 0.15 }, front: true, z: 6.5 });
+        text(ctx, { u0: 1.0, lines: cap, size: capSize, font: F(ctx, 'small'), upper: false, color: '#ffffff', noContrast: true, y: 0.9, in: { kind: 'blurin', dur: 0.4, stag: 0.15 }, front: true, z: 6.5 });
       }
-      const bad = sentenceLines(p.badge, 1, 14); if (bad.length && nWords(bad) <= 2) { shape(ctx, { kind: 'circle', x: 0.84, y: 0.16, size: 0.09, color: ctx.pal.accent, in: { kind: 'pop', dur: 0.4, delay: 0.5 }, idle: { kind: 'pulse', amp: 0.05, speed: 1.4 }, u0: 0.5, z: 4 }); text(ctx, { u0: 0.7, lines: bad, size: 0.04, font: F(ctx, 'head'), x: 0.84, y: 0.16, r: -12, color: inkFor(ctx.pal.accent, null), in: { kind: 'pop', dur: 0.3 }, front: true, z: 6 }); }
+      const bad = sentenceLines(p.badge, 1, 14); if (bad.length && nWords(bad) <= 2) { shape(ctx, { kind: 'circle', x: 0.84, y: 0.16, size: 0.09, color: ctx.pal.accent, in: { kind: 'pop', dur: 0.4, delay: 0.5 }, idle: { kind: 'pulse', amp: 0.05, speed: 1.4 }, u0: 0.5, z: 4 }); text(ctx, { u0: 0.7, lines: bad, size: 0.04, font: F(ctx, 'head'), x: 0.84, y: 0.16, r: -12, color: inkFor(ctx.pal.accent, null), noContrast: true, in: { kind: 'pop', dur: 0.3 }, front: true, z: 6 }); }
       cue(ctx, 0.15, 'whoosh'); cue(ctx, 0.7, 'impact'); cam(ctx, 0.68, 'punch', { amp: 0.04 });
     } else cue(ctx, 0.1, 'tick');
   },
@@ -252,7 +252,7 @@ ARCH.ring = {
     const have = Object.keys(ctx.packs), ids = ((Array.isArray(p.packs) ? p.packs : []).filter((x) => have.includes(x)).concat(have)).slice(0, 3), lines = wordsLines(p.lines || p.word, 2, 12), style = variantOf(ctx, { variant: p.style }, ['ring', 'grid']);
     shape(ctx, { kind: 'circle', x: 0.5, y: 0.5, size: 0.46, color: ctx.pal.accent, in: { kind: 'pop', dur: 0.4 }, u0: 0.1, z: 4.5 });   // a solid disc IN FRONT of the ring of packs: the words on it are always readable
     push(ctx, { kind: 'pattern', src: ids, sub: style === 'grid' ? 'grid' : 'radial', cx: 0.5, cy: 0.5, w: 0.17, spin: ctx.v.pick([35, -35, 55]), rings: 2, cols: 4, rows: 7, stag: 0.03, alpha: 1, t0: A(ctx, 0.25), t1: A(ctx, ctx.dur) });
-    if (lines.length) text(ctx, { u0: 0.5, lines, size: +clamp(0.36 / (Math.max(...lines.map((l) => l.length)) * 0.5), 0.06, 0.11).toFixed(3), font: F(ctx, 'giant', p.font), color: inkFor(ctx.pal.accent, null), y: 0.5, in: { kind: 'rise', dur: 0.4, stag: 0.25 }, front: true, z: 5 });
+    if (lines.length) text(ctx, { u0: 0.5, lines, size: +clamp(0.36 / (Math.max(...lines.map((l) => l.length)) * 0.5), 0.06, 0.11).toFixed(3), font: F(ctx, 'giant', p.font), color: inkFor(ctx.pal.accent, null), noContrast: true, y: 0.5, in: { kind: 'rise', dur: 0.4, stag: 0.25 }, front: true, z: 5 });
     cue(ctx, 0.25, 'whoosh'); cue(ctx, 0.6, 'impact');
   },
 };
@@ -282,7 +282,7 @@ ARCH.callouts = {
       const [ix0, iy, sd] = POS[i], tw = lab.length * 0.026, pw = +(tw + 0.08).toFixed(3), ix = +(sd === 'R' ? Math.min(Math.max(ix0, rest.x + rest.w * 0.5 + 0.075), 0.965 - pw) : Math.max(Math.min(ix0, rest.x - rest.w * 0.5 - 0.075), 0.035 + pw)).toFixed(3), u = 0.9 + i * 0.36, sx = rest.x + (sd === 'R' ? 1 : -1) * (rest.w * 0.5 + 0.012), sy = clamp(iy, rest.y - 0.14, rest.y + 0.14), pxc = +(ix + (sd === 'R' ? pw / 2 : -pw / 2)).toFixed(3), pc = i % 2 ? ctx.pal.ink : ctx.pal.accent;
       shape(ctx, { kind: 'line', x1: +sx.toFixed(3), y1: +sy.toFixed(3), x2: +ix.toFixed(3), y2: iy, cx: +((sx + ix) / 2).toFixed(3), cy: +(sy + (iy - sy) * 0.3).toFixed(3), color: ctx.pal.ink, alpha: 0.9, width: 0.0034, dur: 0.4, u0: u, u1: ctx.dur - 0.25, z: 4.1 });
       shape(ctx, { kind: 'rect', x: pxc, y: iy, w: pw, h: 0.066, radius: 0.5, color: pc, in: { kind: 'pop', dur: 0.4, delay: 0.3 }, u0: u, u1: ctx.dur - 0.25, z: 4.6 });
-      text(ctx, { u0: u + 0.4, lines: [lab], size: 0.04, font: F(ctx, 'head'), upper: true, track: 0.04, color: (() => { const q = rgb(pc), l = (0.2126 * q[0] + 0.7152 * q[1] + 0.0722 * q[2]) / 255; return l < 0.55 ? '#ffffff' : '#0c0c10'; })(), x: pxc, y: iy, in: { kind: 'pop', dur: 0.3 }, front: true, z: 5 });
+      text(ctx, { u0: u + 0.4, lines: [lab], size: 0.04, font: F(ctx, 'head'), upper: true, track: 0.04, color: (() => { const q = rgb(pc), l = (0.2126 * q[0] + 0.7152 * q[1] + 0.0722 * q[2]) / 255; return l < 0.55 ? '#ffffff' : '#0c0c10'; })(), noContrast: true, x: pxc, y: iy, in: { kind: 'pop', dur: 0.3 }, front: true, z: 5 });
       shape(ctx, { kind: 'burst', x: pxc, y: iy, n: 10, color: pc, color2: ctx.pal.ink, life: 0.7, u0: u + 0.3, u1: u + 0.9, z: 4.7 });
       cue(ctx, u + 0.3, 'tick');
     });
@@ -383,7 +383,7 @@ ARCH.endcard = {
     movePack(ctx, id, [...enter(ctx, ent, 0.1, rest), drift(ctx, Math.max(1.4, ctx.dur - 0.05), rest)]);
     text(ctx, { u0: 0.7, lines: brandLines, size: fitSize(chars, 'heading') * (brandLines.length > 1 ? 0.92 : 1), font: F(ctx, 'head'), color: inkFor(ctx.pal.c0, ctx.pal.accent), y: brandLines.length > 1 ? 0.76 : 0.78, lineGap: 1.0, in: { kind: style, dur: 0.5, stag: 0.14 }, shadow: true, front: true, z: 6, isBrand: true });
     const cta = sentenceLines(p.cta || ctx.cta, 1, 24); if (cta.length && nWords(cta) <= 3) text(ctx, { u0: 1.3, lines: cta, size: 0.045, font: F(ctx, 'small'), upper: true, y: 0.91, track: 0.14, in: { kind: 'rise', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
-    const badge = sentenceLines(p.badge, 1, 14); if (badge.length && nWords(badge) <= 2) { shape(ctx, { kind: 'circle', x: 0.83, y: 0.15, size: 0.085, color: ctx.pal.accent, in: { kind: 'pop', dur: 0.4, delay: 0.9 }, u0: 0.9, z: 4 }); text(ctx, { u0: 1.1, lines: badge, size: 0.034, font: F(ctx, 'small'), x: 0.83, y: 0.15, color: inkFor(ctx.pal.accent, null), r: -12, in: { kind: 'pop', dur: 0.3 }, front: true, z: 6 }); }
+    const badge = sentenceLines(p.badge, 1, 14); if (badge.length && nWords(badge) <= 2) { shape(ctx, { kind: 'circle', x: 0.83, y: 0.15, size: 0.085, color: ctx.pal.accent, in: { kind: 'pop', dur: 0.4, delay: 0.9 }, u0: 0.9, z: 4 }); text(ctx, { u0: 1.1, lines: badge, size: 0.034, font: F(ctx, 'small'), x: 0.83, y: 0.15, color: inkFor(ctx.pal.accent, null), noContrast: true, r: -12, in: { kind: 'pop', dur: 0.3 }, front: true, z: 6 }); }
     shape(ctx, { kind: 'burst', x: rest.x, y: rest.y, n: 24, color: ctx.pal.ink, color2: ctx.pal.accent, life: 1, u0: 0.75, u1: 1.9, z: 4 });
     cue(ctx, 0.1, 'whoosh'); cue(ctx, 0.75, 'impact'); cue(ctx, 0.75, 'sparkle'); cam(ctx, 0.72, 'punch');
   },
