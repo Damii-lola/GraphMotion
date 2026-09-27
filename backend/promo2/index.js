@@ -114,7 +114,13 @@ async function generate({ brief, company, outDir, say = () => {}, call, planOnly
   const { plan, issues } = await director.plan({ brief, call, ctx: { brand: company && company.name }, dice });
   plan.dice = dice;
   const real = planOnly ? null : await realPhotos(plan, company, say);   // real pictures of the product, or null (then the packs are painted)
-  if (real) plan.product.variants = real.variants.map((v) => ({ look: v.name || '' }));
+  if (real) {
+    plan.product.variants = real.variants.map((v) => ({ look: v.name || '' }));
+    if (real.variants.length && plan.scenes.length > 1) {   // a second real photo that was found must actually be SEEN, not painted for nothing
+      const already = plan.scenes.some((sc) => { const pr = sc.params || {}; return [pr.pack].concat(Array.isArray(pr.packs) ? pr.packs : []).some((x) => /^hero[23]$/.test(x || '')); });
+      if (!already) { const t = plan.scenes.slice(1).find((sc) => sc.params && 'pack' in sc.params && sc.params.pack && sc.params.pack !== 'none'); if (t) t.params.pack = 'hero2'; }
+    }
+  }
   const needs = director.neededAssets(plan);
   const spec = { kind: 'promo', engine: 2, brand: plan.brand, tagline: '', cta: '', link: '', theme: { look: 'clean', accent: plan.scenes[0].backdrop.c0, accentInk: '#000000', bg: plan.scenes[0].backdrop.c1 }, scenes: [], review: { engine: 2, real: null, dice, mimic: plan.mimic, issues, plan: { scenes: plan.scenes.map((s) => ({ archetype: s.archetype, dur: s.dur, tr: s.transition_in, params: s.params })) } } };
   if (planOnly) { spec.promo = compile(plan, { packs: { hero: { aspect: 0.5 }, ...(needs.packs.includes('hero2') ? { hero2: { aspect: 0.5 } } : {}), ...(needs.packs.includes('hero3') ? { hero3: { aspect: 0.5 } } : {}) }, props: needs.props }); fs.writeFileSync(path.join(outDir, 'site.json'), JSON.stringify(spec, null, 2)); return { outDir, spec }; }

@@ -136,7 +136,7 @@ ARCH.word_pack = {
 
 ARCH.wall = {
   about: 'A WALL of one repeated word fills the screen in thin outline, rows scrolling in opposite directions with a motion-blur trail on arrival, a few words solid (Goli "NEW", Sunbake, Wendy\'s). Variants: grid | diagonal (tilted rows) | columns (vertical) | marquee (3 huge rows). The pack whips across it and shrinks, or drops, or is absent; small pieces float.',
-  params: { word: 'the wall word (up to 8 letters)', font: 'a caps font', variant: 'grid | diagonal | columns | marquee', pack: 'hero | hero2 | hero3 | none', action: 'cross | drop | absent', tilt: 'degrees', pieces: 'floating small pieces 0-5', caption: 'a benefit line typed under the pack (max 5 words, e.g. real juice, zero sugar)', badge: 'a round sticker (max 2 words, e.g. NEW)' },
+  params: { word: 'ONE real word: the product/brand name, or a plain benefit word already common for this kind of product (NEW, COLD, FRESH, CRISP, ZERO, ICE...). NEVER an invented slogan or made-up compound (no "SPRITELIFE"): up to 10 letters', font: 'a caps font', variant: 'grid | diagonal | columns | marquee', pack: 'hero | hero2 | hero3 | none', action: 'cross | drop | absent', tilt: 'degrees', pieces: 'floating small pieces 0-5', caption: 'a benefit line typed under the pack (max 5 words, e.g. real juice, zero sugar)', badge: 'a round sticker (max 2 words, e.g. NEW)' },
   packs: 'optional',
   build(p, ctx) {
     const word = wordsLines(p.word || p.lines, 1, 10)[0] || 'NEW', chars = word.length, v = variantOf(ctx, p, ['grid', 'diagonal', 'columns', 'marquee']), font = F(ctx, 'giant', p.font);
@@ -151,9 +151,10 @@ ARCH.wall = {
       if (act === 'drop') movePack(ctx, id, [...enter(ctx, 'drop', 0.3, rest), drift(ctx, Math.max(1.6, ctx.dur - 0.05), rest)]);
       else { const d = ctx.v.pick([-1, 1]); movePack(ctx, id, [{ u: 0.15, x: d < 0 ? -0.6 : 1.6, y: 0.7, w: rest.w * 1.15, r: d < 0 ? -38 : 38, blur: 18 }, { u: 0.7, ...rest, blur: 0, e: 'outExpo' }, { u: 1.05, ...rest, w: +(rest.w * 1.1).toFixed(3), e: 'inOutCubic' }, { u: 1.5, ...rest, e: 'inOutCubic' }, { u: Math.max(1.9, ctx.dur - 0.1), x: d < 0 ? 0.62 : 0.38, y: 0.58, w: +(rest.w * 0.68).toFixed(3), r: 0, e: 'inOutCubic' }]); }
       shape(ctx, { kind: 'burst', x: 0.5, y: 0.58, n: 20, color: ctx.pal.ink, color2: ctx.pal.accent, life: 1, u0: 0.7, u1: 1.8, z: 4 });
-      const cap = sentenceLines(p.caption, 1, 40); if (cap.length && nWords(cap) <= 5) {   // the benefit line sits on a dark pill in FRONT of the pack, so it is always readable
-        shape(ctx, { kind: 'rect', x: 0.5, y: 0.9, w: 0.84, h: 0.075, radius: 0.5, color: '#0c0c10', alpha: 0.82, in: { kind: 'pop', dur: 0.35 }, u0: 0.9, u1: ctx.dur - 0.25, z: 6 });
-        text(ctx, { u0: 1.0, lines: cap, size: 0.044, font: F(ctx, 'small'), upper: false, color: '#ffffff', y: 0.9, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 6.5 });
+      const cap = sentenceLines(p.caption, 1, 26); if (cap.length && nWords(cap) <= 5) {   // the benefit line sits on a dark pill in FRONT of the pack, sized to the words so nothing is ever cut off
+        const capSize = +clamp(0.8 / (Math.max(...cap.map((l) => l.length)) * 0.58), 0.03, 0.044).toFixed(3), capW = +clamp(Math.max(...cap.map((l) => l.length)) * capSize * 0.62 + 0.1, 0.3, 0.86).toFixed(3);
+        shape(ctx, { kind: 'rect', x: 0.5, y: 0.9, w: capW, h: capSize * 1.7, radius: 0.5, color: '#0c0c10', alpha: 0.82, in: { kind: 'pop', dur: 0.35 }, u0: 0.9, u1: ctx.dur - 0.25, z: 6 });
+        text(ctx, { u0: 1.0, lines: cap, size: capSize, font: F(ctx, 'small'), upper: false, color: '#ffffff', y: 0.9, in: { kind: 'blurin', dur: 0.4, stag: 0.15 }, front: true, z: 6.5 });
       }
       const bad = sentenceLines(p.badge, 1, 14); if (bad.length && nWords(bad) <= 2) { shape(ctx, { kind: 'circle', x: 0.84, y: 0.16, size: 0.09, color: ctx.pal.accent, in: { kind: 'pop', dur: 0.4, delay: 0.5 }, idle: { kind: 'pulse', amp: 0.05, speed: 1.4 }, u0: 0.5, z: 4 }); text(ctx, { u0: 0.7, lines: bad, size: 0.04, font: F(ctx, 'head'), x: 0.84, y: 0.16, r: -12, color: inkFor(ctx.pal.accent, null), in: { kind: 'pop', dur: 0.3 }, front: true, z: 6 }); }
       cue(ctx, 0.15, 'whoosh'); cue(ctx, 0.7, 'impact'); cam(ctx, 0.68, 'punch', { amp: 0.04 });
@@ -167,7 +168,7 @@ ARCH.typed = {
   packs: 'optional',
   build(p, ctx) {
     const lines = sentenceLines(p.lines || p.sentence, 3, String(p.energy) === 'true' ? 17 : 30); while (nWords(lines) > 9) lines[lines.length - 1] = lines[lines.length - 1].split(' ').slice(0, -1).join(' ');
-    const v = variantOf(ctx, p, ['left', 'center', 'right', 'bottom', 'swap']), chars = Math.max(...lines.map((l) => l.length), 1), size = +clamp(0.86 / (chars * 0.62), 0.045, String(p.energy) === 'true' ? 0.086 : 0.062).toFixed(3), stag = ctx.v.range(0.22, 0.32), tEnd = nWords(lines) * stag + 0.5, font = F(ctx, 'small', p.font), inK = oneOf(p.style, ['blurin', 'rise'], ctx.v.pick(['blurin', 'rise']));
+    const v = variantOf(ctx, p, ['left', 'center', 'right', 'bottom', 'swap']), chars = Math.max(...lines.map((l) => l.length), 1), size = +clamp(0.86 / (chars * 0.62), 0.045, String(p.energy) === 'true' ? 0.086 : 0.062).toFixed(3), stag = ctx.v.range(0.13, 0.19), tEnd = nWords(lines) * stag + 0.35, font = F(ctx, 'small', p.font), inK = oneOf(p.style, ['blurin', 'rise'], ctx.v.pick(['blurin', 'rise']));
     if (String(p.wave) === 'true' || (p.wave === undefined && ctx.v.chance(0.4))) decor(ctx, 'waves'); else decor(ctx, ctx.v.chance(0.5) ? 'none' : ctx.v.pick(['rings', 'dots', 'stripes', 'rays']));   // no wave when the plan turned it off
     if (v === 'swap') {
       const ws = lines.join(' ').split(/\s+/).filter(Boolean).slice(0, 7), per = clamp((ctx.dur - 0.3) / ws.length, 0.28, 0.6);
@@ -266,7 +267,7 @@ ARCH.callouts = {
     if (v !== 'list' && Math.max(0, ...items.map((s) => s.length * 0.026 + 0.08)) > 0.25) v = 'list';   // long claim pills do not fit beside a centred pack: all of them go on ONE side, the pack on the other
     const px = v === 'list' ? ctx.v.pick([0.32, 0.68]) : 0.5, rest = restPose(ctx, id, px, 0.64, v === 'radial' ? 0.3 : 0.34, ctx.v.range(-9, 9), false, 0.46);
     movePack(ctx, id, [...enter(ctx, oneOf(p.entrance, ['spin', 'pop', 'rise'], ctx.v.pick(['spin', 'pop', 'rise'])), 0.15, rest), drift(ctx, Math.max(2.0, ctx.dur - 0.05), rest)]);
-    if (sent.length) text(ctx, { u0: 0.2, lines: sent, size: +clamp(0.9 / (Math.max(...sent.map((l) => l.length)) * 0.6), 0.05, 0.07).toFixed(3), font: F(ctx, 'small'), upper: false, y: 0.24, lineGap: 1.25, in: { kind: 'blurin', dur: 0.4, stag: 0.22 }, front: true, z: 5 });
+    if (sent.length) text(ctx, { u0: 0.1, lines: sent, size: +clamp(0.9 / (Math.max(...sent.map((l) => l.length)) * 0.6), 0.05, 0.07).toFixed(3), font: F(ctx, 'small'), upper: false, y: 0.24, lineGap: 1.25, in: { kind: 'blurin', dur: 0.4, stag: 0.13 }, front: true, z: 5 });
     // ENERGY behind the pack: rays, a glow disc, a ghost word wall and a burst when the pack lands
     decor(ctx, 'rays');
     shape(ctx, { kind: 'circle', x: rest.x, y: rest.y, size: 0.4, color: '#ffffff', alpha: 0.22, in: { kind: 'pop', dur: 0.5, delay: 0.3 }, idle: { kind: 'pulse', amp: 0.05, speed: 1.3 }, u0: 0.2, z: 2.5 });

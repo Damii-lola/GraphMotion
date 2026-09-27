@@ -83,7 +83,11 @@ function compile(plan, assets) {
   // ---- the brand shows inside the LAST scene (there is no separate end card): a quiet lockup is added when the scene did not already carry the name
   { const last = scenes[scenes.length - 1], shown = showName(plan.brand, plan.product), w0 = String(shown || '').split(' ')[0].toLowerCase();
     const has = layers.some((l) => l.kind === 'text' && l.t0 >= last.t0 - 0.3 && l.lines.join(' ').toLowerCase().includes(w0));
-    if (!has && lastPal) layers.push({ kind: 'text', lines: [String(shown || '').toUpperCase()], x: 0.5, y: 0.93, size: fitSize(Math.max(4, String(shown || '').length), 'line') * 1.1, font: vary.forScene(dice, scenes.length - 1).font('head'), color: lastPal.ink, upper: true, r: 0, track: 0.12, align: 'center', in: { kind: 'pop', dur: 0.4 }, t0: +(last.t0 + 0.9).toFixed(2), t1: D, front: true, shadow: true, z: 6 }); }
+    if (!has && lastPal) {
+      layers.push({ kind: 'text', lines: [String(shown || '').toUpperCase()], x: 0.5, y: 0.93, size: fitSize(Math.max(4, String(shown || '').length), 'line') * 1.1, font: vary.forScene(dice, scenes.length - 1).font('head'), color: lastPal.ink, upper: true, r: 0, track: 0.12, align: 'center', in: { kind: 'pop', dur: 0.4 }, t0: +(last.t0 + 0.9).toFixed(2), t1: D, front: true, shadow: true, z: 6 });
+      if (plan.cta) layers.push({ kind: 'text', lines: [cleanWord(plan.cta, 22)], x: 0.5, y: 0.86, size: 0.036, font: vary.forScene(dice, scenes.length - 1).font('small'), upper: false, color: lastPal.ink, track: 0.04, align: 'center', in: { kind: 'fade', dur: 0.4 }, t0: +(last.t0 + 1.15).toFixed(2), t1: D, front: true, z: 6 });   // an honest close: a short call to action under the name, never invented copy
+    }
+  }
   // ---- a round pack (can, bottle, jar) turns like a turntable: a full turn on arrival, then a gentle swing
   const kindText = String((plan.product && plan.product.kind) || '') + ' ' + String((plan.product && plan.product.name) || ''), heroAsp = (assets.packs && assets.packs.hero && assets.packs.hero.aspect) || 0.5;
   const flatPack = /\b(box|bag|pouch|packet|carton|sachet|cereal|chips?|crisps|bar|wrapper|tray|sleeve|book|shoes?|phone|device|electronics|kit)\b/i.test(kindText);

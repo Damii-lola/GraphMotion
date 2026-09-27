@@ -53,7 +53,7 @@ ${LAW_TEXT}
 ${dice ? vary.dicePrompt(dice) + '\n\n' : ''}Return ONE JSON object:
 {"mimic": {"ref": "R1".."R10", "why": "one sentence"},
  "brand": (as in the brief, max 24 letters),
- "cta": (call to action, max 3 words),
+ "cta": (a short, REAL call to action, max 3 words: Grab one today | Try it now | Available now - never an invented brand slogan),
  "product": {"name","kind" (what it physically is),"look" (how the pack looks for an image AI: shape, materials, 2-3 colours, label art WITHOUT any text, max 30 words),"colors":["#rrggbb","#rrggbb"],"variants":[0-2 OTHER SHOTS of the product: {"name","look"} (another flavour or colour, an open box, a multipack)]},
  "props": [2-3 REAL natural ingredients the product actually contains or goes with (a lime slice, a lemon wedge, an ice cube, a mint leaf, a water splash, a berry, a gummy): {"name","look" (one real thing, photographic, for an image AI, no text, max 18 words)} (prop0, prop1, prop2 in order); NEVER packaging (bottle, can, jar, box, capsule), never icons, stars, discs or balls],
  "sound": {"music": "pulse" | "warm pad" | "tense" | "dark drone"},
