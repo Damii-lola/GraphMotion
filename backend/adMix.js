@@ -1,10 +1,13 @@
 'use strict';
 /*
- * Sound for a generated ad = a quiet music bed (siteAudio.synth, no effects baked in) + REAL sound-effect recordings from
- * backend/sfx/library (CC0, auditioned and picked by a person) placed on the picture with ffmpeg.
+ * Sound for a generated ad = a real, present music bed (a CC0 loop from backend/music/library when this video's mood has one,
+ * else siteAudio's synth as a fallback) + REAL sound-effect recordings from backend/sfx/library (CC0, auditioned and picked by
+ * a person) placed on the picture with ffmpeg. Both libraries hold several tracks per mood/kind, picked by this video's own
+ * dice seed, so the SAME reference generated many times reaches for different music and hits, not the identical ones every time.
  *
  * Levels are relative to each recording normalised to the same peak. Transition whooshes are deliberately quiet
- * (20 %): they must be felt, never noticed. The finished mix is loudness-normalised so every ad plays at the same volume.
+ * (20 %): they must be felt, never noticed. The bed ducks a little under every impact/riser landing (a real produced mix's
+ * "pump", not just layering). The finished mix is loudness-normalised so every ad plays at the same volume.
  */
 const fs = require('fs');
 const os = require('os');
@@ -20,6 +23,29 @@ function library() {
     const list = JSON.parse(fs.readFileSync(path.join(LIB, 'catalog.json'), 'utf8')).filter((x) => x && x.id && x.kind && fs.existsSync(path.join(LIB, x.file)));
     return { list, byId: Object.fromEntries(list.map((x) => [x.id, x])), of: (kind) => list.filter((x) => x.kind === kind) };
   } catch (_) { return { list: [], byId: {}, of: () => [] }; }
+}
+
+// ------------------------------------------------------------- real music loops (CC0), so the bed is a real beat, not just synthesised
+const MUSIC_LIB = path.join(__dirname, 'music', 'library');
+/** { list, of(mood) } - every real loop, CC0, auditioned; several per mood so the SAME reference used again still picks a different one. */
+function musicLibrary() {
+  try {
+    const list = JSON.parse(fs.readFileSync(path.join(MUSIC_LIB, 'catalog.json'), 'utf8')).filter((x) => x && x.id && x.mood && x.seconds > 0 && fs.existsSync(path.join(MUSIC_LIB, x.file)));
+    return { list, of: (mood) => list.filter((x) => x.mood === mood) };
+  } catch (_) { return { list: [], of: () => [] }; }
+}
+
+/** Picks a real loop for this mood (seeded, so ten videos of the same reference/mood don't all reach for the same track), then loops
+ * and trims it to fit `duration` with a fade in/out - writes outWav. Returns the picked catalog entry, or null when that mood has no loop
+ * (the caller falls back to the synthesised bed). */
+async function realBed({ mood, seed, duration, outWav }) {
+  const pool = musicLibrary().of(mood);
+  if (!pool.length) return null;
+  const track = pool[Math.abs(Math.round(seed || 0)) % pool.length];
+  const src = path.join(MUSIC_LIB, track.file);
+  const need = duration + 1, loops = Math.max(0, Math.ceil(need / track.seconds) - 1), fadeOutAt = Math.max(0, need - 1.2);
+  await run(['-stream_loop', String(loops), '-i', src, '-t', need.toFixed(2), '-af', `afade=t=in:st=0:d=0.6,afade=t=out:st=${fadeOutAt.toFixed(2)}:d=1.2`, '-ar', '44100', '-ac', '2', outWav]);
+  return track;
 }
 
 /** One line per sound for the AI's prompt, grouped by what the sound is for. Empty when no library has been installed. */
@@ -47,8 +73,10 @@ function peakDb(file) {
   peakCache.set(file, p); return p;
 }
 
-/** events: [{ file (absolute), at (seconds), gain (0..1) }] laid over bedWav; writes outWav (16-bit stereo 44.1 kHz). */
-async function mix({ bedWav, events, outWav, end }) {
+/** events: [{ file (absolute), at (seconds), gain (0..1) }] laid over bedWav; writes outWav (16-bit stereo 44.1 kHz).
+ * duckAt: seconds where the bed should duck for a beat (impact/riser landings) - a short professional-mix "pump", not a background hum
+ * that never moves; every one of those hits should be FELT under the beat, not just laid flatly on top of it. */
+async function mix({ bedWav, events, outWav, end, duckAt }) {
   const ev = events.filter((e) => e.file && e.at >= 0 && e.gain > 0);
   for (const e of ev) e.norm = Math.pow(10, -(await peakDb(e.file)) / 20);           // gain that takes this recording's peak to 0 dBFS
   const args = ['-i', bedWav]; ev.forEach((e) => args.push('-i', e.file));
@@ -56,11 +84,15 @@ async function mix({ bedWav, events, outWav, end }) {
   // the bed has a shape: it fades in, plays as a real, PRESENT beat under the story (not a background hum - direct user
   // feedback: "we need a nice beat to play"), then swells further into the end card (over ~2.7 s around the end-card time)
   const E = Number.isFinite(end) ? end : 17.5;
-  f.unshift(`[0:a]volume='if(lt(t,0.6),0.14+0.44*t/0.6,if(lt(t,${(E - 2.4).toFixed(2)}),0.58,if(lt(t,${(E + 0.3).toFixed(2)}),0.58+0.22*(t-${(E - 2.4).toFixed(2)})/2.7,0.8)))':eval=frame[bed]`);
+  const shape = `if(lt(t,0.6),0.14+0.44*t/0.6,if(lt(t,${(E - 2.4).toFixed(2)}),0.58,if(lt(t,${(E + 0.3).toFixed(2)}),0.58+0.22*(t-${(E - 2.4).toFixed(2)})/2.7,0.8)))`;
+  // a brief, gentle dip (12%) around each hit, ~0.3s wide - the classic "duck" that makes a mix feel produced instead of just layered
+  const dips = (duckAt || []).slice(0, 8).map((t0) => `(1-0.12*max(0,1-abs(t-${t0.toFixed(2)})/0.16))`);
+  const duck = dips.length ? dips.reduceRight((acc, d) => (acc ? `min(${d},${acc})` : d), '') : '1';
+  f.unshift(`[0:a]volume='(${shape})*(${duck})':eval=frame[bed]`);
   const ins = '[bed]' + ev.map((_, k) => `[e${k}]`).join('');
   f.push(`${ins}amix=inputs=${ev.length + 1}:duration=first:normalize=0:dropout_transition=0,loudnorm=I=-16:TP=-1.5:LRA=20[out]`);
   await run([...args, '-filter_complex', f.join(';'), '-map', '[out]', '-ar', '44100', '-ac', '2', outWav]);
 }
 
 const tmpFile = (ext) => path.join(os.tmpdir(), 'admix-' + process.pid + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7) + ext);
-module.exports = { library, menu, mix, tmpFile, GAIN, LIB };
+module.exports = { library, menu, mix, tmpFile, GAIN, LIB, musicLibrary, realBed };
