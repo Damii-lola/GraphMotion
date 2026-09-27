@@ -83,10 +83,14 @@ async function realPhotos(plan, company, say) {
   const userPhotos = (company && company.userPhotos) || [], sitePhotos = (company && company.sitePhotos) || [];
   let got = null;
   const base = { name: plan.product.name, brand: plan.brand, kind: plan.product.kind, wantVariants: 2, isolate: (b) => isolatePhoto(b, plan) };
-  // 1. the client's own photos / website pictures   2. the product's official site, rendered in Chrome   3. Open Food Facts (a can photo is isolated by the picture model)
+  // 1. the client's own photos / website pictures   2. the product's official site, rendered in a second real browser   3. Open Food Facts (a can photo is isolated by the picture model)
   try { got = await realimg.acquire({ ...base, userPhotos, sitePhotos, off: false }); } catch (e) { console.warn('[promo2] real photo search failed: ' + String(e.message).slice(0, 100)); }
   if (!got && !userPhotos.length) {
-    try { say('Finding your product photos', 0.1); const found = await webphotos.discover(plan, company); if (found.length) got = await realimg.acquire({ ...base, userPhotos: [], sitePhotos: found, off: false }); if (got) got.credit = null; } catch (e) { console.warn('[promo2] official-site photos failed: ' + String(e.message).slice(0, 100)); }
+    try {
+      say('Finding your product photos', 0.1);
+      const found = await Promise.race([webphotos.discover(plan, company), new Promise((res) => setTimeout(() => res([]), 45000))]);   // never let a stuck browser hold up the whole job
+      if (found.length) { const g2 = await realimg.acquire({ ...base, userPhotos: [], sitePhotos: found, off: false }); if (g2) { got = g2; got.credit = null; } }
+    } catch (e) { console.warn('[promo2] official-site photos failed: ' + String(e.message).slice(0, 100)); }
   }
   if (!got) { try { got = await realimg.acquire({ ...base, userPhotos, sitePhotos: [], off: true }); } catch (e) { console.warn('[promo2] photo library failed: ' + String(e.message).slice(0, 100)); if (/429|4006|allocation|not set/i.test(String(e.message))) throw e; } }
   if (!got && (userPhotos.length || sitePhotos.length)) {                                   // the client's photo has a busy background: ask the picture model to isolate the exact product
