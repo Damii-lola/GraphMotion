@@ -152,16 +152,16 @@ function synth({ duration, cues, music }) {
   let sumSq = 0, peak = 1e-6;
   for (let i = 0; i < n; i++) {
     const [rl, rr] = rev.process(sendL[i], sendR[i]);
-    const l = musL[i] * 0.42 + fxL[i] + rl * 5.5, r = musR[i] * 0.42 + fxR[i] + rr * 5.5; outL[i] = l; outR[i] = r;
+    const l = musL[i] * 0.42 + fxL[i] + rl * 2.6, r = musR[i] * 0.42 + fxR[i] + rr * 2.6; outL[i] = l; outR[i] = r;   // 5.5 drowned the bed in reverb wash; this still glues the mix without washing it out
     sumSq += l * l + r * r; peak = Math.max(peak, Math.abs(l), Math.abs(r));
   }
-  const gain = 1.55 / peak; // peak-referenced (not RMS): the hits set the ceiling and the bed sits well underneath, so the mix keeps its punch
+  const gain = 1.2 / peak; // peak-referenced (not RMS): the hits set the ceiling and the bed sits well underneath, so the mix keeps its punch - driven gently now (1.2, not 1.55): this file often becomes the BED under a real, separately loudness-normalised mix (see promoAudio/adMix.mix), so any distortion baked in here survives that later stage and was making the whole track sound harsh
   const buf = Buffer.alloc(44 + n * 4);
   buf.write('RIFF', 0); buf.writeUInt32LE(36 + n * 4, 4); buf.write('WAVEfmt ', 8); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(2, 22);
   buf.writeUInt32LE(SR, 24); buf.writeUInt32LE(SR * 4, 28); buf.writeUInt16LE(4, 32); buf.writeUInt16LE(16, 34); buf.write('data', 36); buf.writeUInt32LE(n * 4, 40);
   for (let i = 0; i < n; i++) {
     const t = i / SR, fade = Math.min(1, t / 0.2) * Math.min(1, Math.max(0, (duration + 1.6 - t) / 1.4));
-    const l = Math.tanh(outL[i] * gain * 1.15) * 0.94 * fade, r = Math.tanh(outR[i] * gain * 1.15) * 0.94 * fade;
+    const l = Math.tanh(outL[i] * gain) * 0.94 * fade, r = Math.tanh(outR[i] * gain) * 0.94 * fade;   // tanh is a SAFETY net here, not an intentional drive: the extra *1.15 pushed every loud passage deep into audible saturation
     buf.writeInt16LE(Math.round(l * 32767), 44 + i * 4); buf.writeInt16LE(Math.round(r * 32767), 46 + i * 4);
   }
   return buf;
