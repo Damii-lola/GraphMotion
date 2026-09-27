@@ -124,7 +124,7 @@ function kindFit(kind, aspect) {
   const want = /can/.test(k) ? [0.36, 0.66] : /bottle/.test(k) ? [0.22, 0.45] : /jar|tub|box|pouch|bag|carton|pack/.test(k) ? [0.6, 1.4] : null;
   return want ? (a >= want[0] && a <= want[1] ? 1 : 0) : 0.5;
 }
-const VARIANT_RE = /zero|sin az|sugar free|sans sucre|light|diet|cherry|vanilla|peach|\btea\b|limited|edition|mango|cranberry|ginger|mini|0%/i;
+const VARIANT_RE = /zero|sin az|sugar free|sans sucre|light|diet|cherry|vanilla|peach|\btea\b|limited|edition|mango|cranberry|ginger|mini|chill|lymon|lemonade|tropical|remix|0%/i;
 const variantPenalty = (name, want) => (VARIANT_RE.test(String(name)) && !VARIANT_RE.test(String(want)) ? 1 : 0);   // the regular flavour first
 const isCanHit = (h) => { const t = (h.name + ' ' + (h.quantity || '')).toLowerCase(); return !/bottle|botella|bouteille|\bpet\b|1[.,]5|\b[12]\s?l\b|litre|liter/.test(t) && /\bcan\b|canette|lata|blik|dose|\b(150|200|250|330|355|440|473)\s?ml|\b33\s?cl|\b(12|16)\s?(fl\.?\s?)?oz/.test(t); };
 async function acquire({ name, brand, kind, userPhotos = [], sitePhotos = [], wantVariants = 2, isolate = null, off = true, log = console.log }) {
@@ -158,7 +158,8 @@ async function acquire({ name, brand, kind, userPhotos = [], sitePhotos = [], wa
   const rank = (c) => variantPenalty(c.label || c.name, name) * 10 - kindFit(kind, c.aspect) * 3 - (words(name).length && words(name).every((w) => words(c.label || '').includes(w)) ? 2 : 0) - c.quality.score;   // the right flavour, the right kind of pack, the sharper cut
   cands.sort((a, b) => (a.source === 'Open Food Facts') - (b.source === 'Open Food Facts') || rank(a) - rank(b));   // the client's own photos come first
   const main = cands[0], pal = await paletteOf(main.buf);
-  return { main, variants: cands.slice(1, 1 + wantVariants), palette: pal, credit };
+  const okVar = cands.slice(1).filter((c) => Math.abs(c.aspect - main.aspect) / main.aspect < 0.35 && (!kind || kindFit(kind, c.aspect) === 1 || kindFit(kind, c.aspect) === 0.5) && !(variantPenalty(c.label || c.name, name)));
+  return { main, variants: okVar.slice(0, wantVariants), palette: pal, credit };
 }
 
 module.exports = { acquire, cutoutReal, paletteOf, offFind };

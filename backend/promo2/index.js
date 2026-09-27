@@ -45,16 +45,16 @@ function paintAll(plan, needs, real) {
     if (!res) throw new Error('The product picture could not be made: ' + (lastErr && lastErr.message));
     return { buf: await promoFilm.stampBrand(res.buf, brand), aspect: res.aspect };
   });
-  const prop = (i, pr) => limit(async () => {
+  const prop = (i, pr, photoreal) => limit(async () => {
     let res = null; neurons.charge(neurons.estKlein(false), 'prop ' + (i + 1));
-    for (let t = 0; t < 2 && !res; t++) { try { res = await promoFilm.cutout(await klein.generate(t ? `${pr.name || 'an ingredient'}, macro product photography, isolated on a plain flat pure ${key.name} (${key.hex}) background, no text` : promoFilm.propPrompt(pr, key), { width: 512, height: 512 })); } catch (e) { console.warn(`[promo2] prop ${i + 1} attempt ${t + 1} failed: ${String(e.message).slice(0, 100)}`); if (/429|4006|allocation/i.test(String(e.message))) throw e; } }
-    if (!res) { neurons.refund(neurons.estKlein(false), 'prop ' + (i + 1) + ' (stand-in used)'); return promoFilm.fallbackProp(plan.product.colors[i % plan.product.colors.length]); }
+    for (let t = 0; t < 2 && !res; t++) { try { res = await promoFilm.cutout(await klein.generate(t ? `${pr.name || 'an ingredient'}, macro product photography, isolated on a plain flat pure ${key.name} (${key.hex}) background, no text` : (photoreal ? 'A real photograph, photorealistic, natural lighting and texture, not an illustration, not 3D rendered: ' : '') + promoFilm.propPrompt(pr, key), { width: 512, height: 512 })); } catch (e) { console.warn(`[promo2] prop ${i + 1} attempt ${t + 1} failed: ${String(e.message).slice(0, 100)}`); if (/429|4006|allocation/i.test(String(e.message))) throw e; } }
+    if (!res) { neurons.refund(neurons.estKlein(false), 'prop ' + (i + 1) + ' (stand-in used)'); return photoreal ? null : promoFilm.fallbackProp(plan.product.colors[i % plan.product.colors.length]); }
     return res;
   });
   const realPack = (id) => { const r = id === 'hero' ? real.main : real.variants[+id.slice(4) - 2]; return Promise.resolve({ buf: r.buf, aspect: r.aspect }); };   // a real photo: no painting, no brand stamp (the pack already carries its own print)
   needs.packs.forEach((id) => { jobs[id] = real ? realPack(id) : pack(id, id === 'hero' ? plan.product.look : plan.product.variants[+id.slice(4) - 2].look); jobs[id].catch(() => {}); });
   const vcols = real ? ((real.palette && real.palette.colors) || []).concat(['#ffd23f', '#ff6b6b', '#4ecdc4']).slice(0, 4) : null;
-  needs.props.forEach((id) => { const i = +id.slice(4); jobs[id] = real ? Promise.resolve(vectorProp(i, vcols)) : prop(i, plan.props[i]); jobs[id].catch(() => {}); });
+  needs.props.forEach((id) => { const i = +id.slice(4); const pr0 = plan.props[i] || {}, packaging = /bottle|\bcans?\b|jar|box|pack|container|tub|capsule|pill|logo|label|icon|sparkle|star|disc|ball|sphere/i.test((pr0.name || '') + ' ' + (pr0.look || '')); jobs[id] = real ? (packaging ? Promise.resolve(null) : prop(i, plan.props[i], true)) : prop(i, plan.props[i]); jobs[id].catch(() => {}); });
   return jobs;
 }
 
@@ -110,6 +110,7 @@ async function generate({ brief, company, outDir, say = () => {}, call, planOnly
   const jobs = paintAll(plan, needs, real), packs = {}, propIds = [], assetsOut = [];
   for (const [id, pr] of Object.entries(jobs)) {
     const r = await pr;
+    if (!r) continue;   // a prop that could not be made (or was not a real ingredient) is left out
     fs.writeFileSync(path.join(outDir, 'images', id + '.png'), r.buf); assetsOut.push({ id, file: 'images/' + id + '.png', aspect: r.aspect });
     if (id.startsWith('prop')) propIds.push(id); else packs[id] = { aspect: r.aspect };
     if (id === 'hero') say('Painting the ingredients', 0.4);
