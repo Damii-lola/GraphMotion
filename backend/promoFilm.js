@@ -438,12 +438,13 @@ async function promoAudio(promo, dir) {
   const adMix = require('./adMix'), lib = adMix.library(), D = promo.duration, end = Math.max(2, D - 1.6);
   const music = { style: promo.sound.music || 'pulse', key: 'A', bpm: 124 };
   const hero = promo.layers.find((l) => l.kind === 'sprite' && l.src === 'hero');
-  let cues = (promo.sound.cues || []).filter((c) => c.t >= 0 && c.t < D);
+  // 'tick' (a button click / UI pop) fires on nearly every word and label reveal - direct user feedback: it reads as app-notification
+  // "UI sound", not a cinematic ad, and was a real part of the mix feeling chaotic/cluttered. Dropped entirely, everywhere cues come from.
+  let cues = (promo.sound.cues || []).filter((c) => c.t >= 0 && c.t < D && c.kind !== 'tick');
   if (cues.length < 3) {                                      // the AI wrote (almost) no cues: derive them from the motion it wrote
     cues = promo.beats.slice(1).map((b) => ({ t: Math.max(0, b.t0 - 0.35), kind: 'whoosh' }));
     if (hero) cues.push({ t: hero.keys && hero.keys.length ? hero.keys[0].t + 0.5 : hero.t0, kind: 'impact' });
-    promo.layers.filter((l) => l.kind === 'text' && l.in && (l.in.kind === 'slam' || l.in.kind === 'pop')).slice(0, 5).forEach((l) => cues.push({ t: l.t0, kind: 'tick' }));
-    cues.push({ t: D - 1.4, kind: 'riser' }, { t: D - 0.9, kind: 'sparkle' });
+    cues.push({ t: D - 1.4, kind: 'riser' });
   }
   if (!lib.list.length) {
     const cs = cues.map((c) => ({ t: c.t, kind: c.kind === 'sparkle' ? 'tick' : c.kind, dur: c.kind === 'whoosh' ? 0.6 : c.kind === 'riser' ? 1.0 : undefined, gain: c.kind === 'impact' ? 0.5 : c.kind === 'whoosh' ? 0.12 : 0.5 }));
