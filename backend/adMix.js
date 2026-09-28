@@ -2,8 +2,8 @@
 /*
  * Sound for a generated ad = a real, present music bed (a CC0 loop from backend/music/library when this video's mood has one,
  * else siteAudio's synth as a fallback) + REAL sound-effect recordings from backend/sfx/library (CC0, auditioned and picked by
- * a person) placed on the picture with ffmpeg. Both libraries hold several tracks per mood/kind, picked by this video's own
- * dice seed, so the SAME reference generated many times reaches for different music and hits, not the identical ones every time.
+ * a person) placed on the picture with ffmpeg. The music pick is FIXED per mood, not randomised per video: direct user feedback
+ * was that per-video variety meant the live result never matched whatever sample got approved - one reliable track per mood.
  *
  * Levels are relative to each recording normalised to the same peak. Transition whooshes are deliberately quiet
  * (20 %): they must be felt, never noticed. The bed ducks a little under every impact/riser landing (a real produced mix's
@@ -35,25 +35,21 @@ function musicLibrary() {
   } catch (_) { return { list: [], of: () => [] }; }
 }
 
-// a small, fast seeded RNG (same family the rest of engine 2 already uses for its own per-video dice) - so two videos that land on
-// the very same track still don't sound identical: a different bit of it, in a slightly different key
-function rngFrom(seed) { let a = (seed >>> 0) || 1; return () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-
-/** Picks a real loop for this mood (seeded, so ten videos of the same reference/mood don't all reach for the same track), then loops
- * and trims it to fit `duration` with a fade in/out - writes outWav. Every video also gets its OWN small pitch nudge and, for a loop
- * long enough to have more than one "section", its own start point, so even two videos that pick the identical track don't play back
- * identically. Returns the picked catalog entry, or null when that mood has no loop (the caller falls back to the synthesised bed). */
-async function realBed({ mood, seed, duration, outWav }) {
+/** The one fixed loop for this mood, looped and trimmed to fit `duration` with a fade in/out - writes outWav. Always the same track,
+ * same pitch, same start point, for every video of that mood. Returns the picked catalog entry, or null when that mood has no loop
+ * (the caller falls back to the synthesised bed). */
+async function realBed({ mood, duration, outWav }) {
+  // FIXED, not seeded: direct user feedback - the per-video pick/pitch/start-point variety meant the live result never matched
+  // whatever sample was approved, and the whole point was "let every video of this reference just use audio.wav". One reliable
+  // track per mood, always the same, no pitch-shift, no random start point.
   const pool = musicLibrary().of(mood);
   if (!pool.length) return null;
-  const s = Math.abs(Math.round(seed || 0)), rng = rngFrom(s + 1), track = pool[s % pool.length];
+  const track = pool[0];
   const src = path.join(MUSIC_LIB, track.file);
   const need = duration + 1;
-  const spare = Math.max(0, track.seconds - need), startAt = spare > 1 ? rng() * spare : 0;   // a different bit of a long track each time
-  const pitch = 1 + (rng() - 0.5) * 0.04;   // +-2%: pitch-shifting a busy drum loop is a known source of smeared/robotic-sounding transients, so this stays gentle - still a genuine per-video difference
-  const loops = Math.max(0, Math.ceil(need / Math.max(1, track.seconds - startAt)) - 1), fadeOutAt = Math.max(0, need - 1.2);
-  await run(['-ss', startAt.toFixed(2), '-stream_loop', String(loops), '-i', src, '-t', need.toFixed(2), '-af',
-    `rubberband=pitch=${pitch.toFixed(4)},afade=t=in:st=0:d=0.6,afade=t=out:st=${fadeOutAt.toFixed(2)}:d=1.2`, '-ar', '44100', '-ac', '2', outWav]);
+  const loops = Math.max(0, Math.ceil(need / track.seconds) - 1), fadeOutAt = Math.max(0, need - 1.2);
+  await run(['-stream_loop', String(loops), '-i', src, '-t', need.toFixed(2), '-af',
+    `afade=t=in:st=0:d=0.6,afade=t=out:st=${fadeOutAt.toFixed(2)}:d=1.2`, '-ar', '44100', '-ac', '2', outWav]);
   return track;
 }
 

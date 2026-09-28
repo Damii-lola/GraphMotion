@@ -452,13 +452,10 @@ async function promoAudio(promo, dir) {
     return 'audio.wav';
   }
   const G = adMix.GAIN, ev = [], at = (x) => path.join(adMix.LIB, x.file), used = {};
-  const audioSeed = ((promo.dice && promo.dice.seed) || 0) % 97;   // this video's own pick of whoosh/tick/impact recordings - without it, every video of the same reference (same scene count, same cue pattern) reached for the identical sounds every single time
-  cues.slice(0, 24).forEach((c, i) => { const l = lib.of(c.kind); if (!l.length) return; const n = used[c.kind] = (used[c.kind] || 0) + 1, f = l[(audioSeed + promo.zones.length * 7 + n * 3 + i) % l.length]; ev.push({ file: at(f), at: Math.max(0, c.kind === 'riser' ? c.t - f.seconds * 0.5 : c.t), gain: (G[c.kind] || 0.3) * (c.kind === 'whoosh' ? 1.6 : 1) }); });
+  cues.slice(0, 24).forEach((c, i) => { const l = lib.of(c.kind); if (!l.length) return; const n = used[c.kind] = (used[c.kind] || 0) + 1, f = l[(promo.zones.length * 7 + n * 3 + i) % l.length]; ev.push({ file: at(f), at: Math.max(0, c.kind === 'riser' ? c.t - f.seconds * 0.5 : c.t), gain: (G[c.kind] || 0.3) * (c.kind === 'whoosh' ? 1.6 : 1) }); });
   const bed = adMix.tmpFile('.wav'), out = path.join(dir, 'audio.wav');
-  // a REAL loop for the mood when we have one (this video's own dice seed picks WHICH one, so the same reference used again reaches for a
-  // different track, not always the same beat) - only synthesise the bed from scratch when that mood has no real loop
-  const seed = (promo.dice && promo.dice.seed) || 0;
-  const real = await adMix.realBed({ mood: music.style, seed, duration: D, outWav: bed }).catch(() => null);
+  // the one fixed real loop for this mood - only synthesise the bed from scratch when that mood has no real loop at all
+  const real = await adMix.realBed({ mood: music.style, duration: D, outWav: bed }).catch(() => null);
   if (!real) fs.writeFileSync(bed, synth({ duration: D + 1, cues: [], music }));
   const duckAt = cues.filter((c) => c.kind === 'impact' || c.kind === 'riser').map((c) => c.t);
   try { await adMix.mix({ bedWav: bed, events: ev, outWav: out, end, duckAt }); } finally { fs.rmSync(bed, { force: true }); }
