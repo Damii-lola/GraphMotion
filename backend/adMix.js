@@ -50,7 +50,7 @@ async function realBed({ mood, seed, duration, outWav }) {
   const src = path.join(MUSIC_LIB, track.file);
   const need = duration + 1;
   const spare = Math.max(0, track.seconds - need), startAt = spare > 1 ? rng() * spare : 0;   // a different bit of a long track each time
-  const pitch = 1 + (rng() - 0.5) * 0.09;   // +-4.5%, under a semitone: a genuine per-video variation, never enough to sound "off"
+  const pitch = 1 + (rng() - 0.5) * 0.04;   // +-2%: pitch-shifting a busy drum loop is a known source of smeared/robotic-sounding transients, so this stays gentle - still a genuine per-video difference
   const loops = Math.max(0, Math.ceil(need / Math.max(1, track.seconds - startAt)) - 1), fadeOutAt = Math.max(0, need - 1.2);
   await run(['-ss', startAt.toFixed(2), '-stream_loop', String(loops), '-i', src, '-t', need.toFixed(2), '-af',
     `rubberband=pitch=${pitch.toFixed(4)},afade=t=in:st=0:d=0.6,afade=t=out:st=${fadeOutAt.toFixed(2)}:d=1.2`, '-ar', '44100', '-ac', '2', outWav]);
@@ -93,7 +93,9 @@ async function mix({ bedWav, events, outWav, end, duckAt }) {
   // the bed has a shape: it fades in, plays as a real, PRESENT beat under the story (not a background hum - direct user
   // feedback: "we need a nice beat to play"), then swells further into the end card (over ~2.7 s around the end-card time)
   const E = Number.isFinite(end) ? end : 17.5;
-  const shape = `if(lt(t,0.6),0.14+0.44*t/0.6,if(lt(t,${(E - 2.4).toFixed(2)}),0.58,if(lt(t,${(E + 0.3).toFixed(2)}),0.58+0.22*(t-${(E - 2.4).toFixed(2)})/2.7,0.8)))`;
+  // 0.58->0.8 (the previous fix) was tuned for the old bare synth pad; a real, already-produced drum loop carries far more of its
+  // own energy at the same number and clashed badly with the separate picture-timed hits on top of it - direct, urgent user report
+  const shape = `if(lt(t,0.6),0.12+0.34*t/0.6,if(lt(t,${(E - 2.4).toFixed(2)}),0.46,if(lt(t,${(E + 0.3).toFixed(2)}),0.46+0.19*(t-${(E - 2.4).toFixed(2)})/2.7,0.65)))`;
   // a brief, gentle dip (12%) around each hit, ~0.3s wide - the classic "duck" that makes a mix feel produced instead of just layered
   const dips = (duckAt || []).slice(0, 8).map((t0) => `(1-0.12*max(0,1-abs(t-${t0.toFixed(2)})/0.16))`);
   const duck = dips.length ? dips.reduceRight((acc, d) => (acc ? `min(${d},${acc})` : d), '') : '1';
